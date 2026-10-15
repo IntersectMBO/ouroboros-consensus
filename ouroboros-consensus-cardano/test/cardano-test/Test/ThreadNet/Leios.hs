@@ -1006,7 +1006,8 @@ sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
  where
   -- Fold the chain, inlining each CertRB's EB closure into its
   -- (empty-on-wire) body using the announcement carried by the previous
-  -- header — mirroring what the ChainSync server does when serving blocks.
+  -- header. The ChainSync server inlines it into the announcing RB instead,
+  -- but the total is the same.
   foldChain _ _ !total [] = pure total
   foldChain leiosDb prevAnn !total (blk : rest) = do
     blk' <- case (blockLeiosCert blk, prevAnn) of

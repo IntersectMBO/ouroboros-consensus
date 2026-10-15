@@ -9,6 +9,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncBlocksServer
   , chainSyncHeaderServerFollower
   , chainSyncHeadersServer
+  , inlineCertifiedEbsFollower
 
     -- * Trace events
   , BlockingType (..)
@@ -95,17 +96,8 @@ chainSyncHeadersServer tracer chainDB flr =
 -- The local node-to-client protocol uses the chain sync mini-protocol with
 -- chains of full blocks (rather than a header \/ body split).
 --
--- Dijkstra-era certifier blocks (whose body carries a 'LeiosCert' and an
--- empty tx list on the wire) are resolved before being sent: the
--- transactions of the certified EB are spliced in using the previously
--- announced EB on the announcer's header. Pre-Dijkstra blocks are passed
--- through unchanged.
---
--- The server keeps only the announcer's announcement point ('LeiosPoint')
--- between blocks rather than the full announcer header. A splice is needed
--- only for a CertRB ('headerContainsLeiosCert'); a block carrying no cert is
--- served unchanged (its predecessor's announced EB may never have been
--- certified), which also skips the deserialise/re-encode roundtrip.
+-- The blocks go through 'inlineCertifiedEbsFollower', so a client sees the
+-- transactions of a certified EB in the block that announced it.
 chainSyncBlocksServer ::
   forall m blk.
   ( IOLike m
@@ -121,81 +113,215 @@ chainSyncBlocksServer ::
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ do
-  prevAnnVar <- newTVarIO Nothing
+  flr' <- inlineCertifiedEbsFollower ccfg leiosDbReader flr
   runChainSyncServer $
-    chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) $
-      wrapFollower prevAnnVar flr
- where
-  wrapFollower ::
-    StrictTVar m (Maybe LeiosPoint) ->
-    Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
-    Follower m blk (WithPoint blk (Serialised blk))
-  wrapFollower prevAnnVar f =
+    chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr'
+
+-- | Wrap a follower so that, once an EB is certified, the client gets RB⁺
+-- (RB plus the EB's transactions) in place of the RB that announced it.
+-- CertRBs are sent unchanged.
+--
+-- * __Rule 1: look ahead.__ Before sending an RB that announced an EB, peek at
+--   the next block without waiting. If it is a CertRB, send RB⁺, else send RB.
+--   A client catching up gets RB⁺ with no rollback.
+--
+-- * __Rule 2: late certificate.__ If a CertRB comes after the client got plain
+--   RB, roll back to RB's parent, then send RB⁺ and the CertRB.
+--
+-- A CertRB can announce its own EB, so it follows the same rules.
+--
+-- TODO rule 3: after a chain switch or a reconnection, the client can have RB
+-- or RB⁺ at a point the server rolls back to, and the server cannot tell
+-- which. Rolling back one block deeper fixes this.
+inlineCertifiedEbsFollower ::
+  forall m blk.
+  ( IOLike m
+  , HasHeader (Header blk)
+  , ResolveLeiosBlock blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
+  ) =>
+  CodecConfig blk ->
+  LeiosDbReader m ->
+  Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
+  m (Follower m blk (WithPoint blk (Serialised blk)))
+inlineCertifiedEbsFollower ccfg leiosDbReader f = do
+  -- Unchecked: the state holds headers and raw blocks, and only this
+  -- client's thread uses it.
+  stVar <- uncheckedNewTVarM initState
+  pure
     Follower
-      { followerInstruction = followerInstruction f >>= traverse onUpdate
-      , followerInstructionBlocking = followerInstructionBlocking f >>= onUpdate
+      { followerInstruction =
+          popPending stVar >>= \case
+            Just p -> Just <$> process stVar p
+            Nothing -> followerInstruction f >>= traverse (process stVar . PendingRaw)
+      , followerInstructionBlocking =
+          popPending stVar >>= \case
+            Just p -> process stVar p
+            Nothing -> followerInstructionBlocking f >>= process stVar . PendingRaw
       , followerForward = \pts -> do
           changed <- followerForward f pts
           case changed of
-            Just pt -> setPrev pt >> pure (Just pt)
-            Nothing -> pure Nothing
+            -- The inner follower starts again from the intersection, so what
+            -- was pending is stale.
+            Just pt -> atomically $ writeTVar stVar initState{wsClientTip = pt}
+            Nothing -> pure ()
+          pure changed
       , followerClose = followerClose f
       }
+ where
+  initState :: WrapperState blk
+  initState =
+    WrapperState
+      { wsPending = []
+      , wsClientTip = GenesisPoint
+      , wsPlainAnnouncer = Nothing
+      }
+
+  popPending :: StrictTVar m (WrapperState blk) -> m (Maybe (Pending blk))
+  popPending stVar = atomically $ do
+    st <- readTVar stVar
+    case wsPending st of
+      [] -> pure Nothing
+      p : ps -> writeTVar stVar st{wsPending = ps} >> pure (Just p)
+
+  -- The next instruction, for rule 1. It stays pending, to be sent next.
+  lookAhead ::
+    StrictTVar m (WrapperState blk) ->
+    m (Maybe (ChainUpdate blk (WithPoint blk (Header blk, Serialised blk))))
+  lookAhead stVar =
+    wsPending <$> readTVarIO stVar >>= \case
+      PendingRaw u : _ -> pure (Just u)
+      -- Not reached: rule 2 queues RB⁺ ahead of the CertRB, and RB⁺ is sent
+      -- without looking ahead.
+      PendingReady _ : _ -> pure Nothing
+      [] ->
+        followerInstruction f >>= \case
+          Nothing -> pure Nothing
+          Just u -> do
+            atomically $ modifyTVar stVar $ \st -> st{wsPending = wsPending st <> [PendingRaw u]}
+            pure (Just u)
+
+  process ::
+    StrictTVar m (WrapperState blk) ->
+    Pending blk ->
+    m (ChainUpdate blk (WithPoint blk (Serialised blk)))
+  process stVar = \case
+    PendingReady u -> do
+      atomically $ modifyTVar stVar $ \st ->
+        st{wsClientTip = updatePoint u, wsPlainAnnouncer = Nothing}
+      pure u
+    PendingRaw (RollBack pt) -> do
+      atomically $ modifyTVar stVar $ \st ->
+        st
+          { wsClientTip = pt
+          , -- The client still has plain RB only if the rollback keeps it as
+            -- the tip.
+            wsPlainAnnouncer = case wsPlainAnnouncer st of
+              Just pa | blockPoint (fst (withoutPoint (paBlock pa))) == castPoint pt -> Just pa
+              _ -> Nothing
+          }
+      pure (RollBack pt)
+    PendingRaw (AddBlock wp@(WithPoint (hdr, sblk) pt)) -> do
+      st <- readTVarIO stVar
+      case wsPlainAnnouncer st of
+        -- Rule 2. The CertRB extends the client's tip, so it certifies the EB
+        -- of the plain RB the client has.
+        Just pa | headerContainsLeiosCert hdr -> do
+          rbPlus <- buildRbPlus (paBlock pa) (paEb pa)
+          atomically $
+            writeTVar
+              stVar
+              st
+                { wsPending =
+                    PendingReady (AddBlock rbPlus) : PendingRaw (AddBlock wp) : wsPending st
+                , wsClientTip = paParent pa
+                , wsPlainAnnouncer = Nothing
+                }
+          pure (RollBack (paParent pa))
+        _ -> case headerLeiosAnnouncement hdr of
+          Nothing -> send (WithPoint sblk pt) Nothing
+          -- Rule 1.
+          Just (eb, _size) ->
+            lookAhead stVar >>= \case
+              Just (AddBlock (WithPoint (nextHdr, _) _))
+                | headerContainsLeiosCert nextHdr -> do
+                    rbPlus <- buildRbPlus wp eb
+                    send rbPlus Nothing
+              _ ->
+                send (WithPoint sblk pt) $
+                  Just
+                    PlainAnnouncer
+                      { paParent = wsClientTip st
+                      , paBlock = wp
+                      , paEb = eb
+                      }
    where
-    onUpdate ::
-      ChainUpdate blk (WithPoint blk (Header blk, Serialised blk)) ->
-      m (ChainUpdate blk (WithPoint blk (Serialised blk)))
-    onUpdate (AddBlock wp) = AddBlock <$> resolve wp
-    onUpdate (RollBack pt) = setPrev pt >> pure (RollBack pt)
+    send out pa = do
+      atomically $ modifyTVar stVar $ \st ->
+        st{wsClientTip = point out, wsPlainAnnouncer = pa}
+      pure (AddBlock out)
 
-    resolve ::
-      WithPoint blk (Header blk, Serialised blk) ->
-      m (WithPoint blk (Serialised blk))
-    resolve (WithPoint (hdr, sblk) pt) = do
-      mPrevAnn <- readTVarIO prevAnnVar
-      atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
-      sblk' <- case mPrevAnn of
-        -- Only a CertRB — a block whose header records that it carries a Leios
-        -- certificate ('headerContainsLeiosCert') — splices in an EB closure,
-        -- and it splices the EB announced by its predecessor (the one the cert
-        -- attests to). A block that merely follows an announcement but carries
-        -- no certificate of its own — e.g. one whose predecessor announced an
-        -- EB that was never certified — is served unchanged. Splicing there
-        -- would inline an EB that is not chain content, and whose closure may
-        -- be absent from the LeiosDb (throwing in 'resolveLeiosClosure').
-        Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
-          Left _ -> pure sblk
-          Right blk -> do
-            resolveLeiosClosure leiosDbReader (pointEbHash prevAnn) >>= \case
-              -- Serve what we have rather than dying on a closure we cannot
-              -- read; the peer validates the block regardless.
-              Left _ -> pure sblk
-              Right closure -> pure . encode $ inlineLeiosClosure blk (map snd closure)
-        _ -> pure sblk
-      pure (WithPoint sblk' pt)
+  updatePoint :: ChainUpdate blk (WithPoint blk b) -> Point blk
+  updatePoint = \case
+    AddBlock wp -> point wp
+    RollBack pt -> pt
 
-    decodeRaw :: Serialised blk -> Either String blk
-    decodeRaw (Serialised bs) =
-      case CBOR.Read.deserialiseFromBytes annotator bs of
+  -- RB⁺ has RB's header, so it has RB's point.
+  --
+  -- TODO: this sends RB unchanged when it can't decode RB or read the EB's
+  -- closure. It should fail loudly instead.
+  buildRbPlus ::
+    WithPoint blk (Header blk, Serialised blk) ->
+    LeiosPoint ->
+    m (WithPoint blk (Serialised blk))
+  buildRbPlus (WithPoint (_, sblk) pt) eb = case decodeRaw sblk of
+    Left _ -> pure (WithPoint sblk pt)
+    Right blk ->
+      resolveLeiosClosure leiosDbReader (pointEbHash eb) >>= \case
+        Left _ -> pure (WithPoint sblk pt)
+        Right closure -> pure (WithPoint (encode (inlineLeiosClosure blk (map snd closure))) pt)
+
+  decodeRaw :: Serialised blk -> Either String blk
+  decodeRaw (Serialised bs) =
+    case CBOR.Read.deserialiseFromBytes annotator bs of
+      Left e -> Left (show e)
+      Right (_, applyBytes) -> case applyBytes bs of
         Left e -> Left (show e)
-        Right (_, applyBytes) -> case applyBytes bs of
-          Left e -> Left (show e)
-          Right blk -> Right blk
-     where
-      annotator :: forall s. CBOR.Decoding.Decoder s (Lazy.ByteString -> Either DecoderError blk)
-      annotator = decodeDisk ccfg
+        Right blk -> Right blk
+   where
+    annotator :: forall s. CBOR.Decoding.Decoder s (Lazy.ByteString -> Either DecoderError blk)
+    annotator = decodeDisk ccfg
 
-    -- possible race? 'pt' could be GC'd from the VolatileDB between the
-    -- follower emitting it and this lookup; we then fall back to Nothing.
-    setPrev :: Point blk -> m ()
-    setPrev pt = case pointToWithOriginRealPoint pt of
-      Origin -> atomically $ writeTVar prevAnnVar Nothing
-      NotOrigin rp -> do
-        mHdr <- ChainDB.getBlockComponent chainDB GetHeader rp
-        atomically $ writeTVar prevAnnVar (fst <$> (mHdr >>= headerLeiosAnnouncement))
+  encode :: blk -> Serialised blk
+  encode = Serialised . CBOR.Write.toLazyByteString . encodeDisk ccfg
 
-    encode :: blk -> Serialised blk
-    encode = Serialised . CBOR.Write.toLazyByteString . encodeDisk ccfg
+-- | The state of 'inlineCertifiedEbsFollower' for one client.
+data WrapperState blk = WrapperState
+  { wsPending :: ![Pending blk]
+  -- ^ What to send before asking the inner follower again. One instruction
+  -- from the inner follower can become up to three for the client.
+  , wsClientTip :: !(Point blk)
+  -- ^ The client's tip, once it has what was sent.
+  , wsPlainAnnouncer :: !(Maybe (PlainAnnouncer blk))
+  -- ^ Set only when the client's tip is plain RB, and RB announced an EB.
+  }
+
+data Pending blk
+  = -- | From the inner follower, still to go through the rules.
+    PendingRaw !(ChainUpdate blk (WithPoint blk (Header blk, Serialised blk)))
+  | -- | To send as it is.
+    PendingReady !(ChainUpdate blk (WithPoint blk (Serialised blk)))
+
+-- | A plain RB at the client's tip, which announced an EB. What rule 2 needs
+-- if a CertRB comes next.
+data PlainAnnouncer blk = PlainAnnouncer
+  { paParent :: !(Point blk)
+  -- ^ RB's parent, recorded when RB was sent, so no lookup is needed.
+  , paBlock :: !(WithPoint blk (Header blk, Serialised blk))
+  , paEb :: !LeiosPoint
+  -- ^ The EB that RB announced.
+  }
 
 -- | A chain sync server.
 --
