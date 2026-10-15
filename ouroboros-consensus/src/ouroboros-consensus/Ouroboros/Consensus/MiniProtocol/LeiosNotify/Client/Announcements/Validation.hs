@@ -24,6 +24,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
   , ValidAnnouncement (..)
   , announcementValidity
+  , announcingRbHash
   , maxAnnouncementAgeRecv
   , maxAnnouncementAgeSend
   , mkAnnouncingHeader
@@ -63,7 +64,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import Ouroboros.Consensus.Leios.Protocol
-import Ouroboros.Consensus.Leios.Types (ElectionId (..))
+import Ouroboros.Consensus.Leios.Types (ElectionId (..), RankingBlockHash, toRankingBlockHash)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -84,6 +85,11 @@ deriving anyclass instance NoThunks (Header blk) => NoThunks (AnnouncingHeader b
 
 instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
   a == b = headerHash (ancHeader a) == headerHash (ancHeader b)
+
+-- | The hash of the announcing block, which votes name.
+announcingRbHash ::
+  forall blk. (ConvertRawHash blk, GetHeader blk) => AnnouncingHeader blk -> RankingBlockHash
+announcingRbHash anc = toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc))
 
 -- | Interpret a header as a relayed announcement, or 'Nothing' if it carries
 -- none (so it should not have been relayed as one).

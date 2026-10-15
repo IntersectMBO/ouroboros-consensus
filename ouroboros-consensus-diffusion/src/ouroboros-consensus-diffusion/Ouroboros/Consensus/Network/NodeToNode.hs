@@ -389,6 +389,7 @@ mkHandlers
     , getGsmState
     , getBlockchainTime
     , getLeiosAnnounceState
+    , getLeiosVoteState
     , getLeiosNotifyLog
     }
   txSubmissionLogicVersion =
@@ -502,6 +503,7 @@ mkHandlers
             getTopLevelConfig
             getChainDB
             getLeiosAnnounceState
+            getLeiosVoteState
             getBlockchainTime
             systemTime
             chainSyncFutureCheck
