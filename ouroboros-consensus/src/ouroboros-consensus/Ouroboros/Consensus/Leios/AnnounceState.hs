@@ -11,26 +11,31 @@
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
+  , hasRelayedAnnouncement
   , newAnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
   ) where
 
 import Control.Monad (when)
+import qualified Data.Foldable as Foldable
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block (HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, Header, SlotNo)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (OCINStaleness (FreshOCIN))
-import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot))
+import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RbHash)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
   , ValidAnnouncement (..)
+  , announcingRbHash
   , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -48,6 +53,9 @@ data AnnounceState m blk = MkAnnounceState
   { announced :: !(StrictTVar m (Announcements.State (AnnouncingHeader blk)))
   , prunedTo :: !(StrictTVar m SlotNo)
   -- ^ every election before this slot is forgotten, and ignored
+  , relayed :: !(StrictTVar m (Set RbHash))
+  -- ^ The announcing blocks of the announcements appended to the log, which
+  -- votes name.
   , relayLog :: !(NotifyLog m blk)
   }
 
@@ -56,14 +64,18 @@ newAnnounceState ::
   NotifyLog m blk ->
   m (AnnounceState m blk)
 newAnnounceState notifyLog =
-  MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
+  MkAnnounceState
+    <$> newTVarIO Announcements.empty
+    <*> newTVarIO 0
+    <*> newTVarIO Set.empty
+    <*> pure notifyLog
 
 -- | Accept a valid announcement, and relay it if it is new and fresh enough.
 --
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
 onValidAnnouncement ::
-  (IOLike m, HasHeader (Header blk)) =>
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   AnnounceState m blk ->
   ValidAnnouncement blk ->
   STM m ()
@@ -75,12 +87,13 @@ onValidAnnouncement st valid = do
       Left _repeatedOrThird -> pure ()
       Right seen' -> do
         writeTVar announced seen'
-        when (announcementAge <= maxAnnouncementAgeSend) $
+        when (announcementAge <= maxAnnouncementAgeSend) $ do
+          modifyTVar relayed (Set.insert (announcingRbHash announcingHeader))
           appendNotifyLog relayLog (NotifyAnnouncement announcementOnset announcingHeader)
  where
   electionId = ancElectionId announcingHeader
 
-  MkAnnounceState{prunedTo, announced, relayLog} = st
+  MkAnnounceState{prunedTo, announced, relayed, relayLog} = st
 
   MkValidAnnouncement
     { announcingHeader
@@ -89,12 +102,20 @@ onValidAnnouncement st valid = do
     , announcementStaleness
     } = valid
 
+-- | Whether the node relays the announcement of this announcing block, so that
+-- it can relay votes for it.
+hasRelayedAnnouncement :: IOLike m => AnnounceState m blk -> RbHash -> STM m Bool
+hasRelayedAnnouncement st rbHash = Set.member rbHash <$> readTVar (relayed st)
+
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::
-  IOLike m =>
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   AnnounceState m blk ->
   SlotNo ->
   STM m ()
 pruneAnnounceState st immTipSlot = do
-  modifyTVar (announced st) (snd . Announcements.prune immTipSlot)
+  (pruned, kept) <- Announcements.prune immTipSlot <$> readTVar (announced st)
+  writeTVar (announced st) kept
   writeTVar (prunedTo st) immTipSlot
+  modifyTVar (relayed st) $ \rbHashes ->
+    Foldable.foldl' (\acc anc -> Set.delete (announcingRbHash anc) acc) rbHashes pruned

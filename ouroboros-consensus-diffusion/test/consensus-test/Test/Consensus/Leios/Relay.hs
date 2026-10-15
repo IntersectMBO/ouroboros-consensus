@@ -207,6 +207,14 @@ tests =
             0
             [withControl [(5, vote someAnnouncingBlock seatNoKey), (5, vote someAnnouncingBlock seatBadPoP)]]
         votes down @?= [control]
+    , testCase "the node does not relay a vote for an announcement it did not relay" $ do
+        down <-
+          relayToOne
+            0
+            [ withControl [announce equivocation]
+            , [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]
+            ]
+        votes down @?= [control]
     , testCase "a peer that connects during a vote's window receives the vote" $ do
         down <- relayToOne 6 [votedFor0]
         votes down @?= [voteOf someAnnouncingBlock 0]

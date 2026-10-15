@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -44,6 +45,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   , diffRelTime
   )
+import Ouroboros.Consensus.Leios.Types (LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader
   , maxAnnouncementAgeSend
@@ -65,7 +67,9 @@ import Ouroboros.Consensus.Util.IOLike
 data NotifyEntry blk
   = -- | An announcement, with its election slot's wall-clock onset.
     NotifyAnnouncement !RelativeTime !(AnnouncingHeader blk)
-  -- TODO: add offers and votes
+  | -- | A vote, with the end of its window, when it stops being relayed.
+    NotifyVote !RelativeTime !LeiosVote
+  -- TODO: add offers
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (NotifyEntry blk)
@@ -122,12 +126,15 @@ pruneNotifyLog notifyLog now = do
   unless (Map.size kept == Map.size entries) $
     writeTVar (notifyEntries notifyLog) kept
  where
-  expired (NotifyAnnouncement onset _anc) = diffRelTime now onset > maxAnnouncementAgeSend
+  expired = \case
+    NotifyAnnouncement onset _anc -> diffRelTime now onset > maxAnnouncementAgeSend
+    NotifyVote windowEnd _vote -> now > windowEnd
 
 -- | Prune the log every second.
 --
--- The tick is far below the margin between 'maxAnnouncementAgeSend' and what a
--- downstream peer tolerates, so no entry is relayed too late for it.
+-- The tick is far below the margin between 'maxAnnouncementAgeSend', or a
+-- vote's window, and what a downstream peer tolerates, so no entry is relayed
+-- too late for it.
 notifyLogPruner :: IOLike m => SystemTime m -> NotifyLog m blk -> m Void
 notifyLogPruner systemTime notifyLog = forever $ do
   now <- systemTimeCurrent systemTime
