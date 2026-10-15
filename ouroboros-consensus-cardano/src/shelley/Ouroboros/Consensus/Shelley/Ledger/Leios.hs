@@ -47,7 +47,7 @@ import LeiosDemoTypes
   , fromCodecEbAnnouncement
   , hashLeiosTx
   )
-import Lens.Micro ((.~), (^.))
+import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (..))
@@ -222,7 +222,8 @@ instance
   inlineLeiosClosure blk txs = do
     blk{shelleyBlockRaw = Core.Block hdr body'}
    where
-    body' = body & Core.txSeqBlockBodyL .~ StrictSeq.fromList (fromGenTx <$> txs)
+    -- Add the EB's txs after the block's own, keeping both.
+    body' = body & Core.txSeqBlockBodyL %~ (<> StrictSeq.fromList (fromGenTx <$> txs))
 
     fromGenTx (ShelleyTx _ tx) = tx
 
