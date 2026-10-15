@@ -37,7 +37,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
-import Ouroboros.Consensus.Leios.VoteState (VoteState, onAcceptedVote, pruneVoteState)
+import Ouroboros.Consensus.Leios.VoteState (VoteState, onAcceptedVote)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
@@ -203,8 +203,8 @@ withLeiosNotifyClientState statesVar peer =
     )
     (\_stateVar -> atomically $ modifyTVar statesVar (Map.delete peer))
 
--- | Prune every LeiosNotify client's state, and the node's 'AnnounceState' and
--- 'VoteState', each time the immutable tip's slot advances.
+-- | Prune every LeiosNotify client's state, and the node's 'AnnounceState',
+-- each time the immutable tip's slot advances.
 leiosNotifyPruner ::
   ( IOLike m
   , GetTip (LedgerState blk)
@@ -213,10 +213,9 @@ leiosNotifyPruner ::
   ) =>
   ChainDB m blk ->
   AnnounceState m blk ->
-  VoteState m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
   m Void
-leiosNotifyPruner chainDB announceState voteState statesVar = go (SlotNo 0)
+leiosNotifyPruner chainDB announceState statesVar = go (SlotNo 0)
  where
   go prunedSlot = do
     immTipSlot <- atomically $ do
@@ -227,7 +226,6 @@ leiosNotifyPruner chainDB announceState voteState statesVar = go (SlotNo 0)
               states <- readTVar statesVar
               mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
               pruneAnnounceState announceState slot
-              pruneVoteState voteState slot
               pure slot
         _ -> retry
     go immTipSlot

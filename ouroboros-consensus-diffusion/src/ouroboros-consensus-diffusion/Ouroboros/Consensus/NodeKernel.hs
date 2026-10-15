@@ -413,7 +413,7 @@ initNodeKernel
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
-        leiosNotifyPruner chainDB leiosAnnounceState leiosVoteState leiosNotifyClientStates
+        leiosNotifyPruner chainDB leiosAnnounceState leiosNotifyClientStates
     void $
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog

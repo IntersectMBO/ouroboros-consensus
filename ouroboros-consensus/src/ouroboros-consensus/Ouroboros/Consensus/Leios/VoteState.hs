@@ -11,7 +11,13 @@ module Ouroboros.Consensus.Leios.VoteState
   ( VoteState
   , newVoteState
   , onAcceptedVote
-  , pruneVoteState
+
+    -- * The votes kept
+  , Votes
+  , maxVoteElections
+  , readVotes
+  , recordVote
+  , seenVote
   ) where
 
 import Cardano.Crypto.DSIGN.Class (verifyDSIGN)
@@ -50,11 +56,10 @@ import Ouroboros.Consensus.Util.IOLike
   , throwIO
   )
 
--- | The node's votes, per election slot and seat, and where it learns which
--- announcements it relays and relays the votes.
+-- | The node's votes, and where it learns which announcements it relays and
+-- relays the votes.
 data VoteState m blk = MkVoteState
-  { votes :: !(StrictTVar m (Map (SlotNo, LeiosSeatId) LeiosVote))
-  -- ^ The first valid vote of each seat in each election slot.
+  { votes :: !(StrictTVar m Votes)
   , announceState :: !(AnnounceState m blk)
   -- ^ Which announcements the node relays, as it relays only votes for those.
   , relayLog :: !(NotifyLog m blk)
@@ -75,23 +80,21 @@ onAcceptedVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) => VoteState m blk -> AcceptedVote -> m ()
 onAcceptedVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteDiffusionEnd, voteCommittee} = do
   worthVerifying <- atomically $ do
-    known <- isKnown
+    seen <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
     announced <-
       hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
-    pure (not known && announced)
+    pure (not seen && announced)
   when worthVerifying $ do
     unless (validVote voteCommittee acceptedVote) $
       throwIO $
         ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
     atomically $ do
       -- Another peer may have delivered the same vote meanwhile.
-      known <- isKnown
-      unless known $ do
-        modifyTVar (votes st) (Map.insert key acceptedVote)
+      seen <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
+      unless seen $ do
+        recordVote st voteElectionSlot acceptedVote
         appendNotifyLog (relayLog st) (NotifyVote voteDiffusionEnd acceptedVote)
  where
-  key = (voteElectionSlot, voteSeatId acceptedVote)
-  isKnown = Map.member key <$> readTVar (votes st)
 
 -- | Whether the vote's seat has a key in the committee, and the signature
 -- verifies under it.
@@ -102,7 +105,47 @@ validVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature}
       isRight $ verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
     _ -> False
 
--- | Forget every election before the given slot, which is the immutable tip's.
-pruneVoteState :: IOLike m => VoteState m blk -> SlotNo -> STM m ()
-pruneVoteState st immTipSlot =
-  modifyTVar (votes st) (Map.dropWhileAntitone (\(slot, _seat) -> slot < immTipSlot))
+{-------------------------------------------------------------------------------
+  The votes kept
+-------------------------------------------------------------------------------}
+
+-- | The first valid vote of each seat, per election slot, for the latest
+-- 'maxVoteElections' election slots the node has votes for.
+type Votes = Map SlotNo (Map LeiosSeatId LeiosVote)
+
+-- | How many election slots the node keeps votes for: far more than the
+-- elections whose votes are still within their window.
+--
+-- TODO: magic number
+maxVoteElections :: Int
+maxVoteElections = 128
+
+readVotes ::
+  IOLike m =>
+  VoteState m blk -> STM m Votes
+readVotes st = readTVar (votes st)
+
+-- | Whether the node may already have seen a vote of this seat in this
+-- election slot: it has one, or, once full, the slot is older than all it
+-- keeps, so it may have forgotten one.
+seenVote ::
+  IOLike m =>
+  VoteState m blk -> SlotNo -> LeiosSeatId -> STM m Bool
+seenVote st slot seat = seen <$> readVotes st
+ where
+  seen vs = case Map.lookup slot vs of
+    Just seats -> Map.member seat seats
+    Nothing -> Map.size vs >= maxVoteElections && maybe False ((>= slot) . fst) (Map.lookupMin vs)
+
+-- | Keep a vote the node has not 'seenVote', forgetting the oldest election
+-- slot if there are then more than 'maxVoteElections'.
+recordVote ::
+  IOLike m =>
+  VoteState m blk -> SlotNo -> LeiosVote -> STM m ()
+recordVote st slot vote = modifyTVar (votes st) insertVote
+ where
+  insertVote vs
+    | Map.size vs' > maxVoteElections = Map.deleteMin vs'
+    | otherwise = vs'
+   where
+    vs' = Map.insertWith Map.union slot (Map.singleton (voteSeatId vote) vote) vs
