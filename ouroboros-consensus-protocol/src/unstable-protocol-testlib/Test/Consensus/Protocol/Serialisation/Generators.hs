@@ -24,8 +24,10 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
+import qualified Data.Strict.Either as Strict
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types (EbHash (..))
+import Ouroboros.Consensus.Protocol.PolyPraos (WhyNotCertifiable (..))
 import Ouroboros.Consensus.Protocol.Praos
   ( PolyPraosState (PraosState)
   )
@@ -33,7 +35,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (pureLeiosOnly)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
-import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof, vectorOf)
+import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, oneof, vectorOf)
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
@@ -100,4 +102,14 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> traverse (\() -> arbitrary) (pureLeiosOnly ())
+      <*> traverse (\() -> genCertifiable) (pureLeiosOnly ())
+
+genCertifiable :: Gen (Strict.Either WhyNotCertifiable LeiosAnnouncement)
+genCertifiable =
+  oneof
+    [ Strict.Left <$> arbitrary
+    , Strict.Right <$> arbitrary
+    ]
+
+instance Arbitrary WhyNotCertifiable where
+  arbitrary = elements [NothingAnnounced, AnnouncedInPreviousEra, AnnouncedInPreviousEpoch]
