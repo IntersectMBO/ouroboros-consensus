@@ -6,6 +6,19 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.1.0.2'></a>
+## 5.1.0.2 -- 2026-10-15
+
+### Patch
+
+- The `tracing` sublibrary renders the Dijkstra ledger predicate failures
+  (`DijkstraLedgerPredFailure`, `EntitiesPredFailure`, `DijkstraGovPredFailure`,
+  `DijkstraGovCertPredFailure`, `DijkstraPoolPredFailure`,
+  `DijkstraBbodyPredFailure`, `DijkstraUtxoPredFailure` and
+  `DijkstraUtxowPredFailure`). Their `LogFormatting` instances used to call
+  `error`, so tracing a Dijkstra block that failed validation crashed the thread
+  that forced the message.
+
 <a id='changelog-5.1.0.1'></a>
 ## 5.1.0.1 -- 2026-10-09
 
