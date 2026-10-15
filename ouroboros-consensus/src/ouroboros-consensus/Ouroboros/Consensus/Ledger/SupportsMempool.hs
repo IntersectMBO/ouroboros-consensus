@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , HasTxs (..)
   , IgnoringOverflow (..)
   , Invalidated (..)
+  , HasSizeForBlockBodyInclusion (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
   , TxId
@@ -493,6 +495,15 @@ class
     proxy blk ->
     TxEbMeasure blk ->
     TxMeasure blk
+
+-- | A class to get the "size" of an object to be included as part of a
+-- block body.
+--
+-- This is used to select fewer transactions when forging a block that should
+-- also contain other objects as a payload (e.g. a Peras certificate), to avoid
+-- exceeding the maximum block size.
+class TxMeasurePhase1Metrics m => HasSizeForBlockBodyInclusion m a where
+  getSizeForBlockBodyInclusion :: a -> m
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for

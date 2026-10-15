@@ -437,7 +437,8 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get all transactions (oldest to newest) in the mempool snapshot,
   -- along with their ticket number, which are associated with a ticket
   -- number greater than the one provided.
-  , snapshotPartition ::
+  , snapshotPartitionWithInitialPayload ::
+      Maybe (MempoolMeasure blk) ->
       TxMeasure blk ->
       TxEbMeasure blk ->
       ( [Validated (GenTx blk)]
@@ -447,7 +448,8 @@ data MempoolSnapshot blk = MempoolSnapshot
       )
   -- ^ Partition the mempool for one forging opportunity. The first part is
   -- the greatest prefix (oldest to newest) whose 'TxMeasure' respects the
-  -- given block capacity. The second part is the greatest run of the
+  -- given block capacity, considering the size of the optional initial
+  -- payload of the block. The second part is the greatest run of the
   -- /following/ transactions whose 'TxEbMeasure' respects the given
   -- endorser-block capacity. Each part comes with its total size.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
