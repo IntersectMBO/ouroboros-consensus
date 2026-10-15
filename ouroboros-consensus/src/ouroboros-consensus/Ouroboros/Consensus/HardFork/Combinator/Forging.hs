@@ -14,9 +14,14 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , HardForkForgeStateInfo (..)
   , HardForkForgeStateUpdateError
   , hardForkBlockForging
+
+    -- * Properties
+  , propHardForkForgesInSameEra
   ) where
 
-import Control.Monad (void)
+import Control.Monad (unless, void)
+import Control.Monad.Except (ExceptT, MonadError (throwError))
+import Control.Monad.Trans.Class (lift)
 import Data.Bifunctor (first)
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
@@ -443,3 +448,21 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
               , fbEbTxs = map unwrapValidatedGenTx ebTxs'
               , fbIsLeader = isLeader'
               }
+
+{-------------------------------------------------------------------------------
+  Properties
+-------------------------------------------------------------------------------}
+
+-- | Check that 'forgeBlock' produces a block in the same era as the ticked
+-- ledger state.
+propHardForkForgesInSameEra ::
+  (CanHardFork xs, Monad m) =>
+  BlockForging m (HardForkBlock xs) ->
+  ForgeBlockArgs (HardForkBlock xs) ->
+  ExceptT (String, (HardForkBlock xs, Maybe ForgedLeiosEb)) m (HardForkBlock xs, Maybe ForgedLeiosEb)
+propHardForkForgesInSameEra blockForging args = do
+  res@(HardForkBlock (OneEraBlock forged), _) <- lift $ forgeBlock blockForging args
+  let TickedHardForkLedgerState _ ledgerState = fbCurrentTickedLedgerState args
+  unless (index_NS forged == index_NS (State.tip ledgerState)) $
+    throwError ("forgeBlock forged in a different era than the ticked ledger state", res)
+  pure res

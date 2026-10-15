@@ -24,8 +24,14 @@ module Ouroboros.Consensus.Block.Forging
 
     -- * 'ForgeBlockArgs'
   , ForgeBlockArgs (..)
+
+    -- * Properties
+  , propForgedMatchesHeader
   ) where
 
+import Cardano.Prelude (lift)
+import Control.Monad (unless)
+import Control.Monad.Except (ExceptT, MonadError (throwError))
 import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
@@ -277,3 +283,28 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   , fbIsLeader :: !(IsLeader (BlockProtocol blk))
   -- ^ Proof that the node is the slot leader.
   }
+
+{-------------------------------------------------------------------------------
+  Properties
+-------------------------------------------------------------------------------}
+
+-- | Check that the result of 'forgeBlock' — the ranking block and the optional
+-- endorser block — are both consistent with the block header.
+--
+-- The caller supplies 'ebMatchesHeader', which receives 'Nothing' when no
+-- endorser block was forged and 'Just eb' otherwise, so it can enforce both
+-- directions of the invariant.
+-- TODO(bladyjoker): Move ebMatchesHeader into GetHeader class.
+propForgedMatchesHeader ::
+  (Monad m, GetHeader blk) =>
+  (Header blk -> Maybe ForgedLeiosEb -> Bool) ->
+  BlockForging m blk ->
+  ForgeBlockArgs blk ->
+  ExceptT (String, (blk, Maybe ForgedLeiosEb)) m (blk, Maybe ForgedLeiosEb)
+propForgedMatchesHeader ebMatchesHeader blockForging forgeBlockArgs = do
+  res@(blk, mayEb) <- lift $ forgeBlock blockForging forgeBlockArgs
+  unless (blockMatchesHeader (getHeader blk) blk) $
+    throwError ("Block header must match the body", res)
+  unless (ebMatchesHeader (getHeader blk) mayEb) $
+    throwError ("Block header must match the endorsement block", res)
+  pure res

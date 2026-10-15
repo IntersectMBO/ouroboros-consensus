@@ -28,6 +28,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Block as X
 import Ouroboros.Consensus.HardFork.Combinator.Forging as X
   ( HardForkForgeStateInfo (..)
   , hardForkBlockForging
+  , propHardForkForgesInSameEra
   )
 import Ouroboros.Consensus.HardFork.Combinator.Info as X
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs as X
