@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Peras.Protocol (PerasProtocol)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Ledger
@@ -120,5 +121,6 @@ instance
   , ShowProxy (PerasCert (ShelleyBlock proto era))
   , ShowProxy (PerasVote (ShelleyBlock proto era))
   , LeiosProtocol proto
+  , PerasProtocol proto
   ) =>
   RunNode (ShelleyBlock proto era)

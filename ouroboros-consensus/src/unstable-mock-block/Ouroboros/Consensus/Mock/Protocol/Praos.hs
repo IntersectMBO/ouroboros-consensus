@@ -85,6 +85,10 @@ import Ouroboros.Consensus.Leios.Protocol
   )
 import Ouroboros.Consensus.Mock.Ledger.Stake
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Util.Condense
@@ -466,6 +470,9 @@ instance PraosCrypto c => LeiosProtocol (Praos c) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
+
+instance PraosCrypto c => PerasProtocol (Praos c) where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   protocolSecurityParam = praosSecurityParam . praosParams

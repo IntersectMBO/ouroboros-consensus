@@ -20,6 +20,10 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultValidateLeiosAnnouncement
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.LeaderSchedule
 import Ouroboros.Consensus.Ticked
@@ -45,6 +49,9 @@ instance ConsensusProtocol p => LeiosProtocol (WithLeaderSchedule p) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
+
+instance ConsensusProtocol p => PerasProtocol (WithLeaderSchedule p) where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type TiebreakerView (WithLeaderSchedule p) = TiebreakerView p

@@ -87,6 +87,10 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   )
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -198,6 +202,9 @@ instance PraosCrypto c => LeiosProtocol (Praos c) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
+
+instance PraosCrypto c => PerasProtocol (Praos c) where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PolyPraosState (Praos c)
