@@ -1293,6 +1293,7 @@ test-suite protocol-test
     cardano-crypto-class,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-protocol-tpraos,
+    cardano-slotting,
     containers,
     ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,

@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Protocol.PolyPraos
   ( WhyNotCertifiable (..)
   , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
+  , markUncertifiable
   , validateLeiosAnnouncementPolyPraos
   )
 import Ouroboros.Consensus.Protocol.Praos
@@ -234,8 +235,7 @@ instance TranslateProto (Praos2 c) (Praos2 c) era where
   translateChainDepState _ st =
     st
       { praosStateLeiosAnnouncement =
-          Strict.either Strict.Left (\_ann -> Strict.Left AnnouncedInPreviousEra)
-            <$> praosStateLeiosAnnouncement st
+          markUncertifiable AnnouncedInPreviousEra <$> praosStateLeiosAnnouncement st
       }
 
 instance

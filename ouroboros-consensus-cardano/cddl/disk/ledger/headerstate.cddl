@@ -49,8 +49,8 @@ praos2State = [withOrigin<slotno>,
 
 ; The announcement carried by the most recently applied header, or why the next
 ; header may certify none: 0 if nothing was announced, 1 if it was announced in
-; the previous era.
-certifiable = [0] / [1] / [2, announcedBy]
+; the previous era, 3 if it was announced in the previous epoch.
+certifiable = [0] / [1] / [2, announcedBy] / [3]
 
 ; The issuer, followed by the announced endorser block's hash and size.
 announcedBy = [keyhash, hash, word32]

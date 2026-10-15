@@ -107,6 +107,9 @@ instance
 genCertifiable :: Gen (Strict.Either WhyNotCertifiable LeiosAnnouncement)
 genCertifiable =
   oneof
-    [ Strict.Left <$> elements [NothingAnnounced, AnnouncedInPreviousEra]
+    [ Strict.Left <$> arbitrary
     , Strict.Right <$> arbitrary
     ]
+
+instance Arbitrary WhyNotCertifiable where
+  arbitrary = elements [NothingAnnounced, AnnouncedInPreviousEra, AnnouncedInPreviousEpoch]
