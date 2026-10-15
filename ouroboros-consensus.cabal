@@ -259,6 +259,7 @@ library
     Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
+    Ouroboros.Consensus.Peras.Protocol
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Void
