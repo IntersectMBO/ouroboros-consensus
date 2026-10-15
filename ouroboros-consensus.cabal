@@ -1356,6 +1356,7 @@ test-suite protocol-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Protocol.Praos.SelectView
+    Test.Consensus.Protocol.Praos2
 
   build-depends:
     base,
@@ -1363,8 +1364,9 @@ test-suite protocol-test
     cardano-crypto-class,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-protocol-tpraos,
+    cardano-slotting,
     containers,
-    ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib},
+    ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
     serialise,
     tasty,

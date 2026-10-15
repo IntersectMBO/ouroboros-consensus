@@ -499,6 +499,9 @@ instance ResolveLeiosBlock LeiosTestBlock where
 
   protocolStateLeiosAnnouncement = ltcdsAnnouncement
 
+  tickedProtocolStateLeiosAnnouncement (TickedLeiosTestChainDepState cds) =
+    ltcdsAnnouncement cds
+
   -- The closure the LeiosDb holds for this endorser block, decoded back into
   -- transactions. A CertRB is not selectable until this succeeds.
   resolveLeiosClosure leiosDb ebHash =

@@ -221,6 +221,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
                   cfg
                   mempool
                   currentSlot
+                  tickedChainDepState
                   tickedLedgerState
                   unticked
                   forker
@@ -308,7 +309,9 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
 --
 -- An EB is certifiable when:
 --
---   * it was announced on this chain ('protocolStateLeiosAnnouncement' is a 'Just');
+--   * our parent announced it and this block may still certify it
+--     ('tickedProtocolStateLeiosAnnouncement' is a 'Just', which it is not if
+--     the parent is in the previous epoch);
 --   * enough slots ('minCertificationGap') have elapsed since the announcement;
 --   * we have downloaded its closure into the 'LeiosDb', and
 --   * we have assembled a certificate for the announcing RB.
@@ -331,8 +334,10 @@ decideLeiosCertify ::
   SlotNo ->
   -- | Unticked ledger state that we can extend.
   ExtLedgerState blk EmptyMK ->
+  -- | Its chain-dep state ticked to that slot.
+  Ticked (ChainDepState (BlockProtocol blk)) ->
   m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState =
+decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState tickedChainDepState =
   case (,) <$> announcedPoint <*> mMinGap of
     Nothing -> pure Nothing
     Just (ebPoint, minGap)
@@ -378,11 +383,11 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
   -- 'Nothing' means this era does not do Leios and nothing is certifiable.
   mMinGap = Leios.getMinCertificationGap ledgerCfg (ledgerState extState)
 
-  -- What the parent announced, if anything: the endorser block a certificate
-  -- here would be for.
+  -- What the parent announced, if anything and if this block may still certify
+  -- it: the endorser block a certificate here would be for.
   announcedPoint =
     Leios.announcementLeiosPoint
-      <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
+      <$> tickedProtocolStateLeiosAnnouncement @blk tickedChainDepState
 
   hs = headerState extState
 
@@ -735,6 +740,7 @@ partitionMempool ::
   TopLevelConfig blk ->
   Mempool m blk ->
   SlotNo ->
+  Ticked (ChainDepState (BlockProtocol blk)) ->
   Ticked LedgerState blk DiffMK ->
   ExtLedgerState blk EmptyMK ->
   ReadOnlyForker' m blk ->
@@ -745,7 +751,7 @@ partitionMempool ::
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
-partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
+partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedChainDepState tickedLedgerState unticked forker = do
   let readTables = roforkerReadTables forker
 
       pmTraceVia ::
@@ -768,6 +774,7 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
         (configLedger cfg)
         currentSlot
         unticked
+        tickedChainDepState
 
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
       ebCap = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
