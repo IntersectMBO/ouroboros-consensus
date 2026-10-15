@@ -358,6 +358,14 @@ data ExnLeiosNotifyInvalidVotes
       !RbHash
       -- | the election slot
       !SlotNo
+  | -- | A vote whose seat has no key in the committee, or whose signature does
+    -- not verify under it. The node's 'VoteState' throws this, and only for a
+    -- vote it does not have yet.
+    ExnLeiosInvalidVote
+      -- | the announcing block
+      !RbHash
+      -- | the seat
+      !LeiosSeatId
   deriving Show
 
 instance Exception ExnLeiosNotifyInvalidVotes
@@ -379,7 +387,7 @@ data AcceptedVote = MkAcceptedVote
 --
 -- This does not check a vote's seat or signature. The node's 'VoteState' will,
 -- once per vote, so a badly signed copy of a vote the node already has costs it
--- only the bytes.
+-- only the bytes; see 'ExnLeiosInvalidVote'.
 checkLeiosVotes ::
   forall blk.
   ( LedgerSupportsProtocol blk

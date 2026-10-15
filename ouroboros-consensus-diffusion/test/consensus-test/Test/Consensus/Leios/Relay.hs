@@ -37,6 +37,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTQueue
   )
+import Control.Monad (replicateM)
 import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -47,9 +48,10 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Either (isRight)
 import Data.Foldable (for_, toList)
 import qualified Data.Foldable as Foldable
-import Data.List (sortOn)
+import Data.List (isInfixOf, sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (maybeToList)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
@@ -121,6 +123,7 @@ import Test.QuickCheck
   , counterexample
   , elements
   , forAllShow
+  , oneof
   , property
   , sublistOf
   , (===)
@@ -174,26 +177,40 @@ tests =
         let down = relayToOne 0 [votedFor0, [announce equivocation, (5.5, vote equivocation 0)]]
         votes down @?= [voteOf someAnnouncingBlock 0]
         assertHonest down
-    , testCase "the node does not relay a badly signed vote, nor disconnect the peer that sent it" $ do
-        let (ups, downs) = relay 20 [withControl [(5, badlySignedVote someAnnouncingBlock 0)]] [0]
+    , testCase "the node disconnects a peer that sends a badly signed vote, and does not relay it" $ do
+        let (ups, downs) = relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock 0)]]) [0]
         concatMap votes downs @?= [control]
-        map poNodeClientEnded ups @?= [Nothing]
-    , testCase "the node does not relay a vote from a seat outside the committee" $ do
-        let down = relayToOne 0 [withControl [(5, badlySignedVote someAnnouncingBlock seatOutside)]]
-        votes down @?= [control]
-    , testCase "the node does not relay a vote from a seat without a key" $ do
-        let down =
-              relayToOne
-                0
-                [withControl [(5, vote someAnnouncingBlock seatNoKey), (5, vote someAnnouncingBlock seatBadPoP)]]
-        votes down @?= [control]
+        map invalidVoteDisconnected ups @?= [True, False]
+    , testCase "the node disconnects a peer that sends a vote from a seat outside the committee" $ do
+        let (ups, downs) =
+              relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock seatOutside)]]) [0]
+        concatMap votes downs @?= [control]
+        map invalidVoteDisconnected ups @?= [True, False]
+    , testCase "the node disconnects a peer that sends a vote from a seat without a key" $ do
+        let (ups, downs) =
+              relay
+                20
+                ( withControl
+                    [[(5, vote someAnnouncingBlock seatNoKey)], [(5, vote someAnnouncingBlock seatBadPoP)]]
+                )
+                [0]
+        concatMap votes downs @?= [control]
+        map invalidVoteDisconnected ups @?= [True, True, False]
+    , testCase "the node does not verify a vote of a seat it already has a vote of" $ do
+        let (ups, downs) =
+              relay
+                20
+                [votedFor0, [announce someAnnouncingBlock, (5.5, badlySignedVote someAnnouncingBlock 0)]]
+                [0]
+        concatMap votes downs @?= [voteOf someAnnouncingBlock 0]
+        map poNodeClientEnded ups @?= [Nothing, Nothing]
     , testCase "the node does not relay a vote for an announcement it did not relay" $ do
         let down =
               relayToOne
                 0
-                [ withControl [announce equivocation]
-                , [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]
-                ]
+                ( withControl
+                    [[announce equivocation], [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
+                )
         votes down @?= [control]
         assertHonest down
     , testCase "a peer that connects during a vote's window receives the vote" $ do
@@ -212,47 +229,77 @@ tests =
   -- election's window
   votedFor0 = [announce someAnnouncingBlock, (5, vote someAnnouncingBlock 0)]
 
-  -- A valid vote sent alongside the ones a test expects the node to hold back,
-  -- so that the test cannot pass merely because the node relays nothing.
-  withControl sends = [announce someAnnouncingBlock] <> sends <> [(6, vote someAnnouncingBlock 1)]
+  -- Peers that announce 'someAnnouncingBlock' and send what a test expects the
+  -- node to hold back, and a last one that sends a valid vote, so that the test
+  -- cannot pass merely because the node relays nothing.
+  withControl peers =
+    map (announce someAnnouncingBlock :) peers
+      <> [[announce someAnnouncingBlock, (6, vote someAnnouncingBlock 1)]]
   control = voteOf someAnnouncingBlock 1
+
+-- | Whether the node's client disconnected the peer for an invalid vote.
+invalidVoteDisconnected :: PeerOutcome -> Bool
+invalidVoteDisconnected o = maybe False ("ExnLeiosInvalidVote" `isInfixOf`) (poNodeClientEnded o)
 
 {-------------------------------------------------------------------------------
   The property
 -------------------------------------------------------------------------------}
 
--- | Each upstream peer announces, then votes, as the node's client requires of
--- it: only for announcements it sent, at most once per seat in an election,
--- within the window. A last peer only listens.
-genVotingPeers :: Gen [[(DiffTime, Notification)]]
+-- | Upstream peers, which each announce, then vote, as the node's client
+-- requires of them: only for announcements they sent, at most once per seat in
+-- an election, within the window. A last peer only listens.
+data VotingPeers = VotingPeers
+  { honestPeers :: [[(DiffTime, Notification)]]
+  -- ^ peers that send only valid votes
+  , invalidPeer :: Maybe [(DiffTime, Notification)]
+  -- ^ a peer that sends only invalid votes
+  }
+
+genVotingPeers :: Gen VotingPeers
 genVotingPeers = do
   n <- choose (1, 3)
-  sequence (replicate n genUpstream)
+  VotingPeers
+    <$> replicateM n (genUpstream [0 .. seatNoKey - 1] vote)
+    <*> oneof [pure Nothing, Just <$> genUpstream [0 .. seatOutside] invalidVote]
  where
-  genUpstream = do
+  genUpstream seats signed = do
     blks <- elements [[someAnnouncingBlock], [equivocation], [someAnnouncingBlock, equivocation]]
     -- both blocks are in one election, so a seat votes for one of them
-    seats <- sublistOf [0 .. seatOutside]
-    vs <- mapM (genVote blks) seats
+    voters <- sublistOf seats
+    vs <- mapM (genVote blks signed) voters
     pure $ map announce blks <> sortOn fst vs
-  genVote blks seat = do
+  genVote blks signed seat = do
     blk <- elements blks
     at <- realToFrac <$> choose (4.1 :: Double, 7.9)
-    -- a seat outside the committee has no key to sign with
-    signed <- if seat < seatOutside then elements [vote, badlySignedVote] else pure badlySignedVote
     pure (at, signed blk seat)
+  -- a seat without a key cannot sign validly, and others sign with a wrong key
+  invalidVote blk seat
+    | seat == seatNoKey || seat == seatBadPoP = vote blk seat
+    | otherwise = badlySignedVote blk seat
 
-showVotingPeers :: [[(DiffTime, Notification)]] -> String
-showVotingPeers = unlines . map (unwords . map showSend)
+allPeers :: VotingPeers -> [[(DiffTime, Notification)]]
+allPeers VotingPeers{honestPeers, invalidPeer} = honestPeers <> maybeToList invalidPeer
+
+showVotingPeers :: VotingPeers -> String
+showVotingPeers peers =
+  unlines $
+    map showPeer (honestPeers peers)
+      <> ["invalid: " <> showPeer p | p <- maybeToList (invalidPeer peers)]
  where
+  showPeer = unwords . map showSend
   showSend (at, n) = show at <> ":" <> showNotification n
 
-prop_relay :: [[(DiffTime, Notification)]] -> Property
-prop_relay ups =
+prop_relay :: VotingPeers -> Property
+prop_relay peers =
   conjoin $
-    [ poNodeClientEnded up === Nothing
-    | up <- upOutcomes
+    [ counterexample "an honest peer was disconnected" $ poNodeClientEnded up === Nothing
+    | up <- honestOutcomes
     ]
+      <> [ counterexample ("the invalid peer was disconnected: " <> show ended) $
+             maybe True ("ExnLeiosInvalidVote" `isInfixOf`) ended
+         | up <- invalidOutcomes
+         , let ended = poNodeClientEnded up
+         ]
       <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
          | (i, o) <- zip [1 :: Int ..] outcomes
          ]
@@ -260,7 +307,9 @@ prop_relay ups =
              Set.fromList [electionSeat v | v <- votes down] === firstValid
          ]
  where
+  ups = allPeers peers
   (upOutcomes, downOutcomes) = relay 20 ups [0]
+  (honestOutcomes, invalidOutcomes) = splitAt (length (honestPeers peers)) upOutcomes
   outcomes = upOutcomes <> downOutcomes
   down = head downOutcomes
 
