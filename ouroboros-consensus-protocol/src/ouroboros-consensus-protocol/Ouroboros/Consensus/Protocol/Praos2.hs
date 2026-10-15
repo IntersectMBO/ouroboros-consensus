@@ -226,6 +226,9 @@ instance
 -- not be certified across an era boundary (to keep the design simpler).
 --
 -- Nothing uses this yet: it's dead code until two adjacent eras use 'Praos2'.
+-- Even so, it's important to implement it _now_, because it would be easy to
+-- forget, and doing so could introduce blindspots in the rest of the Leios
+-- rules.
 instance TranslateProto (Praos2 c) (Praos2 c) era where
   translateLedgerView _prx _ctx = id
   translateChainDepState _ st =
