@@ -61,6 +61,11 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , newChainSelQueue
   , processedChainSelMessage
 
+    -- * Certificates to store in the PerasImmutableCertDB
+  , CertStoringQueue (..)
+  , enqueueCertsToStore
+  , newCertStoringQueue
+
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
@@ -392,6 +397,9 @@ data ChainDbEnv m blk = CDB
   , cdbPerasCertDB :: !(PerasCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   , cdbPerasImmutableCertDB :: !(PerasImmutableCertDB m blk)
+  , cdbCertStoringQueue :: !(CertStoringQueue m blk)
+  -- ^ Certificates garbage-collected from the 'PerasCertDB' that are pending
+  -- to be stored in the 'PerasImmutableCertDB'.
   }
   deriving Generic
 
@@ -796,6 +804,91 @@ getMaxSlotNoChainSelQueue ChainSelQueue{varChainSelPoints} =
   aux pts = case MultiSet.maxView pts of
     Nothing -> NoMaxSlotNo
     Just (RealPoint s _, _) -> MaxSlotNo s
+
+{-------------------------------------------------------------------------------
+  Certificates to store in the PerasImmutableCertDB
+-------------------------------------------------------------------------------}
+
+-- | Queue of certificates garbage-collected from the volatile 'PerasCertDB'
+-- that are pending to be stored in the 'PerasImmutableCertDB'.
+--
+-- It is written to by the 'gcScheduleRunner' and read from by the
+-- 'certStoringRunner'. Each entry is the batch of certificates collected by a
+-- single garbage collection.
+--
+-- The queue is unbounded, so enqueueing never blocks. This way garbage
+-- collection (of the VolatileDB, the 'PerasCertDB' and the 'PerasVoteDB')
+-- never waits on certificate storage, which writes to disk and is therefore
+-- slower. With a bounded queue, a lagging 'certStoringRunner' would stall the
+-- 'gcScheduleRunner' and let the volatile databases grow.
+--
+-- Its size is not enforced, but it remains small in practice:
+--
+-- * Each batch contains at most one certificate per Peras round (the
+--   'PerasCertDB' stores at most one per round), and only for rounds whose
+--   boosted blocks became collectable since the previous garbage collection.
+--
+-- * Garbage collections are batched by 'scheduleGC', so at most one batch is
+--   enqueued per @gcInterval@, and empty batches are not enqueued.
+--
+-- Hence the queue stays short as long as the 'certStoringRunner' stores
+-- certificates, on average, at least as fast as they are collected (one
+-- small file write per certificate). If storage stalls (e.g. on a very slow
+-- disk), the queue, and hence memory usage, keeps growing.
+--
+-- __Syncing nodes.__ A caught-up node collects roughly one round's worth of
+-- certificates per @gcInterval@, i.e. usually zero or one. A syncing node
+-- that also obtains historical certificates (which the Genesis machinery is
+-- expected to do in the future) copies blocks to the ImmutableDB at sync
+-- speed, so a single @gcInterval@ can cover a very large number of rounds,
+-- and batches can contain thousands of certificates. This is still expected
+-- to be fine:
+--
+-- * The writing rate is tied to the block copying rate: there is at most one
+--   certificate per round, i.e. per many blocks (a round spans many slots), so
+--   storing certificates adds only a fraction of the disk writes already done
+--   by 'copyToImmutableDB'.
+--
+-- * The queue only holds certificates that were held by the 'PerasCertDB'
+--   just before they were collected. While the 'certStoringRunner' keeps up,
+--   the queue does not increase peak memory usage beyond that.
+--
+-- If it does fall behind (e.g. because creating and renaming a file per
+-- certificate is too slow compared to appending blocks), the backlog grows
+-- for as long as the node syncs.
+--
+-- __Shutdown.__ Before the ChainDB is closed, the certificates remaining in
+-- the queue are stored (see 'drainCertStoringQueue'), so that they are not
+-- lost: they are no longer in the in-memory 'PerasCertDB', and the blocks they
+-- boost will not be synced again. Hence, closing the ChainDB takes longer the
+-- larger the backlog is.
+data CertStoringQueue m blk = CertStoringQueue
+  { csqBatches :: !(TQueue m [WithArrivalTime (ValidatedPerasCert blk)])
+  , csqPending :: !(StrictTVar m Int)
+  -- ^ Number of certificates enqueued and not yet processed, including those
+  -- of the batch being processed. Only used for tracing.
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "CertStoringQueue" (CertStoringQueue m blk)
+
+newCertStoringQueue :: IOLike m => m (CertStoringQueue m blk)
+newCertStoringQueue = CertStoringQueue <$> newTQueueIO <*> newTVarIO 0
+
+-- | Enqueue a batch of garbage-collected certificates to be stored. Empty
+-- batches are ignored.
+enqueueCertsToStore ::
+  IOLike m =>
+  Tracer m (TraceGCEvent blk) ->
+  CertStoringQueue m blk ->
+  [WithArrivalTime (ValidatedPerasCert blk)] ->
+  m ()
+enqueueCertsToStore _ _ [] = pure ()
+enqueueCertsToStore tracer CertStoringQueue{csqBatches, csqPending} certs = do
+  pending <- atomically $ do
+    writeTQueue csqBatches certs
+    stateTVar csqPending $ \n -> let n' = n + nbCerts in (n', n')
+  traceWith tracer $ EnqueuedPerasCertsToStore nbCerts pending
+ where
+  nbCerts = length certs
 
 {-------------------------------------------------------------------------------
   Trace types
