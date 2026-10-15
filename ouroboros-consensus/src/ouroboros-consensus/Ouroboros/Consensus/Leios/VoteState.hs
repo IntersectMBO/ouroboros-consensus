@@ -35,7 +35,10 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , appendNotifyLog
   )
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State (AcceptedVote (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( AcceptedVote (..)
+  , ExnLeiosNotifyInvalidVotes (ExnLeiosInvalidVote)
+  )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , STM
@@ -44,6 +47,7 @@ import Ouroboros.Consensus.Util.IOLike
   , modifyTVar
   , newTVarIO
   , readTVar
+  , throwIO
   )
 
 -- | The node's votes, per election slot and seat, and where it learns which
@@ -64,8 +68,9 @@ newVoteState announceState' notifyLog =
 -- | Accept a vote, and relay it if it is the first valid vote of its seat in
 -- its election and the node relays the announcement it is for.
 --
--- The signature is verified between two transactions, so that a retry does not
--- repeat a BLS verification.
+-- Throws 'ExnLeiosInvalidVote' if the vote is invalid, to disconnect the peer
+-- that sent it. The signature is verified between two transactions, so that a
+-- retry does not repeat a BLS verification.
 onAcceptedVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) => VoteState m blk -> AcceptedVote -> m ()
 onAcceptedVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteDiffusionEnd, voteCommittee} = do
@@ -74,7 +79,10 @@ onAcceptedVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteDiffusionEn
     announced <-
       hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
     pure (not known && announced)
-  when (worthVerifying && validVote voteCommittee acceptedVote) $
+  when worthVerifying $ do
+    unless (validVote voteCommittee acceptedVote) $
+      throwIO $
+        ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
     atomically $ do
       -- Another peer may have delivered the same vote meanwhile.
       known <- isKnown
