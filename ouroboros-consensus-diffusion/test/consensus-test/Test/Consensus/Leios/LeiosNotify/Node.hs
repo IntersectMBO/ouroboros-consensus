@@ -8,6 +8,8 @@
 -- connections against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 
+import Cardano.Crypto.DSIGN.Class (signDSIGN)
+import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId (..), LeiosSigningKey, leiosSignContext)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -23,6 +25,7 @@ import Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
+import Data.Ratio ((%))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word8)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
@@ -60,8 +63,8 @@ import Ouroboros.Network.Mux
   , TemperatureBundle (..)
   , WithProtocolTemperature (..)
   )
+import Test.Cardano.Crypto.Leios.Gen (TestSeatType (..), mkCommitteeFromTestSeats)
 import Test.Consensus.Leios.Environment
-import Test.Consensus.Leios.LeiosNotify.Codec (signedVote)
 import Test.Consensus.Leios.LeiosNotify.Protocol
   ( ExcessiveOutcome (..)
   , WhetherDisconnected (..)
@@ -315,6 +318,7 @@ data DisconnectReason
   | VoteTooEarly
   | VoteTooLate
   | VoteOutsideHorizon
+  | VoteInvalid
   | OfferOutsideHorizon
   deriving (Eq, Show)
 
@@ -348,6 +352,7 @@ disconnectReason e
       ExnLeiosVoteTooEarly{} -> VoteTooEarly
       ExnLeiosVoteTooLate{} -> VoteTooLate
       ExnLeiosVoteOutsideHorizon{} -> VoteOutsideHorizon
+      ExnLeiosInvalidVote{} -> VoteInvalid
   | otherwise = Nothing
 
 -- | Run a peer's server that answers each request with whatever @next@ yields
@@ -462,7 +467,7 @@ nodeClientGated = withNodeForecastingOnly 5 $ \nut -> do
 -- | How many elections, body offers, closure offers and votes the client's state
 -- holds once one of each is in, and once the immutable tip has passed them.
 nodePrunesClientState :: IOSim s ((Int, Int, Int, Int), (Int, Int, Int, Int))
-nodePrunesClientState = withNode $ \nut -> do
+nodePrunesClientState = withNodeCommittee committee 100000 $ \nut -> do
   requests <- newTVarIO 0
   queue <- newTQueueIO
   let envPeer =
@@ -528,15 +533,27 @@ feedAt queue = go 0
 nodeClientAgainstSchedule ::
   [(DiffTime, Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle)] ->
   IOSim s NodeClientOutcome
-nodeClientAgainstSchedule schedule = withNode $ \nut -> do
+nodeClientAgainstSchedule schedule = withNodeCommittee committee 100000 $ \nut -> do
   queue <- newTQueueIO
   let msgs = (0, someAnnouncement) : schedule
   withAsync (feedAt queue msgs) $ \_feeder ->
     runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + length msgs)
 
--- | A vote from this seat for the announcement this block carries.
+-- | A vote from this seat for the announcement this block carries, signed with
+-- the seat's key.
 voteFor :: LeiosTestBlock -> Word16 -> LeiosVote
-voteFor blk seat = signedVote (MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))) seat
+voteFor blk seat =
+  MkLeiosVote
+    rbHash
+    (LeiosSeatId seat)
+    (signDSIGN leiosSignContext rbHash (seatKeys !! fromIntegral seat))
+ where
+  rbHash = MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))
+
+-- | One more seat than a votes message holds votes, each with a key.
+seatKeys :: [LeiosSigningKey]
+committee :: LeiosCommittee
+(seatKeys, committee) = mkCommitteeFromTestSeats [(WithKey, 1 % 17) | _ <- [0 .. 16 :: Int]]
 
 someAnnouncingBlock :: LeiosTestBlock
 someAnnouncingBlock = ann 1 (firstLeiosBlock 0)
