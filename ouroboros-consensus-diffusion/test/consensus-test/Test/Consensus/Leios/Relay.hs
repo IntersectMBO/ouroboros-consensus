@@ -209,6 +209,14 @@ tests =
             0
             [withControl [(5, vote someAnnouncingBlock seatNoKey), (5, vote someAnnouncingBlock seatBadPoP)]]
         votes down @?= [control]
+    , testCase "the node does not relay a vote for an announcement it did not relay" $ do
+        down <-
+          relayToOne
+            0
+            [ withControl [announce equivocation]
+            , [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]
+            ]
+        votes down @?= [control]
     , testCase "the node relays a vote that arrives after its voting period, within its diffusion period" $ do
         -- Voting ends 8 s in, and diffusion 9 s in.
         down <- relayToOne 0 [[announce someAnnouncingBlock, (8.5, vote someAnnouncingBlock 0)]]
