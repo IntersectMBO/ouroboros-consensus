@@ -79,7 +79,14 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), strictMaybeToMaybe, (⭒))
+import Cardano.Ledger.BaseTypes
+  ( ActiveSlotCoeff
+  , Nonce
+  , StrictMaybe (..)
+  , strictMaybe
+  , strictMaybeToMaybe
+  , (⭒)
+  )
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
@@ -667,10 +674,10 @@ reupdateChainDepStatePolyPraos
       , praosStateLeiosAnnouncement =
           fmap
             ( \(_containsCert, mbAnn) ->
-                maybe
+                strictMaybe
                   (Strict.Left NothingAnnounced)
                   (Strict.Right . mkLeiosAnnouncement hk)
-                  (strictMaybeToMaybe mbAnn)
+                  mbAnn
             )
             (Views.hvLeios b)
       }

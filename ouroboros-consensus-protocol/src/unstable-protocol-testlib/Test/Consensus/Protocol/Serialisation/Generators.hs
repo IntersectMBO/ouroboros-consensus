@@ -102,11 +102,11 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> traverse
-        ( \() ->
-            oneof
-              [ Strict.Left <$> elements [NothingAnnounced, AnnouncedInPreviousEra]
-              , Strict.Right <$> arbitrary
-              ]
-        )
-        (pureLeiosOnly ())
+      <*> traverse (\() -> genCertifiable) (pureLeiosOnly ())
+
+genCertifiable :: Gen (Strict.Either WhyNotCertifiable LeiosAnnouncement)
+genCertifiable =
+  oneof
+    [ Strict.Left <$> elements [NothingAnnounced, AnnouncedInPreviousEra]
+    , Strict.Right <$> arbitrary
+    ]
