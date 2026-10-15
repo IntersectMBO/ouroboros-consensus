@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Cardano.Tools.DBSynthesizer.Forging
   ( GenTxs
@@ -13,66 +13,56 @@ import Cardano.Tools.DBSynthesizer.Types
   ( ForgeLimit (..)
   , ForgeResult (..)
   )
-import Control.Monad (when)
-import Control.Monad.Except (runExcept)
-import Control.Monad.IO.Class (liftIO)
-import qualified Control.Monad.Trans.Class as Trans
-import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer as Trace (nullTracer)
-import Data.Either (isRight)
-import Data.Maybe (fromJust, isJust)
-import Data.Proxy
+import Control.Monad (unless, void)
+import Control.Tracer (nullTracer)
+import Data.Maybe (isJust)
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.Abstract as Block
-import Ouroboros.Consensus.Block.Forging as Block
-  ( BlockForging (..)
-  , ForgeBlockArgs (..)
-  , ShouldForge (..)
-  , checkShouldForge
+import Ouroboros.Consensus.Block
+  ( BlockForging
+  , EpochSize (..)
+  , SlotNo (..)
   )
 import Ouroboros.Consensus.Config
   ( TopLevelConfig
-  , configConsensus
   , configLedger
   )
-import Ouroboros.Consensus.Forecast (forecastFor)
-import Ouroboros.Consensus.HeaderValidation
-  ( BasicEnvelopeValidation (..)
-  , HeaderState (..)
-  )
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
-import Ouroboros.Consensus.Protocol.Abstract
-  ( ChainDepState
-  , tickChainDepState
+  ( ComputeLedgerEvents (..)
+  , DiffMK
+  , TickedLedgerState
+  , applyChainTick
   )
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( GenTx
+  )
+import Ouroboros.Consensus.Mempool
+  ( Mempool (..)
+  , MempoolAddTxResult (MempoolTxRejected)
+  , MempoolCapacityBytesOverride (..)
+  , addLocalTxs
+  , chainDBLedgerInterface
+  , openMempoolWithoutSyncThread
+  )
+import Ouroboros.Consensus.Node.Run (RunNode)
+import Ouroboros.Consensus.NodeKernel.Forge (forge)
 import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-  ( AddBlockResult (..)
-  , ChainDB
-  , addBlockAsync
-  , blockProcessed
-  , getCurrentChain
-  , getPastLedger
+  ( ChainDB
+  , getTipPoint
   , withReadOnlyForkerAtPoint
   )
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
-  ( noPunishment
-  )
 import Ouroboros.Consensus.Storage.LedgerDB
+  ( ReadOnlyForker'
+  , roforkerGetLedgerState
+  )
 import Ouroboros.Consensus.Util.EarlyExit
-  ( withEarlyExit
+  ( exitEarly
+  , lift
+  , withEarlyExit
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
-import Ouroboros.Network.AnchoredFragment as AF
-  ( Anchor (..)
-  , AnchoredFragment
-  , AnchoredSeq (..)
-  , headPoint
-  )
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
+import System.Timeout (timeout)
 
 data ForgeState
   = ForgeState
@@ -86,18 +76,21 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
+-- If Mempool capacity (2 blocks) is breached with generated transactions,
+-- 'Mempool.addLocalTxs' blocks until a specified timeout.
 type GenTxs blk =
   SlotNo ->
   ReadOnlyForker' IO blk ->
   TickedLedgerState blk DiffMK ->
-  IO [Validated (GenTx blk)]
+  IO [GenTx blk]
 
--- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
--- For an extensive commentary of the forging loop, see there.
+-- In microseconds
+mempoolAddTxsTimeout :: Int
+mempoolAddTxsTimeout = 100_000 -- 0.1s
 
 runForge ::
   forall blk.
-  LedgerSupportsProtocol blk =>
+  RunNode blk =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
@@ -109,7 +102,15 @@ runForge ::
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
-  endState <- go initialForgeState{currentSlot = nextSlot}
+  -- TODO(bladyjoker): I think it would be simpler to just have the sync thread.
+  mempool <-
+    openMempoolWithoutSyncThread
+      (chainDBLedgerInterface chainDB)
+      (configLedger cfg)
+      NoMempoolCapacityBytesOverride
+      Nothing
+      nullTracer
+  endState <- go mempool initialForgeState{currentSlot = nextSlot}
   putStrLn $
     "--> forged and adopted "
       ++ show (forged endState)
@@ -125,12 +126,12 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     ForgeLimitBlock b -> (b ==) . forged
     ForgeLimitEpoch e -> (e ==) . currentEpoch
 
-  go :: ForgeState -> IO ForgeState
-  go forgeState
+  go :: Mempool IO blk -> ForgeState -> IO ForgeState
+  go mempool forgeState
     | forgingDone forgeState = pure forgeState
-    | otherwise =
-        go . nextForgeState forgeState . isRight
-          =<< runExceptT (goSlot $ currentSlot forgeState)
+    | otherwise = do
+        didForge <- goSlot mempool (currentSlot forgeState)
+        go mempool (nextForgeState forgeState didForge)
 
   nextForgeState :: ForgeState -> Bool -> ForgeState
   nextForgeState ForgeState{currentSlot, forged, currentEpoch, processed} didForge =
@@ -144,146 +145,57 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     processed' = processed + 1
     epoch' = currentEpoch + if unSlotNo processed' `rem` epochSize == 0 then 1 else 0
 
-  -- just some shims; in this ported code, we use ExceptT instead of WithEarlyExit
-  exitEarly' = throwE
-  lift = liftIO
+  goSlot :: Mempool IO blk -> SlotNo -> IO Bool
+  goSlot mempool currentSlot = do
+    -- Mempool and ChainDB must see the same 'tip'
+    -- Sync mempool with the latest block adoption at 'tip'
+    _ <- testSyncWithLedger mempool
+    -- Populate mempool (synced against 'tip') with transactions for this slot
+    tip <- atomically $ ChainDB.getTipPoint chainDB
+    void $
+      withEarlyExit $
+        ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint tip) $ \case
+          Left{} -> do
+            lift $ putStrLn $ "--> could not acquire forker at tip: " <> show tip
+            exitEarly
+          Right frk -> do
+            extLedgerState <- lift $ atomically $ roforkerGetLedgerState frk
+            let tickedLedgerState =
+                  applyChainTick
+                    OmitLedgerEvents
+                    (configLedger cfg)
+                    currentSlot
+                    (ledgerState extLedgerState)
+            txs <- lift $ genTxs currentSlot frk tickedLedgerState
+            mayMpRes <- lift $ timeout mempoolAddTxsTimeout $ addLocalTxs mempool txs
+            case mayMpRes of
+              Nothing -> lift $ warnTimeout currentSlot txs
+              Just mpRes -> lift $ warnRejected currentSlot txs mpRes
+    -- Forge a block for each credential.
+    -- A block is adopted when forge returns `Just ()`.
+    -- If more than one is a leader in this slot, there will be a fork and some block will be orphaned in VolatileDB.
+    results <-
+      mapM
+        (\bf -> withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf currentSlot)
+        blockForging
+    pure $ any isJust results
 
-  goSlot :: SlotNo -> ExceptT String IO ()
-  goSlot currentSlot = do
-    -- Figure out which block to connect to
-    BlockContext{bcBlockNo, bcPrevPoint} <- do
-      eBlkCtx <-
-        lift $
-          atomically $
-            mkCurrentBlockContext currentSlot
-              <$> ChainDB.getCurrentChain chainDB
-      case eBlkCtx of
-        Right blkCtx -> return blkCtx
-        Left{} -> exitEarly' "no block context"
+  warnTimeout slot txs =
+    putStrLn $
+      "--> at slot "
+        <> show slot
+        <> " timeout of"
+        <> show mempoolAddTxsTimeout
+        <> " micros reached when adding "
+        <> show (length txs)
+        <> " transactions to the mempool"
+        <> "\nMempool is probably full and blocks new additions until it frees up space."
+        <> "\nIt's either that nothing is clearing the Mempool because no new blocks are forged, or"
+        <> "\nthe transaction generator provided too many transactions."
+        <> "\nContinuing with forging..."
 
-    -- Get corresponding ledger state, ledgder view and ticked 'ChainDepState'
-    unticked <- do
-      mExtLedger <- lift $ atomically $ ChainDB.getPastLedger chainDB bcPrevPoint
-      case mExtLedger of
-        Just l -> return l
-        Nothing -> exitEarly' "no ledger state"
-
-    ledgerView <-
-      case runExcept $
-        forecastFor
-          ( ledgerViewForecastAt
-              (configLedger cfg)
-              (ledgerState unticked)
-          )
-          currentSlot of
-        Left err -> exitEarly' $ "no ledger view: " ++ show err
-        Right lv -> return lv
-
-    let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-        tickedChainDepState =
-          tickChainDepState
-            (configConsensus cfg)
-            ledgerView
-            currentSlot
-            (headerStateChainDep (headerState unticked))
-
-    -- Check if any forger is slot leader
-    let
-      checkShouldForge' f =
-        checkShouldForge f nullTracer cfg currentSlot tickedChainDepState
-
-    checks <- zip blockForging <$> liftIO (mapM checkShouldForge' blockForging)
-
-    (blockForging', proof) <- case [(f, p) | (f, ShouldForge p) <- checks] of
-      x : _ -> pure x
-      _ -> exitEarly' "NoLeader"
-
-    -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked LedgerState blk DiffMK
-        tickedLedgerState =
-          applyChainTick
-            OmitLedgerEvents
-            (configLedger cfg)
-            currentSlot
-            (ledgerState unticked)
-
-    -- Let the caller generate transactions
-    let withReadOnlyForkerAtPoint' cdb tgt k =
-          -- type legos just to reuse the same Forker combinator as
-          -- the node's forging loop
-          ExceptT . fmap (Right . fromJust) . withEarlyExit $
-            withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
-    txs <- withReadOnlyForkerAtPoint'
-      chainDB
-      (SpecificPoint bcPrevPoint)
-      $ \case
-        Left{} -> error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!"
-        Right frk ->
-          genTxs
-            currentSlot
-            frk
-            tickedLedgerState
-
-    -- Actually produce the block
-    newBlock <-
-      lift $
-        Block.forgeBlock
-          blockForging'
-          Block.ForgeBlockArgs
-            { Block.fbConfig = cfg
-            , Block.fbCurrentBlockNo = bcBlockNo
-            , Block.fbCurrentSlotNo = currentSlot
-            , Block.fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
-            , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , Block.fbTxs = txs
-            , Block.fbIsLeader = proof
-            }
-
-    -- Add the block to the chain DB (synchronously) and verify adoption
-    let noPunish = InvalidBlockPunishment.noPunishment
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-    mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
-
-    when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
-      exitEarly' "block not adopted"
-
--- | Context required to forge a block
-data BlockContext blk = BlockContext
-  { bcBlockNo :: !BlockNo
-  , bcPrevPoint :: !(Point blk)
-  }
-
--- | Create the 'BlockContext' from the header of the previous block
-blockContextFromPrevHeader ::
-  HasHeader (Header blk) =>
-  Header blk ->
-  BlockContext blk
-blockContextFromPrevHeader hdr =
-  BlockContext (succ (blockNo hdr)) (headerPoint hdr)
-
--- | Determine the 'BlockContext' for a block about to be forged from the
--- current slot, ChainDB chain fragment, and ChainDB tip block number
-mkCurrentBlockContext ::
-  forall blk.
-  ( GetHeader blk
-  , BasicEnvelopeValidation blk
-  ) =>
-  SlotNo ->
-  AnchoredFragment (Header blk) ->
-  Either () (BlockContext blk)
-mkCurrentBlockContext currentSlot c = case c of
-  Empty AF.AnchorGenesis ->
-    Right $ BlockContext (expectedFirstBlockNo (Proxy @blk)) GenesisPoint
-  Empty (AF.Anchor anchorSlot anchorHash anchorBlockNo) ->
-    let p :: Point blk = BlockPoint anchorSlot anchorHash
-     in if anchorSlot < currentSlot
-          then Right $ BlockContext (succ anchorBlockNo) p
-          else Left ()
-  c' :> hdr -> case blockSlot hdr `compare` currentSlot of
-    LT -> Right $ blockContextFromPrevHeader hdr
-    GT -> Left ()
-    EQ ->
-      Right $
-        if isJust (headerIsEBB hdr)
-          then blockContextFromPrevHeader hdr
-          else BlockContext (blockNo hdr) $ castPoint $ AF.headPoint c'
+  warnRejected slot txs mpRes =
+    let rejected = [e | MempoolTxRejected _ e <- mpRes]
+     in unless (null rejected) $ do
+          putStrLn $ "--> at slot " <> show slot <> " generated txs: " ++ show (length txs)
+          putStrLn $ "--> at slot " <> show slot <> " mempool rejected txs: " ++ show (length rejected)
