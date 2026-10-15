@@ -76,6 +76,10 @@ import Ouroboros.Consensus.Leios.Protocol
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT.Crypto
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
@@ -299,6 +303,9 @@ instance PBftCrypto c => LeiosProtocol (PBft c) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
+
+instance PBftCrypto c => PerasProtocol (PBft c) where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c

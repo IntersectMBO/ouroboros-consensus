@@ -4,18 +4,26 @@
 
 module Test.Consensus.Protocol.Praos2 (tests) where
 
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
+import Cardano.Ledger.BaseTypes
+  ( BoundedRational (..)
+  , Milliseconds32 (..)
+  , ProtVer (..)
+  , StrictMaybe (..)
+  )
 import Cardano.Ledger.Coin (knownNonZeroCoin)
 import Cardano.Ledger.State (PoolDistr (..), emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
-import Cardano.Slotting.Slot (EpochSize (..), SlotNo (..), WithOrigin (..))
+import Cardano.Slotting.Slot (EpochSize (..), SlotInterval (..), SlotNo (..), WithOrigin (..))
 import Cardano.Slotting.Time (slotLengthFromSec)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
+import Data.Ratio ((%))
 import qualified Data.Strict.Either as Strict
 import Data.Word (Word64)
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
 import Ouroboros.Consensus.Protocol.Abstract (TranslateProto (..))
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( PolyPraosState (..)
@@ -24,7 +32,11 @@ import Ouroboros.Consensus.Protocol.PolyPraos
   , tickChainDepStatePolyPraos
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
-import Ouroboros.Consensus.Protocol.Praos2 (LeiosOnly (Praos2HasLeios), Praos2)
+import Ouroboros.Consensus.Protocol.Praos2
+  ( LeiosOnly (Praos2HasLeios)
+  , PerasOnly (Praos2HasPeras)
+  , Praos2
+  )
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -80,7 +92,7 @@ prop_crossingEraAndEpochInEitherOrder st =
   praosStateLeiosAnnouncement (tickTo nextEpoch (translateEra st))
     === Praos2HasLeios expected
     .&&. praosStateLeiosAnnouncement (translateEra (tickTo nextEpoch st))
-      === Praos2HasLeios expected
+    === Praos2HasLeios expected
  where
   Praos2HasLeios before = praosStateLeiosAnnouncement st
   expected = afterEraBoundary before
@@ -150,5 +162,15 @@ ledgerView =
             , llvDiffusionPeriod = Milliseconds32 1000
             , llvMaxEbBodySize = 0
             , llvMaxEbTxsSize = 0
+            }
+    , Views.plvPeras =
+        Praos2HasPeras
+          MkPerasLedgerView
+            { plvMinCandidateBlockAge = SlotInterval 90
+            , plvHealingFactor = fromMaybe (error "impossible") (boundRational 1)
+            , plvCertBoost = 15
+            , plvTargetCommitteeSize = 900
+            , plvBootstrapRound = SNothing
+            , plvQuorumThresholdSafetyMargin = fromMaybe (error "impossibe") (boundRational (2 % 100))
             }
     }

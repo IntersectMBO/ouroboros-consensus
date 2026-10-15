@@ -63,12 +63,13 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , tickChainDepStatePolyPraos
   , validateKESSignature
   , validateVRFSignature
+  , getLeiosLedgerViewPolyPraos
+  , getPerasLedgerViewPolyPraos
 
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateKESSignature'
   , getLeiosAnnouncementPolyPraos
-  , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
   , WhyNotCertifiable (..)
@@ -163,6 +164,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , encodeLeiosAnnouncement
   )
 import qualified Ouroboros.Consensus.Leios.Types as Leios
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -543,6 +545,14 @@ instance ChainDepStateSupportsPeras (PolyPraosState proto) where
 
 instance ChainDepStateSupportsPeras (Ticked (PolyPraosState proto)) where
   getEpochNonce = praosStateEpochNonce . tickedPraosStateChainDepState
+
+-- | 'getPerasLedgerView' for every Praos.
+getPerasLedgerViewPolyPraos ::
+  Foldable (WhenPeras proto) =>
+  Views.PolyPraosLedgerView proto ->
+  Maybe PerasLedgerView
+getPerasLedgerViewPolyPraos lv =
+  foldr (\llv _ -> Just llv) Nothing (Views.plvPeras lv)
 
 -- | 'checkIsLeader' for every Praos.
 checkIsLeaderPolyPraos ::
