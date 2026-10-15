@@ -51,6 +51,7 @@ import Ouroboros.Network.PeerSelection.RelayAccessPoint
   ( IP (..)
   , LedgerRelayAccessPoint (..)
   )
+import Test.Cardano.Ledger.Api.Arbitrary ()
 import Test.Cardano.Ledger.Shelley.Constants
   ( defaultConstants
   , numCoreNodes
@@ -270,9 +271,6 @@ genLedgerRelayAccessPoint =
   genIP = elements [IPv4 "1.1.1.1", IPv4 "3.3.3.3", IPv6 "2001:db8::1"]
   genDomain = elements ["test1.", "test2.", "test3."]
   genPort = fromIntegral <$> (arbitrary :: Gen Word16)
-
-instance Arbitrary NonMyopicMemberRewards where
-  arbitrary = NonMyopicMemberRewards <$> arbitrary
 
 instance CanMock proto era => Arbitrary (Point (ShelleyBlock proto era)) where
   arbitrary = BlockPoint <$> arbitrary <*> arbitrary

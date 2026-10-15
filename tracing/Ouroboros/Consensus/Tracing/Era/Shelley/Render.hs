@@ -42,7 +42,6 @@ import Cardano.Ledger.Api.Scripts
 import Cardano.Ledger.BaseTypes
   ( Mismatch (..)
   , Network (..)
-  , Relation (..)
   , TxIx (..)
   )
 import Cardano.Ledger.Conway.Governance (ProposalProcedure)
@@ -62,6 +61,7 @@ import qualified Data.Map.NonEmpty as NonEmptyMap
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
+import Data.Typeable (Typeable)
 import Data.Word (Word32)
 
 -- | Hex-encode a script hash, matching @cardano-api@'s
@@ -186,8 +186,8 @@ renderMissingRedeemers scripts =
     Aeson.fromText (renderScriptHash sHash) .= renderScriptPurpose scriptPurpose
 
 renderIncompleteWithdrawals ::
-  Show payload =>
-  NonEmptyMap AccountAddress (Mismatch RelEQ payload) ->
+  (Typeable rel, Show payload) =>
+  NonEmptyMap AccountAddress (Mismatch rel payload) ->
   Value
 renderIncompleteWithdrawals payload =
   Aeson.object $ map renderTuple $ NonEmptyMap.toList payload

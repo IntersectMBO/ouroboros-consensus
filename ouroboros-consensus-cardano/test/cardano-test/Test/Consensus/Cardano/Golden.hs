@@ -26,6 +26,13 @@ tests =
     codecConfig
     ($(getGoldenDir) </> "cardano")
     ( Just $
+        CDDLsForDisk
+          ("diskstate.cddl", "ledgerState")
+          ("diskstate.cddl", "headerStateTip")
+          ("diskstate.cddl", "headerStateChainDep")
+          ("diskstate.cddl", "extLedgerState")
+    )
+    ( Just $
         CDDLsForNodeToNode
           ("ntnblock.cddl", "serialisedCardanoBlock")
           ("ntnheader.cddl", "header")

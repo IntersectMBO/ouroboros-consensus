@@ -109,7 +109,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , Flag (..)
 
     -- * Testing
-  , decodeLBackwardsCompatible
+  , decodeL
   , destroySnapshots
   , encodeL
   , snapshotsMapM_
@@ -120,7 +120,6 @@ import Cardano.Slotting.Time (SlotLength, getSlotLength)
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Codec.CBOR.Write as CBOR
-import qualified Codec.Serialise.Decoding as Dec
 import Control.Monad
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
@@ -147,7 +146,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
 import Ouroboros.Consensus.Util.CBOR
   ( ReadIncrementalErr
-  , decodeWithOrigin
   , readIncremental
   )
 import Ouroboros.Consensus.Util.CRC
@@ -385,17 +383,16 @@ readExtLedgerState ::
   IOLike m =>
   SomeHasFS m ->
   (forall s. Decoder s (ExtLedgerState blk EmptyMK)) ->
-  (forall s. Decoder s (HeaderHash blk)) ->
   FsPath ->
   ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
-readExtLedgerState hasFS decLedger decHash =
+readExtLedgerState hasFS decLedger =
   do
     ExceptT
     . fmap (fmap (fmap runIdentity))
     . readIncremental hasFS Identity decoder
  where
   decoder :: Decoder s (ExtLedgerState blk EmptyMK)
-  decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
+  decoder = decodeL decLedger
 
 -- | Write an extended ledger state to disk
 writeExtLedgerState ::
@@ -460,55 +457,23 @@ snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 -- | Version 1: uses versioning ('Ouroboros.Consensus.Util.Versioned') and only
 -- encodes the ledger state @l@.
-snapshotEncodingVersion1 :: VersionNumber
-snapshotEncodingVersion1 = 1
+--
+-- Version 2: unify all consensus version numbers into this one.
+snapshotEncodingVersion2 :: VersionNumber
+snapshotEncodingVersion2 = 2
 
--- | Encoder to be used in combination with 'decodeSnapshotBackwardsCompatible'.
+-- | Encoder to be used in combination with 'decodeL'.
 encodeL :: (l -> Encoding) -> l -> Encoding
 encodeL encodeLedger l =
-  encodeVersion snapshotEncodingVersion1 (encodeLedger l)
+  encodeVersion snapshotEncodingVersion2 (encodeLedger l)
 
--- | To remain backwards compatible with existing snapshots stored on disk, we
--- must accept the old format as well as the new format.
---
--- The old format:
---
--- * The tip: @WithOrigin (RealPoint blk)@
---
--- * The chain length: @Word64@
---
--- * The ledger state: @l@
---
--- The new format is described by 'snapshotEncodingVersion1'.
---
--- This decoder will accept and ignore them. The encoder ('encodeSnapshot') will
--- no longer encode them.
-decodeLBackwardsCompatible ::
-  forall l blk.
-  Proxy blk ->
+decodeL ::
+  forall l.
   (forall s. Decoder s l) ->
-  (forall s. Decoder s (HeaderHash blk)) ->
-  forall s.
-  Decoder s l
-decodeLBackwardsCompatible _ decodeLedger decodeHash =
-  decodeVersionWithHook
-    decodeOldFormat
-    [(snapshotEncodingVersion1, Decode decodeVersion1)]
- where
-  decodeVersion1 :: forall s. Decoder s l
-  decodeVersion1 = decodeLedger
-
-  decodeOldFormat :: Maybe Int -> forall s. Decoder s l
-  decodeOldFormat (Just 3) = do
-    _ <-
-      withOriginRealPointToPoint
-        <$> decodeWithOrigin (decodeRealPoint @blk decodeHash)
-    _ <- Dec.decodeWord64
-    decodeLedger
-  decodeOldFormat mbListLen =
-    fail $
-      "decodeSnapshotBackwardsCompatible: invalid start "
-        <> show mbListLen
+  forall s. Decoder s l
+decodeL decodeLedger =
+  decodeVersion
+    [(snapshotEncodingVersion2, Decode decodeLedger)]
 
 {-------------------------------------------------------------------------------
   Policy

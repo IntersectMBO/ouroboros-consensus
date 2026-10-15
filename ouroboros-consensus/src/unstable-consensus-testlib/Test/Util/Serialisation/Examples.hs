@@ -14,6 +14,9 @@ module Test.Util.Serialisation.Examples
   , Labelled
   , labelled
   , unlabelled
+
+    -- * Top-level queries
+  , topLevelQueries
   ) where
 
 import Data.Bifunctor (first)
@@ -30,7 +33,7 @@ import Ouroboros.Consensus.Ledger.Abstract
   , LedgerState
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import Ouroboros.Consensus.Ledger.Query (BlockQuery, SomeBlockQuery)
+import Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..), SomeBlockQuery)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTx
@@ -38,6 +41,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
+import Ouroboros.Consensus.Util (SomeSecond (..))
 import Ouroboros.Network.Block (Serialised)
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
 
@@ -55,6 +59,9 @@ data Examples blk = Examples
   , exampleGenTxId :: Labelled (GenTxId blk)
   , exampleApplyTxErr :: Labelled (ApplyTxErr blk)
   , exampleQuery :: Labelled (SomeBlockQuery (BlockQuery blk))
+  , exampleTopLevelQuery :: Labelled (SomeSecond Query blk)
+  -- ^ The queries of 'Query' that are not 'BlockQuery', which are versioned by
+  -- 'Ouroboros.Consensus.Ledger.Query.QueryVersion' instead of by the block.
   , exampleResult :: Labelled (SomeResult blk)
   , exampleAnnTip :: Labelled (AnnTip blk)
   , exampleLedgerState :: Labelled (LedgerState blk EmptyMK)
@@ -76,6 +83,7 @@ emptyExamples =
     , exampleGenTxId = mempty
     , exampleApplyTxErr = mempty
     , exampleQuery = mempty
+    , exampleTopLevelQuery = mempty
     , exampleResult = mempty
     , exampleAnnTip = mempty
     , exampleLedgerState = mempty
@@ -102,6 +110,7 @@ combineExamples f e1 e2 =
     , exampleGenTxId = combine exampleGenTxId
     , exampleApplyTxErr = combine exampleApplyTxErr
     , exampleQuery = combine exampleQuery
+    , exampleTopLevelQuery = combine exampleTopLevelQuery
     , exampleResult = combine exampleResult
     , exampleAnnTip = combine exampleAnnTip
     , exampleLedgerState = combine exampleLedgerState
@@ -155,3 +164,20 @@ unlabelled x = [(Nothing, x)]
 
 labelled :: [(String, a)] -> Labelled a
 labelled = map (first Just)
+
+{-------------------------------------------------------------------------------
+  Top-level queries
+-------------------------------------------------------------------------------}
+
+-- | The non-'BlockQuery' constructors of 'Query'.
+--
+-- They are the same for every block, so every block can use this list as its
+-- 'exampleTopLevelQuery'. 'DebugLedgerConfig' is left out on purpose: it is a
+-- debug query, and we make no effort to keep its encoding stable.
+topLevelQueries :: Labelled (SomeSecond Query blk)
+topLevelQueries =
+  labelled
+    [ ("GetSystemStart", SomeSecond GetSystemStart)
+    , ("GetChainBlockNo", SomeSecond GetChainBlockNo)
+    , ("GetChainPoint", SomeSecond GetChainPoint)
+    ]

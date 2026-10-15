@@ -511,6 +511,7 @@ test-suite tracing-test
   hs-source-dirs: tracing/test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Tracing.Dijkstra
     Test.Consensus.Tracing.Golden
     Test.Consensus.Tracing.MetaTrace
 
@@ -525,6 +526,7 @@ test-suite tracing-test
     cardano-ledger-core,
     cardano-ledger-dijkstra,
     cardano-ledger-mary,
+    cardano-ledger-shelley,
     cardano-protocol-tpraos,
     containers,
     filepath,
@@ -562,7 +564,6 @@ library lsm
     primitive,
     random,
     resource-registry,
-    serialise,
     streaming,
     text,
     transformers,
@@ -1824,8 +1825,9 @@ library unstable-shelley-testlib
     cardano-crypto-class,
     cardano-data,
     cardano-ledger-allegra:cardano-ledger-allegra,
+    cardano-ledger-api:testlib,
     cardano-ledger-babbage:testlib,
-    cardano-ledger-conway:testlib,
+    cardano-ledger-conway:{cardano-ledger-conway, testlib},
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-dijkstra:testlib,
     cardano-ledger-mary:cardano-ledger-mary,
