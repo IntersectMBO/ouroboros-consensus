@@ -143,6 +143,10 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   , MockPerasVotingCommitteeScheme
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -355,6 +359,9 @@ instance LeiosProtocol LeiosTestProtocol where
       HeaderCounterNotBelowImmTips -> FreshOCIN
       HeaderCounterBelowImmTips -> StaleOCIN
   getLeiosLedgerView _proxy = Just
+
+instance PerasProtocol LeiosTestProtocol where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 -- | A test issuer's stand-in for the hash of a pool's cold verification key.
 issuerKeyHash :: Word64 -> KeyHash BlockIssuer

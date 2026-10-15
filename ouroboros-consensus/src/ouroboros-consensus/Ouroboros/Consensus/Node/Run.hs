@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Protocol (PerasProtocol)
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
@@ -120,6 +121,7 @@ class
   , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk
   , LeiosProtocol (BlockProtocol blk)
+  , PerasProtocol (BlockProtocol blk)
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)

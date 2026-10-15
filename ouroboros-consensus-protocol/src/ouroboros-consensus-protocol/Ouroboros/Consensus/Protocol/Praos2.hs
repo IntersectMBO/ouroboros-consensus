@@ -39,12 +39,13 @@ import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), LeiosProtocol (..))
-import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..), PerasProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( WhyNotCertifiable (..)
   , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
+  , getPerasLedgerViewPolyPraos
   , markUncertifiable
   , validateLeiosAnnouncementPolyPraos
   )
@@ -156,6 +157,9 @@ instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
   getLeiosLedgerView _proxy = getLeiosLedgerViewPolyPraos
+
+instance LeiosCrypto c => PerasProtocol (Praos2 c) where
+  getPerasLedgerView _proxy = getPerasLedgerViewPolyPraos
 
 instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
   type ChainDepState (Praos2 c) = PolyPraosState (Praos2 c)
