@@ -17,6 +17,10 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , VoidUnlessLeios
   , WhenLeios
   , pureLeiosOnly
+  , PerasOnly
+  , VoidUnlessPeras
+  , WhenPeras
+  , purePerasOnly
   , TypeSwitch (..)
   , ShelleyProtocolHeader
   , MaxMajorProtVer (..)
@@ -402,6 +406,34 @@ type VoidUnlessLeios proto = LeiosOnly proto Void
 pureLeiosOnly ::
   forall proto b. Applicative (WhenLeios proto) => b -> WhenLeios proto b
 pureLeiosOnly = pure
+
+-- | @a@ for the protocols without Peras, and @b@ for the ones with it.
+--
+-- One such family per extension, which is what keeps every type that mentions
+-- one indexed by @proto@ alone. Its two intended uses:
+--
+--  * @VoidUnlessPeras proto ()@ gates a constructor, since the protocols
+--    without Peras cannot build it.
+--
+--  * @WhenPeras proto a@ gates a field, which those protocols have but
+--    cannot put anything in.
+type PerasOnly :: Type -> Type -> Type -> Type
+data family PerasOnly proto a :: Type -> Type
+
+-- | The field use of 'PerasOnly': present only when the protocol has Peras.
+type WhenPeras :: Type -> Type -> Type
+type WhenPeras proto = PerasOnly proto ()
+
+-- | The constructor use of 'PerasOnly': inhabited only when the protocol has
+-- Peras.
+type VoidUnlessPeras :: Type -> Type -> Type
+type VoidUnlessPeras proto = PerasOnly proto Void
+
+-- | 'pure' for the field form of 'PerasOnly', with @proto@ first so callers
+-- can fix it with a type application.
+purePerasOnly ::
+  forall proto b. Applicative (WhenPeras proto) => b -> WhenPeras proto b
+purePerasOnly = pure
 
 -- | Allow for any type on the side of a type-level switch that wasn't chosen
 --
