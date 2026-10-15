@@ -112,6 +112,7 @@ instance
   , InspectLedger blk
   , HasIssuer blk
   , LogFormatting (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show (PerasError blk)
   ) =>
@@ -1966,16 +1967,27 @@ instance MetaTrace (PerasVoteDB.TraceEvent blk) where
   documentFor (Namespace _ ["GarbageCollected"]) = Just "GarbageCollected"
   documentFor _ = Nothing
 
-instance Show (PerasCert blk) => LogFormatting (PerasVoteDB.TraceEvent blk) where
-  forHuman (PerasVoteDB.AddVote voteId _vote result) =
-    "Peras vote " <> Text.pack (show voteId) <> ": " <> Text.pack (show result)
+instance
+  ( Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  LogFormatting (PerasVoteDB.TraceEvent blk)
+  where
+  forHuman (PerasVoteDB.AddVote voteId vote result) =
+    "Peras vote (id: "
+      <> Text.pack (show voteId)
+      <> ") "
+      <> Text.pack (show vote)
+      <> ": "
+      <> Text.pack (show result)
   forHuman (PerasVoteDB.GarbageCollected slotNo) =
     "Peras vote DB garbage collected at slot " <> Text.pack (show slotNo)
 
-  forMachine _dtal (PerasVoteDB.AddVote voteId _vote result) =
+  forMachine _dtal (PerasVoteDB.AddVote voteId vote result) =
     mconcat
       [ "kind" .= String "AddVote"
       , "voteId" .= String (Text.pack $ show voteId)
+      , "vote" .= String (Text.pack $ show vote)
       , "result" .= String (Text.pack $ show result)
       ]
   forMachine _dtal (PerasVoteDB.GarbageCollected slotNo) =
@@ -2002,16 +2014,25 @@ instance MetaTrace (PerasCertDB.TraceEvent blk) where
   documentFor (Namespace _ ["GarbageCollected"]) = Just "GarbageCollected"
   documentFor _ = Nothing
 
-instance LogFormatting (PerasCertDB.TraceEvent blk) where
-  forHuman (PerasCertDB.AddCert roundNo _cert result) =
-    "Peras certificate for round " <> Text.pack (show roundNo) <> ": " <> Text.pack (show result)
+instance
+  Show (PerasCert blk) =>
+  LogFormatting (PerasCertDB.TraceEvent blk)
+  where
+  forHuman (PerasCertDB.AddCert roundNo cert result) =
+    "Peras certificate (round: "
+      <> Text.pack (show roundNo)
+      <> ") "
+      <> Text.pack (show cert)
+      <> ": "
+      <> Text.pack (show result)
   forHuman (PerasCertDB.GarbageCollected slotNo) =
     "Peras certificate DB garbage collected at slot " <> Text.pack (show slotNo)
 
-  forMachine _dtal (PerasCertDB.AddCert roundNo _cert result) =
+  forMachine _dtal (PerasCertDB.AddCert roundNo cert result) =
     mconcat
       [ "kind" .= String "AddCert"
       , "round" .= String (Text.pack $ show roundNo)
+      , "cert" .= String (Text.pack $ show cert)
       , "result" .= String (Text.pack $ show result)
       ]
   forMachine _dtal (PerasCertDB.GarbageCollected slotNo) =
