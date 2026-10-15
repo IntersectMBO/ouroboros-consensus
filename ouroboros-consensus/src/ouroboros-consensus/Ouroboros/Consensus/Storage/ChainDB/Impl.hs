@@ -256,6 +256,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     immdbLock <- RAW.new ()
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
+    certStoringQueue <- newCertStoringQueue
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
     varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
@@ -285,6 +286,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             , cdbPerasImmutableCertDB = perasImmutableCertDB
+            , cdbCertStoringQueue = certStoringQueue
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
@@ -442,6 +444,7 @@ closeDB ::
   forall m blk.
   ( IOLike m
   , HasHeader (Header blk)
+  , IsPerasCert (PerasCert blk) blk
   , HasCallStack
   ) =>
   ChainDbHandle m blk -> m ()
@@ -462,6 +465,10 @@ closeDB (CDBHandle varState) = do
 
     killBgThreads <- atomically $ readTVar cdbKillBgThreads
     killBgThreads
+
+    -- Store the certificates still pending, which would otherwise be lost.
+    -- This needs the ImmutableDB to be open.
+    Background.drainCertStoringQueue cdb
 
     ImmutableDB.closeDB cdbImmutableDB
     VolatileDB.closeDB cdbVolatileDB
