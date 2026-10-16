@@ -28,6 +28,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Cardano.Crypto.Leios (LeiosSeatId)
 import Control.Monad (foldM, when)
 import Control.Monad.Except (Except, ExceptT, liftEither, throwError, withExcept, withExceptT)
+import Control.Monad.Trans (lift)
 import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import Data.List.NonEmpty (NonEmpty)
@@ -59,6 +60,7 @@ import Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
+import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, onValidAnnouncement)
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -80,7 +82,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, atomically)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -281,7 +283,7 @@ instance
 
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
--- Nothing else in the node processes the announcement yet.
+-- An accepted announcement goes on to the node's 'AnnounceState'.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
@@ -292,24 +294,21 @@ onLeiosNotifyAnnouncement ::
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
+  AnnounceState m blk ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement systemTime futureCheck cfg immLedger st hdr = do
+onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
       liftEither $ Announcements.insert (ancElectionId anc) anc (lnpsAnnouncements st)
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
-    --
-    -- TODO When the node processes and relays announcements, have
-    -- 'announcementValidity' also return a fresh announcement's slot onset and
-    -- age: the age decides whether to relay it, and the onset dates the
-    -- endorser block's arrival.
-    _staleness <- announcementValidity systemTime futureCheck cfg immLedger anc
+    valid <- announcementValidity systemTime futureCheck cfg immLedger anc
+    lift $ atomically $ onValidAnnouncement announceState valid anc
     pure
       st
         { lnpsAnnouncements = announcements

@@ -26,6 +26,13 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.Ledger.Abstract (GetTip, LedgerState, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, pruneAnnounceState)
+import Ouroboros.Consensus.Leios.NotifyLog
+  ( NotifyEntry (..)
+  , NotifyLog
+  , nextNotifyLog
+  , notifyLogStart
+  )
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
@@ -33,6 +40,9 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   , SomeHeaderInFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( AnnouncingHeader (ancHeader)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
@@ -66,6 +76,7 @@ leiosNotifyClient ::
   ) =>
   TopLevelConfig blk ->
   ChainDB m blk ->
+  AnnounceState m blk ->
   BlockchainTime m ->
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
@@ -76,6 +87,7 @@ leiosNotifyClient ::
 leiosNotifyClient
   cfg
   chainDB
+  announceState
   btime
   systemTime
   chainSyncFutureCheck
@@ -101,6 +113,7 @@ leiosNotifyClient
                       systemTime
                       chainSyncFutureCheck
                       cfg
+                      announceState
                       immLedger
                       st
                       hdr
@@ -132,23 +145,33 @@ leiosNotifyClient
       st <- readTVar stateVar
       either throwSTM (writeTVar stateVar) $ runExcept (judge st)
 
--- | The node's LeiosNotify server.
+-- | The node's LeiosNotify server, which relays the node's 'NotifyLog' to one
+-- downstream peer, from the log's oldest entry on.
 leiosNotifyServer ::
   IOLike m =>
+  NotifyLog m blk ->
   m (LeiosNotifyServerPeerLookahead LeiosPoint (Header blk) LeiosVote m)
-leiosNotifyServer = do
+leiosNotifyServer notifyLog = do
   requests <- newTVarIO (0 :: Int)
+  cursorVar <- newTVarIO notifyLogStart
   leiosNotifyServerPeerLookahead
-    ( atomically $ do
-        n <- readTVar requests
-        if n >= leiosNotifyPipelineDepth
-          then pure ExcessiveRequests
-          else do
-            writeTVar requests (n + 1)
-            pure NotExcessiveRequests
-    )
-    -- The node never has a notification to send.
-    retry
+    (increment requests)
+    (serveNext requests cursorVar)
+ where
+  increment requests = atomically $ do
+    n <- readTVar requests
+    if n >= leiosNotifyPipelineDepth
+      then pure ExcessiveRequests
+      else do
+        writeTVar requests (n + 1)
+        pure NotExcessiveRequests
+
+  serveNext requests cursorVar = do
+    (entry, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
+    writeTVar cursorVar cursor
+    modifyTVar requests (subtract 1)
+    pure $ case entry of
+      NotifyAnnouncement _onset anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.
@@ -167,8 +190,8 @@ withLeiosNotifyClientState statesVar peer =
     )
     (\_stateVar -> atomically $ modifyTVar statesVar (Map.delete peer))
 
--- | Prune every LeiosNotify client's state each time the immutable tip's slot
--- advances.
+-- | Prune every LeiosNotify client's state, and the node's 'AnnounceState',
+-- each time the immutable tip's slot advances.
 leiosNotifyPruner ::
   ( IOLike m
   , GetTip (LedgerState blk)
@@ -176,9 +199,10 @@ leiosNotifyPruner ::
   , GetHeader blk
   ) =>
   ChainDB m blk ->
+  AnnounceState m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
   m Void
-leiosNotifyPruner chainDB statesVar = go (SlotNo 0)
+leiosNotifyPruner chainDB announceState statesVar = go (SlotNo 0)
  where
   go prunedSlot = do
     immTipSlot <- atomically $ do
@@ -188,6 +212,7 @@ leiosNotifyPruner chainDB statesVar = go (SlotNo 0)
           | prunedSlot < slot -> do
               states <- readTVar statesVar
               mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
+              pruneAnnounceState announceState slot
               pure slot
         _ -> retry
     go immTipSlot

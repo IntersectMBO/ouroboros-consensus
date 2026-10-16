@@ -201,6 +201,8 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.AnnounceState
+    Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Mempool
@@ -1499,6 +1501,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosNotify.Node
     Test.Consensus.Leios.LeiosNotify.Protocol
     Test.Consensus.Leios.NodeUnderTest
+    Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch
