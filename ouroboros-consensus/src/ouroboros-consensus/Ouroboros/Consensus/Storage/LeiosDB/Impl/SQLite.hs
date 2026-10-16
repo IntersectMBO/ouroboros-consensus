@@ -318,7 +318,6 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
   -- while a pass is in progress. Starts requested, to continue a sweep pass
   -- potentially interrupted by a node restart.
   activeGcSweepStateVar <- newTVarIO (Just 0)
-  jobsServedVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
       worker :: WriterConns -> IO ()
@@ -331,41 +330,34 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
           , wcGcStmts = gcStmts
           , wcPinStmt = pinStmt
           , wcMarkCopiedStmt = markCopiedStmt
-          } = serve
+          } = serve 0
          where
-          -- The write worker takes care of tow types of jobs: queued jobs (values of `WriteJob`)
+          -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
           -- and maintenance jobs.
           -- We prioritise queued jobs first: writes arrive in bursts, and the quiet in
           -- between is the time to do maintenance. But a burst can go on for as
           -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
-          serve = do
-            mJob <- atomically $ do
-              served <- readTVar jobsServedVar
+          serve :: Int -> IO ()
+          serve served = do
+            mJob <-
               if served >= maxJobsBetweenMaintenance
                 then
                   -- we've served enough queued jobs, time to do maintenance
                   pure Nothing
                 else
-                  tryReadTBQueue queue >>= \case
-                    Nothing ->
-                      -- no queue jobs: do maintenance
-                      pure Nothing
-                    Just job -> do
-                      -- do a queued job
-                      writeTVar jobsServedVar (served + 1)
-                      pure (Just job)
+                  -- 'Nothing' when there are no queued jobs: do maintenance
+                  atomically $ tryReadTBQueue queue
             case mJob of
               -- do a normal queue job
               Just job -> do
                 stop <- runJob job
                 traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-                unless stop serve
+                unless stop $ serve (served + 1)
               -- do maintenance
               Nothing -> do
                 quiet <- stepMaintenance
-                atomically $ writeTVar jobsServedVar 0
                 when quiet blockUntilWork
-                serve
+                serve 0
 
           runJob :: WriteJob -> IO Bool
           runJob = \case
