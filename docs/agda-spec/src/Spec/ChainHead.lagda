@@ -18,6 +18,7 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
   \item The last header hash \afld{h}.
   \item The last slot \afld{sℓ}.
   \item The last block number \afld{bℓ}.
+  \item The endorser block announced by the last block \afld{aeb}.
 \end{itemize}
 
 \begin{code}[hide]
