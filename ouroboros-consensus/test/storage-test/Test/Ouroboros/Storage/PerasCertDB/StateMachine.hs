@@ -16,7 +16,7 @@
 
 module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 
-import Control.Monad (join)
+import Control.Monad (join, void)
 import Control.Monad.State
 import Control.Tracer (nullTracer)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
@@ -182,7 +182,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       lift $ atomically $ PerasCertDB.getLatestCertSeen perasCertDB
     GarbageCollect slotNo -> do
       perasCertDB <- get
-      lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
+      lift $ void $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
 
   postcondition (Model model, _) (AddCert cert) _ actual = do
     let expected = fst $ Model.addCert model cert
