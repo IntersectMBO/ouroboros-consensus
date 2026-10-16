@@ -1642,6 +1642,12 @@ instance
       protocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra) praosSt
     _ -> Nothing
 
+  tickedProtocolStateLeiosAnnouncement tcds = case tickedHardForkChainDepStatePerEra tcds of
+    State.HardForkState
+      (TeleDijkstra _ _ _ _ _ _ _ (State.Current _ (Comp (WrapTickedChainDepState praosSt)))) ->
+        tickedProtocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra) praosSt
+    _ -> Nothing
+
   assumeValidatedClosureTx cfg slot st tx = case (tx, matchTickedDijkstra cfg st) of
     (GenTxDijkstra inner, Just (dijkstraCfg, dijkstraSt)) ->
       HardForkValidatedGenTx

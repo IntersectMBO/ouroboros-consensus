@@ -993,6 +993,13 @@ class ResolveLeiosBlock blk where
     ChainDepState (BlockProtocol blk) -> Maybe AnnouncementFields
   protocolStateLeiosAnnouncement _ = Nothing
 
+  -- | 'protocolStateLeiosAnnouncement' of the chain-dep state ticked to the
+  -- next header's slot: the announcement that header may certify. Ticking may
+  -- rule out certifying an announcement, eg one made in the previous epoch.
+  tickedProtocolStateLeiosAnnouncement ::
+    Ticked (ChainDepState (BlockProtocol blk)) -> Maybe AnnouncementFields
+  tickedProtocolStateLeiosAnnouncement _ = Nothing
+
   -- | For a CertRB, the hash of the ranking block that announced the EB this CertRB
   -- certifies. 'Nothing' for non-Leios eras.
   announcingRbHash :: blk -> Maybe RbHash

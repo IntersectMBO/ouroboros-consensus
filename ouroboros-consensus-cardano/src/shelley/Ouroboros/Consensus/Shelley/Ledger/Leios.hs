@@ -311,6 +311,10 @@ instance
         , announcementEbBodySize = ann.ebAnnouncementSize
         }
 
+  tickedProtocolStateLeiosAnnouncement =
+    protocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra)
+      . tickedPraosStateChainDepState
+
   -- The announcing RB is this block's parent
   announcingRbHash blk =
     case blockPrevHash blk of
