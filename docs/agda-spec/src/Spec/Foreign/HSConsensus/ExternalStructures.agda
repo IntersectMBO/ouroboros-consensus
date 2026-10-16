@@ -142,15 +142,17 @@ instance
   HSLedgerInterface : LedgerInterface
   HSLedgerInterface = record
     { NewEpochState         = ℕ
-    -- NOTE: With a slot length of 1000ms, the certification delay these imply is
-    -- 3 * 1000 + 2000 + 3000 = 8000ms, i.e. 8 slots.
+    -- NOTE: The certification delay these imply is 3 * 1000 + 2000 + 3500 =
+    -- 8500ms, which at a slot length of 1000ms is ⌈8500/1000⌉ = 9 slots. The
+    -- sum is deliberately not a whole number of slots, so that the tests
+    -- distinguish rounding up from rounding down.
     ; getPParams            = const $ record
                                 { maxHeaderSize        = 1
                                 ; maxBlockSize         = 2
                                 ; pv                   = 1 , 0
                                 ; leiosHeaderPeriod    = 1000
                                 ; leiosVotingPeriod    = 2000
-                                ; leiosDiffusionPeriod = 3000 }
+                                ; leiosDiffusionPeriod = 3500 }
     ; getEpoch              = const 1
     ; getPoolDelegatedStake = const $ fromListᵐ ((457 , (10 , 568)) ∷ (111 , (10 , 222)) ∷ (333 , (10 , 444)) ∷ [])
     ; adoptGenesisDelegs    = _+_
