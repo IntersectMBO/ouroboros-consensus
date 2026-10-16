@@ -1662,7 +1662,7 @@ library cardano
     cardano-crypto-class:cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.10,
-    cardano-ledger-alonzo ^>=1.17,
+    cardano-ledger-alonzo ^>=1.18,
     cardano-ledger-api ^>=1.16,
     cardano-ledger-babbage ^>=1.15,
     cardano-ledger-binary,
