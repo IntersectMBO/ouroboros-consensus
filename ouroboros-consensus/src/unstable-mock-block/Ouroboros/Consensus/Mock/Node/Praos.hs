@@ -142,8 +142,8 @@ praosBlockForging cid initHotKey = do
       , forgeBlock = \fbArgs -> do
           hotKey <- readMVar varHotKey
           return $
-            forgeSimple
-              (forgePraosExt hotKey)
-              fbArgs
+            ForgeBlockResult
+              (forgeSimple (forgePraosExt hotKey) fbArgs)
+              Nothing
       , finalize = pure ()
       }
