@@ -46,7 +46,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
-  , deleteDanglingTxs
   , newLeiosDBInMemory
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
@@ -85,11 +84,6 @@ tests =
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
              , testCase "runs on the immutable partition" $
                  withTempLeiosDbPaths test_truncateImmutablePartition
-             ]
-         , testGroup
-             "deleteDanglingTxs"
-             [ testCase "deletes only the tx bytes of unannounced EBs" $
-                 withFreshSQLiteFile test_deleteDanglingTxs
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -860,7 +854,6 @@ test_truncateImmutablePartition :: FilePath -> FilePath -> IO ()
 test_truncateImmutablePartition volDbPath immDbPath = do
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \_db -> pure ()
   truncateLeiosDbAfterSlot immDbPath 10
-  deleteDanglingTxs immDbPath
 
 -- * File initialisation
 
@@ -920,33 +913,6 @@ test_reopenKeepsData volDbPath immDbPath = do
     withRW db $ \con -> do
       points <- rwScanEbPoints con
       points @?= [(5, ebHash)]
-
--- * deleteDanglingTxs
-
-test_deleteDanglingTxs :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
-test_deleteDanglingTxs volDbPath _immDbPath db = do
-  let eb = mkTestEb 2
-      keptHash = mkTestEbHash 1
-      danglingHash = mkTestEbHash 2
-  withRW db $ \con ->
-    forM_ [(5, keptHash), (6, danglingHash)] $ \(slot, ebHash) -> do
-      let point = MkLeiosPoint slot ebHash
-      rwInsertEbPoint con point (encodeLeiosEbSize eb)
-      void $ rwInsertEbBody con point eb
-      void $ rwInsertTxs con point (allTxsFor eb)
-  -- Leave the second EB's tx bytes behind, as an out-of-band edit of 'ebs'
-  -- would.
-  withSqlFile volDbPath $ \sql ->
-    SQL.exec sql (T.pack ("DELETE FROM ebs WHERE ebHashBytes = " <> sqlBlob danglingHash))
-  ebTxBytesRows volDbPath danglingHash >>= (@?= 2)
-
-  deleteDanglingTxs volDbPath
-
-  ebTxBytesRows volDbPath danglingHash >>= (@?= 0)
-  withRW db $ \con -> do
-    closure <- rwLookupEbClosure con keptHash
-    closure
-      @?= Just [(txHash, txBytesFor eb off) | (off, (txHash, _)) <- zip [0 ..] (V.toList (leiosEbTxs eb))]
 
 -- | Open a database file on a connection of its own.
 withSqlFile :: FilePath -> (SQL.Database -> IO a) -> IO a
