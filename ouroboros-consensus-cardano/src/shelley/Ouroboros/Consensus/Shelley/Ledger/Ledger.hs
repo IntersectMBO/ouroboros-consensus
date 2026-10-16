@@ -876,8 +876,8 @@ instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
 
 instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era)) where
   getPoolDistr =
-    nesPd . shelleyLedgerState
+    view SL.nesStakePoolDistrG . shelleyLedgerState
 
 instance LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era)) where
   getPoolDistr =
-    nesPd . tickedShelleyLedgerState
+    view SL.nesStakePoolDistrG . tickedShelleyLedgerState
