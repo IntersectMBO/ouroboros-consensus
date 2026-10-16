@@ -10,7 +10,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
-  , deleteDanglingTxs
   , vacuumLeiosDb
 
     -- * SQL strings (re-exported for leios-schedule-gen)

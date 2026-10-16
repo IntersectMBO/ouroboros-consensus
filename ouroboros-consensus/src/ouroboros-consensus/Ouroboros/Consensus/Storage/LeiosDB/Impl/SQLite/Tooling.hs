@@ -7,7 +7,6 @@
 -- must not run against a file that a node has open.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
   ( truncateLeiosDbAfterSlot
-  , deleteDanglingTxs
   , vacuumLeiosDb
   ) where
 
@@ -56,13 +55,6 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
       <> show slot
       <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
       <> show slot
-
--- | Delete the tx bytes of EBs that are no longer announced.
-deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
-deleteDanglingTxs dbPath =
-  withExistingLeiosDbFile dbPath $ \db ->
-    dbExec db . fromString $
-      "DELETE FROM ebTxBytes WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM ebs)"
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --
