@@ -1862,6 +1862,7 @@ test-suite shelley-test
   other-modules:
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.EndorserBlock
+    Test.Consensus.Shelley.Forge
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.Integrity
     Test.Consensus.Shelley.LedgerTables
@@ -1872,6 +1873,7 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-crypto-class,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
