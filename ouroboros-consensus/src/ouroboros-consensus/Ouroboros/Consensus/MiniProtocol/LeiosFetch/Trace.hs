@@ -10,8 +10,13 @@ data TraceLeiosFetchServerEvent
     TraceLeiosFetchServerBlockServed !LeiosPoint !Int
   | -- | The client requested this many of an endorser block's transactions.
     TraceLeiosFetchServerTxsRequested !LeiosPoint !Int
-  | -- | The server sent them, this many bytes of them.
-    TraceLeiosFetchServerTxsServed !LeiosPoint !Int !Int
+  | -- | The server sent them.
+    TraceLeiosFetchServerTxsServed
+      !LeiosPoint
+      -- | the number of transactions
+      !Int
+      -- | their total size in bytes
+      !Int
   | -- | The server does not hold the requested endorser block, so it
     -- disconnects the client.
     TraceLeiosFetchServerUnknownBlock !LeiosPoint
