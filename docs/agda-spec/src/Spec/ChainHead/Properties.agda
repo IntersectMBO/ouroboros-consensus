@@ -49,11 +49,11 @@ chainChecks? maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
     m = proj₁ protocolVersion
     open BHeader; open BHBody (bh .body)
 
-certChecks? : ∀ ps lab b s → Dec (certChecks ps lab b s)
+certChecks? : ∀ pp lab b s → Dec (certChecks pp lab b s)
 certChecks? _  _                               false _ = yes tt
 certChecks? _  nothing                         true  _ = no λ ()
 certChecks? _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = no λ ()
-certChecks? ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s = sℓ + certificationDelay ps ≤? s
+certChecks? pp (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s = sℓ + certificationDelay pp ≤? s
 
 instance
 
@@ -91,7 +91,7 @@ instance
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
             (no ¬cc) → failure (genErrors ¬cc)
             (yes cc) →
-              case certChecks? (leiosPeriods pp) lab certifiedEB slot of λ where
+              case certChecks? pp lab certifiedEB slot of λ where
                 (no ¬ec) → failure (genErrors ¬ec)
                 (yes ec) → do
                   (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
@@ -110,7 +110,7 @@ instance
            in chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh)
       ... | no ¬cc = contradiction cc ¬cc
       ... | yes _
-        with certChecks? (leiosPeriods (getPParams forecast)) lab certifiedEB slot
+        with certChecks? (getPParams forecast) lab certifiedEB slot
       ... | no ¬ec = contradiction ec ¬ec
       ... | yes _
         with

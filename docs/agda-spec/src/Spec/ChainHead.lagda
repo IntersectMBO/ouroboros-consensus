@@ -137,22 +137,17 @@ prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ , _ ⟧ℓ) bh = sℓ < slot × bℓ
     ph = lastAppliedHash lab
 \end{code}
 \begin{code}
-LeiosPeriods : Type
-LeiosPeriods = Milliseconds × Milliseconds × Milliseconds
-
-leiosPeriods : PParams → LeiosPeriods
-leiosPeriods pp = leiosHeaderPeriod , leiosVotingPeriod , leiosDiffusionPeriod
+certificationDelay : PParams → Slot
+certificationDelay pp = slotsFromDuration
+    (3 * leiosHeaderPeriod + leiosVotingPeriod + leiosDiffusionPeriod)
   where open PParams pp
 
-certificationDelay : LeiosPeriods → Slot
-certificationDelay (hdr , vote , diff) = slotsFromDuration (3 * hdr + vote + diff)
-
-certChecks : LeiosPeriods → Maybe LastAppliedBlock → Bool → Slot → Type
+certChecks : PParams → Maybe LastAppliedBlock → Bool → Slot → Type
 certChecks _  _                                false _ = ⊤
 certChecks _  nothing                          true  _ = ⊥
 certChecks _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = ⊥
-certChecks ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
-  sℓ + certificationDelay ps ≤ s
+certChecks pp (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
+  sℓ + certificationDelay pp ≤ s
 \end{code}
 \end{AgdaAlign}
 \caption{Chain Head transition system functions}
@@ -223,7 +218,7 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
-    ∙ certChecks (leiosPeriods pp) lab certifiedEB slot
+    ∙ certChecks pp lab certifiedEB slot
     ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
     ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
     ────────────────────────────────
