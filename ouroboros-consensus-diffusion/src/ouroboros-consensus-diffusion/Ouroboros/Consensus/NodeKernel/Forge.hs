@@ -341,7 +341,7 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
   case (,) <$> announcedPoint <*> mMinGap of
     Nothing -> pure Nothing
     Just (ebPoint, minGap)
-      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= unSlotNo minGap ->
+      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) < unSlotNo minGap ->
           pure Nothing
       | otherwise -> do
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
