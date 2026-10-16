@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasure (..)
   , TxMeasurePhase1Metrics (..)
   , TxMeasurePhase2Metrics (..)
+  , TxEbMeasureMetrics (..)
   , TrivialTxMeasurePhase2 (..)
   , Validated
   , WhetherToIntervene (..)
@@ -387,6 +388,7 @@ class
   , NoThunks (TxEbMeasure blk)
   , Eq (TxEbMeasure blk)
   , Show (TxEbMeasure blk)
+  , TxEbMeasureMetrics (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
@@ -580,6 +582,17 @@ class TxMeasurePhase2Metrics msr where
 
 instance TxMeasurePhase2Metrics () where
   txMeasureMetricRefScriptsSizeBytes () = mempty
+
+class TxEbMeasureMetrics msr where
+  -- | The reference bytes that an endorser-block measure counts, without the
+  -- CBOR framing. 'Nothing' when the measure has no reference size.
+  txEbMeasureMetricReferencesSize :: msr -> Maybe ByteSize32
+
+instance TxEbMeasureMetrics (TxMeasure blk) where
+  txEbMeasureMetricReferencesSize _ = Nothing
+
+instance TxEbMeasureMetrics (IgnoringOverflow ByteSize32) where
+  txEbMeasureMetricReferencesSize _ = Nothing
 
 instance TxMeasurePhase1Metrics ByteSize32 where
   txMeasureMetricTxSizeBytes = id

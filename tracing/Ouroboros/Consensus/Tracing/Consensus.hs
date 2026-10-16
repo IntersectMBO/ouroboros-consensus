@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Tracing.Consensus
   , txsMempoolTimeoutSoftCounterName
   , txsSyncDurationTotalCounterName
   , impliesMempoolTimeoutSoft
+  , jsonTxReferencesSize
   ) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
@@ -57,6 +58,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , HasTxId
   , LedgerSupportsMempool
+  , TxEbMeasureMetrics (..)
   , TxMeasurePhase1Metrics (..)
   , TxMeasurePhase2Metrics (..)
   , txForgetValidated
@@ -74,6 +76,7 @@ import Ouroboros.Consensus.Mempool
   , TraceEventMempool (..)
   , jsonMempoolRejectionDetails
   )
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure (mmTxEbMeasure))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( TraceBlockFetchServerEvent (..)
   )
@@ -1295,6 +1298,15 @@ jsonTxMeasure m =
     , "refScriptsSizeBytes" .= unByteSize32 (txMeasureMetricRefScriptsSizeBytes m)
     ]
 
+-- | The reference-size dimension of an endorser-block measure, when present.
+-- This excludes CBOR framing and reports the size used by capacity checks.
+jsonTxReferencesSize :: TxEbMeasureMetrics msr => msr -> Aeson.Object
+jsonTxReferencesSize measure =
+  mconcat
+    [ "txReferencesSize" .= unByteSize32 size
+    | Just size <- [txEbMeasureMetricReferencesSize measure]
+    ]
+
 instance LogFormatting MempoolSize where
   forMachine _dtal MempoolSize{msNumTxs, msNumBytes} =
     mconcat
@@ -1527,6 +1539,7 @@ instance
       , "size" .= toJSON (encodeLeiosEbSize eb)
       , "measure" .= jsonTxMeasure ebMeasure
       ]
+      <> jsonTxReferencesSize (mmTxEbMeasure ebMeasure)
   forMachine _dtal (TraceDidntAdoptBlock slotNo _) =
     mconcat
       [ "kind" .= String "TraceDidntAdoptBlock"
@@ -1982,6 +1995,8 @@ instance MetaTrace (TraceForgeEvent blk) where
         , "  number of transactions that it references, its size in bytes, and the"
         , "  selected transactions' measure (transaction bytes, execution units, and"
         , "  reference-script bytes)."
+        , "  When the measure tracks reference bytes, txReferencesSize reports"
+        , "  that size excluding CBOR framing; size includes the framing."
         ]
   documentFor (Namespace _ ["DidntAdoptBlock"]) =
     Just $
