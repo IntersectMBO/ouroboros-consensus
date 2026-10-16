@@ -96,7 +96,7 @@ import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, contramap, traceWith)
+import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
@@ -151,6 +151,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withLeiosDBSQLite)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -289,6 +290,8 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
   -- ^ File-system on which the directories for databases other than the ImmutableDB will
   -- be created.
+  , llrnWithLeiosDB :: forall a. (LeiosDbHandle m -> m a) -> m a
+  -- ^ Open the LeiosDB, run the action with it, and close it.
   , llrnCustomiseChainDbArgs ::
       Complete ChainDbArgs m blk ->
       Complete ChainDbArgs m blk
@@ -488,7 +491,13 @@ runWith ::
   m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
-    withRegistry $ \registry ->
+    -- Opened outside the registry, so that it outlives every thread that reads
+    -- it.
+    --
+    -- TODO The ChainDB will need it too: its replay re-applies blocks that
+    -- carry a certificate, and its garbage collection and its copying to the
+    -- ImmutableDB must drive the LeiosDB's.
+    llrnWithLeiosDB $ \leiosDB -> withRegistry $ \registry ->
       handleJust
         -- Ignore exception thrown in connection handlers and diffusion.
         -- Also ignore 'ExitSuccess'.
@@ -597,6 +606,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxClockSkew
                   historicityCheck
                   chainDB
+                  leiosDB
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
@@ -784,6 +794,7 @@ type NodeToNodeApps m addrNTN =
   NTN.Apps
     m
     addrNTN
+    ByteString
     ByteString
     ByteString
     ByteString
@@ -993,6 +1004,7 @@ mkNodeKernelArgs ::
   InFutureCheck.ClockSkew ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
+  LeiosDbHandle m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
@@ -1016,6 +1028,7 @@ mkNodeKernelArgs
   maxClockSkew
   chainSyncHistoricityCheck
   chainDB
+  leiosDB
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
@@ -1037,6 +1050,7 @@ mkNodeKernelArgs
           , btime
           , systemTime
           , chainDB
+          , leiosDB
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
@@ -1174,6 +1188,15 @@ stdLowLevelRunNodeArgsIO
         , llrnRng
         , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
         , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
+        , -- Beside the VolatileDB and the ImmutableDB, as 'NodeDatabasePaths'
+          -- places them.
+          --
+          -- TODO Trace its events, once the node's tracers carry them.
+          llrnWithLeiosDB =
+            withLeiosDBSQLite
+              nullTracer
+              (nonImmutableDbPath srnDatabasePath </> "leios.vol.db")
+              (immutableDbPath srnDatabasePath </> "leios.imm.db")
         , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
         , llrnCustomiseChainDbArgs = id
         , llrnCustomiseNodeKernelArgs
