@@ -89,6 +89,7 @@ module Test.Util.LeiosTestBlock
   ) where
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Cardano.Ledger.BaseTypes (ProtVer (..))
 import Cardano.Ledger.Binary (decodeFull', serialize', shelleyProtVer)
 import Cardano.Slotting.EpochInfo (epochInfoEpoch, fixedEpochInfo)
 import Codec.CBOR.Decoding (Decoder, decodeBytes)
@@ -132,7 +133,6 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , LeiosTx (MkLeiosTx)
-  , ProtVerParity (..)
   , RbHash (MkRbHash)
   , TxHash
   , Weight
@@ -525,9 +525,9 @@ instance ResolveLeiosBlock LeiosTestBlock where
 
   assumeValidatedClosureTx _ _ _ = ValidatedLeiosTestGenTx
 
-  -- No protocol versions here: every validation holds.
-  leiosProtVerParity _ _ = EvenProtVer
-  leiosValidatedTxProtVerParity _ = EvenProtVer
+  -- No protocol versions here, any works as long as its consistent
+  leiosCurrentProtVer _ _ = ProtVer (toEnum 12) 0
+  leiosValidatedTxProtVer _ = ProtVer (toEnum 12) 0
 
 -- | The committee lives in the ledger view, which the forecast computes from
 -- the ledger config; the ledger /state/ carries none, so the voting-path

@@ -58,8 +58,6 @@ import Cardano.Crypto.Leios
   , resolveLeiosSeat
   , verifyLeiosCert
   )
-import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
-import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary (DecoderError, decodeFullAnnotator, getVersion64)
 import qualified Cardano.Ledger.Binary as Ledger
@@ -121,7 +119,7 @@ import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word16, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))

@@ -7,7 +7,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -124,6 +123,7 @@ import LeiosDemoTypes
   , LeiosVote
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
+  , protVerParity
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosVoteState
@@ -179,7 +179,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , leiosTxBytesOfGenTx
-  , leiosValidatedTxProtVerParity
+  , leiosValidatedTxProtVer
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (subscribeEbNotifications)
@@ -949,7 +949,7 @@ mkHandlers
                       ( \vtx ->
                           (,)
                             <$> leiosTxBytesOfGenTx (txForgetValidated vtx)
-                            <*> pure (leiosValidatedTxProtVerParity vtx)
+                            <*> pure (protVerParity $ leiosValidatedTxProtVer vtx)
                       )
                   )
                   (Leios.MkPeerId peer)
@@ -1203,8 +1203,7 @@ nullTracers =
     }
 
 showTracers ::
-  ( Monad m
-  , Show blk
+  ( Show blk
   , Show ntnAddr
   , Show (Header blk)
   , Show (GenTx blk)

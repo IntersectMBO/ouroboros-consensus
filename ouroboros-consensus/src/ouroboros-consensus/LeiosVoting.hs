@@ -47,6 +47,7 @@ import LeiosDemoTypes
   , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
+  , protVerParity
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
@@ -479,7 +480,7 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
       values <- resolveValues keys
       -- TODO: Temporarily use the Mempool API until we have a dedicated one
       let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
-          parity = leiosProtVerParity lcfg st0
+          parity = protVerParity $ leiosCurrentProtVer lcfg st0
       -- Determine which txs we can just reapply (the cache hits)
       decided <- withLookupTx txCache $ \look -> mapM (decide parity look) closure
       goValidate parity st0 decided 0 0 []

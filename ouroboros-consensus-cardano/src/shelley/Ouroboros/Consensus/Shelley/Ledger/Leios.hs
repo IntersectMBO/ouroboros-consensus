@@ -44,7 +44,6 @@ import LeiosDemoTypes
   , deserializeTxForLeios
   , fromCodecEbAnnouncement
   , hashLeiosTx
-  , protVerParity
   , serializeTxForLeios
   )
 import Lens.Micro ((.~), (^.))
@@ -164,11 +163,10 @@ instance
    where
     innerSt = tickedShelleyLedgerState (stowLedgerTables st)
 
-  leiosProtVerParity _cfg st =
-    protVerParity $ getPParams (tickedShelleyLedgerState st) ^. Core.ppProtocolVersionL
+  leiosCurrentProtVer _cfg st =
+    getPParams (tickedShelleyLedgerState st) ^. Core.ppProtocolVersionL
 
-  leiosValidatedTxProtVerParity (ShelleyValidatedTx _ vtx) =
-    protVerParity (SL.getValidatedTxProtocolVersion vtx)
+  leiosValidatedTxProtVer (ShelleyValidatedTx _ vtx) = SL.getValidatedTxProtocolVersion vtx
 
   leiosClosureTxKeySets = getTransactionKeySets
 

@@ -160,9 +160,6 @@ instance
 
   assumeValidatedClosureTx _ _ _ = ValidatedSimpleGenTx
 
-  -- No protocol versions here: every validation holds.
-  leiosProtVerParity _ _ = EvenProtVer
-
 instance HasLeiosVoting (SimpleBlock' c ext ext')
 
 instance
