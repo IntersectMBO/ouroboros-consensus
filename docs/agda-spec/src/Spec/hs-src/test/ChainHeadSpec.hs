@@ -116,7 +116,7 @@ chs' = MkChainHeadState
        = { maxHeaderSize = 1; maxBlockSize = 2; pv = (1 , 0)
          ; leiosHeaderPeriod = 1000; leiosVotingPeriod = 2000
          ; leiosDiffusionPeriod = 3500 }
-    certificationDelay (leiosPeriods pp)
+    certificationDelay pp
        = slotsFromDuration (3 * 1000 + 2000 + 3500)
        = ⌈ 8500 / SlotLengthᶜ ⌉ = ⌈ 8500 / 1000 ⌉ = 9 slots
     nₚₕ = prevHashToNonce (lastAppliedHash lab) = prevHashToNonce 2 = 0
@@ -137,8 +137,8 @@ chs' = MkChainHeadState
       = 1 ≤ 1 × 1 ≤ 1 × 1 ≤ 2
       = True
 
-    certChecks (leiosPeriods pp) lab certifiedEB slot
-      = certChecks (1000 , 2000 , 3000) lab False 2
+    certChecks pp lab certifiedEB slot
+      = certChecks pp lab False 2
       = ⊤                                   -- the header certifies nothing
       = True
 
