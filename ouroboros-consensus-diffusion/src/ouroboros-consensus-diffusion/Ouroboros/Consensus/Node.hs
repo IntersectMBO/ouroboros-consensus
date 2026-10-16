@@ -96,7 +96,7 @@ import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
+import Control.Tracer (Tracer, contramap, traceWith)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
@@ -1175,6 +1175,7 @@ stdLowLevelRunNodeArgsIO
     , rnPeerSharing
     , rnGenesisConfig
     , rnFeatureFlags
+    , rnTraceConsensus
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
@@ -1190,11 +1191,9 @@ stdLowLevelRunNodeArgsIO
         , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
         , -- Beside the VolatileDB and the ImmutableDB, as 'NodeDatabasePaths'
           -- places them.
-          --
-          -- TODO Trace its events, once the node's tracers carry them.
           llrnWithLeiosDB =
             withLeiosDBSQLite
-              nullTracer
+              (leiosDbTracer rnTraceConsensus)
               (nonImmutableDbPath srnDatabasePath </> "leios.vol.db")
               (immutableDbPath srnDatabasePath </> "leios.imm.db")
         , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs

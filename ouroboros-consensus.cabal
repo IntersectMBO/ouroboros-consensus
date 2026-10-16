@@ -475,6 +475,7 @@ library tracing
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.KESInfo
+    Ouroboros.Consensus.Tracing.LeiosDB
     Ouroboros.Consensus.Tracing.LeiosFetch
 
   build-depends:

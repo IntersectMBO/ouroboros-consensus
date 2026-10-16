@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Node.Tracers
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb)
 import Ouroboros.Consensus.Tracing
   ( ClientMetrics
   , ConsensusStartupException
@@ -130,6 +131,7 @@ tests =
     , testGroup
         "leios"
         [ metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
+        , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]
     ]
 
