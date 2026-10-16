@@ -569,6 +569,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
+              (\_ _ -> pure ())
               currentSlot
     )
  where

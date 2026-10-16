@@ -81,6 +81,7 @@ class
   , NoThunks (HardForkTxEbMeasure xs)
   , Eq (HardForkTxEbMeasure xs)
   , Show (HardForkTxEbMeasure xs)
+  , TxEbMeasureMetrics (HardForkTxEbMeasure xs)
   ) =>
   CanHardFork xs
   where

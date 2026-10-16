@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Types (LeiosEb)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.Node.Run
@@ -67,9 +68,21 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  -- | 'forge' calls this function after the ChainDB adopts the forged ranking
+  -- block. The arguments are the header of this block and the forged
+  -- endorser block.
+  --
+  -- 'forge' waits for this function to return. In the node kernel,
+  -- 'forkBlockForging' runs 'forge' in 'knownSlotWatcher', which reads the
+  -- current slot again only after 'forge' returns. So if this function is
+  -- slow, the node does no leadership check for the slots that start in the
+  -- meantime. The forging thread is a linked thread
+  -- ('forkLinkedWatcherAllocate'), so an exception from this function stops
+  -- the node. Do slow work, such as a storage write, in another thread.
+  (Header blk -> LeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -87,7 +100,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, payloadSz, snapSize, forgingOnTopOf) <-
+  (fbArgs, selectedTxs, forgingOnTopOf) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -114,7 +127,10 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-        (txs, payloadSz, snapSize) <-
+        selectedTxs@TransactionsToForge
+          { rankingBlockTxs = txs
+          , endorserBlockTxs = ebTxs
+          } <-
           getTransactionsToForge
             cfg
             mempool
@@ -130,27 +146,37 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
                 , Block.fbPerasCert = Nothing -- No PerasCert for now
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
                 , Block.fbTxs = txs
+                , Block.fbEbTxs = ebTxs
                 , Block.fbIsLeader = proof
                 }
         pure
           ( fbArgs
-          , payloadSz
-          , snapSize
+          , selectedTxs
           , ledgerTipPoint (ledgerState unticked)
           )
 
   -- Actually produce the block
-  newBlock <- lift $ Block.forgeBlock blockForging fbArgs
+  Block.ForgeBlockResult
+    { Block.rankingBlock = newBlock
+    , Block.endorserBlock = mForgedEb
+    } <-
+    lift $ Block.forgeBlock blockForging fbArgs
 
   trace $
     TraceForgedBlock
       currentSlot
       forgingOnTopOf
       newBlock
-      snapSize
-      payloadSz
+      (forgingMempoolSize selectedTxs)
+      (rankingBlockMeasure selectedTxs)
 
+  whenJust mForgedEb $ \eb ->
+    trace $ TraceForgedEndorserBlock currentSlot eb (endorserBlockMeasure selectedTxs)
+
+  -- If the ChainDB does not adopt the block, 'addBlockToChainDB' exits early.
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
+
+  lift $ whenJust mForgedEb (onForgedLeiosEb (getHeader newBlock))
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -461,8 +487,19 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 
   trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
--- | Get a consistent snapshot of the mempool for the given ticked ledger state
--- and select transactions up to block capacity.
+-- | Transactions selected for one forging opportunity, with each part's
+-- measure and the size of the mempool snapshot they came from.
+data TransactionsToForge blk = TransactionsToForge
+  { rankingBlockTxs :: [Validated (GenTx blk)]
+  , rankingBlockMeasure :: MempoolMeasure blk
+  , endorserBlockTxs :: [Validated (GenTx blk)]
+  , endorserBlockMeasure :: MempoolMeasure blk
+  , forgingMempoolSize :: MempoolSize
+  }
+
+-- | Get a snapshot of the mempool that is consistent with the given ticked
+-- ledger state. Select the transactions for the ranking block and for the
+-- endorser block from this snapshot.
 getTransactionsToForge ::
   (IOLike m, RunNode blk) =>
   TopLevelConfig blk ->
@@ -471,7 +508,7 @@ getTransactionsToForge ::
   Ticked LedgerState blk DiffMK ->
   ReadOnlyForker m l blk ->
   Maybe (PerasCert blk) ->
-  WithEarlyExit m ([Validated (GenTx blk)], MempoolMeasure blk, MempoolSize)
+  WithEarlyExit m (TransactionsToForge blk)
 getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasCert = lift $ do
   mempoolSnapshot <-
     getSnapshotFor
@@ -480,16 +517,14 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
       tickedLedgerState
       (roforkerReadTables forker)
 
-  -- The endorser-block capacity is zero, so the endorser-block part of the
-  -- partition is empty and the block part is the whole selection.
   let
     certSize = toMempoolMeasure <$> mbPerasCert
-    (txs, payloadSz, ebTxs, _) =
+    (txs, payloadSz, ebTxs, ebMeasure) =
       snapshotPartitionWithInitialPayload
         mempoolSnapshot
         certSize
         (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
-        Measure.zero
+        (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState)
 
     toMempoolMeasure ::
       ( TxLimits blk
@@ -508,14 +543,16 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
         , mmDiffTime = Measure.zero
         }
 
-  -- Only a transaction with a zero 'txEbMeasure' fits a zero capacity, and
-  -- the 'txEbMeasure' INVARIANT forbids a zero result.
-  unless (null ebTxs) $
-    throwIO $
-      userError "getTransactionsToForge: non-empty endorser-block part for a zero capacity"
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 
   _ <- evaluate (length txs)
 
-  pure (txs, payloadSz, snapshotMempoolSize mempoolSnapshot)
+  pure
+    TransactionsToForge
+      { rankingBlockTxs = txs
+      , rankingBlockMeasure = payloadSz
+      , endorserBlockTxs = ebTxs
+      , endorserBlockMeasure = ebMeasure
+      , forgingMempoolSize = snapshotMempoolSize mempoolSnapshot
+      }

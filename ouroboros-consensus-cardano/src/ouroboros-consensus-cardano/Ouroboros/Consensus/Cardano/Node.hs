@@ -82,6 +82,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -958,7 +959,9 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
     let praos2 ::
           forall era.
-          Shelley.ShelleyCompatible (Praos2 c) era =>
+          ( Shelley.ShelleyCompatible (Praos2 c) era
+          , LedgerSupportsProtocol (ShelleyBlock (Praos2 c) era)
+          ) =>
           BlockForging m (ShelleyBlock (Praos2 c) era)
         praos2 =
           Praos.praos2SharedBlockForging hotKey slotToPeriod credentials
