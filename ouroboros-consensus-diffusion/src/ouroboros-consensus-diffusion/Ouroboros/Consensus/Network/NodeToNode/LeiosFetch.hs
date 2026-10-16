@@ -91,7 +91,7 @@ serveEb ::
 serveEb tracer reader point = do
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
   -- A stored body is never empty.
-  traceDbException tracer point (lookupEbBody reader (pointEbHash point)) >>= \case
+  traceDbExceptionAndThrow tracer point (lookupEbBody reader (pointEbHash point)) >>= \case
     [] -> do
       traceWith tracer $ TraceLeiosFetchServerUnknownBlock point
       throwIO $ ExnLeiosUnknownBlockRequested point
@@ -109,7 +109,7 @@ serveTxs ::
   m (V.Vector LeiosTx)
 serveTxs tracer reader point bitmaps = do
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  rows <- traceDbException tracer point (batchRetrieveTxs reader (pointEbHash point) offsets)
+  rows <- traceDbExceptionAndThrow tracer point (batchRetrieveTxs reader (pointEbHash point) offsets)
   let held = IntMap.fromList [(offset, MkLeiosTx bytes) | (offset, _txHash, Just bytes) <- rows]
   case partitionEithers [maybe (Left offset) Right (IntMap.lookup offset held) | offset <- offsets] of
     ([], txs) -> do
@@ -123,13 +123,14 @@ serveTxs tracer reader point bitmaps = do
  where
   offsets = bitmapOffsets bitmaps
 
-traceDbException ::
+-- | Trace a 'LeiosDbException' that the action throws, then rethrow it.
+traceDbExceptionAndThrow ::
   MonadCatch m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosPoint ->
   m a ->
   m a
-traceDbException tracer point action =
+traceDbExceptionAndThrow tracer point action =
   action `catch` \(e :: LeiosDbException) -> do
     traceWith tracer $ TraceLeiosFetchServerDbException point (displayException e)
     throwIO e
