@@ -102,11 +102,11 @@ sql_fill_ebTxBytes =
   \  AND length(txBytes) = length(?3)\n\
   \"
 
--- | Decrement missingTxCount on every announcement of this content hash by
--- the number of tx-bytes rows a batch actually filled, returning each
--- touched row so the caller can spot the ones that just completed. Bytes are
--- keyed by @(ebHash, txOffset)@, so a fill can only ever close a hole in this
--- EB.
+-- | Decrement missingTxCount on every `ebs` row with this EB body hash that
+-- already has a count, by the number of tx-bytes rows a batch actually filled,
+-- returning each touched row so the caller can spot the ones that just
+-- completed. Bytes are keyed by @(ebHash, txOffset)@, so a fill can only ever
+-- close a hole in this EB.
 --
 -- Parameters: 1 = ebHashBytes, 2 = rows filled
 sql_decrement_missing_tx_count :: String
@@ -116,10 +116,9 @@ sql_decrement_missing_tx_count =
   \RETURNING ebSlot, missingTxCount\n\
   \"
 
--- | Initialize missingTxCount after an EB body is inserted: the rows still
--- unfilled (a redelivered body at a second point finds the first point's
--- fills). RETURNING lets the caller detect @missingTxCount = 0@ with a PK
--- lookup on the touched row.
+-- | Initialize missingTxCount after an EB body is inserted: the number of the
+-- EB's 'ebTxBytes' rows not yet filled. RETURNING lets the caller detect
+-- @missingTxCount = 0@ with a PK lookup on the touched row.
 --
 -- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
 sql_init_missing_tx_count :: String
@@ -142,6 +141,11 @@ sql_mark_point_notified =
 -- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
 -- JSON int array of offsets. The join uses ebTxs' PK
 -- @(ebHashBytes, txOffset)@, so index lookups still fire.
+--
+-- A tx whose bytes have not arrived yet reads as NULL rather than as its
+-- zero-filled placeholder. So a request for txs this node does not have, such
+-- as a bad @MsgLeiosBlockTxsRequest@, is detected rather than answered with
+-- zeros.
 sql_retrieve_from_ebTxs_json :: String
 sql_retrieve_from_ebTxs_json =
   "SELECT je.value, e.txHashBytes,\n\
@@ -152,6 +156,13 @@ sql_retrieve_from_ebTxs_json =
   \ORDER BY je.value ASC\n\
   \"
 
+-- | The EB's txs in body order.
+--
+-- A tx whose bytes have not arrived yet reads as NULL rather than as its
+-- zero-filled placeholder, which @sqlLookupEbClosure@ reports as an incomplete
+-- closure. That is what makes it fall back to the immutable partition, which
+-- holds the complete closure of an EB that was copied there and is now being
+-- fetched again into the volatile partition.
 sql_lookup_eb_closure :: String
 sql_lookup_eb_closure =
   unlines

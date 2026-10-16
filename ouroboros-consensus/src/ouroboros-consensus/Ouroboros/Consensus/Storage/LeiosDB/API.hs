@@ -118,9 +118,15 @@ data LeiosDbWriter m = LeiosDbWriter
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
   -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
   --
-  -- The transactions the given with bytes and an offset into the EB body.
+  -- No backend uses the point's slot: the tx bytes belong to the EB body,
+  -- which every point with the same EB hash shares.
+  --
+  -- Each transaction is given by its offset into the EB body and its bytes.
   --
   -- ASSUMPTION: the EB body must already be written, otherwise the txs are dropped.
+  --
+  -- ASSUMPTION: each transaction's bytes hash to the tx hash the EB body lists
+  -- at its offset. The implementations do not check this.
   --
   -- A transaction may be dropped by the implementation if:
   -- - is not in the body,
