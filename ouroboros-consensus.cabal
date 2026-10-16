@@ -1875,6 +1875,7 @@ test-suite shelley-test
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
+    cardano-ledger-binary,
     cardano-ledger-conway:testlib,
     cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
