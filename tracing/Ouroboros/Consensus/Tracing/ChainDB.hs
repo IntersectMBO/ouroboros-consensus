@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -19,6 +20,7 @@ import Cardano.Logging
 import Cardano.Slotting.Time (getSlotLength)
 import Data.Aeson (Object, ToJSON, Value (Object, String), object, toJSON, (.=))
 import qualified Data.ByteString.Base16 as B16
+import Data.Functor ((<&>))
 import Data.Int (Int64)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.SOP (All, K (..), hcmap, hcollapse)
@@ -2035,7 +2037,7 @@ instance
       , "cert" .= String (Text.pack $ show cert)
       , "result" .= String (Text.pack $ show result)
       ]
-  forMachine _dtal (PerasCertDB.GarbageCollected slotNo) =
+  forMachine _dtal (PerasCertDB.GarbageCollected (SlotNo slotNo)) =
     mconcat
       [ "kind" .= String "GarbageCollected"
       , "slot" .= String (Text.pack $ show slotNo)
@@ -3674,14 +3676,15 @@ instance MetaTrace (ChainDB.TraceAddPerasCertEvent blk) where
   namespaceFor (ChainDB.PerasCertBoostsBlockNotYetReceived _ _) = Namespace [] ["PerasCertBoostsBlockNotYetReceived"]
   namespaceFor (ChainDB.ChainSelectionForBoostedBlock _ _) = Namespace [] ["ChainSelectionForBoostedBlock"]
 
-  severityFor (Namespace _ ["AddedPerasCertToQueue"]) _ = Just Debug
-  severityFor (Namespace _ ["PoppedPerasCertFromQueue"]) _ = Just Debug
-  severityFor (Namespace _ ["IgnorePerasCertTooOld"]) _ = Just Info
-  severityFor (Namespace _ ["PerasCertBoostsCurrentChain"]) _ = Just Info
-  severityFor (Namespace _ ["PerasCertBoostsGenesis"]) _ = Just Info
-  severityFor (Namespace _ ["PerasCertBoostsBlockNotYetReceived"]) _ = Just Info
-  severityFor (Namespace _ ["ChainSelectionForBoostedBlock"]) _ = Just Info
-  severityFor _ _ = Nothing
+  severityFor _ msg =
+    msg <&> \case
+      ChainDB.AddedPerasCertToQueue{} -> Debug
+      ChainDB.PoppedPerasCertFromQueue{} -> Debug
+      ChainDB.IgnorePerasCertTooOld{} -> Info
+      ChainDB.PerasCertBoostsCurrentChain{} -> Info
+      ChainDB.PerasCertBoostsBlockNotYetReceived{} -> Info
+      ChainDB.ChainSelectionForBoostedBlock{} -> Info
+      ChainDB.PerasCertBoostsGenesis{} -> Info
 
   privacyFor (Namespace _ ["AddedPerasCertToQueue"]) _ = Just Public
   privacyFor (Namespace _ ["PoppedPerasCertFromQueue"]) _ = Just Public
