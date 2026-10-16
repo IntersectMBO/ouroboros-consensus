@@ -115,10 +115,10 @@ chs' = MkChainHeadState
     pp = getPParams forecast = getPParams 126
        = { maxHeaderSize = 1; maxBlockSize = 2; pv = (1 , 0)
          ; leiosHeaderPeriod = 1000; leiosVotingPeriod = 2000
-         ; leiosDiffusionPeriod = 3000 }
+         ; leiosDiffusionPeriod = 3500 }
     certificationDelay (leiosPeriods pp)
-       = slotsFromDuration (3 * 1000 + 2000 + 3000)
-       = ⌈ 8000 / SlotLengthᶜ ⌉ = ⌈ 8000 / 1000 ⌉ = 8 slots
+       = slotsFromDuration (3 * 1000 + 2000 + 3500)
+       = ⌈ 8500 / SlotLengthᶜ ⌉ = ⌈ 8500 / 1000 ⌉ = 9 slots
     nₚₕ = prevHashToNonce (lastAppliedHash lab) = prevHashToNonce 2 = 0
     pd = extractPoolDistr (getPoolDelegatedStake forecast)
        = extractPoolDistr (getPoolDelegatedStake 126)
@@ -162,15 +162,26 @@ chs' = MkChainHeadState
 
 -- Headers that certify the endorser block announced by `lab`. The certification
 -- delay is 3 * leiosHeaderPeriod + leiosVotingPeriod + leiosDiffusionPeriod =
--- 8000ms, which at a slot length of 1000ms is 8 slots; `lab` is at slot 0, so
--- slot 8 is the earliest slot at which certification is permitted.
+-- 8500ms, which at a slot length of 1000ms is ⌈8500/1000⌉ = 9 slots; `lab` is
+-- at slot 0, so slot 9 is the earliest slot at which certification is
+-- permitted. Note that rounding down would give 8 instead, so the boundary
+-- cases below also pin the direction of the rounding.
 
 certifyingBhbAt :: Slot -> BHBody
 certifyingBhbAt s = bhb { bhbSlot = s , bhbCertifiedEB = True }
 
--- Certifies at slot 2, i.e. 6 slots too early.
+-- Certifies at slot 2, i.e. 7 slots too early.
 bhTooEarly :: BHeader
 bhTooEarly = bh { bhBody = certifyingBhbAt 2 }
+
+-- Certifies at slot 8: the latest slot that is still too early, and the slot a
+-- conversion that rounded down would wrongly permit.
+bhOneShort :: BHeader
+bhOneShort = bh { bhBody = certifyingBhbAt 8 }
+
+-- Certifies at slot 9: the earliest slot permitted.
+bhAtBoundary :: BHeader
+bhAtBoundary = bh { bhBody = certifyingBhbAt 9 }
 
 -- Certifies at slot 10, comfortably past the delay.
 bhInTime :: BHeader
@@ -190,6 +201,12 @@ chsCertified = chs'
   { chsLab = Just lab' { labSℓ = 10 }
   }
 
+-- As `chsCertified`, for `bhAtBoundary`.
+chsAtBoundary :: ChainHeadState
+chsAtBoundary = chs'
+  { chsLab = Just lab' { labSℓ = 9 }
+  }
+
 spec :: Spec
 spec = do
   describe "chainheadStep" $ do
@@ -199,6 +216,10 @@ spec = do
       chainheadStep dummyExternalFunctions che chs bhInTime @?= Success chsCertified
     it "chainheadStep rejects a header certifying before the required delay" $
       isFailure (chainheadStep dummyExternalFunctions che chs bhTooEarly) @?= True
+    it "chainheadStep rejects a header certifying one slot short of the delay" $
+      isFailure (chainheadStep dummyExternalFunctions che chs bhOneShort) @?= True
+    it "chainheadStep accepts a header certifying exactly at the delay" $
+      chainheadStep dummyExternalFunctions che chs bhAtBoundary @?= Success chsAtBoundary
     it "chainheadStep rejects a header certifying an unannounced endorser block" $
       isFailure (chainheadStep dummyExternalFunctions che chsNoAnnouncement bhInTime) @?= True
 -- NOTE: Uncomment to run the debug version.
