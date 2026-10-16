@@ -41,11 +41,11 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , RbHash (..)
-  , deserializeLeiosTx
+  , deserializeTxForLeios
   , fromCodecEbAnnouncement
   , hashLeiosTx
   , protVerParity
-  , serializeLeiosTx
+  , serializeTxForLeios
   )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -131,8 +131,8 @@ instance
   -- The bytes and 'TxHash' a forged EB records for each tx (see 'forgeLeiosEb').
   -- Matching them is what lets the mempool key its txs by the same 'TxHash' an
   -- EB lists, so the body-arrival mempool pull can find them.
-  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serializeLeiosTx tx)
-  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serializeLeiosTx tx)))
+  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serializeTxForLeios tx)
+  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serializeTxForLeios tx)))
 
   getLeiosMaxEbTxsSizeFromView _ lv =
     case PP.plvMaxEbTxsSize lv of
@@ -146,7 +146,7 @@ instance
         -- Stops at the first undecodable tx: a closure is only useful whole, so
         -- decoding the rest would be work thrown away.
         pure $ forM closureEntries $ \(txh, bs) ->
-          case deserializeLeiosTx bs of
+          case deserializeTxForLeios bs of
             Left err -> Left $ LeiosClosureTxUndecodable ebHash txh $ Text.pack (show err)
             Right !tx -> Right (txh, mkShelleyTx tx)
 

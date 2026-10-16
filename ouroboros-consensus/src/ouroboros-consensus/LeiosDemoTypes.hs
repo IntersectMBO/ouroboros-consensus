@@ -1232,13 +1232,14 @@ hashLeiosTx :: LeiosTx -> TxHash
 hashLeiosTx =
   MkTxHash . Hash.hashToPackedBytes . Hash.hashWith @HASH cbor
 
--- | A Dijkstra tx as an endorser block carries it: the block-body encoding,
--- whose @is_valid@ flag the mempool encoding drops.
-serializeLeiosTx :: Tx TopTx DijkstraEra -> ByteString
-serializeLeiosTx = Ledger.serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
+-- | A Dijkstra tx as a Leios endorser block carries it: the block-body
+-- encoding, whose @is_valid@ flag the mempool encoding drops.
+serializeTxForLeios :: Tx TopTx DijkstraEra -> ByteString
+serializeTxForLeios = Ledger.serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
 
-deserializeLeiosTx :: ByteString -> Either DecoderError (Tx TopTx DijkstraEra)
-deserializeLeiosTx =
+-- | Decode a Dijkstra tx as part of a Leios endorser block.
+deserializeTxForLeios :: ByteString -> Either DecoderError (Tx TopTx DijkstraEra)
+deserializeTxForLeios =
   decodeFullAnnotator
     (eraProtVerLow @DijkstraEra)
     "Leios Tx"
@@ -1290,7 +1291,7 @@ forgeLeiosEb slot txsValidatedUnder txs =
   serializedTxs =
     [ (hashLeiosTx (MkLeiosTx bytes), byteSize, bytes)
     | tx <- toList txs
-    , let bytes = serializeLeiosTx tx
+    , let bytes = serializeTxForLeios tx
     , let byteSize = fromIntegral $ BS.length bytes
     ]
 

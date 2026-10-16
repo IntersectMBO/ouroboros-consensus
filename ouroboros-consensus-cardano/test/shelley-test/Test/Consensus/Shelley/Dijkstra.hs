@@ -21,7 +21,7 @@ import Cardano.Protocol.Leios.BlockHeader
   )
 import qualified Data.ByteString as BS
 import Data.Proxy (Proxy (..))
-import LeiosDemoTypes (deserializeLeiosTx, serializeLeiosTx)
+import LeiosDemoTypes (deserializeTxForLeios, serializeTxForLeios)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
@@ -61,7 +61,7 @@ tests =
     ]
 
 -- | An endorser-block reference records the length of the block-body encoding
--- ('serializeLeiosTx'), while the mempool charges the ledger's size
+-- ('serializeTxForLeios'), while the mempool charges the ledger's size
 -- computation ('sizeTxF') plus 'perTxOverhead'. This fails on a ledger bump
 -- that lets the wire size drift above the charge, before that drift can
 -- produce an endorser block no peer accepts.
@@ -69,10 +69,10 @@ prop_leiosEbItemChargeCoversEncoder :: Property
 prop_leiosEbItemChargeCoversEncoder =
   forAll (arbitrary :: Gen (GenTx (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))) $
     \(ShelleyTx _txid tx) ->
-      let wireSize = toInteger $ BS.length (serializeLeiosTx tx)
+      let wireSize = toInteger $ BS.length (serializeTxForLeios tx)
           chargedSize = toInteger (tx ^. Core.sizeTxF) + perTxOverhead
        in counterexample
-            ("serializeLeiosTx: " <> show wireSize <> " bytes, charged: " <> show chargedSize)
+            ("serializeTxForLeios: " <> show wireSize <> " bytes, charged: " <> show chargedSize)
             $ wireSize <= chargedSize
 
 -- | An endorser block must not launder a phase-2-invalid tx into a valid one:
@@ -83,11 +83,11 @@ prop_leiosTxKeepsPhase2Validity =
     \(ShelleyTx _txid tx) ->
       let invalidTx = tx & isPhase2ValidTxL .~ Phase2Invalid
           validTx = tx & isPhase2ValidTxL .~ Phase2Valid
-          roundTrip = fmap (^. isPhase2ValidTxL) . deserializeLeiosTx . serializeLeiosTx
+          roundTrip = fmap (^. isPhase2ValidTxL) . deserializeTxForLeios . serializeTxForLeios
        in conjoin
             [ roundTrip invalidTx === Right Phase2Invalid
             , roundTrip validTx === Right Phase2Valid
-            , serializeLeiosTx invalidTx =/= serializeLeiosTx validTx
+            , serializeTxForLeios invalidTx =/= serializeTxForLeios validTx
             ]
 
 prop_leiosBodyWithCertAndTxsRejected :: Property
