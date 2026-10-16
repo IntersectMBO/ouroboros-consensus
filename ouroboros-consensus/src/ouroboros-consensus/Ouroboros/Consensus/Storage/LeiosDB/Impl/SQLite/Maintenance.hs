@@ -42,7 +42,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTVar
   )
-import Control.Monad (filterM, forever, unless, void, when)
+import Control.Monad (filterM, forever, unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -55,7 +55,6 @@ import Control.ResourceRegistry
   )
 import Control.Tracer (Tracer, traceWith)
 import Data.Int (Int64)
-import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
@@ -277,40 +276,35 @@ sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
   await =<< submitJob writeQueue (GcMark gcSlot)
 
--- | The MARK phase of GC mark-and-sweep:
---   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
---     than the given slot and not pinned (@status = 1@);
---   - request a sweep pass, or extend the one in progress.
+-- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
+-- hash all of whose announcements are older than the given slot and not
+-- pinned (@status = 1@). Returns the number of 'ebs' rows marked.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
 -- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
 -- marked EBs one batch per turn, so an insert waits for a batch at most.
 gcMark ::
   HasCallStack =>
-  StrictTVar IO (Maybe Int) ->
   DB.Database ->
   GcStmts ->
   SlotNo ->
-  IO ()
-gcMark activeGcSweepStateVar db gcStmts gcSlot = do
+  IO Int
+gcMark db gcStmts gcSlot = do
   let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
     useStmt gsHasWork $ do
       dbBindInt64 gsHasWork 1 slot
       (/= 0) <$> readSingleInt64 gsHasWork
-  when hasWork $ do
-    -- mark EBs that are ready to be garbage collected
-    nEbsMarked <-
+  if hasWork
+    then
+      -- mark EBs that are ready to be garbage collected
       dbWithWriteTransactionRaw db $ do
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC
         DB.changes db
-    -- request a sweep pass by setting activeGcSweepStateVar to Just
-    when (nEbsMarked > 0) $
-      atomically $
-        modifyTVar activeGcSweepStateVar (Just . fromMaybe 0)
+    else pure 0
  where
   slot = fromIntegral (unSlotNo gcSlot)
 
