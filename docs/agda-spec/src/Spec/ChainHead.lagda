@@ -190,10 +190,8 @@ L_\text{diff}$ has elapsed since the block that announced the endorser
 block~\cite{cip_164}, so that the endorser block has had time to reach the whole
 network. These three protocol parameters are wall-clock durations, so their sum is
 converted to a number of slots by \slotsFromDuration, using the genesis slot length
-and rounding up. Because a header
-that sets \afld{certifiedEB} obliges the corresponding body to carry a matching
-certificate, this constraint can be checked on the header alone --- exactly the kind
-of check that Property~\ref{prop:header-only-validation} exists to license.
+and rounding up. A header that sets \afld{certifiedEB} obliges the corresponding body
+to carry a matching certificate, thus this constraint is checked by the ledger rules.
 
 Note that the \afld{size} component of \afld{announcedEB} is deliberately \emph{not}
 checked here. As specified in \cite{cip_164}, an incorrect announced size invalidates
