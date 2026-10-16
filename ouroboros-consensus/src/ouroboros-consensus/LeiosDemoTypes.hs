@@ -1266,14 +1266,14 @@ data ForgedLeiosEb = ForgedLeiosEb
   { point :: !LeiosPoint
   , body :: !LeiosEb
   , txClosure :: ![(TxHash, ByteString)]
-  , txsValidatedUnder :: !ProtVerParity
+  , txsProtVerParity :: !ProtVerParity
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 forgeLeiosEb :: SlotNo -> ProtVerParity -> NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
-forgeLeiosEb slot txsValidatedUnder txs =
-  ForgedLeiosEb{point, body, txClosure, txsValidatedUnder}
+forgeLeiosEb slot txsProtVerParity txs =
+  ForgedLeiosEb{point, body, txClosure, txsProtVerParity}
  where
   point = MkLeiosPoint slot (hashLeiosEb body)
 

@@ -55,7 +55,7 @@ tests =
             "the mempool never charges a transaction less than 'forgeLeiosEb' writes for it"
             prop_leiosEbItemChargeCoversEncoder
         , testProperty
-            "an endorser block keeps a tx's phase-2 validity"
+            "an endorser block's codec preserves the tx's phase-2 validity flag"
             prop_leiosTxKeepsPhase2Validity
         ]
     ]

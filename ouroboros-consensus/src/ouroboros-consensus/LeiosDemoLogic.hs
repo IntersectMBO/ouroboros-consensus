@@ -213,7 +213,7 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
     traceWith tracer $
       TraceLeiosBodyHits point summary (Leios.ibsTxsInEb summary - Leios.ibsAcquired summary) 0
   withLockedInsertAppliedTx txCache $ \w0 step ->
-    foldM (\w (txh, _sz) -> step w txh forgedEb.txsValidatedUnder) w0 (leiosEbTxs eb)
+    foldM (\w (txh, _sz) -> step w txh forgedEb.txsProtVerParity) w0 (leiosEbTxs eb)
  where
   point = forgedEb.point
   eb = forgedEb.body
@@ -2453,7 +2453,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
         forgedEb.point
         forgedEb.body
         (V.fromList $ map (MkLeiosTx . snd) forgedEb.txClosure)
-        forgedEb.txsValidatedUnder
+        forgedEb.txsProtVerParity
     )
   traceWith kernelTracer $
     TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
