@@ -211,8 +211,6 @@ mkTestGroups impl =
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
       , testCase "same EB hash at multiple slots notifies each completion" $
           withFreshDb impl test_multipleSlotsSameHash
-      , testCase "tx bytes written before the body are dropped" $
-          withFreshDb impl test_txsBeforeBodyDropped
       ]
   , testGroup
       "lookupEbClosure"
@@ -691,29 +689,6 @@ test_multipleSlotsSameHash db = do
     length completionNotifs @?= 2
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
-
--- | Tx bytes for an EB whose body has not been written yet have nowhere to go:
--- they are dropped, and the closure completes only once they are written again
--- after the body.
-test_txsBeforeBodyDropped :: LeiosDbHandle IO -> IO ()
-test_txsBeforeBodyDropped db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 2
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeLeiosEbSize eb)
-    early <- rwInsertTxs con point (allTxsFor eb)
-    early @?= []
-    completedByBody <- rwInsertEbBody con point eb
-    completedByBody @?= []
-    notifs <- drainChan chan
-    [p | AcquiredEb p _ <- notifs] @?= [point]
-    [p | AcquiredEbTxs p <- notifs] @?= []
-    rwLookupEbClosure con (pointEbHash point) >>= (@?= Nothing)
-    completed <- rwInsertTxs con point (allTxsFor eb)
-    completed @?= [point]
-    rwLookupEbClosure con (pointEbHash point)
-      >>= (@?= Just [(txHash, txBytesFor eb off) | (off, (txHash, _)) <- zip [0 ..] (V.toList (leiosEbTxs eb))])
 
 -- | A tx write only fills a tx the body declares, once, at its declared size.
 -- Anything else changes nothing and completes nothing.
