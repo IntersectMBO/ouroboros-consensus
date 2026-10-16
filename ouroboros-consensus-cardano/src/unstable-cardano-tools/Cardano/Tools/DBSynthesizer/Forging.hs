@@ -176,7 +176,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     -- If more than one is a leader in this slot, there will be a fork and some block will be orphaned in VolatileDB.
     results <-
       mapM
-        (\bf -> withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf currentSlot)
+        ( \bf -> withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf (\_ _ -> pure ()) currentSlot
+        )
         blockForging
     pure $ any isJust results
 

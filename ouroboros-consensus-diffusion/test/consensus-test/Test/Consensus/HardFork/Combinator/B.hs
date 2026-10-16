@@ -350,7 +350,7 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = return . forgeBlockB
+    , forgeBlock = \args -> return (ForgeBlockResult (forgeBlockB args) Nothing)
     , finalize = return ()
     }
 
