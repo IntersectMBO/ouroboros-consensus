@@ -90,7 +90,8 @@ serveEb ::
   m LeiosEb
 serveEb tracer reader point = do
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
-  -- A stored body is never empty.
+  -- The one body's tx references, in order. A stored body is never empty, so
+  -- no references means the node does not hold the body.
   traceDbExceptionAndThrow tracer point (lookupEbBody reader (pointEbHash point)) >>= \case
     [] -> do
       traceWith tracer $ TraceLeiosFetchServerUnknownBlock point
