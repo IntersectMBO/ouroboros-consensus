@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
 -- block bodies and their sizes.
@@ -46,6 +47,8 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , LeiosEb (..)
   , TxOffset
+  , leiosEbFromTxBytes
+  , hashLeiosEb
   , leiosEbBodyItems
   , encodeLeiosEb
   , decodeLeiosEb
@@ -63,10 +66,17 @@ module Ouroboros.Consensus.Leios.Types
 
 import Cardano.Binary (decodeNestedCborBytes, encodeNestedCborBytes)
 import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
+import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
+import Cardano.Ledger.Hashes
+  ( EraIndependentEbReferences
+  , HASH
+  , SafeHash
+  , unsafeMakeSafeHash
+  )
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
@@ -79,11 +89,13 @@ import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (toList)
 import Data.Function ((&))
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Data.Vector.Strict (Vector)
@@ -269,6 +281,26 @@ instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
 -- | The position of a transaction in its EB's body.
 type TxOffset = Int
+
+-- | The endorser block that references the given transactions, in the given
+-- order. The reference to a transaction holds the Blake2b-256 hash and the
+-- length of its bytes.
+leiosEbFromTxBytes :: NonEmpty ByteString -> LeiosEb
+leiosEbFromTxBytes =
+  MkLeiosEb . V.fromList . map reference . toList
+ where
+  reference bytes =
+    ( MkTxHash $ Hash.hashToBytes $ Hash.hashWith @HASH id bytes
+    , fromIntegral $ BS.length bytes
+    )
+
+-- | The hash that a ranking block header announces for an endorser block: the
+-- Blake2b-256 hash of the 'encodeLeiosEb' bytes.
+hashLeiosEb :: LeiosEb -> SafeHash EraIndependentEbReferences
+hashLeiosEb =
+  unsafeMakeSafeHash
+    . Hash.castHash
+    . Hash.hashWith @HASH (toStrictByteString . encodeLeiosEb)
 
 leiosEbBodyItems :: LeiosEb -> [(TxOffset, TxHash, BytesSize)]
 leiosEbBodyItems eb =
