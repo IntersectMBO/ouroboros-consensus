@@ -84,8 +84,11 @@ sqlInsertEbBody tracer conn notify point eb = do
       dbStep1 stPreallocEbTxBytes
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above: a body
-    -- redelivered at a second point finds the first point's fills.
+    -- transitioned to 0 as a consequence of the insert above. If this EB's
+    -- body was already written for another point, then the inserts above
+    -- changed nothing, and the new count accounts for every tx already
+    -- written for this EB hash, including those written while this row's
+    -- count was NULL.
     missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 (ebHashBytes (pointEbHash point))
       dbBindBlob stInitMissingCount 2 (ebHashBytes (pointEbHash point))
@@ -116,6 +119,8 @@ sqlInsertEbBody tracer conn notify point eb = do
 -- | Persist tx bytes for one EB by filling the rows 'sqlInsertEbBody'
 -- pre-allocated.
 --
+-- PREREQ: each tx's bytes hash to the tx hash the body lists at its offset.
+--
 -- A transaction is dropped if:
 --
 -- * its offset is not in the body;
@@ -133,7 +138,7 @@ sqlInsertTxs ::
 sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
   completed <- dbWithWriteTransaction conn $ do
     -- Fill the pre-allocated rows of the ebTxBytes table.
-    -- Count how many tx bytes were successfully filled (i.e. not dropped).
+    -- Count how many txs were successfully filled (i.e. not dropped).
     nFilled <-
       foldM
         ( \acc (txOffset, txBytes) -> do
@@ -150,8 +155,8 @@ sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
     if nFilled == 0
       then pure []
       else do
-        -- Decrement every announcement of this content hash and collect the
-        -- ones this batch completed.
+        -- Decrement the missingTxCount of every ebs row with this EB hash and
+        -- collect the ones this batch completed.
         completedSlots <- useStmt stDecrMissingCount $ do
           dbBindBlob stDecrMissingCount 1 ebHash
           dbBindInt64 stDecrMissingCount 2 nFilled

@@ -10,9 +10,9 @@ The EBs and their closures are copied from the volatile to the immutable partiti
 
 ## Database schema
 
-- `ebs` has one row for each EB *announcement*. Thus one EB hash can occur at several slots.
-- `ebTxs` is the EB body. It has one row for each transaction of the EB, in order. It stores each EB hash only once.
-- `ebTxBytes` stores the transaction bytes of the EB body, one row for each `ebTxs` row, with the same key. The EB owns these bytes: a transaction that belongs to two EBs is stored twice.
+- `ebs` has one row for each pair of slot and EB hash that an announcement named; announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written. Thus one EB hash can occur at several slots.
+- `ebTxs` is the EB body. It has one row for each transaction of the EB, in order. It stores each EB body only once, however many `ebs` rows name its hash.
+- `ebTxBytes` stores the transaction bytes of the EB closure, one row for each `ebTxs` row, with the same key. The EB owns these bytes: a transaction that belongs to two EBs is stored twice (ie duplicated aka denormalized.)
 
 ## Volatile partition
 
@@ -45,7 +45,7 @@ erDiagram
 The queries join the tables on the EB hash (`ebHashBytes`) and the transaction offset (`txOffset`).
 
 - When an EB body arrives, rows are inserted in `ebTxs`. In the same transaction, one `ebTxBytes` row is allocated for each of them: a zero-filled blob of the declared size, with `filled = 0`. Then `missingTxCount` is set to the number of unfilled rows.
-- When transactions arrive, they overwrite their rows in place and set `filled = 1`. A write is dropped if its row does not exist, is already filled, or has a different size. Then `missingTxCount` is decreased by the number of rows filled, on every announcement of the EB hash.
+- When transactions arrive, they overwrite their rows in place and set `filled = 1`. A write is dropped if its row does not exist, is already filled, or has a different size. Also, the `missingTxCount` of every `ebs` row whose EB has already arrived and references the arriving transactions is decreased by the number of `ebTxBytes` rows filled for that EB. Note that a tx will decrement the `missingTxCount` columns only of EBs that referred to that tx with the correct size.
 - The GC sweep phase deletes the `ebTxBytes`, `ebTxs` and `ebs` rows of an EB by its hash: three range deletes.
 
 Indexes:

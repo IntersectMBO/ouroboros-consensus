@@ -180,7 +180,7 @@ retrieveLoop stmt acc =
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
       txHash <- MkTxHash <$> DB.columnBlob stmt 1
-      -- Column 2 is from LEFT JOIN, NULL if the tx's row is not filled yet
+      -- Column 2 is NULL if the tx's bytes have not arrived yet
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
       retrieveLoop stmt ((offset, txHash, mbTxBytes) : acc)

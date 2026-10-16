@@ -212,7 +212,7 @@ mkTestGroups impl =
       "transactions"
       [ testProperty "insert then retrieve" $ prop_txsInsertThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testCase "bogus, duplicate and wrong-sized writes are dropped" $
+      , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
       ]
   , testGroup
@@ -409,7 +409,6 @@ prop_ebsLookupMissing impl =
 -- * Property tests for transactions
 
 -- | Property: inserting tx bytes and retrieving them returns the correct data.
--- Tx bytes are stored per @(ebHash, txOffset)@, owned by the referencing EB.
 prop_txsInsertThenRetrieve :: DbImpl -> Property
 prop_txsInsertThenRetrieve impl =
   forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
@@ -419,6 +418,8 @@ prop_txsInsertThenRetrieve impl =
           -- Insert the EB first (point then body)
           rwInsertEbPoint con point (encodeLeiosEbSize eb)
           void $ rwInsertEbBody con point eb
+          -- Forced, so that the tabulated insert time excludes building the
+          -- bytes.
           let !txsToInsert =
                 force [(off, txBytesFor eb off) | off <- offsetsToInsert]
           insertTime <- snd <$> timed (rwInsertTxs con point txsToInsert)
@@ -598,8 +599,8 @@ test_offerBlockTxs db = do
     assertOfferBlockTxs point notification
 
 -- | Test that completed EBs are not re-notified when subsequent unrelated
--- transactions are inserted: here, for another EB, whose closure they
--- complete.
+-- transactions are inserted: in this test specifically, it's for another EB
+-- whose closure they complete.
 test_noReNotifyCompletedEbs :: LeiosDbHandle IO -> IO ()
 test_noReNotifyCompletedEbs db = do
   chan <- subscribeEbNotifications db
@@ -694,11 +695,13 @@ test_multipleSlotsSameHash db = do
     let acquiredEbPoints =
           [p | AcquiredEb p _ <- acquiredEbs]
     acquiredEbPoints `setEquals` [point1, point2]
-    -- Insert every tx the EB references, for one of its points — the bytes
-    -- are keyed by the content hash, so the closure completes for both rows.
+    -- Insert every tx the EB references, naming only one of its points. The
+    -- tx bytes belong to the EB, not to a point, so the closure completes for
+    -- both points.
     completed <- rwInsertTxs con point1 (allTxsFor eb)
+    -- The write returns both points ...
     completed `setEquals` [point1, point2]
-    -- Both rows must notify completion, once each.
+    -- ... and notifies each completion, once.
     completionNotifs <- drainNotifications
     let completionPoints =
           [p | AcquiredEbTxs p <- completionNotifs]
@@ -744,6 +747,9 @@ test_txsBeforeBodyDropped db = do
 
 -- | A tx write only fills a tx the body declares, once, at its declared size.
 -- Anything else changes nothing and completes nothing.
+--
+-- Neither the LeiosDB nor this test requires the bytes to hash to the body's
+-- tx hash: the LeiosDB assumes that its caller checked that.
 test_malformedTxWritesDropped :: LeiosDbHandle IO -> IO ()
 test_malformedTxWritesDropped db = do
   let point = mkTestPoint (SlotNo 1) 1
