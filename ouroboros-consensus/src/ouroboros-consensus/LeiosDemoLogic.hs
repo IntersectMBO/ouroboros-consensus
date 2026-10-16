@@ -263,7 +263,7 @@ leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
-    pure $ LF.MsgLeiosBlockTxs p bitmaps x
+    pure $ LF.MsgLeiosBlockTxs x
 
 msgLeiosBlockRequest ::
   IOLike m =>
@@ -824,7 +824,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
       let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
        in LF.MkSomeLeiosFetchJob
             (LF.MsgLeiosBlockTxsRequest p bitmaps)
-            ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
+            ( pure $ \(LF.MsgLeiosBlockTxs txs) ->
                 processLeiosBlockTxs
                   ktracer
                   tracer

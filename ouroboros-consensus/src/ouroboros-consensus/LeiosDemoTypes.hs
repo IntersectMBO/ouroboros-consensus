@@ -1585,14 +1585,11 @@ messageLeiosFetchToObject = \case
       , "numTxs" .= Aeson.Number (fromIntegral $ sum $ map (Bits.popCount . snd) bitmaps)
       , "bitmaps" .= map prettyBitmap bitmaps
       ]
-  MsgLeiosBlockTxs (MkLeiosPoint ebSlot ebHash) bitmaps txs ->
+  MsgLeiosBlockTxs txs ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
       , "numTxs" .= Aeson.Number (fromIntegral (length txs))
       , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
-      , "ebSlot" .= ebSlot
-      , "ebHash" .= prettyEbHash ebHash
-      , "bitmaps" .= map prettyBitmap bitmaps
       ]
   LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"

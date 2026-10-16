@@ -6,11 +6,9 @@
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
-import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure (..), deserialiseFromBytes)
 import Codec.CBOR.Write (toLazyByteString)
-import Data.Bits (bit)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
@@ -19,7 +17,6 @@ import Data.List (isInfixOf, (\\))
 import qualified Data.List as List
 import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word64)
 import LeiosDemoOnlyTestFetch
   ( LeiosFetch
   , SingLeiosFetch (..)
@@ -79,7 +76,7 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
-import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
+import Test.Util.LeiosHash (unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -99,7 +96,7 @@ tests =
         "decodeLeiosEb rejects item counts outside [1, maxTxsPerEb]"
         prop_decodeLeiosEbBoundsItemCount
     , testProperty
-        "MsgLeiosBlockTxs decoder rejects a wrong or too large tx count"
+        "MsgLeiosBlockTxs decoder rejects a too large tx count"
         prop_decodeBlockTxsChecksCount
     , testProperty
         "decodeBitmaps accepts exactly the valid entry lists"
@@ -331,30 +328,26 @@ prop_decodeBlockTxsChecksCount =
     ioProperty $
       conjoin
         <$> sequence
-          [ check "matching count" Nothing (firstTxs 1) 1 1
-          , check "one tx too many" (Just "does not match") (firstTxs 1) 2 2
-          , check "one tx too few" (Just "does not match") (firstTxs 2) 1 1
+          [ check "one tx" Nothing (Just 1) 1
+          , check "maxTxsPerEb txs" Nothing (Just maxTxsPerEb) maxTxsPerEb
+          , check "indefinite maxTxsPerEb txs" Nothing Nothing maxTxsPerEb
           , -- No tx follows the header.
-            check "huge declared count" (Just "exceeds") (firstTxs 1) (2 ^ (40 :: Int)) 0
-          , -- The bitmaps set bits past the last offset an EB can have, so
-            -- they request more txs than an EB can hold. The count matches.
-            check "count over maxTxsPerEb" (Just "exceeds") overLimit overLimitCount overLimitCount
+            check "huge declared count" (Just "exceeds") (Just (2 ^ (40 :: Int))) 0
+          , check "one past maxTxsPerEb" (Just "exceeds") (Just (maxTxsPerEb + 1)) (maxTxsPerEb + 1)
+          , check "indefinite one past maxTxsPerEb" (Just "exceeds") Nothing (maxTxsPerEb + 1)
           ]
  where
-  -- The bitmaps request the first @n@ txs.
-  firstTxs n = [(0, sum [bit (63 - i) | i <- [0 .. n - 1]])]
-  overLimit = [(fromIntegral i, maxBound) | i <- [0 .. (maxTxsPerEb + 63) `div` 64 - 1]]
-  overLimitCount = 64 * length overLimit
-  -- The reply declares @declared@ txs and carries @nTxs@ of them.
-  check :: String -> Maybe String -> [(Word16, Word64)] -> Int -> Int -> IO Property
-  check label expected bitmaps declared nTxs = do
-    let msg =
-          CBOR.encodeListLen 4
+  -- The reply declares @declared@ txs, or is indefinite, and carries @nTxs@ of
+  -- them.
+  check :: String -> Maybe String -> Maybe Int -> Int -> IO Property
+  check label expected declared nTxs = do
+    let txs = mconcat (replicate nTxs (encodeLeiosTx (MkLeiosTx BS.empty)))
+        msg =
+          CBOR.encodeListLen 2
             <> CBOR.encodeWord 4 -- MsgLeiosBlockTxs
-            <> encodeLeiosPoint testPoint
-            <> encodeBitmapEntries bitmaps
-            <> CBOR.encodeListLen (fromIntegral declared)
-            <> mconcat (replicate nTxs (encodeLeiosTx (MkLeiosTx BS.empty)))
+            <> case declared of
+              Just n -> CBOR.encodeListLen (fromIntegral n) <> txs
+              Nothing -> CBOR.encodeListLenIndef <> txs <> CBOR.encodeBreak
     failure <- decodeFailure SingBlockTxs msg
     pure $ counterexample label $ failsWith expected failure
 
@@ -430,15 +423,6 @@ test_decodeBitmapsBoundaries = do
       (BSL.fromStrict . serialize' $ encodeBitmaps entries) of
       Left _ -> False
       Right (rest, _) -> BSL.null rest
-
-testPoint :: LeiosPoint
-testPoint = MkLeiosPoint (SlotNo 0) (unsafeEbHashFromBytes $ BS.replicate 32 0xab)
-
-encodeBitmapEntries :: [(Word16, Word64)] -> CBOR.Encoding
-encodeBitmapEntries entries =
-  CBOR.encodeMapLenIndef
-    <> foldMap (\(i, b) -> CBOR.encodeWord16 i <> CBOR.encodeWord64 b) entries
-    <> CBOR.encodeBreak
 
 -- | @failsWith Nothing@ expects the decoder to accept. @failsWith (Just s)@
 -- expects it to reject with a message that contains @s@, so that a case
