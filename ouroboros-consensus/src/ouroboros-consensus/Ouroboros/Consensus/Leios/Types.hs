@@ -306,15 +306,15 @@ encodeLeiosEb (MkLeiosEb references) =
     references
 
 -- | The inverse of 'encodeLeiosEb', though it also accepts an indefinite-length
--- map. It rejects an endorser block that names no transaction or more than
--- 'maxTxsPerEb'.
+-- map. It rejects an empty map of transaction references, and one with more
+-- than 'maxTxsPerEb'.
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
   references <-
     decodeMapUpTo "LeiosEb" maxTxsPerEb $
       (,) <$> (MkTxHash <$> CBOR.decodeBytes) <*> CBOR.decodeWord32
   when (null references) $
-    fail "LeiosEb: names no transaction"
+    fail "LeiosEb: empty map of transaction references"
   pure $ MkLeiosEb $ V.fromList references
 
 -- | The widest the framing 'encodeLeiosEb' writes around the references can
