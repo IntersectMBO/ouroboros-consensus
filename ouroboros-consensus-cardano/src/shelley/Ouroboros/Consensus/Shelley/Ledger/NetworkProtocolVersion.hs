@@ -17,7 +17,7 @@ data ShelleyNodeToClientVersion
   = -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
     -- New queries introduced: QueryDRepDelegations
     ShelleyNodeToClientVersion15
-  | -- | New queries introduced: QueryStakePoolState
+  | -- | New queries introduced: QueryStakePoolState, QueryLeiosCommittee
     ShelleyNodeToClientVersion16
   deriving (Show, Eq, Ord, Enum, Bounded)
 
