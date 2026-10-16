@@ -1216,15 +1216,15 @@ newtype LeiosTx = MkLeiosTx {cbor :: ByteString}
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
 
--- | Uses cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
+-- | Uses cbor-in-cbor (@#6.24@) to allow for not needing to decode into a 'Tx era'.
 encodeLeiosTx :: LeiosTx -> Encoding
 encodeLeiosTx MkLeiosTx{cbor} =
-  CBOR.encodeBytes cbor
+  CBOR.encodeNestedCborBytes (BSL.fromStrict cbor)
 
--- | Relies on cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
+-- | Relies on cbor-in-cbor (@#6.24@) to allow for not needing to decode into a 'Tx era'.
 decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx =
-  MkLeiosTx <$> CBOR.decodeBytes
+  MkLeiosTx <$> CBOR.decodeNestedCborBytes
 
 hashLeiosTx :: LeiosTx -> TxHash
 hashLeiosTx =
