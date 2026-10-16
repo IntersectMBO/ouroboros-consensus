@@ -50,6 +50,7 @@ module Implementation where
   SlotsPerEpochᶜ                 = 100
   StabilityWindowᶜ               = 10
   RandomnessStabilisationWindowᶜ = 20
+  SlotLengthᶜ                    = 1000 -- one second per slot
   Quorum                         = 1
   NetworkId                      = 0
   SlotsPerKESPeriodᶜ             = 5
