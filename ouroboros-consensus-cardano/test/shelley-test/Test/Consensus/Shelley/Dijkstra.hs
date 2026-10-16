@@ -71,9 +71,7 @@ prop_leiosEbItemChargeCoversEncoder =
     \(ShelleyTx _txid tx) ->
       let wireSize = toInteger $ BS.length (serializeTxForLeios tx)
           chargedSize = toInteger (tx ^. Core.sizeTxF) + perTxOverhead
-       in counterexample
-            ("serializeTxForLeios: " <> show wireSize <> " bytes, charged: " <> show chargedSize)
-            $ wireSize <= chargedSize
+       in wireSize === chargedSize
 
 -- | An endorser block must not launder a phase-2-invalid tx into a valid one:
 -- the flag survives the round trip and is covered by the tx's hash.
