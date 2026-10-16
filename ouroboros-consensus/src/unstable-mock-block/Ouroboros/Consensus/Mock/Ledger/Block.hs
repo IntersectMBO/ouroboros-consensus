@@ -77,6 +77,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash, HashAlgorithm, SHA256, ShortHash)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.BaseTypes (ProtVer (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), deserialise, serialise)
@@ -90,7 +91,7 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.TypeLits (KnownNat)
-import LeiosDemoTypes (LeiosClosureError (..), ProtVerParity (..))
+import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -159,6 +160,9 @@ instance
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
   assumeValidatedClosureTx _ _ _ = ValidatedSimpleGenTx
+
+  -- No protocol versions here, any works as long as it is consistent
+  leiosCurrentProtVer _ _ = ProtVer (toEnum 12) 0
 
 instance HasLeiosVoting (SimpleBlock' c ext ext')
 
