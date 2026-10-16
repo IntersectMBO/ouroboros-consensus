@@ -49,8 +49,7 @@ sql_schema_gc =
 -- over ATTACH.
 --
 -- Left out, since EBs land here complete and are never collected:
--- @ebs.missingTxCount@, @ebs.status@ and the GC indexes. Files created
--- before the split still have some of them; nothing reads them.
+-- @ebs.missingTxCount@, @ebs.status@ and the GC indexes.
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 
@@ -81,7 +80,8 @@ ebsTable extraColumns =
 -- closure touches one contiguous key range, and a tx shared by two EBs is
 -- stored twice, deliberately. A row is allocated as a @zeroblob@ of the
 -- declared size when the body arrives and filled in place when the tx does
--- (@filled = 1@); it never changes size, so pages never split.
+-- (@filled = 1@). It never changes size, so SQLite overwrites it in place,
+-- without moving rows between B-tree pages.
 sharedTables :: [String]
 sharedTables =
   [ "CREATE TABLE IF NOT EXISTS ebTxs ("
@@ -94,9 +94,10 @@ sharedTables =
   , "CREATE TABLE IF NOT EXISTS ebTxBytes ("
   , "  ebHashBytes BLOB NOT NULL,"
   , "  txOffset INTEGER NOT NULL,"
-  , -- Before the blob, so probing it never touches overflow pages.
-    "  filled INTEGER NOT NULL DEFAULT 0,"
-  , "  txBytes BLOB NOT NULL,"
+  , "  filled INTEGER NOT NULL DEFAULT 0,"
+  , -- The blob is the rightmost column, so probing @filled@ never touches
+    -- overflow pages.
+    "  txBytes BLOB NOT NULL,"
   , "  PRIMARY KEY (ebHashBytes, txOffset)"
   , ");"
   ]
