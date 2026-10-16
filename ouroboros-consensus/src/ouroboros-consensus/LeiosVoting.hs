@@ -40,12 +40,14 @@ import LeiosDemoTypes
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosSigningKey
+  , ProtVerParity
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
   , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
+  , protVerParity
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
@@ -267,7 +269,7 @@ runLeiosVoting ::
   ChainDB m blk ->
   SystemTime m ->
   LeiosDbHandle m ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosVoteState m ->
   [LeiosSigningKey] ->
   m ()
@@ -457,7 +459,7 @@ validateEbClosure ::
   ) =>
   LedgerConfig blk ->
   LeiosDbReader m ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   -- | Read the ledger tables the closure's txs need, as
   -- 'resolveAndApplyLeiosClosure' does on the apply path.
   (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
@@ -476,30 +478,32 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
       -- internal to the chain.
       let keys = foldMap (getTransactionKeySets . snd) closure
       values <- resolveValues keys
-      -- Determine which txs we can just reapply (the cache hits)
-      decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
       -- TODO: Temporarily use the Mempool API until we have a dedicated one
       let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
-      goValidate st0 decided 0 0 []
+          parity = protVerParity $ leiosCurrentProtVer lcfg st0
+      -- Determine which txs we can just reapply (the cache hits)
+      decided <- withLookupTx txCache $ \look -> mapM (decide parity look) closure
+      goValidate parity st0 decided 0 0 []
  where
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
   slot = pointSlotNo point
 
   -- NOTE: The lookup licenses 'assumeValidatedClosureTx': the tag is the
-  -- evidence that this tx was validated before. The token itself is built in
-  -- 'goValidate' and nowhere else, against the state it is reapplied to.
-  decide look (txh, tx) =
+  -- evidence that this tx was validated before, under the protocol version we
+  -- validate under now. The token itself is built in 'goValidate' and nowhere
+  -- else, against the state it is reapplied to.
+  decide parity look (txh, tx) =
     look txh >>= \case
-      Just Right{} -> pure (txh, Right tx)
+      Just (Right validatedUnder) | validatedUnder == parity -> pure (txh, Right tx)
       _ -> pure (txh, Left tx)
 
   -- Apply or reapply txs, accumulating the ones we newly validated so the cache
   -- is written once for the whole closure rather than once per tx.
-  goValidate _ [] !reapplied !applied newly = do
-    recordValidated newly
+  goValidate parity _ [] !reapplied !applied newly = do
+    recordValidated parity newly
     pure $ EbClosureValid reapplied applied
-  goValidate !st ((txh, decision) : rest) !reapplied !applied newly =
+  goValidate parity !st ((txh, decision) : rest) !reapplied !applied newly =
     case decision of
       Right tx ->
         -- Already validated once, so only the state-dependent checks re-run. A
@@ -507,8 +511,8 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
         -- about the static checks, so the tx keeps the tag it already has.
         let vtx = assumeValidatedClosureTx lcfg slot st tx
          in case runExcept $ reapplyTx lcfg slot vtx st of
-              Left err -> abandon newly err
-              Right st' -> goValidate st' rest (reapplied + 1) applied newly
+              Left err -> abandon parity newly err
+              Right st' -> goValidate parity st' rest (reapplied + 1) applied newly
       Left tx ->
         -- 'Intervene', despite the mempool's framing of it as a courtesy to
         -- local clients. What it actually selects is whether the era's applyTx
@@ -523,24 +527,24 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
         -- 'Intervene' leaves the flag alone and lets the mismatch escape as an
         -- error, so we fail closed on precisely those txs.
         case runExcept $ applyTx lcfg Intervene slot tx st of
-          Left err -> abandon newly err
+          Left err -> abandon parity newly err
           Right (st', _vtx) ->
-            goValidate (applyDiffs st st') rest reapplied (applied + 1) (txh : newly)
+            goValidate parity (applyDiffs st st') rest reapplied (applied + 1) (txh : newly)
 
   -- A closure that fails part-way still validated everything before the failure,
   -- against a real ledger state, so those tags are kept: the work holds
   -- regardless of the tx that sank the EB.
-  abandon newly err = do
-    recordValidated newly
+  abandon parity newly err = do
+    recordValidated parity newly
     pure $ EbClosureInvalid err
 
   -- One lock acquisition per closure. Order is irrelevant -- each entry is an
   -- independent tag -- so the accumulator is not reversed.
-  recordValidated newly
+  recordValidated parity newly
     | null newly = pure ()
     | otherwise =
         withLockedInsertAppliedTx txCache $ \w0 step ->
-          foldM (\w txh -> step w txh ()) w0 newly
+          foldM (\w txh -> step w txh parity) w0 newly
 
 -- | The 'RbHash' of the currently-selected chain's tip iff its most
 -- recently applied announcing header announces the given EB and is

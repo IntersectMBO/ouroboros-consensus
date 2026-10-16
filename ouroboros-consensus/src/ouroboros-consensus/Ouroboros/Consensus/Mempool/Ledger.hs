@@ -24,7 +24,6 @@ import Ouroboros.Consensus.Ledger.Abstract
   , HasLedgerTables (projectLedgerTables, withLedgerTables)
   , KeysMK (KeysMK, getKeysMK)
   , LedgerConfig
-  , LedgerState
   , LedgerTables (LedgerTables, getLedgerTables)
   , TickedLedgerState
   , TxIn

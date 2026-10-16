@@ -22,6 +22,7 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
   , RbHash (..)
   , SerializedEbBody
   , TxHash
@@ -72,6 +73,9 @@ tests =
         "validateEbClosure"
         [ testProperty "a fresh closure is validated in full" prop_freshClosureFullyApplied
         , testProperty "a second look reapplies instead" prop_secondLookReapplies
+        , testProperty
+            "a validation under the other protocol version is redone"
+            prop_otherProtVerRevalidates
         , testProperty "records the txs validated before a failure" prop_recordsValidatedBeforeFailure
         , testProperty "a tx after the failure is not recorded" prop_stopsAtFirstFailure
         ]
@@ -105,6 +109,17 @@ prop_secondLookReapplies =
   forAllValidClosure 4 $ \acquired txs -> ioProperty $ do
     (_, _, second) <- runValidateTwice acquired txs
     pure $ second === Valid (length txs) 0
+
+-- | The mock ledger validates under an even protocol version, so tags left
+-- under an odd one must send every tx back through the full 'applyTx'.
+prop_otherProtVerRevalidates :: Property
+prop_otherProtVerRevalidates =
+  forAllValidClosure 4 $ \acquired txs -> ioProperty $
+    withHarness acquired txs $ \h -> do
+      withLockedInsertAppliedTx (hCache h) $ \w0 step ->
+        foldM (\w tx -> step w (txHashOf tx) OddProtVer) w0 txs
+      (verdict, _) <- validateOnce h txs
+      pure $ verdict === Valid 0 (length txs)
 
 -- | A closure that fails part-way must still leave everything it validated
 -- before the failure recorded: that work was done against a real ledger state
@@ -189,7 +204,7 @@ runValidateTwice acquired txs = withHarness acquired txs $ \h -> do
 
 data Harness = Harness
   { hReader :: LeiosDbReader IO
-  , hCache :: LeiosTxCache IO () () SerializedEbBody
+  , hCache :: LeiosTxCache IO () ProtVerParity SerializedEbBody
   , hPoint :: LeiosPoint
   }
 
@@ -212,7 +227,7 @@ validateOnce Harness{hReader, hCache, hPoint} txs = do
   pure (summarise verdict, tagged)
  where
   isValidated = \case
-    Just (Right ()) -> True
+    Just Right{} -> True
     _ -> False
 
 -- | An in-memory LeiosDb holding the closure, and a cache that has seen the

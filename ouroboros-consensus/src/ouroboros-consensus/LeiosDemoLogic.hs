@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -20,7 +21,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (foldM, forM_, unless, when)
+import Control.Monad (foldM, forM_, guard, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -87,6 +88,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
+  , ProtVerParity (..)
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
@@ -176,7 +178,7 @@ traceException tracer toTrace action =
 -- bodies\/txs are discarded; they can be useful for debugging/etc.
 recordAnnouncementInTxCache ::
   IOLike m =>
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   -- | The announcing block's hash.
   RbHash ->
   LeiosPoint ->
@@ -193,7 +195,7 @@ recordAnnouncementInTxCache txCache rbh point =
 recordForgedEbAndClosureInTxCache ::
   Monad m =>
   Tracer m TraceLeiosKernel ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   RbHash ->
   Leios.ForgedLeiosEb ->
   m ()
@@ -212,7 +214,7 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
     traceWith tracer $
       TraceLeiosBodyHits point summary (Leios.ibsTxsInEb summary - Leios.ibsAcquired summary) 0
   withLockedInsertAppliedTx txCache $ \w0 step ->
-    foldM (\w (txh, _sz) -> step w txh ()) w0 (leiosEbTxs eb)
+    foldM (\w (txh, _sz) -> step w txh forgedEb.txsProtVerParity) w0 (leiosEbTxs eb)
  where
   point = forgedEb.point
   eb = forgedEb.body
@@ -751,13 +753,13 @@ nextLeiosFetchClientCommand ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosDbWriter m ->
   -- | For reporting each arriving EB's age (see 'processLeiosBlock').
   SystemTime m ->
   -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
   ( IntMap.IntMap (TxHash, BytesSize) ->
-    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString, ProtVerParity)
   ) ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
@@ -854,11 +856,11 @@ data LeiosBlockTxsSource pid
   | -- | Carries the forged EB's point and body (so the tx hashes come from the
     -- body's 'leiosEbTxs', aligned by position with the closure bytes, rather
     -- than being re-derived) and the closure bytes.
-    ForgedTxs !LeiosPoint !LeiosEb !(V.Vector LeiosTx)
+    ForgedTxs !LeiosPoint !LeiosEb !(V.Vector LeiosTx) !ProtVerParity
   | -- | Carries an EB's txs that 'processLeiosBlock' found in our local mempool
     -- (so it removed them from the fetch job set), already paired with their
     -- (known) tx hashes, to be ingested applied.
-    MempoolTxs !LeiosPoint !(IntMap.IntMap (TxHash, BS.ByteString))
+    MempoolTxs !LeiosPoint !(IntMap.IntMap (TxHash, BS.ByteString)) !ProtVerParity
 
 -- | The age of an EB on arrival: the wall-clock elapsed from its recorded oldest
 -- announcement-slot onset (see 'Leios.ebStateOnset') to @now@, or 'Nothing' if
@@ -879,7 +881,7 @@ processLeiosBlock ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosDbWriter m ->
   -- | For reporting the EB's age on arrival (now minus its recorded onset).
   SystemTime m ->
@@ -888,7 +890,7 @@ processLeiosBlock ::
   -- plus the mempool-found txs' bytes (which 'processLeiosBlock' ingests itself,
   -- as its last step). See 'noMempoolPull' for the forge/test no-op.
   ( IntMap.IntMap (TxHash, BytesSize) ->
-    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString, ProtVerParity)
   ) ->
   LeiosBlockSource pid ->
   LeiosEb ->
@@ -963,7 +965,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- only novelty check we need: keyed off the lock, two peers delivering the same
   -- body cannot both write it (the second sees 'novel = False'), so we neither
   -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
-  (shouldPersist, bodyClass, mempoolIngest, missedBoth, fills) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  (shouldPersist, bodyClass, mbMempoolTxs, missedBoth, fills) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.outstandingPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -1005,7 +1007,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 (True, _) -> fetchArrivalEvicted ebBytesSize'
                 (_, Just{}) -> fetchArrivalInvalid ebBytesSize'
                 _ -> fetchArrivalExtra ebBytesSize'
-            , IntMap.empty
+            , Nothing
             , IntMap.empty
             , []
             )
@@ -1049,7 +1051,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- thing this function does); none of them become fetch jobs.
         let MkLeiosEb ebTxs = eb
             fullTxSet = IntMap.fromList (zip [0 ..] (V.toList ebTxs))
-        (notInMempool, mempoolHits) <- pullFromMempool fullTxSet
+        (notInMempool, mempoolHits, parity) <- pullFromMempool fullTxSet
         -- The fetch set is everything the mempool cannot supply. The cache is
         -- NOT consulted for it: it records tx hashes we have seen, but bytes
         -- are owned per (ebHash, txOffset) now, so a hash seen in another EB
@@ -1057,9 +1059,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- suppress a fetch is how a closure never completes.
         let mempoolIngest =
               IntMap.mapMaybeWithKey
-                (\_ (txh, _sz) -> (,) txh <$> Map.lookup txh mempoolHits)
+                (\_ (txh, _sz) -> (txh,) <$> Map.lookup txh mempoolHits)
                 (IntMap.difference fullTxSet notInMempool)
             missedBoth = notInMempool
+            mbMempoolTxs = MempoolTxs point mempoolIngest parity <$ guard (not (IntMap.null mempoolIngest))
         -- Report the body's cache+mempool hit picture: the cache summary, the full
         -- mempool-resident count, and how many txs were in neither (so the combined
         -- hit rate is @(txsInEb - missedBoth) / txsInEb@, avoiding double counting).
@@ -1078,7 +1081,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- has been enqueued. Until then the body reads as not-held, so a
         -- concurrent offer may redundantly re-fetch it -- accepted, and simpler
         -- than an in-flight state that a lost/cancelled write would have to undo.
-        pure (outstandingCleaned, (True, bodyClass, mempoolIngest, missedBoth, fills))
+        pure (outstandingCleaned, (True, bodyClass, mbMempoolTxs, missedBoth, fills))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
@@ -1151,7 +1154,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- Every mempool hit is ingested for THIS EB: bytes are per (ebHash, offset),
   -- so "the tx is already persisted" (for some other EB) no longer excuses
   -- skipping the write. Also what marks them Applied in the cache.
-  unless (IntMap.null mempoolIngest) $
+  forM_ mbMempoolTxs $
     processLeiosBlockTxs
       ktracer
       tracer
@@ -1159,7 +1162,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       txCache
       writer
       systemTime
-      (MempoolTxs point mempoolIngest)
   -- The correctly-hashed EB body has been processed by this point. So now we
   -- can punish the peer if it the EB isn't what it offered or should not have
   -- been offered.
@@ -1175,30 +1177,30 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
 noMempoolPull ::
   Applicative m =>
   IntMap.IntMap (TxHash, BytesSize) ->
-  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
-noMempoolPull misses = pure (misses, Map.empty)
+  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString, ProtVerParity)
+noMempoolPull misses = pure (misses, Map.empty, EvenProtVer)
 
 -- | Build a 'processLeiosBlock' mempool-pull from a read of the mempool's Leios
 -- tx index (keyed by 'TxHash') and an era-specific conversion of a found tx to
--- its 'LeiosTx' bytes. A miss is removed from the still-to-fetch set only if it
+-- its 'LeiosTx' bytes and the protocol version it was validated under. A miss is removed from the still-to-fetch set only if it
 -- is present in the index /and/ converts (so a tx we can't turn into bytes is
 -- still fetched from peers, never lost). Polymorphic in the index's value type so
 -- this stays blk-agnostic.
 mkMempoolPull ::
   Monad m =>
   -- | Read the mempool's current Leios tx index.
-  m (Map TxHash vtx) ->
+  m (Map TxHash vtx, ProtVerParity) ->
   -- | The 'LeiosTx' bytes of a found tx, if it has them.
   (vtx -> Maybe BS.ByteString) ->
   IntMap.IntMap (TxHash, BytesSize) ->
-  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString, ProtVerParity)
 mkMempoolPull readIndex toBytes misses = do
-  idx <- readIndex
+  (idx, parity) <- readIndex
   let missHashes = Set.fromList (map fst (IntMap.elems misses))
       hits = Map.mapMaybe toBytes (Map.restrictKeys idx missHashes)
       hitHashes = Map.keysSet hits
       stillMissing = IntMap.filter (\(h, _sz) -> not (Set.member h hitHashes)) misses
-  pure (stillMissing, hits)
+  pure (stillMissing, hits, parity)
 
 -----
 
@@ -1403,14 +1405,14 @@ processLeiosBlockTxs ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosDbWriter m ->
   -- | For reporting each completed closure's age on arrival.
   SystemTime m ->
   LeiosBlockTxsSource pid ->
   m ()
 processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer systemTime source = case source of
-  ForgedTxs _point eb txs -> do
+  ForgedTxs _point eb txs _parity -> do
     now <- systemTimeCurrent systemTime
     -- Ingest the whole closure (TODO even though we might already have some of
     -- it).
@@ -1426,7 +1428,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
             zip3 [0 ..] (V.toList (leiosEbTxs eb)) (V.toList (V.map cbor txs))
         ]
     void $ MVar.tryPutMVar readyVar ()
-  MempoolTxs _point hits -> do
+  MempoolTxs _point hits _parity -> do
     now <- systemTimeCurrent systemTime
     -- Txs found in our local mempool (so already-known-valid): ingest applied,
     -- using the hashes we already have. No peer accounting, no arrival telemetry.
@@ -1563,10 +1565,15 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
       ReceivedTxsFrom{} ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
           foldM (\w (_off, txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
-      _ -> do
-        withLockedInsertAppliedTx txCache $ \w0 step ->
-          foldM (\w (_off, txh, _bs) -> step w txh ()) w0 toIngest
-        pure mempty
+      ForgedTxs _ _ _ parity ->
+        insertApplied [(txh, parity) | (_off, txh, _bs) <- toIngest]
+      MempoolTxs _ hits parity ->
+        insertApplied [(txh, parity) | (txh, _bs) <- IntMap.elems hits]
+
+  insertApplied validated = do
+    withLockedInsertAppliedTx txCache $ \w0 step ->
+      foldM (\w (txh, parity) -> step w txh parity) w0 validated
+    pure mempty
 
   onDurable = whenReceivedTxs $ \peerId req -> adjustOutstanding $ completeTxRequest peerId req
 
@@ -1578,8 +1585,8 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
 
   -- The EB whose rows this call fills; every source names it.
   ingestPoint = case source of
-    ForgedTxs point _ _ -> point
-    MempoolTxs point _ -> point
+    ForgedTxs point _ _ _ -> point
+    MempoolTxs point _ _ -> point
     ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point _) _ -> point
 
 -----
@@ -1783,7 +1790,7 @@ processAnnouncementCentrally ::
   Tracer m TraceLeiosKernel ->
   MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
   (MVar m (LeiosOutstanding pid), MVar m ()) ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosDbWriter m ->
   Maybe peer ->
   AnnouncementSource ->
@@ -2403,7 +2410,7 @@ onForgedLeiosEb ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   LeiosDbWriter m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
@@ -2442,6 +2449,11 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     txCache
     writer
     systemTime
-    (ForgedTxs forgedEb.point forgedEb.body $ V.fromList $ map (MkLeiosTx . snd) $ forgedEb.txClosure)
+    ( ForgedTxs
+        forgedEb.point
+        forgedEb.body
+        (V.fromList $ map (MkLeiosTx . snd) forgedEb.txClosure)
+        forgedEb.txsProtVerParity
+    )
   traceWith kernelTracer $
     TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}

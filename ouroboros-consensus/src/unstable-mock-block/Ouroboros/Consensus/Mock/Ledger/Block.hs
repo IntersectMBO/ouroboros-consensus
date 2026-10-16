@@ -90,7 +90,7 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.TypeLits (KnownNat)
-import LeiosDemoTypes (LeiosClosureError (..))
+import LeiosDemoTypes (LeiosClosureError (..), ProtVerParity (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
