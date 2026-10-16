@@ -50,6 +50,7 @@ import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
+import LeiosDemoTypes (ProtVerParity)
 import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
@@ -229,7 +230,7 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , getLeiosTxIndex :: STM m (Map TxHash (Validated (GenTx blk)))
+  , getLeiosTxIndex :: STM m (Map TxHash (Validated (GenTx blk)), ProtVerParity)
   -- ^ The current mempool contents indexed by Leios EB-tx hash: lets the Leios
   -- fetch logic find an EB's referenced txs in our mempool by hash. Empty in a
   -- non-Leios setup (see 'ResolveLeiosBlock'\''s @leiosTxHashOfGenTx@).
