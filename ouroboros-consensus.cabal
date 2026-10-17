@@ -1147,6 +1147,7 @@ benchmark LeiosDB-bench
     base,
     bytestring,
     cardano-slotting,
+    containers,
     contra-tracer,
     io-classes:si-timers,
     ouroboros-consensus,
