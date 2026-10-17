@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , modifyTVar
   , newTQueueIO
   , newTVarIO
+  , orElse
   , readTQueue
   , readTVarIO
   , writeTQueue
@@ -35,12 +36,20 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import qualified Data.Foldable as Foldable
+import Data.Maybe (fromMaybe)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block (Header, SlotNo (..), blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( newAnnounceState
+  , onValidAnnouncement
+  , pruneAnnounceState
+  )
+import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog, nextNotifyLog, notifyLogStart)
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
@@ -49,6 +58,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancElectionId)
+  , ValidAnnouncement (..)
   , maxAnnouncementAgeRecv
   , mkAnnouncingHeader
   )
@@ -126,6 +136,8 @@ tests =
     , testCase "a peer that connects later receives the announcement, until it is too old to relay" $ do
         (_, downs) <- relay 400 [[announce someAnnouncingBlock]] [0, 10, 350]
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
+    , testCase "the node does not relay an announcement of an election pruned while validating it" $
+        prunedWhileValidating @?= []
     ]
 
 announcements :: PeerOutcome -> [Header Blk]
@@ -304,6 +316,30 @@ honestViolations = snd . Foldable.foldl' step (Announcements.empty, [])
 
 topLevelConfig :: TopLevelConfig Blk
 topLevelConfig = singleNodeLeiosTestConfig ledgerConfig k
+
+{-------------------------------------------------------------------------------
+  The node's announcement state on its own
+-------------------------------------------------------------------------------}
+
+-- | What the node relays of a valid announcement of an election that its
+-- announcement state pruned while the announcement was validated.
+prunedWhileValidating :: [()]
+prunedWhileValidating = runSimOrThrow $ do
+  notifyLog <- newNotifyLog
+  st <- newAnnounceState notifyLog
+  atomically $ pruneAnnounceState st (blockSlot someAnnouncingBlock + 1)
+  atomically $ onValidAnnouncement st valid anc
+  atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
+ where
+  anc =
+    fromMaybe (error "prunedWhileValidating: an announcement") $
+      mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
+  valid =
+    MkValidAnnouncement
+      { announcementOnset = RelativeTime 1
+      , announcementAge = 0
+      , announcementStaleness = FreshOCIN
+      }
 
 {-------------------------------------------------------------------------------
   Fixtures

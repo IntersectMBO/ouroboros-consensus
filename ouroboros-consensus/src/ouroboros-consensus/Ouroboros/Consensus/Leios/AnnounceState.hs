@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , appendNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (OCINStaleness (FreshOCIN))
+import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot))
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancElectionId)
@@ -44,6 +45,8 @@ import Ouroboros.Consensus.Util.IOLike
 -- | The node's announcements, per election, and the log it relays them in.
 data AnnounceState m blk = MkAnnounceState
   { announced :: !(StrictTVar m (Announcements.State (AnnouncingHeader blk)))
+  , prunedTo :: !(StrictTVar m SlotNo)
+  -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
   }
 
@@ -51,19 +54,22 @@ newAnnounceState ::
   (IOLike m, NoThunks (Header blk)) =>
   NotifyLog m blk ->
   m (AnnounceState m blk)
-newAnnounceState notifyLog = MkAnnounceState <$> newTVarIO Announcements.empty <*> pure notifyLog
+newAnnounceState notifyLog =
+  MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
 
 -- | Accept a valid announcement, and relay it if it is new and fresh enough.
 --
--- An announcement signed by a revoked operational certificate is neither.
+-- An announcement signed by a revoked operational certificate is neither, and
+-- one of an election already pruned, while it was validated, is not new.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
   ValidAnnouncement ->
   AnnouncingHeader blk ->
   STM m ()
-onValidAnnouncement st valid anc =
-  when (announcementStaleness valid == FreshOCIN) $ do
+onValidAnnouncement st valid anc = do
+  pruned <- readTVar (prunedTo st)
+  when (announcementStaleness valid == FreshOCIN && electionSlot (ancElectionId anc) >= pruned) $ do
     seen <- readTVar (announced st)
     case Announcements.insert @_ @Void (ancElectionId anc) anc seen of
       Left _repeatedOrThird -> pure ()
@@ -78,5 +84,6 @@ pruneAnnounceState ::
   AnnounceState m blk ->
   SlotNo ->
   STM m ()
-pruneAnnounceState st immTipSlot =
+pruneAnnounceState st immTipSlot = do
   modifyTVar (announced st) (snd . Announcements.prune immTipSlot)
+  writeTVar (prunedTo st) immTipSlot
