@@ -21,6 +21,9 @@ module Ouroboros.Consensus.Protocol.Praos
   , LeiosOnly (..)
   , VoidUnlessLeios
   , WhenLeios
+  , PerasOnly (..)
+  , VoidUnlessPeras
+  , WhenPeras
   , Praos
   , PraosCrypto
   , PraosLedgerView
@@ -84,6 +87,10 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   )
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -145,6 +152,29 @@ instance TypeSwitch (LeiosOnly (Praos c)) where
   typeSwitchL = PraosLacksLeios (PraosLacksLeios ())
   typeSwitchR = PraosLacksLeios ()
 
+-- | Praos is not Peras, so it holds the left alternative.
+newtype instance PerasOnly (Praos c) a b = PraosLacksPeras a
+  deriving (Eq, Generic, Show)
+
+deriving anyclass instance NoThunks a => NoThunks (PerasOnly (Praos c) a b)
+
+instance Functor (PerasOnly (Praos c) a) where
+  fmap _ (PraosLacksPeras a) = PraosLacksPeras a
+
+instance () ~ a => Applicative (PerasOnly (Praos c) a) where
+  pure _ = PraosLacksPeras ()
+  PraosLacksPeras () <*> PraosLacksPeras () = PraosLacksPeras ()
+
+instance Foldable (PerasOnly (Praos c) a) where
+  foldMap _ (PraosLacksPeras _) = mempty
+
+instance Traversable (PerasOnly (Praos c) a) where
+  traverse _ (PraosLacksPeras a) = pure (PraosLacksPeras a)
+
+instance TypeSwitch (PerasOnly (Praos c)) where
+  typeSwitchL = PraosLacksPeras (PraosLacksPeras ())
+  typeSwitchR = PraosLacksPeras ()
+
 {-------------------------------------------------------------------------------
   Configuration
 -------------------------------------------------------------------------------}
@@ -173,6 +203,9 @@ instance PraosCrypto c => LeiosProtocol (Praos c) where
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 
+instance PraosCrypto c => PerasProtocol (Praos c) where
+  getPerasLedgerView = defaultGetPerasLedgerView
+
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PolyPraosState (Praos c)
   type IsLeader (Praos c) = PraosIsLeader c
@@ -200,6 +233,7 @@ instance Views.ForecastToPolyPraosLedgerView (Praos c) era where
       , Views.plvMaxBodySize = ccMaxBBSize cc
       , Views.plvProtocolVersion = ccProtocolVersion cc
       , Views.plvLeios = PraosLacksLeios ()
+      , Views.plvPeras = PraosLacksPeras ()
       }
    where
     cc = SL.forecastChainChecks @t @era f
@@ -231,6 +265,7 @@ instance TranslateProto (TPraos c) (Praos c) era where
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
       , Views.plvLeios = PraosLacksLeios ()
+      , Views.plvPeras = PraosLacksPeras ()
       }
 
   translateChainDepState _ tpState =

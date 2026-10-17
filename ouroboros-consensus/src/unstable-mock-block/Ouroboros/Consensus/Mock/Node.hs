@@ -28,6 +28,7 @@ import Ouroboros.Consensus.Mock.Node.Serialisation ()
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Peras.Protocol (PerasProtocol)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Util.RedundantConstraints
@@ -79,6 +80,7 @@ instance
   , ChainDepStateSupportsPeras
       (Ticked (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext))))
   , LeiosProtocol (BlockProtocol (SimpleBlock SimpleMockCrypto ext))
+  , PerasProtocol (BlockProtocol (SimpleBlock SimpleMockCrypto ext))
   ) =>
   RunNode (SimpleBlock SimpleMockCrypto ext)
 
