@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , CompletedEbs
+  , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -36,6 +37,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEb
   , LeiosPoint
   , TxHash
+  , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
@@ -113,8 +115,23 @@ data LeiosDbWriter m = LeiosDbWriter
   -- be this same EB which got completed.
   , writeTxs ::
       HasCallStack =>
-      [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
+  --
+  -- No backend uses the point's slot: the tx bytes belong to the EB body,
+  -- which every point with the same EB hash shares.
+  --
+  -- Each transaction is given by its offset into the EB body and its bytes.
+  --
+  -- ASSUMPTION: the EB body must already be written, otherwise the txs are dropped.
+  --
+  -- ASSUMPTION: each transaction's bytes hash to the tx hash the EB body lists
+  -- at its offset. The implementations do not check this.
+  --
+  -- A transaction may be dropped by the implementation if:
+  -- - is not in the body,
+  -- - or it is already stored,
+  -- - or its size is not the declared one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -122,9 +139,8 @@ data LeiosDbWriter m = LeiosDbWriter
 --
 -- 'await' rethrows whatever the write threw, in the awaiting thread, as a
 -- 'LeiosDbException' naming the write and the site that submitted it.
--- Awaiting twice is fine. Not awaiting discards the failure along with the
--- result: collect promises and 'awaitAll' them instead, unless the write's
--- fate genuinely does not matter.
+-- Awaiting twice is fine. Not awaiting does not discard a failure: a failed
+-- write is not survivable and stops the writer either way.
 newtype Promise m a = Promise {await :: m a}
   deriving stock Functor
 

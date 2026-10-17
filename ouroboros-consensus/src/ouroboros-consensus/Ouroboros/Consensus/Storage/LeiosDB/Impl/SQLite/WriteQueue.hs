@@ -10,7 +10,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   , WriteQueue (..)
   , submitJob
   , describeJob
-  , failJob
   , maxJobsBetweenMaintenance
   , writerQueueDepth
   ) where
@@ -22,9 +21,10 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , StrictTVar
   , isFullTBQueue
   , newEmptyTMVarIO
-  , putTMVar
+  , orElse
   , readTMVar
   , readTVar
+  , retry
   , writeTBQueue
   )
 import Control.Exception (SomeException, throwIO)
@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Leios.Types
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxOffset
   , leiosEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
@@ -76,8 +76,10 @@ data WriteJob
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | WriteTxs
-      -- | txs with their bytes
-      ![(TxHash, ByteString)]
+      -- | the EB the txs belong to
+      !LeiosPoint
+      -- | txs with their bytes, by offset into the EB's body
+      ![(TxOffset, ByteString)]
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
@@ -100,13 +102,13 @@ data WriteJob
     GcMark
       -- | the GC frontier slot
       !SlotNo
-      -- | where the worker puts the result
-      !(WriteResult ())
+      -- | where the worker puts the number of 'ebs' rows marked
+      !(WriteResult Int)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
 
-type WriteResult a = StrictTMVar IO (Either SomeException a)
+type WriteResult a = StrictTMVar IO a
 
 -- | The writer's submission side: the job queue, and -- once the worker has
 -- stopped -- the exception every submission throws instead of queueing.
@@ -116,7 +118,8 @@ data WriteQueue = WriteQueue
   , wqTracer :: !(Tracer IO TraceLeiosDb)
   }
 
--- | Hand a job to the writer; the 'Promise' waits for its result. Blocks
+-- | Hand a job to the writer; the 'Promise' waits for its result, or throws
+-- the worker's parting exception if the worker stopped before serving it. Blocks
 -- only while the queue is full, which is the backpressure -- and which is
 -- traced, since it is the one thing about the writer that no other trace
 -- reports: every producer is now waiting on it.
@@ -160,7 +163,12 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
       -- no continuation yet to carry one.
       join (atomically park)
         `onException` traceWith wqTracer (TraceLeiosDbWriteAbandoned (describeJob job))
-  pure $ Promise (either (throwIO . wrap) pure =<< atomically (readTMVar resultVar))
+  pure $
+    Promise $
+      join $
+        atomically $
+          (pure <$> readTMVar resultVar)
+            `orElse` (readTVar wqSealed >>= maybe retry (pure . throwIO . wrap))
 
 -- | Name a job for 'LeiosDbWriteException': what it is and what it is about,
 -- never its payload.
@@ -168,27 +176,12 @@ describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
-
--- | Publish the worker's parting exception as a queued job's result.
-failJob :: SomeException -> WriteJob -> IO ()
-failJob cause = \case
-  WriteEbPoint _ _ rv -> put rv
-  WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
-  Flush rv -> put rv
-  PinEb _ rv -> put rv
-  MarkCopied _ rv -> put rv
-  GcMark _ rv -> put rv
-  Shutdown rv -> put rv
- where
-  put :: WriteResult a -> IO ()
-  put rv = atomically $ putTMVar rv (Left cause)
 
 -- | How many queued jobs the writer serves back-to-back before it takes a
 -- turn of maintenance anyway.
