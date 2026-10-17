@@ -335,6 +335,8 @@ data ValidAnnouncement = MkValidAnnouncement
 -- Comfortably less than 'maxAnnouncementAgeRecv', so that an announcement an
 -- honest node relays just before this bound still arrives within its
 -- downstream peer's larger bound, even after transmission time and clock skew.
+-- It is also far younger than any peer's immutable tip, so no downstream peer
+-- rejects a relayed announcement as 'SlotBeforeImmutableTip'.
 --
 -- TODO magic number; should be a config/RunNode option
 maxAnnouncementAgeSend :: NominalDiffTime
