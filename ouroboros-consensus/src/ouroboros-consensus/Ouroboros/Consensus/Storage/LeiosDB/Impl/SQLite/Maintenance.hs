@@ -274,7 +274,7 @@ defaultGcBatchSize = 4
 -- as a 'GcMark' job on the writer (see 'gcMark').
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
-  await =<< submitJob writeQueue (GcMark gcSlot)
+  void . await =<< submitJob writeQueue (GcMark gcSlot)
 
 -- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
 -- hash all of whose announcements are older than the given slot and not
