@@ -139,9 +139,8 @@ data LeiosDbWriter m = LeiosDbWriter
 --
 -- 'await' rethrows whatever the write threw, in the awaiting thread, as a
 -- 'LeiosDbException' naming the write and the site that submitted it.
--- Awaiting twice is fine. Not awaiting discards the failure along with the
--- result: collect promises and 'awaitAll' them instead, unless the write's
--- fate genuinely does not matter.
+-- Awaiting twice is fine. Not awaiting does not discard a failure: a failed
+-- write is not survivable and stops the writer either way.
 newtype Promise m a = Promise {await :: m a}
   deriving stock Functor
 

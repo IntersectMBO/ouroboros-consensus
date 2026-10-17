@@ -198,8 +198,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
     --
     -- A sealed queue refuses the job. Nothing is left to close then: the
     -- worker closes the connections on every exit path before it seals,
-    -- and whatever killed it already reached the awaiter of the write
-    -- that failed.
+    -- and whatever killed it is already taking the node down through the
+    -- link.
     try (submitJob writeQueue Shutdown) >>= \case
       Left (_writerGone :: LeiosDbException) -> pure ()
       Right promise -> await promise
@@ -288,12 +288,9 @@ withWriterConns tracer statsVar volPath immPath k =
 -- connections itself, on its own thread ('withWriterConns'), and closes them
 -- on every way out.
 --
--- The worker publishes each job's outcome into its 'WriteResult', then
--- rethrows a failure: publishing first lets an awaiting producer see the
--- exception rather than block on a promise the dying worker would never fill,
--- and a failed write is not survivable (no caller catches
--- 'LeiosDbException') -- producers still submitting eventually block on the
--- full queue and go down as blocked-indefinitely.
+-- The worker puts each job's result into its 'WriteResult'. A failed write is
+-- not survivable: the worker stops and seals the queue with the exception, so
+-- awaiting a job it did not serve, or submitting another, throws it.
 startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
@@ -436,15 +433,9 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
                       bumpVolatileStatsVar statsVar (negate evicted)
                       pure (Just (nEbs + evicted))
 
-      -- Seal, then fail what was already queued: nothing can be queued after
-      -- the seal ('submitJob'), so afterwards the queue stays empty forever.
-      sealAndDrain cause = do
-        atomically $ writeTVar sealedVar (Just cause)
-        let drain =
-              atomically (tryReadTBQueue queue) >>= \case
-                Nothing -> pure ()
-                Just job -> failJob cause job >> drain
-        drain
+      -- Nothing can be queued after the seal ('submitJob'), and awaiting a
+      -- job left in the queue throws the cause.
+      seal cause = atomically $ writeTVar sealedVar (Just cause)
 
   void $ forkLinkedThread registry "leiosdb-writer" $ do
     -- The brackets close the connections on every way out of 'worker': a
@@ -452,15 +443,16 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
     outcome <- try $ withWriterConns tracer statsVar volPath immPath worker
     readIORef shutdownVar >>= \case
       -- Stopped on request: the close outcome, failed or not, is the
-      -- awaiter's to report, and the worker ends quietly.
+      -- awaiter's to report (a failed close through the seal), and the worker
+      -- ends quietly.
       Just resultVar -> do
-        atomically $ putTMVar resultVar outcome
-        sealAndDrain closedException
+        either (const (pure ())) (atomically . putTMVar resultVar) outcome
+        seal (either id (const closedException) outcome)
       -- Anything else stopped the worker. Then out, so the link takes the
       -- node down where the write failed rather than at whatever submits
       -- next. Cancellation by the registry is the one stop the link lets pass.
       Nothing -> do
-        sealAndDrain (either id (const closedException) outcome)
+        seal (either id (const closedException) outcome)
         either throwIO pure outcome
   pure WriteQueue{wqJobs = queue, wqSealed = sealedVar, wqTracer = tracer}
  where
@@ -471,18 +463,12 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
           { ldfErrorMessage = "the LeiosDB writer is closed"
           , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
           }
-  -- Only a 'LeiosDbException' is a failed write; anything else -- a
-  -- cancellation above all -- belongs to this thread, not to the job. The
-  -- action rolls back its own transaction on failure.
+  -- The action rolls back its own transaction on failure.
   publish :: WriteResult a -> IO a -> IO a
-  publish resultVar action =
-    try action >>= \case
-      Right x -> do
-        atomically $ putTMVar resultVar (Right x)
-        pure x
-      Left (e :: LeiosDbException) -> do
-        atomically $ putTMVar resultVar (Left (toException e))
-        throwIO e
+  publish resultVar action = do
+    x <- action
+    atomically $ putTMVar resultVar x
+    pure x
 
 -- | What the writer does after serving a job.
 data Next
