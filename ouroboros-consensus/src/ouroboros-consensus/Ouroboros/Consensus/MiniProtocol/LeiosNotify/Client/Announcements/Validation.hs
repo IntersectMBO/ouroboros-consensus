@@ -288,7 +288,7 @@ announcementValidity ::
   -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
-  ExceptT (Announcements.Error (AnnouncementInvalidity blk)) m ValidAnnouncement
+  ExceptT (Announcements.Error (AnnouncementInvalidity blk)) m (ValidAnnouncement blk)
 announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
   onset <- lift $ case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
@@ -315,14 +315,16 @@ announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
       validateAnnouncementHeader cfg immLedger ancHdr
   pure
     MkValidAnnouncement
-      { announcementOnset = onset
+      { announcingHeader = ancHdr
+      , announcementOnset = onset
       , announcementAge = age
       , announcementStaleness = staleness
       }
 
--- | What 'announcementValidity' learns about a valid announcement.
-data ValidAnnouncement = MkValidAnnouncement
-  { announcementOnset :: !RelativeTime
+-- | A valid announcement, and what 'announcementValidity' learns about it.
+data ValidAnnouncement blk = MkValidAnnouncement
+  { announcingHeader :: !(AnnouncingHeader blk)
+  , announcementOnset :: !RelativeTime
   -- ^ The wall-clock onset of the election's slot.
   , announcementAge :: !NominalDiffTime
   -- ^ How long after that onset the announcement arrived.

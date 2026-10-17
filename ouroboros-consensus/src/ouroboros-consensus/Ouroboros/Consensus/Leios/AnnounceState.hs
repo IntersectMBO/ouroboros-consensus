@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | The announcements the node has accepted, from whichever peer.
@@ -28,7 +29,7 @@ import Ouroboros.Consensus.Leios.Protocol (OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot))
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( AnnouncingHeader (ancElectionId)
+  ( AnnouncingHeader (..)
   , ValidAnnouncement (..)
   , maxAnnouncementAgeSend
   )
@@ -64,19 +65,29 @@ newAnnounceState notifyLog =
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
-  ValidAnnouncement ->
-  AnnouncingHeader blk ->
+  ValidAnnouncement blk ->
   STM m ()
-onValidAnnouncement st valid anc = do
-  pruned <- readTVar (prunedTo st)
-  when (announcementStaleness valid == FreshOCIN && electionSlot (ancElectionId anc) >= pruned) $ do
-    seen <- readTVar (announced st)
-    case Announcements.insert @_ @Void (ancElectionId anc) anc seen of
+onValidAnnouncement st valid = do
+  pruned <- readTVar prunedTo
+  when (announcementStaleness == FreshOCIN && electionSlot electionId >= pruned) $ do
+    seen <- readTVar announced
+    case Announcements.insert @_ @Void electionId announcingHeader seen of
       Left _repeatedOrThird -> pure ()
       Right seen' -> do
-        writeTVar (announced st) seen'
-        when (announcementAge valid <= maxAnnouncementAgeSend) $
-          appendNotifyLog (relayLog st) (NotifyAnnouncement (announcementOnset valid) anc)
+        writeTVar announced seen'
+        when (announcementAge <= maxAnnouncementAgeSend) $
+          appendNotifyLog relayLog (NotifyAnnouncement announcementOnset announcingHeader)
+ where
+  electionId = ancElectionId announcingHeader
+
+  MkAnnounceState{prunedTo, announced, relayLog} = st
+
+  MkValidAnnouncement
+    { announcingHeader
+    , announcementOnset
+    , announcementAge
+    , announcementStaleness
+    } = valid
 
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::

@@ -308,7 +308,7 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st 
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
     valid <- announcementValidity systemTime futureCheck cfg immLedger anc
-    lift $ atomically $ onValidAnnouncement announceState valid anc
+    lift $ atomically $ onValidAnnouncement announceState valid
     pure
       st
         { lnpsAnnouncements = announcements

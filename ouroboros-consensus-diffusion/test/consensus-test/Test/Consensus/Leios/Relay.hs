@@ -328,15 +328,15 @@ prunedWhileValidating = runSimOrThrow $ do
   notifyLog <- newNotifyLog
   st <- newAnnounceState notifyLog
   atomically $ pruneAnnounceState st (blockSlot someAnnouncingBlock + 1)
-  atomically $ onValidAnnouncement st valid anc
+  atomically $ onValidAnnouncement st valid
   atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
  where
-  anc =
-    fromMaybe (error "prunedWhileValidating: an announcement") $
-      mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
   valid =
     MkValidAnnouncement
-      { announcementOnset = RelativeTime 1
+      { announcingHeader =
+          fromMaybe (error "prunedWhileValidating: an announcement") $
+            mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
+      , announcementOnset = RelativeTime 1
       , announcementAge = 0
       , announcementStaleness = FreshOCIN
       }
