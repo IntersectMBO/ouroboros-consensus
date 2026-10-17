@@ -288,14 +288,12 @@ withWriterConns tracer statsVar volPath immPath k =
 -- connections itself, on its own thread ('withWriterConns'), and closes them
 -- on every way out.
 --
--- The worker publishes each job's outcome into its 'WriteResult'. For insert
--- jobs it then rethrows a failure: publishing first lets an awaiting producer
--- see the exception rather than block on a promise the dying worker would
--- never fill, and a failed insert write is not survivable (no caller catches
+-- The worker publishes each job's outcome into its 'WriteResult', then
+-- rethrows a failure: publishing first lets an awaiting producer see the
+-- exception rather than block on a promise the dying worker would never fill,
+-- and a failed write is not survivable (no caller catches
 -- 'LeiosDbException') -- producers still submitting eventually block on the
--- full queue and go down as blocked-indefinitely. A failed maintenance job is
--- the submitting scheduler's problem instead (traced, paced, retried); the
--- worker survives it.
+-- full queue and go down as blocked-indefinitely.
 startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
@@ -381,33 +379,27 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
               -- One transaction for the batch: the submitter awaits this while
               -- holding the ImmutableDB write lock, so a round-trip per EB throttles
               -- block immutalisation to this queue's drain rate.
-              void $
-                publishMaintenance volDb immDb resultVar $
-                  dbWithWriteTransactionRaw volDb $
-                    forM_ ebHashes $ \ebHash ->
-                      useStmt pinStmt $ do
-                        dbBindBlob pinStmt 1 (ebHashBytes ebHash)
-                        dbStep1Safe pinStmt
+              publish resultVar $
+                dbWithWriteTransactionRaw volDb $
+                  forM_ ebHashes $ \ebHash ->
+                    useStmt pinStmt $ do
+                      dbBindBlob pinStmt 1 (ebHashBytes ebHash)
+                      dbStep1Safe pinStmt
               pure Continue
             MarkCopied ebHashes resultVar -> do
               -- One transaction for the batch: the mark is what makes a copied EB
               -- evictable, and under sync it otherwise costs a queue round-trip
               -- per EB behind a saturated insert FIFO.
-              void $
-                publishMaintenance volDb immDb resultVar $
-                  dbWithWriteTransactionRaw volDb $
-                    forM_ ebHashes $ \ebHash ->
-                      useStmt markCopiedStmt $ do
-                        dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
-                        dbStep1Safe markCopiedStmt
+              publish resultVar $
+                dbWithWriteTransactionRaw volDb $
+                  forM_ ebHashes $ \ebHash ->
+                    useStmt markCopiedStmt $ do
+                      dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
+                      dbStep1Safe markCopiedStmt
               pure Continue
             GcMark slot resultVar -> do
-              mMarked <-
-                publishMaintenance volDb immDb resultVar $
-                  gcMark volDb gcStmts slot
-              pure $ case mMarked of
-                Just nEbsMarked | nEbsMarked > 0 -> ContinueAndSweep
-                _ -> Continue
+              nEbsMarked <- publish resultVar (gcMark volDb gcStmts slot)
+              pure $ if nEbsMarked > 0 then ContinueAndSweep else Continue
 
           -- Nothing queued and no sweep outstanding: wait for a job.
           blockUntilJob = IO.atomically $ do
@@ -480,33 +472,17 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
           , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
           }
   -- Only a 'LeiosDbException' is a failed write; anything else -- a
-  -- cancellation above all -- belongs to this thread, not to the job.
-  publish :: WriteResult a -> IO a -> IO ()
+  -- cancellation above all -- belongs to this thread, not to the job. The
+  -- action rolls back its own transaction on failure.
+  publish :: WriteResult a -> IO a -> IO a
   publish resultVar action =
     try action >>= \case
-      Right x -> atomically $ putTMVar resultVar (Right x)
+      Right x -> do
+        atomically $ putTMVar resultVar (Right x)
+        pure x
       Left (e :: LeiosDbException) -> do
         atomically $ putTMVar resultVar (Left (toException e))
         throwIO e
-
-  -- The transaction brackets have already rolled back on failure; the extra
-  -- best-effort ROLLBACKs cover only the case where that rollback itself
-  -- failed and would otherwise leave a transaction open under every later job.
-  --
-  -- The submitter only learns whether the job succeeded; the worker also gets
-  -- the action's result.
-  publishMaintenance ::
-    DB.Database -> DB.Database -> WriteResult () -> IO a -> IO (Maybe a)
-  publishMaintenance volDb immDb resultVar action =
-    try action >>= \case
-      Right x -> do
-        atomically $ putTMVar resultVar (Right ())
-        pure (Just x)
-      Left (e :: LeiosDbException) -> do
-        _ <- DB.exec volDb "ROLLBACK"
-        _ <- DB.exec immDb "ROLLBACK"
-        atomically $ putTMVar resultVar (Left (toException e))
-        pure Nothing
 
 -- | What the writer does after serving a job.
 data Next

@@ -102,8 +102,8 @@ data WriteJob
     GcMark
       -- | the GC frontier slot
       !SlotNo
-      -- | where the worker puts the result
-      !(WriteResult ())
+      -- | where the worker puts the number of 'ebs' rows marked
+      !(WriteResult Int)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())

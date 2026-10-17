@@ -961,12 +961,10 @@ sqlBlob (MkEbHash bytes) = "x'" <> concatMap hex (BS.unpack bytes) <> "'"
 ebTxBytesRows :: FilePath -> EbHash -> IO Int
 ebTxBytesRows path ebHash =
   withSqlFile path $ \sql ->
-    bracket
-      (SQL.prepare sql (T.pack ("SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = " <> sqlBlob ebHash)))
-      SQL.finalize
-      $ \stmt -> do
-        _ <- SQL.step stmt
-        fromIntegral <$> SQL.columnInt64 stmt 0
+    SQL.withStatement
+      sql
+      (T.pack ("SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = " <> sqlBlob ebHash)) $ \stmt ->
+      SQL.step stmt >> fromIntegral <$> SQL.columnInt64 stmt 0
 
 -- | A pinned EB whose tx closure never arrives cannot be copied, so the
 -- copier keeps retrying it for as long as the database is open. 'close' must
