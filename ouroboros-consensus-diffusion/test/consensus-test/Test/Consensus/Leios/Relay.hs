@@ -33,15 +33,24 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Ouroboros.Consensus.Block (Header)
+import Data.Foldable (for_)
+import qualified Data.Foldable as Foldable
+import Data.Void (Void)
+import Ouroboros.Consensus.Block (Header, SlotNo (..), blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
+  )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( AnnouncingHeader (ancElectionId)
+  , maxAnnouncementAgeRecv
+  , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
@@ -79,10 +88,12 @@ import Test.Consensus.Leios.TestBlock
   , firstLeiosBlock
   , forkLeiosBlock
   , setAnnouncement
+  , setCounterBelowImmTips
   , setSlot
+  , singleNodeLeiosTestConfig
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
@@ -90,27 +101,30 @@ tests =
   testGroup
     "Relay"
     [ testCase "the node relays an announcement to a peer" $ do
-        let down = relayToOne 0 [[announce someAnnouncingBlock]]
+        down <- relayToOne 0 [[announce someAnnouncingBlock]]
         announcements down @?= [ltbHeader someAnnouncingBlock]
     , testCase "the node relays an announcement it hears from two peers once" $ do
-        let down = relayToOne 0 [[announce someAnnouncingBlock], [announce someAnnouncingBlock]]
+        down <- relayToOne 0 [[announce someAnnouncingBlock], [announce someAnnouncingBlock]]
         announcements down @?= [ltbHeader someAnnouncingBlock]
     , testCase "the node relays both announcements of an election, but no third" $ do
-        let down =
-              relayToOne
-                0
-                [[announce someAnnouncingBlock, announce equivocation], [announceAt 1 thirdAnnouncement]]
+        down <-
+          relayToOne
+            0
+            [[announce someAnnouncingBlock, announce equivocation], [announceAt 1 thirdAnnouncement]]
         announcements down @?= map ltbHeader [someAnnouncingBlock, equivocation]
     , testCase "the node does not relay an announcement too old to relay" $ do
         -- connecting late, since a connection without KeepAlive times out
-        let (_, downs) =
-              relayPeers
-                400
-                [PeerSpec 340 [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
-                [340]
+        (_, downs) <-
+          relayPeers
+            400
+            [PeerSpec 340 [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
+            [340]
         map announcements downs @?= [[ltbHeader lateAnnouncingBlock]]
+    , testCase "the node does not relay an announcement of a revoked operational certificate" $ do
+        down <- relayToOne 0 [[announce (setCounterBelowImmTips someAnnouncingBlock)]]
+        announcements down @?= []
     , testCase "a peer that connects later receives the announcement, until it is too old to relay" $ do
-        let (_, downs) = relay 400 [[announce someAnnouncingBlock]] [0, 10, 350]
+        (_, downs) <- relay 400 [[announce someAnnouncingBlock]] [0, 10, 350]
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
     ]
 
@@ -142,22 +156,29 @@ newtype PeerOutcome = PeerOutcome
 -- | Run peers against one node until the given time: upstream peers, which
 -- connect at once and send the node their schedules, and downstream peers,
 -- which connect at the given times and send nothing. Every peer records what
--- the node relays to it.
-relay :: DiffTime -> [[(DiffTime, Notification)]] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
+-- the node relays to it, and the test fails if an honest peer's client would
+-- disconnect the node for it.
+relay :: DiffTime -> [[(DiffTime, Notification)]] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
 relay end ups = relayPeers end (map (PeerSpec 0) ups)
 
 -- | 'relay', with upstream peers that connect when they say.
-relayPeers :: DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
-relayPeers end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode $ \nut ->
-  forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
+relayPeers :: DiffTime -> [PeerSpec] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
+relayPeers end ups downs = do
+  for_ (zip [1 :: Int ..] outcomes) $ \(i, o) -> case honestViolations (poReceived o) of
+    [] -> pure ()
+    violations -> assertFailure $ "peer " <> show i <> ":\n" <> unlines violations
+  pure $ splitAt (length ups) outcomes
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
+  outcomes = runSimOrThrow $ withNode $ \nut ->
+    forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
 
 -- | 'relay' for 20 seconds to one downstream peer connecting at the given time.
-relayToOne :: DiffTime -> [[(DiffTime, Notification)]] -> PeerOutcome
-relayToOne at ups = case relay 20 ups [at] of
-  (_, [down]) -> down
-  _ -> error "relayToOne: one downstream peer"
+relayToOne :: DiffTime -> [[(DiffTime, Notification)]] -> IO PeerOutcome
+relayToOne at ups =
+  relay 20 ups [at] >>= \case
+    (_, [down]) -> pure down
+    _ -> error "relayToOne: one downstream peer"
 
 runPeer :: NodeUnderTest (IOSim s) -> DiffTime -> PeerAddr -> PeerSpec -> IOSim s PeerOutcome
 runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
@@ -230,27 +251,59 @@ sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNode body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
+  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) nodeDBs body
+
+k :: SecurityParam
+k = SecurityParam $ knownNonZeroBounded @10
+
+-- | One-second slots, the first starting when the run begins.
+ledgerConfig :: LeiosTestLedgerConfig
+ledgerConfig =
+  LeiosTestLedgerConfig
+    { ltlcHardForkParams =
+        HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
+    , ltlcForecastRange = 100000
+    , ltlcLeios =
+        MkLeiosLedgerView
+          { llvCommittee = emptyLeiosCommittee
+          , llvQuorumStakeThreshold = maxBound
+          , llvAnnouncementPeriod = Milliseconds32 1000
+          , llvVotePeriod = Milliseconds32 4000
+          , llvDiffusionPeriod = Milliseconds32 1000
+          , llvMaxEbBodySize = 5000
+          , llvMaxEbTxsSize = 5000
+          }
+    }
+
+{-------------------------------------------------------------------------------
+  Checking what a peer receives
+-------------------------------------------------------------------------------}
+
+-- | Why an honest peer's client would disconnect the node for this stream, if
+-- it would: an announcement must be neither a repeat nor the third of its
+-- election, nor older than 'maxAnnouncementAgeRecv'.
+honestViolations :: [(Time, Notification)] -> [String]
+honestViolations = snd . Foldable.foldl' step (Announcements.empty, [])
  where
-  k = SecurityParam $ knownNonZeroBounded @10
-  cfg =
-    defaultNodeUnderTestConfig
-      k
-      LeiosTestLedgerConfig
-        { ltlcHardForkParams =
-            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = 100000
-        , ltlcLeios =
-            MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
-              , llvQuorumStakeThreshold = maxBound
-              , llvAnnouncementPeriod = Milliseconds32 1000
-              , llvVotePeriod = Milliseconds32 4000
-              , llvDiffusionPeriod = Milliseconds32 1000
-              , llvMaxEbBodySize = 5000
-              , llvMaxEbTxsSize = 5000
-              }
-        }
+  step (seen, errs) (at, n) = case n of
+    NotifyAnnouncement hdr -> case mkAnnouncingHeader topLevelConfig hdr of
+      Nothing -> (seen, errs <> ["not an announcement: " <> show hdr])
+      Just anc -> case Announcements.insert @_ @Void (ancElectionId anc) anc seen of
+        Left err -> (seen, errs <> [show err <> ": " <> show hdr])
+        Right seen' ->
+          ( seen'
+          , errs
+              <> [ "too old, at " <> show at <> ": " <> show hdr
+                 | toSeconds at - slotStart (blockSlot hdr) > realToFrac maxAnnouncementAgeRecv
+                 ]
+          )
+    NotifyOther -> (seen, errs)
+
+  toSeconds (Time t) = realToFrac t :: Double
+  slotStart (SlotNo s) = fromIntegral s -- one-second slots
+
+topLevelConfig :: TopLevelConfig Blk
+topLevelConfig = singleNodeLeiosTestConfig ledgerConfig k
 
 {-------------------------------------------------------------------------------
   Fixtures
