@@ -350,6 +350,8 @@ mkHandlers
     , getPeerSharingAPI
     , getGsmState
     , getBlockchainTime
+    , getLeiosAnnounceState
+    , getLeiosNotifyLog
     }
   txSubmissionLogicVersion =
     Handlers
@@ -461,12 +463,13 @@ mkHandlers
           leiosNotifyClient
             getTopLevelConfig
             getChainDB
+            getLeiosAnnounceState
             getBlockchainTime
             systemTime
             chainSyncFutureCheck
             maxClockSkew
             controlMessageSTM
-      , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer
+      , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog
       }
 
 {-------------------------------------------------------------------------------
