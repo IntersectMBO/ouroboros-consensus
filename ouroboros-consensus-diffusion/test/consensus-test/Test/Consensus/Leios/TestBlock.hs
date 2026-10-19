@@ -43,6 +43,7 @@ module Test.Consensus.Leios.TestBlock
   , setCounterBelowImmTips
   , setInvalid
   , setIssuer
+  , setLeiosCert
   , setSlot
   , successorLeiosBlock
 
@@ -193,9 +194,15 @@ data instance Header LeiosTestBlock = LeiosTestHeader
   , lthCounter :: !CounterVsImmTip
   -- ^ Whether this header's operational certificate counter is below the one
   -- the immutable tip records for its issuer; see 'setCounterBelowImmTips'.
+  , lthLeiosCert :: !LeiosTestCert
+  -- ^ Whether this block contains a Leios certificate; see 'setLeiosCert'.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
+
+data LeiosTestCert = NoLeiosTestCert | HasLeiosTestCert
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NoThunks, Serialise)
 
 data CounterVsImmTip = HeaderCounterNotBelowImmTips | HeaderCounterBelowImmTips
   deriving stock (Eq, Show, Generic)
@@ -283,6 +290,7 @@ mkLeiosTestBlock hash slot =
       , lthAnnouncement = Nothing
       , lthValidity = Valid
       , lthCounter = HeaderCounterNotBelowImmTips
+      , lthLeiosCert = NoLeiosTestCert
       }
 
 onHeader :: (Header LeiosTestBlock -> Header LeiosTestBlock) -> LeiosTestBlock -> LeiosTestBlock
@@ -298,6 +306,11 @@ setSlot slot = onHeader $ \hdr -> hdr{lthSlot = slot}
 
 setIssuer :: Word64 -> LeiosTestBlock -> LeiosTestBlock
 setIssuer issuer = onHeader $ \hdr -> hdr{lthIssuer = issuer}
+
+-- | Make this block contain a Leios certificate, which certifies the endorser
+-- block its predecessor announced.
+setLeiosCert :: LeiosTestBlock -> LeiosTestBlock
+setLeiosCert = onHeader $ \hdr -> hdr{lthLeiosCert = HasLeiosTestCert}
 
 -- | Make the protocol reject this header.
 setInvalid :: LeiosTestBlock -> LeiosTestBlock
@@ -353,7 +366,9 @@ instance LeiosProtocol LeiosTestProtocol where
           , announcementEbHash = ebHash
           , announcementEbSize = size
           }
-  getContainsLeiosCert = defaultGetContainsLeiosCert
+  getContainsLeiosCert _proxy hdr = case lthLeiosCert hdr of
+    NoLeiosTestCert -> False
+    HasLeiosTestCert -> True
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of
@@ -658,6 +673,7 @@ instance Serialise (Header LeiosTestBlock) where
       <> encodeMaybe encodeAnnouncement lthAnnouncement
       <> encode lthValidity
       <> encode lthCounter
+      <> encode lthLeiosCert
   decode = do
     lthHash <- decode
     lthSlot <- decode
@@ -665,6 +681,7 @@ instance Serialise (Header LeiosTestBlock) where
     lthAnnouncement <- decodeMaybe decodeAnnouncement
     lthValidity <- decode
     lthCounter <- decode
+    lthLeiosCert <- decode
     pure LeiosTestHeader{..}
 
 encodeAnnouncement :: (EbHash, BytesSize) -> Encoding
