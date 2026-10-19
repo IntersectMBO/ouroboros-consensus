@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -246,6 +247,7 @@ openChainDB ::
 openChainDB registry getLoEFragment = do
   chainDbArgs <- do
     mcdbNodeDBs <- emptyNodeDBs
+    mcdbLeiosDb <- newLeiosDBInMemory
     let mcdbTopLevelConfig = cfg
         configureLoE a =
           a
@@ -261,6 +263,7 @@ openChainDB registry getLoEFragment = do
             , mcdbRegistry = registry
             , mcdbTopLevelConfig
             , mcdbNodeDBs
+            , mcdbLeiosDb
             }
   (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate

@@ -147,6 +147,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -2422,6 +2423,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
     (tracer, getTrace) <- recordingTracerIORef
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
+    leiosDb <- newLeiosDBInMemory
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
     let args =
           mkArgs
@@ -2430,6 +2432,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
             (testInitExtLedger (configLedger testCfg) `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
+            leiosDb
             tracer
             (loe $> varLoEFragment)
 
@@ -2603,10 +2606,11 @@ mkArgs ::
   ExtLedgerState Blk ValuesMK ->
   ResourceRegistry m ->
   NodeDBs (StrictTMVar m MockFS) ->
+  LeiosDbHandle m ->
   CT.Tracer m (TraceEvent Blk) ->
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
   ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
+mkArgs cfg chunkInfo initLedger registry nodeDBs leiosDb tracer varLoEFragment =
   let args =
         fromMinimalChainDbArgs
           MinimalChainDbArgs
@@ -2615,6 +2619,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
             , mcdbInitLedger = initLedger
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDBs
+            , mcdbLeiosDb = leiosDb
             }
    in ChainDB.updateTracer tracer $
         args

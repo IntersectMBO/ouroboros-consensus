@@ -49,6 +49,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -107,6 +108,9 @@ data LiveResources blk m = LiveResources
   -- After 'lnCopyToImmDb' was executed, the latter will contain the final
   -- state of an interval.
   -- The rest is reset when the chain DB is recreated.
+  , lrLeiosDb :: LeiosDbHandle m
+  -- ^ The node's LeiosDB, kept across live intervals as the immutable and
+  -- volatile DBs are.
   , lrLoEVar :: LoE (StrictTVar m (AnchoredFragment (HeaderWithTime blk)))
   -- ^ The LoE fragment must be reset for each live interval.
   }
@@ -164,6 +168,7 @@ mkChainDb resources = do
                   , mcdbInitLedger = lrInitLedger
                   , mcdbRegistry = lrRegistry
                   , mcdbNodeDBs = lrCdb
+                  , mcdbLeiosDb = lrLeiosDb
                   }
             )
     pure $
@@ -182,7 +187,7 @@ mkChainDb resources = do
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
   pure (chainDB, intCopyToImmutableDB)
  where
-  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger} = resources
+  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLeiosDb, lrLoEVar, lrChunkInfo, lrInitLedger} = resources
 
 -- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.

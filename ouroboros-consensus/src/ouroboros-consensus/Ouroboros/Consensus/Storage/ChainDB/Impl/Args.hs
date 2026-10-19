@@ -39,6 +39,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -93,6 +94,8 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- current LoE fragment.
   , cdbsSnapshotDelayRNG :: HKD f StdGen
   -- ^ RNG used to randomly determine the duration of snapshot delays
+  , cdbsLeiosDb :: HKD f (LeiosDbHandle m)
+  -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
   }
 
 -- | Default arguments
@@ -128,6 +131,7 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsSnapshotDelayRNG = noDefault
+    , cdbsLeiosDb = noDefault
     }
 
 -- | Default arguments
@@ -182,6 +186,8 @@ completeChainDbArgs ::
   -- | Randomised snapshot delay RNG
   StdGen ->
   LedgerDbBackendArgs m blk ->
+  -- | The node's LeiosDB
+  LeiosDbHandle m ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -195,6 +201,7 @@ completeChainDbArgs
   mkVolFS
   snapshotDelayRNG
   flavorArgs
+  leiosDb
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -235,6 +242,7 @@ completeChainDbArgs
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
             , cdbsSnapshotDelayRNG = snapshotDelayRNG
+            , cdbsLeiosDb = leiosDb
             }
       }
 

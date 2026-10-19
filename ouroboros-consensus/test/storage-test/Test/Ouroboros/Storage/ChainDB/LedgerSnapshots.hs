@@ -41,6 +41,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util (dropLast)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))
@@ -162,12 +163,14 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
   openChainDB registry cdbTracer = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
+      mcdbLeiosDb <- newLeiosDBInMemory
       let mcdbTopLevelConfig = singleNodeTestConfigWithK (tsSecParam testSetup)
           cdbArgs =
             fromMinimalChainDbArgs
               MinimalChainDbArgs
                 { mcdbTopLevelConfig
                 , mcdbNodeDBs
+                , mcdbLeiosDb
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
@@ -386,12 +389,14 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
   openChainDB registry cdbTracer = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
+      mcdbLeiosDb <- newLeiosDBInMemory
       let mcdbTopLevelConfig = singleNodeTestConfigWithK (tsSecParam testSetup)
           cdbArgs =
             fromMinimalChainDbArgs
               MinimalChainDbArgs
                 { mcdbTopLevelConfig
                 , mcdbNodeDBs
+                , mcdbLeiosDb
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry

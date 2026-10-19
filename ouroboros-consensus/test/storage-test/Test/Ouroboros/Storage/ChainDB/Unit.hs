@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Storage.Common
   , StreamTo (..)
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint, genesisPoint)
@@ -645,8 +646,9 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     varNextId <- uncheckedNewTVarM 0
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
     nodeDbs <- emptyNodeDBs
+    leiosDb <- newLeiosDBInMemory
     (tracer, getTrace) <- recordingTracerTVar
-    let args = chainDbArgs threadRegistry nodeDbs tracer
+    let args = chainDbArgs threadRegistry nodeDbs leiosDb tracer
     varDB <- open args >>= newTVarIO
     let env =
           ChainDBEnv
@@ -664,7 +666,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     closeRegistry (registry env)
     closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-  chainDbArgs registry nodeDbs tracer =
+  chainDbArgs registry nodeDbs leiosDb tracer =
     let args =
           fromMinimalChainDbArgs
             MinimalChainDbArgs
@@ -673,6 +675,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               , mcdbInitLedger = extLedgerState
               , mcdbRegistry = registry
               , mcdbNodeDBs = nodeDbs
+              , mcdbLeiosDb = leiosDb
               }
      in updateTracer tracer args
 

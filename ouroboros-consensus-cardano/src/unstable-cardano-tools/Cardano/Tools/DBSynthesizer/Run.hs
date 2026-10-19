@@ -64,6 +64,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
@@ -171,6 +172,9 @@ synthesize ::
 synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
     snapshotDelayRng <- newStdGen
+    -- TODO Open the LeiosDB in the ChainDB's directory rather than an empty
+    -- one.
+    leiosDb <- newLeiosDBInMemory
     let
       epochSize = sgEpochLength shelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
@@ -186,6 +190,7 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
           (Node.stdMkChainDbHasFS confDbDir)
           snapshotDelayRng
           flavargs
+          leiosDb
           $ ChainDB.defaultArgs
 
     -- The KES agent client only reports a failure to connect by tracing it, so

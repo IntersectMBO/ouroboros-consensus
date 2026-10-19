@@ -31,6 +31,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -78,6 +79,8 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTMVar's containing empty MockFS's.
+  , mcdbLeiosDb :: LeiosDbHandle m
+  -- ^ The node's LeiosDB, eg an in-memory one.
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -151,5 +154,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsSnapshotDelayRNG = mkStdGen 0
+          , cdbsLeiosDb = mcdbLeiosDb
           }
     }

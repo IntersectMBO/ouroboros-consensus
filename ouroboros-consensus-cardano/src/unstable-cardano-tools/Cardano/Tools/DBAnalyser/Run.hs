@@ -51,6 +51,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -176,6 +177,8 @@ analyse dbaConfig args =
         throwConfigError
           "no LedgerDB backend was selected and none could be determined from the configuration."
     snapshotDelayRng <- newStdGen
+    -- TODO Open the node's LeiosDB rather than an empty one.
+    leiosDb <- newLeiosDBInMemory
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case backend of
@@ -203,6 +206,7 @@ analyse dbaConfig args =
             shfs
             snapshotDelayRng
             flavargs
+            leiosDb
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
         -- go forward so we don't need to account for rollbacks.

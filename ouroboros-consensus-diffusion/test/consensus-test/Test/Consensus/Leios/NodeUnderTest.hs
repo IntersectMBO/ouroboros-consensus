@@ -245,6 +245,7 @@ withNodeUnderTest cfg nodeDBs body = do
   -- on the way out, the body finishes first, then the node's threads stop, and
   -- only then does the ChainDB close.
   withRegistry $ \dbRegistry -> do
+    leiosDB <- newLeiosDBInMemory
     bracket
       ( fst
           <$> openChainDB
@@ -255,6 +256,7 @@ withNodeUnderTest cfg nodeDBs body = do
             (mountedIn (nodeDBsVol nodeDBs))
             (seedSnapshotDelay seeds)
             (fst (mkInMemoryArgs ()))
+            leiosDB
             ChainDB.defaultArgs
             updateChainDbArgs
       )
@@ -262,7 +264,6 @@ withNodeUnderTest cfg nodeDBs body = do
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-        leiosDB <- newLeiosDBInMemory
         kernelArgs <-
           nodeKernelArgsEnforceInvariants
             <$> mkNodeKernelArgs
