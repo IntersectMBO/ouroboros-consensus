@@ -353,6 +353,7 @@ instance LeiosProtocol LeiosTestProtocol where
           , announcementEbHash = ebHash
           , announcementEbSize = size
           }
+  getContainsLeiosCert = defaultGetContainsLeiosCert
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of
