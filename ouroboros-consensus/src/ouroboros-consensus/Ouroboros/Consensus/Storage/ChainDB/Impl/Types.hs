@@ -128,6 +128,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
@@ -386,6 +387,8 @@ data ChainDbEnv m blk = CDB
   -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
+  , cdbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
   }
   deriving Generic
 

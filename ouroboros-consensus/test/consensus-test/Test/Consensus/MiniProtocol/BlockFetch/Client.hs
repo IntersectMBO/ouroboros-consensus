@@ -48,6 +48,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
@@ -283,6 +284,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkChainDbView registry tracer = do
     chainDbArgs <- do
       nodeDBs <- emptyNodeDBs
+      leiosDb <- newLeiosDBInMemory
       let args =
             fromMinimalChainDbArgs $
               MinimalChainDbArgs
@@ -291,6 +293,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
+                , mcdbLeiosDb = leiosDb
                 }
       pure $ ChainDB.updateTracer cdbTracer args
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
