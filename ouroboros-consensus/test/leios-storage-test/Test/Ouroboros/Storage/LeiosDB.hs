@@ -26,6 +26,7 @@ import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
@@ -92,6 +93,18 @@ tests =
            -- is linked to the thread that opened the database.
            testCase "InMemory: writing a body for an unwritten point fails, as on SQLite" $
              withFreshDb InMemory test_ebBodyWithoutPointFails
+         , -- InMemory only: the SQLite implementation sweeps in the background.
+           testGroup
+             "InMemory: garbage collection"
+             [ testCase "evicts an EB all of whose points are older, with the txs only it references" $
+                 withFreshDb InMemory test_gcEvictsOldEb
+             , testCase "keeps an EB with a point at the slot" $
+                 withFreshDb InMemory test_gcKeepsEbWithPointAtSlot
+             , testCase "keeps a pinned EB" $
+                 withFreshDb InMemory test_gcKeepsPinnedEb
+             , testCase "pinning an EB with no point does not keep it once it has one" $
+                 withFreshDb InMemory test_pinWithoutPointIgnored
+             ]
          , testGroup
              "truncateLeiosDbAfterSlot"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
@@ -757,6 +770,55 @@ drainChan chan = go []
     atomically (tryReadTChan chan) >>= \case
       Nothing -> pure (reverse acc)
       Just n -> go (n : acc)
+
+-- * Garbage collection
+
+-- | Write the EB at these points, with its body and all its transactions.
+writeWholeEb :: RW -> [LeiosPoint] -> LeiosEb -> IO ()
+writeWholeEb con points eb = do
+  forM_ points $ \point -> rwInsertEbPoint con point (encodeLeiosEbSize eb)
+  forM_ points $ \point -> void $ rwInsertEbBody con point eb
+  forM_ (take 1 points) $ \point -> void $ rwInsertTxs con point (allTxsFor eb)
+
+-- | Whether the reader sees the EB's whole closure.
+holdsClosure :: RW -> EbHash -> IO Bool
+holdsClosure con ebHash = isJust <$> rwLookupEbClosure con ebHash
+
+test_gcEvictsOldEb :: LeiosDbHandle IO -> IO ()
+test_gcEvictsOldEb db = withRW db $ \con -> do
+  -- The old EB references transactions 0, 1 and 2, and the other only 0 and 1.
+  writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
+  writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
+  leiosDbGarbageCollect db 6
+  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= [])
+  holdsClosure con (mkTestEbHash 1) >>= (@?= False)
+  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
+  holdsClosure con (mkTestEbHash 2) >>= (@?= True)
+  -- The old EB's transactions went with it, so a new EB referencing them
+  -- lacks them.
+  rwInsertEbPoint con (mkTestPoint 20 3) (encodeLeiosEbSize (mkTestEb 3))
+  void $ rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
+  holdsClosure con (mkTestEbHash 3) >>= (@?= False)
+
+test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
+test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
+  writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
+  leiosDbGarbageCollect db 6
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+
+test_gcKeepsPinnedEb :: LeiosDbHandle IO -> IO ()
+test_gcKeepsPinnedEb db = withRW db $ \con -> do
+  writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
+  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
+  leiosDbGarbageCollect db 6
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+
+test_pinWithoutPointIgnored :: LeiosDbHandle IO -> IO ()
+test_pinWithoutPointIgnored db = withRW db $ \con -> do
+  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
+  writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
+  leiosDbGarbageCollect db 6
+  holdsClosure con (mkTestEbHash 1) >>= (@?= False)
 
 -- * Test utilities
 

@@ -92,12 +92,16 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- 'addVote'). Each point carries the EB's hash and its announcer slot,
   -- so this is also the source for
   -- 'scanCompleteEbClosuresNotOlderThanSlot'.
+  , imPinned :: !(Set EbHash)
+  -- ^ The EBs 'leiosDbPromoteToImmutable' pinned. The garbage collection never
+  -- evicts them, as the SQLite implementation never evicts what it copied to
+  -- its immutable partition.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -123,15 +127,38 @@ newLeiosDBInMemoryWith stateVar = do
         closeLeiosDbHandle = pure ()
       , subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , -- No-op for now; see 'leiosDbGarbageCollect'.
-        leiosDbGarbageCollect = \_slotNo -> pure ()
-      , -- No-op for now; see 'leiosDbPromoteToImmutable'.
-        leiosDbPromoteToImmutable = \_points -> pure ()
+      , leiosDbGarbageCollect = imGarbageCollect stateVar
+      , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
       , openWriter = openInMemoryWriter stateVar notificationChan
       }
+
+-- | Pin the given EBs, among those with a point. As the SQLite
+-- implementation does, it pins by hash, and ignores an EB with no point.
+imPromoteToImmutable :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint] -> m ()
+imPromoteToImmutable stateVar points = atomically $ modifyTVar stateVar $ \s ->
+  let announced = Set.map pointEbHash (Map.keysSet (imEbPoints s))
+      pinned = Set.fromList (map pointEbHash points) `Set.intersection` announced
+   in s{imPinned = imPinned s <> pinned}
+
+-- | Evict every unpinned EB all of whose points are older than the slot, with
+-- its body and tx bytes, as the SQLite implementation's mark and sweep do. It
+-- does so at once rather than in the background.
+imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
+imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
+  let newestPointSlots =
+        Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Map.keys (imEbPoints s)]
+      evicted = Map.keysSet (Map.filter (< slot) newestPointSlots) `Set.difference` imPinned s
+      kept p = pointEbHash p `Set.notMember` evicted
+   in s
+        { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
+        , imEbBodiesDownloaded = Set.filter kept (imEbBodiesDownloaded s)
+        , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
+        , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
+        , imCompletedEbs = Set.filter kept (imCompletedEbs s)
+        }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
 openInMemoryReader :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbReader m)
