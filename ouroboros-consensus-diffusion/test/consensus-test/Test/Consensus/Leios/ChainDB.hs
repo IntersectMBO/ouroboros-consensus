@@ -1,13 +1,15 @@
--- | Tests of which endorser blocks the ChainDB has the LeiosDB keep, once the
--- blocks that announce and certify them are immutable.
+-- | Tests of how the ChainDB and the LeiosDB interact: which endorser blocks the
+-- ChainDB has the LeiosDB keep, once the blocks that announce and certify them
+-- are immutable, and when ChainSel may select a block certifying one.
 module Test.Consensus.Leios.ChainDB (tests) where
 
 import Control.Monad (forM_, void)
+import Control.Monad.Class.MonadSTM (atomically)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Strict as V
-import Ouroboros.Consensus.Block (blockSlot)
+import Ouroboros.Consensus.Block (Point, blockPoint, blockSlot)
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -32,6 +34,9 @@ tests =
         fst (runSimOrThrow bodiesAfterGc) @?= V.toList (leiosEbTxs ebA)
     , testCase "the GC evicts an endorser block no block certifies" $
         snd (runSimOrThrow bodiesAfterGc) @?= []
+    , testCase "ChainSel parks a certifying block until the closure arrives" $
+        runSimOrThrow tipsAroundClosure
+          @?= (blockPoint announcingA, blockPoint certifyingA)
     ]
 
 -- | The node holds endorser blocks A and B, with their transactions. The
@@ -61,17 +66,46 @@ bodiesAfterGc = withNode $ \nut -> do
       <$> lookupEbBody reader (pointEbHash pointA)
       <*> lookupEbBody reader (pointEbHash pointB)
  where
-  pointA = MkLeiosPoint (blockSlot announcingA) (MkEbHash (BS.replicate 32 1))
-  pointB = MkLeiosPoint (blockSlot announcingB) (MkEbHash (BS.replicate 32 2))
-
-  announcingA = setAnnouncement (pointEbHash pointA) (encodeLeiosEbSize ebA) (firstLeiosBlock 1)
-  certifyingA = setLeiosCert (successorLeiosBlock announcingA)
-  announcingB = setAnnouncement (pointEbHash pointB) (encodeLeiosEbSize ebB) (successorLeiosBlock certifyingA)
-
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.
   chain = take 16 $ announcingA : certifyingA : iterate successorLeiosBlock announcingB
 
+pointA, pointB :: LeiosPoint
+pointA = MkLeiosPoint (blockSlot announcingA) (MkEbHash (BS.replicate 32 1))
+pointB = MkLeiosPoint (blockSlot announcingB) (MkEbHash (BS.replicate 32 2))
+
+-- | The first block, which announces A; the second, which certifies A; and
+-- the third, which announces B.
+announcingA, certifyingA, announcingB :: LeiosTestBlock
+announcingA = setAnnouncement (pointEbHash pointA) (encodeLeiosEbSize ebA) (firstLeiosBlock 1)
+certifyingA = setLeiosCert (successorLeiosBlock announcingA)
+announcingB = setAnnouncement (pointEbHash pointB) (encodeLeiosEbSize ebB) (successorLeiosBlock certifyingA)
+
 ebA, ebB :: LeiosEb
 ebA = MkLeiosEb (V.fromList [(MkTxHash (BS.replicate 32 1), 10)])
 ebB = MkLeiosEb (V.fromList [(MkTxHash (BS.replicate 32 2), 10)])
+
+-- | The chain announces A and then certifies it, while the LeiosDB holds A's
+-- body but not its transactions. The tip of the selected chain before they
+-- arrive, and after.
+tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
+tipsAroundClosure = withNode $ \nut -> do
+  let leiosDb = getLeiosDB (nutKernel nut)
+      chainDB = nutChainDB nut
+  withWriter leiosDb $ \writer -> do
+    await =<< writeEbPoint writer pointA (encodeLeiosEbSize ebA)
+    void $ await =<< writeEbBody writer pointA ebA
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  mapM_ (ChainDB.addBlock_ chainDB noPunishment) [announcingA, certifyingA]
+  threadDelay 1
+  tipBefore <- atomically $ ChainDB.getTipPoint chainDB
+  withWriter leiosDb $ \writer ->
+    void $
+      await
+        =<< writeTxs
+          writer
+          [(txHash, BS.replicate (fromIntegral size) 0) | (txHash, size) <- V.toList (leiosEbTxs ebA)]
+  threadDelay 1
+  tipAfter <- atomically $ ChainDB.getTipPoint chainDB
+  pure (tipBefore, tipAfter)

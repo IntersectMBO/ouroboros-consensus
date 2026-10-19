@@ -81,11 +81,17 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Backgrou
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (acquiredLeiosEbsFromList)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , withReader
+  )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -222,6 +228,16 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+    -- Subscribe before seeding, so that no closure acquired in between is
+    -- missed. The seed is every closure the LeiosDB holds that a block the
+    -- initial chain selection could select may certify.
+    leiosEbNotifications <- subscribeEbNotifications leiosDb
+    initialAcquiredLeiosEbs <-
+      withReader leiosDb $ \reader ->
+        scanCompleteEbClosuresNotOlderThanSlot
+          reader
+          (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
+    varAcquiredLeiosEbs <- newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
     chain <-
       ChainSel.initialChainSelection
         immutableDB
@@ -230,6 +246,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
+        (readTVar varAcquiredLeiosEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
@@ -288,7 +305,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
-            , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
+            , cdbLeiosDb = leiosDb
+            , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -375,7 +393,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env
+    when launchBgTasks $ Background.launchBgTasks env leiosEbNotifications
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
@@ -389,6 +407,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
+  leiosDb = Args.cdbsLeiosDb cdbSpecificArgs
   Args.ChainDbArgs
     argsImmutableDb
     argsVolatileDb
