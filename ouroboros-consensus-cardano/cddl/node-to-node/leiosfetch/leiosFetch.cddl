@@ -1,17 +1,12 @@
 ; The messages of the LeiosFetch mini-protocol, as the cardano-blueprint's
-; network/node-to-node/leios-fetch/messages.cddl has them, except that
+; network/node-to-node/leios-fetch/messages.cddl has them, except that a
+; transaction is any bytes in tag 24, where the blueprint's says which CBOR
+; those bytes hold.
 ;
-; - a MsgLeiosBlockTxs carries only the transactions, where the blueprint's
-;   also repeats the request's point and bitmaps,
-;
-; - a transaction is not tagged with its era, where the blueprint's is, as
-;   transaction submission tags it, and
-;
-; - an endorser block names at least one transaction, which the blueprint does
-;   not require.
-;
-; TODO Make the blueprint agree on all three; then drop this file in favour of
-; the blueprint's.
+; Neither LeiosFetch nor the LeiosDB decodes those bytes, so neither checks
+; that they are CBOR at all. So this file is the more honest reference, and
+; testing our codec against it is stronger than testing it against the
+; blueprint's: the test checks the codec's framing around any bytes.
 
 leiosFetchMessage
   = msgDone
@@ -38,5 +33,6 @@ tx_size = uint .size 4
 ; from the index of each run of 64 transactions to the bitmap of those 64
 bitmaps = { * uint .size 2 => uint .size 8 }
 
-tx = #6.24(bytes .cbor any)   ; the any is the block_transaction of whichever era this EB was announced in
-                              ; eg, tx = #6.24(bytes .cbor dijkstra.block_transaction)
+; meant to hold the block_transaction of the era the endorser block was
+; announced in, eg #6.24(bytes .cbor dijkstra.block_transaction)
+tx = #6.24(bytes)

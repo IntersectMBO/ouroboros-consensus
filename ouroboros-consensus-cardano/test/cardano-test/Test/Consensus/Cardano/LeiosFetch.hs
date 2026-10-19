@@ -4,9 +4,7 @@
 -- | The node's LeiosFetch codec against the CDDL.
 module Test.Consensus.Cardano.LeiosFetch (tests) where
 
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
-import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString, toStrict)
 import qualified Data.Set as Set
@@ -82,7 +80,6 @@ prop_nodeCodecMatchesCDDL =
 
   genEb = MkLeiosEb . V.fromList <$> listOf1 ((,) <$> (MkTxHash <$> genHash) <*> arbitrary)
 
-  -- 'tx' must hold CBOR, so the bytes are a CBOR byte string.
-  genTx = MkLeiosTx . CBOR.toStrictByteString . CBOR.encodeBytes . BS.pack <$> arbitrary
+  genTx = MkLeiosTx . BS.pack <$> arbitrary
 
   genHash = BS.pack <$> vectorOf 32 arbitrary
