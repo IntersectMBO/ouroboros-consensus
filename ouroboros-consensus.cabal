@@ -1505,6 +1505,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Codec
