@@ -940,6 +940,7 @@ mkHandlers
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
+                  (getFreshBytes nodeKernel)
                   writer
                   systemTime
                   ( Leios.mkMempoolPull

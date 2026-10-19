@@ -73,6 +73,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosFreshBytes (FreshBytes, addAdopted, newFreshBytes, newestFirst)
 import LeiosTxCache (LeiosTxCache)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
@@ -128,7 +129,10 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (getLeiosMaxEbTxsSizeFromView)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveLeiosBlock (..)
+  , getLeiosMaxEbTxsSizeFromView
+  )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   )
@@ -163,6 +167,7 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_MAX_PEERS
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
+import Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 import Ouroboros.Network.TxSubmission.Inbound.V1
   ( TxSubmissionInitDelay
   , TxSubmissionMempoolWriter
@@ -279,6 +284,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
       LeiosTxCache m () ProtVerParity Leios.SerializedEbBody
   -- ^ Shadow in-memory tx-cache (see 'LeiosTxCache'); maintained but
   -- not yet consulted, so it changes no observable behavior.
+  , getFreshBytes :: FreshBytes m
+  -- ^ The bytes the chain has freshly announced (see 'LeiosFreshBytes'),
+  -- read by diffusion's egress credit.
   }
 
 -- | Arguments required when initializing a node
@@ -356,6 +364,7 @@ initNodeKernel
     , miniProtocolParameters
     , leiosDB
     , leiosMinOfferLead
+    , blockFetchSize
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -377,6 +386,7 @@ initNodeKernel
           , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
+          , freshBytes = getFreshBytes
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -626,6 +636,29 @@ initNodeKernel
           leiosVoteState
           (topLevelConfigVotingKeys cfg)
 
+    -- Each newly adopted block refills the egress credit by its size and its
+    -- EB's list size, once and while fresh (see 'LeiosFreshBytes'), by the
+    -- slot onset chain selection already attached to its header.
+    void $
+      forkLinkedWatcher registry "NodeKernel.freshBytes" $
+        Watcher
+          { wFingerprint = AF.headPoint
+          , wInitial = Nothing
+          , wReader = ChainDB.getCurrentChainWithTime chainDB
+          , wNotify = \chain -> do
+              now <- systemTimeCurrent systemTime
+              let aged HeaderWithTime{hwtHeader = hdr, hwtSlotRelativeTime = onset} =
+                    ( blockSlot hdr
+                    , now `diffRelTime` onset
+                    , fromIntegral (getSizeInBytes (blockFetchSize hdr))
+                        + maybe 0 (fromIntegral . snd) (headerLeiosAnnouncement hdr)
+                    )
+              (added, total) <- atomically $ addAdopted getFreshBytes (map aged (newestFirst chain))
+              when (added > 0) $
+                traceWith (leiosKernelTracer tracers) $
+                  Leios.TraceLeiosFreshBytes Leios.FreshAdopted added total
+          }
+
     void $
       forkLinkedWatcher registry "NodeKernel.leiosImmTipPrune" $
         Watcher
@@ -718,6 +751,7 @@ initNodeKernel
         , getLeiosReady = getLeiosReady
         , getLeiosCentralState = getLeiosCentralState
         , getLeiosTxCache = getLeiosTxCache
+        , getFreshBytes
         }
    where
     blockForgingController ::
@@ -792,6 +826,7 @@ data InternalState m addrNTN addrNTC blk = IS
   -- point's tally crosses 'minCertificationThreshold'. Source of
   -- 'fbLeiosVoteState' threaded into 'ForgeBlockLeiosArgs'.
   , leiosMinOfferLead :: Leios.LeiosMinOfferLead
+  , freshBytes :: FreshBytes m
   }
 
 initInternalState ::
@@ -862,6 +897,9 @@ initInternalState
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
+    freshBytes <-
+      newFreshBytes Leios.maxAnnouncementAgeSend . AF.headSlot
+        =<< atomically (ChainDB.getCurrentChain chainDB)
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -946,6 +984,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
+                          freshBytes
                           leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header

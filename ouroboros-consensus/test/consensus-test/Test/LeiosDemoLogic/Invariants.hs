@@ -27,7 +27,7 @@
 -- from several peers is fine; re-requesting a held one is not.
 module Test.LeiosDemoLogic.Invariants (tests) where
 
-import Cardano.Slotting.Slot (SlotNo (SlotNo))
+import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (Origin))
 import Control.Concurrent.Class.MonadMVar
   ( MVar
   , modifyMVar_
@@ -48,7 +48,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Foldable (foldl', toList)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
-import Data.List (sort)
+import Data.List (nub, sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
@@ -64,6 +64,7 @@ import LeiosDemoLogic
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
   , mkAnnouncingHeader
+  , maxAnnouncementAgeSend
   , noMempoolPull
   , processAnnouncementCentrally
   , processLeiosBlock
@@ -96,6 +97,7 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import LeiosFreshBytes (FreshBytes, newFreshBytes, readFreshBytes)
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
 import Ouroboros.Consensus.Block (getHeader)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -105,7 +107,14 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Storage.LeiosDB (withWriter)
 import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
-import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , check
+  , evaluate
+  , newTVarIO
+  , readTVar
+  , writeTVar
+  )
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -137,6 +146,7 @@ tests =
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
           ]
+      , testProperty "a closure is credited once, however many peers deliver it" prop_closureCreditedOnce
       , testCase "a body is claimed acquired only by a settled write" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
@@ -417,6 +427,7 @@ tests =
                 withWriter dbHandle $ \conn -> do
                   outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
                   readyVar <- newEmptyMVar
+                  freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
                   let kv = (outstandingVar, readyVar)
                   recordAnnouncedEb kv SNothing $
                     announcementOf point (encodeLeiosEbSize eb)
@@ -427,6 +438,7 @@ tests =
                         nullTracer
                         kv
                         nullLeiosTxCache
+                        freshBytes
                         conn
                         dummySystemTime
                         noMempoolPull
@@ -456,6 +468,7 @@ tests =
                 withWriter dbHandle $ \conn -> do
                   outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
                   readyVar <- newEmptyMVar
+                  freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
                   let kv = (outstandingVar, readyVar)
                   recordAnnouncedEb kv SNothing $
                     announcementOf point (encodeLeiosEbSize eb)
@@ -464,6 +477,7 @@ tests =
                     nullTracer
                     kv
                     nullLeiosTxCache
+                    freshBytes
                     conn
                     dummySystemTime
                     noMempoolPull
@@ -551,8 +565,9 @@ txHashOf = hashLeiosTx . leiosTxOf
 txSizeOf :: Int -> BytesSize
 txSizeOf = fromIntegral . BS.length . txBytesOf
 
--- | A stub clock for the handlers: the suite never asserts on EB age, and these
--- EBs are never heralded, so the age always comes out 'Nothing' regardless.
+-- | A stub clock for the handlers, fixed at zero. The suite never asserts on EB
+-- age: an EB it heralds, at zero, is fresh on arrival, and one it does not
+-- herald has no age at all.
 dummySystemTime :: Applicative m => SystemTime m
 dummySystemTime =
   SystemTime
@@ -617,10 +632,11 @@ runCmdsCollision cmds = runSimOrThrow go
       outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
       let kv = (outstandingVar, readyVar)
       centralVar <- newMVar Announcements.emptyCentralState
       mapM_
-        (applyCmd centralVar conn nullLeiosTxCache kv peerVars (MkPeerId (0 :: Int)))
+        (applyCmd centralVar conn nullLeiosTxCache freshBytes kv peerVars (MkPeerId (0 :: Int)))
         cmds
     -- The plain selector: record dot cannot select a 'HasCallStack =>' field.
     points <- LeiosDb.withReader dbHandle LeiosDb.testScanEbPoints
@@ -647,13 +663,14 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
       centralVar <- newMVar Announcements.emptyCentralState
+      freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
           loop acc [] = pure (Right acc)
           loop acc (c : cs) = do
             r <-
-              try (applyCmd centralVar conn txCache kv peerVars peerId c) ::
+              try (applyCmd centralVar conn txCache freshBytes kv peerVars peerId c) ::
                 IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
@@ -681,12 +698,13 @@ applyCmd ::
     (Announcements.CentralState (IOSim s) (PeerId Int) (AnnouncingHeader LeiosTestBlock)) ->
   LeiosDb.LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () Leios.ProtVerParity Leios.SerializedEbBody ->
+  FreshBytes (IOSim s) ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
   LeiosPeerVars (IOSim s) ->
   PeerId Int ->
   Cmd ->
   IOSim s [EbHash]
-applyCmd centralVar conn txCache kv peerVars peerId = \case
+applyCmd centralVar conn txCache freshBytes kv peerVars peerId = \case
   Announce ids slot -> do
     -- Through the same entry point the node uses, so that whatever a validated
     -- announcement is defined to do --- today that includes registering the
@@ -722,6 +740,7 @@ applyCmd centralVar conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      freshBytes
       conn
       dummySystemTime
       noMempoolPull
@@ -743,6 +762,7 @@ applyCmd centralVar conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      freshBytes
       lostConn
       dummySystemTime
       noMempoolPull
@@ -771,6 +791,7 @@ applyCmd centralVar conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      freshBytes
       conn
       dummySystemTime
       noMempoolPull
@@ -1094,6 +1115,7 @@ raceSameHashMultiSlot = do
     readyVar <- newEmptyMVar
     peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
     txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
+    freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
     let kv = (outstandingVar, readyVar)
         peerId = MkPeerId (0 :: Int)
         ids = [0, 1] :: TestEb
@@ -1112,6 +1134,7 @@ raceSameHashMultiSlot = do
               nullTracer
               kv
               txCache
+              freshBytes
               conn
               dummySystemTime
               noMempoolPull
@@ -1147,3 +1170,73 @@ announcementOf point size =
     size
  where
   ebHash = Leios.pointEbHash point
+
+------------------------------------------------------------
+-- The closure's egress credit
+------------------------------------------------------------
+
+-- | Distinct txs; deliveries of the body while the first one's write is still
+-- pending (at least one); deliveries after it settled.
+data ClosureDeliveries = ClosureDeliveries TestEb Int Int
+  deriving Show
+
+instance Arbitrary ClosureDeliveries where
+  arbitrary =
+    ClosureDeliveries
+      <$> (nub <$> listOf1 (choose (0, 60)))
+      <*> choose (1, 4)
+      <*> choose (0, 2)
+  shrink (ClosureDeliveries ids pending released) =
+    [ClosureDeliveries ids' pending released | ids' <- shrink ids, not (null ids'), ids' == nub ids']
+      ++ [ClosureDeliveries ids pending' released | pending' <- shrink pending, pending' >= 1]
+      ++ [ClosureDeliveries ids pending released' | released' <- shrink released]
+
+-- | A fresh EB's closure bytes are credited to the egress count once, however
+-- many peers deliver its body: a delivery while another's write is pending
+-- still reads as novel, and one after the claim is not persisted at all.
+prop_closureCreditedOnce :: ClosureDeliveries -> Property
+prop_closureCreditedOnce (ClosureDeliveries ids pending released) = runSimOrThrow $ do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  withWriter dbHandle $ \conn -> do
+    outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+    readyVar <- newEmptyMVar
+    txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
+    freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
+    gate <- newTVarIO False
+    let kv = (outstandingVar, readyVar)
+        eb = ebOf ids
+        point = pointOf ids 10
+        closureBytes = sum [fromIntegral (txSizeOf i) | i <- ids]
+        ebBytesSize = encodeLeiosEbSize eb
+        -- the closure bound admits exactly this closure
+        closureBound = fromIntegral closureBytes
+        -- a body write completes only once the gate opens
+        heldConn =
+          conn
+            { LeiosDb.writeEbBody = \p e fills -> do
+                promise <- LeiosDb.writeEbBody conn p e fills
+                pure (LeiosDb.Promise (atomically (readTVar gate >>= check) >> LeiosDb.await promise))
+            }
+        deliver i =
+          processLeiosBlock
+            nullTracer
+            nullTracer
+            kv
+            txCache
+            freshBytes
+            heldConn
+            dummySystemTime
+            noMempoolPull
+            (ReceivedBlockFrom (MkPeerId (i :: Int)) (MkLeiosBlockRequest point ebBytesSize closureBound))
+            eb
+    -- announced at the stub clock's instant, so every delivery is fresh
+    recordAnnouncedEb kv (SJust (RelativeTime 0)) (announcementOf point ebBytesSize)
+    mapM_ deliver [1 .. pending]
+    atomically (writeTVar gate True)
+    threadDelay 1 -- the pending writes settle
+    mapM_ deliver [pending + 1 .. pending + released]
+    threadDelay 1
+    credited <- atomically (readFreshBytes freshBytes)
+    pure $
+      counterexample ("credited " <> show credited <> " for a closure of " <> show closureBytes) $
+        credited === closureBytes
