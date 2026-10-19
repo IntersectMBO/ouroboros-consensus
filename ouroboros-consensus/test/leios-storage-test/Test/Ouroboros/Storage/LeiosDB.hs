@@ -102,8 +102,8 @@ tests =
                  withFreshDb InMemory test_gcKeepsEbWithPointAtSlot
              , testCase "keeps a pinned EB" $
                  withFreshDb InMemory test_gcKeepsPinnedEb
-             , testCase "pinning an EB with no point does not keep it once it has one" $
-                 withFreshDb InMemory test_pinWithoutPointIgnored
+             , testCase "promoting an EB whose closure is incomplete fails" $
+                 withFreshDb InMemory test_promoteIncompleteFails
              ]
          , testGroup
              "truncateLeiosDbAfterSlot"
@@ -813,12 +813,17 @@ test_gcKeepsPinnedEb db = withRW db $ \con -> do
   leiosDbGarbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
-test_pinWithoutPointIgnored :: LeiosDbHandle IO -> IO ()
-test_pinWithoutPointIgnored db = withRW db $ \con -> do
-  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
-  writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
-  leiosDbGarbageCollect db 6
-  holdsClosure con (mkTestEbHash 1) >>= (@?= False)
+test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
+test_promoteIncompleteFails db = withRW db $ \con -> do
+  rwInsertEbPoint con (mkTestPoint 5 1) (encodeLeiosEbSize (mkTestEb 2))
+  void $ rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
+  result <- tryDb $ leiosDbPromoteToImmutable db [mkTestPoint 5 1]
+  case result of
+    Left _ -> pure ()
+    Right () -> assertFailure "promoting an EB whose closure is incomplete succeeded"
+ where
+  tryDb :: IO a -> IO (Either LeiosDbException a)
+  tryDb = try
 
 -- * Test utilities
 
