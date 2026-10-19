@@ -162,6 +162,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     } <-
     lift $ Block.forgeBlock blockForging fbArgs
 
+  lift $ whenJust mForgedEb (onForgedLeiosEb (getHeader newBlock))
+
   trace $
     TraceForgedBlock
       currentSlot
@@ -175,8 +177,6 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
   -- If the ChainDB does not adopt the block, 'addBlockToChainDB' exits early.
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
-
-  lift $ whenJust mForgedEb (onForgedLeiosEb (getHeader newBlock))
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
