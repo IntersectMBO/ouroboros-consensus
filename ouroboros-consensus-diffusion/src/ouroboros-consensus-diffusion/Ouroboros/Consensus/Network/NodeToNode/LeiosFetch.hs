@@ -6,10 +6,10 @@
 -- | The node's LeiosFetch client and server, and what the node-to-node wiring
 -- needs to run them.
 module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
-  ( ExnLeiosInvalidRequest (..)
-  , leiosFetchClient
+  ( leiosFetchClient
   , leiosFetchMiniProtocol
   , leiosFetchServer
+  , catchAndRethrow
   ) where
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
@@ -29,7 +29,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   , leiosFetchClientPeerIdle
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
-  ( LeiosFetchRequestHandler (..)
+  ( ExnLeiosInvalidRequest (..)
+  , LeiosFetchRequestHandler (..)
   , LeiosFetchServerPeer
   , leiosFetchServerPeer
   )
@@ -41,9 +42,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
-import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import Ouroboros.Consensus.Util.IOLike
-  ( Exception (..)
+  ( Exception
   , MonadCatch (..)
   , MonadSTM (..)
   , MonadThrow (..)
@@ -79,11 +79,19 @@ leiosFetchServer ::
   LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
 leiosFetchServer tracer reader =
   leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
-    MsgLeiosBlockRequest point -> MsgLeiosBlock <$> serveEb tracer reader point
-    MsgLeiosBlockTxsRequest point bitmaps -> MsgLeiosBlockTxs <$> serveTxs tracer reader point bitmaps
+    MsgLeiosBlockRequest point ->
+      fmap MsgLeiosBlock $
+        catchAndRethrow tracer TraceLeiosFetchServerInvalidRequest $
+          catchAndRethrow tracer (TraceLeiosFetchServerBlockDbFailure point) $
+            serveEb tracer reader point
+    MsgLeiosBlockTxsRequest point bitmaps ->
+      fmap MsgLeiosBlockTxs $
+        catchAndRethrow tracer TraceLeiosFetchServerInvalidRequest $
+          catchAndRethrow tracer (TraceLeiosFetchServerTxsDbFailure point bitmaps) $
+            serveTxs tracer reader point bitmaps
 
 serveEb ::
-  MonadCatch m =>
+  MonadThrow m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
@@ -93,17 +101,15 @@ serveEb tracer reader point = do
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
   -- The one body's tx references, in order. A stored body is never empty, so
   -- no references means the node does not hold the body.
-  traceDbExceptionAndThrow tracer point (lookupEbBody reader (pointEbHash point)) >>= \case
-    [] -> do
-      traceWith tracer $ TraceLeiosFetchServerUnknownBlock point
-      throwIO $ ExnLeiosUnknownBlockRequested point
+  lookupEbBody reader (pointEbHash point) >>= \case
+    [] -> throwIO $ ExnLeiosUnknownBlockRequested point
     refs -> do
       let n = length refs
       traceWith tracer $ TraceLeiosFetchServerBlockServed point n
       pure $ MkLeiosEb $ V.fromListN n refs
 
 serveTxs ::
-  MonadCatch m =>
+  MonadThrow m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
@@ -112,7 +118,7 @@ serveTxs ::
 serveTxs tracer reader point bitmaps = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  rows <- traceDbExceptionAndThrow tracer point (batchRetrieveTxs reader (pointEbHash point) offsets)
+  rows <- batchRetrieveTxs reader (pointEbHash point) offsets
   let held = IntMap.fromList [(offset, MkLeiosTx bytes) | (offset, _txHash, Just bytes) <- rows]
   case partitionEithers [maybe (Left offset) Right (IntMap.lookup offset held) | offset <- offsets] of
     ([], txs) -> do
@@ -120,35 +126,17 @@ serveTxs tracer reader point bitmaps = do
       traceWith tracer $
         TraceLeiosFetchServerTxsServed point n (sum [BS.length (leiosTxBytes tx) | tx <- txs])
       pure $ V.fromListN n txs
-    (missing, _txs) -> do
-      traceWith tracer $ TraceLeiosFetchServerUnknownTxs point missing
-      throwIO $ ExnLeiosUnknownTxsRequested point missing
+    (missing, _txs) -> throwIO $ ExnLeiosUnknownTxsRequested point missing
  where
   offsets = bitmapOffsets bitmaps
 
--- | Trace a 'LeiosDbException' that the action throws, then rethrow it.
-traceDbExceptionAndThrow ::
-  MonadCatch m =>
-  Tracer m TraceLeiosFetchServerEvent ->
-  LeiosPoint ->
-  m a ->
-  m a
-traceDbExceptionAndThrow tracer point action =
-  action `catch` \(e :: LeiosDbException) -> do
-    traceWith tracer $ TraceLeiosFetchServerDbException point (displayException e)
+-- | Trace an exception of the event's type that the action throws, then
+-- rethrow it.
+catchAndRethrow :: (MonadCatch m, Exception e) => Tracer m ev -> (e -> ev) -> m a -> m a
+catchAndRethrow tracer mkEvent action =
+  action `catch` \e -> do
+    traceWith tracer (mkEvent e)
     throwIO e
-
--- | Thrown by the node's LeiosFetch server, which disconnects a client that
--- requests what the node does not hold.
-data ExnLeiosInvalidRequest
-  = -- | An endorser block whose body the node does not hold.
-    ExnLeiosUnknownBlockRequested !LeiosPoint
-  | -- | Offsets into an endorser block that it does not have, or whose
-    -- transactions the node does not hold.
-    ExnLeiosUnknownTxsRequested !LeiosPoint ![Int]
-  deriving Show
-
-instance Exception ExnLeiosInvalidRequest
 
 -- | LeiosFetch as a node-to-node mini-protocol.
 leiosFetchMiniProtocol ::

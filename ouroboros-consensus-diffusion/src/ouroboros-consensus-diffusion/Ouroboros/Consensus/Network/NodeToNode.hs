@@ -97,6 +97,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchServerPeer
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch
   , byteLimitsLeiosFetch
@@ -126,7 +127,8 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
-  ( leiosFetchClient
+  ( catchAndRethrow
+  , leiosFetchClient
   , leiosFetchMiniProtocol
   , leiosFetchServer
   )
@@ -143,7 +145,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader, withReader)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosDbReader (..))
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -1402,14 +1404,19 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     channel = do
       labelThisThread "LeiosFetchServer"
       -- A reader of its own, since one must not be shared across threads.
-      withReader getLeiosDB $ \reader ->
-        runPeerWithLimits
-          nullTracer
-          (cLeiosFetchCodec (mkCodecs version))
-          blLeiosFetch
-          timeLimitsLeiosFetch
-          channel
-          (hLeiosFetchServer version them reader)
+      bracket
+        (catchAndRethrow tracer TraceLeiosFetchServerOpenReaderDbFailure (openReader getLeiosDB))
+        closeReader
+        $ \reader ->
+          runPeerWithLimits
+            nullTracer
+            (cLeiosFetchCodec (mkCodecs version))
+            blLeiosFetch
+            timeLimitsLeiosFetch
+            channel
+            (hLeiosFetchServer version them reader)
+     where
+      tracer = contramap (TraceLabelPeer them) (Node.leiosFetchServerTracer (getTracers kernel))
 
 {-------------------------------------------------------------------------------
   Projections from 'Apps'

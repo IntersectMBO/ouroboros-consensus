@@ -2,6 +2,9 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..)) where
 
 import Ouroboros.Consensus.Leios.Types (LeiosPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxBitmaps)
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
 data TraceLeiosFetchServerEvent
   = -- | The client requested an endorser block.
@@ -17,12 +20,16 @@ data TraceLeiosFetchServerEvent
       !Int
       -- | their total size in bytes
       !Int
-  | -- | The server does not hold the requested endorser block, so it
-    -- disconnects the client.
-    TraceLeiosFetchServerUnknownBlock !LeiosPoint
-  | -- | The server does not hold the transactions at these offsets, so it
-    -- disconnects the client.
-    TraceLeiosFetchServerUnknownTxs !LeiosPoint ![Int]
-  | -- | Reading the LeiosDB failed, so the server disconnects the client.
-    TraceLeiosFetchServerDbException !LeiosPoint !String
+  | -- | The client requested what the server does not hold, so the server
+    -- disconnects it.
+    TraceLeiosFetchServerInvalidRequest !ExnLeiosInvalidRequest
+  | -- | Reading the LeiosDB for the client's request for this endorser block
+    -- failed, so the server disconnects the client.
+    TraceLeiosFetchServerBlockDbFailure !LeiosPoint !LeiosDbException
+  | -- | Reading the LeiosDB for the client's request for these transactions of
+    -- this endorser block failed, so the server disconnects the client.
+    TraceLeiosFetchServerTxsDbFailure !LeiosPoint !TxBitmaps !LeiosDbException
+  | -- | Opening the server's LeiosDB reader failed, so the server disconnects
+    -- the client.
+    TraceLeiosFetchServerOpenReaderDbFailure !LeiosDbException
   deriving Show

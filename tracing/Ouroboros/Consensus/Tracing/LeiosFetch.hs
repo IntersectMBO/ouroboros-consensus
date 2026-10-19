@@ -6,12 +6,17 @@
 module Ouroboros.Consensus.Tracing.LeiosFetch () where
 
 import Cardano.Logging
+import Control.Exception (displayException)
 import Data.Aeson (Value (String), (.=))
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyEbHash, prettyLeiosPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
 
+-- The exceptions these events carry disconnect only the client, not the whole
+-- node, so their fields are rendered for structured logging, rather than left
+-- to the network layer's traces of the same exceptions, which 'show' them.
 instance LogFormatting TraceLeiosFetchServerEvent where
   forMachine _dtal = \case
     TraceLeiosFetchServerBlockRequested point ->
@@ -23,12 +28,22 @@ instance LogFormatting TraceLeiosFetchServerEvent where
     TraceLeiosFetchServerTxsServed point txCount bytes ->
       mconcat
         ["kind" .= String "TxsServed", pointFields point, "txCount" .= txCount, "bytes" .= bytes]
-    TraceLeiosFetchServerUnknownBlock point ->
-      mconcat ["kind" .= String "UnknownBlock", pointFields point]
-    TraceLeiosFetchServerUnknownTxs point offsets ->
-      mconcat ["kind" .= String "UnknownTxs", pointFields point, "offsets" .= offsets]
-    TraceLeiosFetchServerDbException point err ->
-      mconcat ["kind" .= String "DbException", pointFields point, "error" .= String (Text.pack err)]
+    TraceLeiosFetchServerInvalidRequest exn -> case exn of
+      ExnLeiosUnknownBlockRequested point ->
+        mconcat ["kind" .= String "UnknownBlock", pointFields point]
+      ExnLeiosUnknownTxsRequested point offsets ->
+        mconcat ["kind" .= String "UnknownTxs", pointFields point, "offsets" .= offsets]
+    TraceLeiosFetchServerBlockDbFailure point err ->
+      mconcat ["kind" .= String "BlockDbFailure", pointFields point, "exception" .= err]
+    TraceLeiosFetchServerTxsDbFailure point bitmaps err ->
+      mconcat
+        [ "kind" .= String "TxsDbFailure"
+        , pointFields point
+        , "bitmaps" .= bitmaps
+        , "exception" .= err
+        ]
+    TraceLeiosFetchServerOpenReaderDbFailure err ->
+      mconcat ["kind" .= String "OpenReaderDbFailure", "exception" .= err]
    where
     pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
       mconcat ["slot" .= slot, "ebHash" .= String (Text.pack (prettyEbHash ebHash))]
@@ -48,16 +63,28 @@ instance LogFormatting TraceLeiosFetchServerEvent where
         <> ", "
         <> showT bytes
         <> " bytes"
-    TraceLeiosFetchServerUnknownBlock point ->
-      "Disconnecting a client that requested endorser block " <> pretty point <> ", which is not held"
-    TraceLeiosFetchServerUnknownTxs point offsets ->
-      "Disconnecting a client that requested transactions of endorser block "
+    TraceLeiosFetchServerInvalidRequest exn -> case exn of
+      ExnLeiosUnknownBlockRequested point ->
+        "Disconnecting a client that requested endorser block " <> pretty point <> ", which is not held"
+      ExnLeiosUnknownTxsRequested point offsets ->
+        "Disconnecting a client that requested transactions of endorser block "
+          <> pretty point
+          <> " at offsets "
+          <> showT offsets
+          <> ", which are not held"
+    TraceLeiosFetchServerBlockDbFailure point err ->
+      "Disconnecting a client, since reading its requested endorser block "
         <> pretty point
-        <> " at offsets "
-        <> showT offsets
-        <> ", which are not held"
-    TraceLeiosFetchServerDbException point err ->
-      "Reading endorser block " <> pretty point <> " from the LeiosDB failed: " <> Text.pack err
+        <> " from the LeiosDB failed: "
+        <> Text.pack (displayException err)
+    TraceLeiosFetchServerTxsDbFailure point _bitmaps err ->
+      "Disconnecting a client, since reading its requested transactions of endorser block "
+        <> pretty point
+        <> " from the LeiosDB failed: "
+        <> Text.pack (displayException err)
+    TraceLeiosFetchServerOpenReaderDbFailure err ->
+      "Disconnecting a client, since opening its LeiosDB reader failed: "
+        <> Text.pack (displayException err)
    where
     pretty = Text.pack . prettyLeiosPoint
 
@@ -67,9 +94,11 @@ instance MetaTrace TraceLeiosFetchServerEvent where
     TraceLeiosFetchServerBlockServed{} -> Namespace [] ["BlockServed"]
     TraceLeiosFetchServerTxsRequested{} -> Namespace [] ["TxsRequested"]
     TraceLeiosFetchServerTxsServed{} -> Namespace [] ["TxsServed"]
-    TraceLeiosFetchServerUnknownBlock{} -> Namespace [] ["UnknownBlock"]
-    TraceLeiosFetchServerUnknownTxs{} -> Namespace [] ["UnknownTxs"]
-    TraceLeiosFetchServerDbException{} -> Namespace [] ["DbException"]
+    TraceLeiosFetchServerInvalidRequest ExnLeiosUnknownBlockRequested{} -> Namespace [] ["UnknownBlock"]
+    TraceLeiosFetchServerInvalidRequest ExnLeiosUnknownTxsRequested{} -> Namespace [] ["UnknownTxs"]
+    TraceLeiosFetchServerBlockDbFailure{} -> Namespace [] ["BlockDbFailure"]
+    TraceLeiosFetchServerTxsDbFailure{} -> Namespace [] ["TxsDbFailure"]
+    TraceLeiosFetchServerOpenReaderDbFailure{} -> Namespace [] ["OpenReaderDbFailure"]
 
   severityFor (Namespace _ ["BlockRequested"]) _ = Just Debug
   severityFor (Namespace _ ["BlockServed"]) _ = Just Info
@@ -77,7 +106,9 @@ instance MetaTrace TraceLeiosFetchServerEvent where
   severityFor (Namespace _ ["TxsServed"]) _ = Just Info
   severityFor (Namespace _ ["UnknownBlock"]) _ = Just Notice
   severityFor (Namespace _ ["UnknownTxs"]) _ = Just Notice
-  severityFor (Namespace _ ["DbException"]) _ = Just Error
+  severityFor (Namespace _ ["BlockDbFailure"]) _ = Just Error
+  severityFor (Namespace _ ["TxsDbFailure"]) _ = Just Error
+  severityFor (Namespace _ ["OpenReaderDbFailure"]) _ = Just Error
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["BlockRequested"]) =
@@ -94,8 +125,14 @@ instance MetaTrace TraceLeiosFetchServerEvent where
   documentFor (Namespace _ ["UnknownTxs"]) =
     Just
       "A client requested transactions that the node does not hold, so the server disconnects it."
-  documentFor (Namespace _ ["DbException"]) =
-    Just "Reading the LeiosDB failed, so the server disconnects the client."
+  documentFor (Namespace _ ["BlockDbFailure"]) =
+    Just
+      "Reading a client's requested endorser block from the LeiosDB failed, so the server disconnects the client."
+  documentFor (Namespace _ ["TxsDbFailure"]) =
+    Just
+      "Reading a client's requested transactions from the LeiosDB failed, so the server disconnects the client."
+  documentFor (Namespace _ ["OpenReaderDbFailure"]) =
+    Just "Opening the server's LeiosDB reader failed, so the server disconnects the client."
   documentFor _ = Nothing
 
   allNamespaces =
@@ -105,5 +142,7 @@ instance MetaTrace TraceLeiosFetchServerEvent where
     , Namespace [] ["TxsServed"]
     , Namespace [] ["UnknownBlock"]
     , Namespace [] ["UnknownTxs"]
-    , Namespace [] ["DbException"]
+    , Namespace [] ["BlockDbFailure"]
+    , Namespace [] ["TxsDbFailure"]
+    , Namespace [] ["OpenReaderDbFailure"]
     ]

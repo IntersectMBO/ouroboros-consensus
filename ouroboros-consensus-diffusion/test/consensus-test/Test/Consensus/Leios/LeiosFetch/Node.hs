@@ -31,10 +31,10 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash (..)
   , encodeLeiosEbSize
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
-import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)

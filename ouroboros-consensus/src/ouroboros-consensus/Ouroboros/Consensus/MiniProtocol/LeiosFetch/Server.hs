@@ -6,17 +6,20 @@
 
 -- | The upstream side of LeiosFetch.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
-  ( LeiosFetchRequestHandler (..)
+  ( ExnLeiosInvalidRequest (..)
+  , LeiosFetchRequestHandler (..)
   , LeiosFetchServerPeer
   , leiosFetchServerPeer
   ) where
 
+import Control.Monad.Class.MonadThrow (Exception)
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core
   ( IsPipelined (..)
   , ReflRelativeAgency (..)
   )
 import Network.TypedProtocol.Peer (Peer (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch (..)
   , Message (..)
@@ -49,3 +52,15 @@ leiosFetchServerPeer (MkLeiosFetchRequestHandler answer) = go
       Effect $ (\response -> Yield ReflServerAgency response go) <$> answer request
     request@MsgLeiosBlockTxsRequest{} ->
       Effect $ (\response -> Yield ReflServerAgency response go) <$> answer request
+
+-- | Thrown by the node's LeiosFetch server, which disconnects a client that
+-- requests what the node does not hold.
+data ExnLeiosInvalidRequest
+  = -- | An endorser block whose body the node does not hold.
+    ExnLeiosUnknownBlockRequested !LeiosPoint
+  | -- | Offsets into an endorser block that it does not have, or whose
+    -- transactions the node does not hold.
+    ExnLeiosUnknownTxsRequested !LeiosPoint ![Int]
+  deriving Show
+
+instance Exception ExnLeiosInvalidRequest
