@@ -3,11 +3,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
+module Ouroboros.Consensus.Shelley.Ledger.Forge
+  ( ebTxBytes
+  , forgeShelleyBlock
+  ) where
 
 import Cardano.Ledger.Binary (serialize')
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
-import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
+import qualified Cardano.Ledger.Core as Core (EraTx, TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( blockBodySize
   , eraProtVerLow
@@ -98,14 +101,7 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe LeiosEb)
     forgedEb =
       pureLeiosOnly @proto $
-        leiosEbFromTxBytes . fmap (txBytes . extractTx) <$> nonEmpty fbEbTxs
-
-    -- The length of this encoding must not exceed 'sizeTxF' plus
-    -- 'perTxOverhead'. Otherwise the endorser block can exceed the size that
-    -- 'txEbMeasureDijkstra' reserved for it, and header validation rejects the
-    -- block with 'LeiosEbTooBig'.
-    txBytes :: Core.Tx Core.TopTx era -> ByteString
-    txBytes = serialize' (SL.eraProtVerLow @era)
+        leiosEbFromTxBytes . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
 
     -- TODO Forging does not yet certify endorser blocks.
     leiosFields = (,) False . maybeToStrictMaybe . fmap announce <$> forgedEb
@@ -132,3 +128,12 @@ forgeShelleyBlock
         . castHash
         . getTipHash
         $ fbCurrentTickedLedgerState
+
+-- | The bytes of a transaction that an endorser block references.
+--
+-- The length of these bytes must not exceed 'txByteSizeWithOverhead'.
+-- Otherwise the endorser block can exceed the size that
+-- 'txEbMeasureDijkstra' reserved for it, and header validation rejects the
+-- block with 'LeiosEbTooBig'.
+ebTxBytes :: forall era. Core.EraTx era => Core.Tx Core.TopTx era -> ByteString
+ebTxBytes = serialize' (SL.eraProtVerLow @era)

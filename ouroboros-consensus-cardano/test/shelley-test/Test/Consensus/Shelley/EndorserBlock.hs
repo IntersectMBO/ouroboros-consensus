@@ -1,17 +1,13 @@
-{-# LANGUAGE TypeApplications #-}
-
 -- | The sizes the mempool charges for an endorser block agree with
 -- the bytes 'encodeLeiosEb' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
-import Cardano.Ledger.Binary (serialize')
-import Cardano.Ledger.Core (TopTx, Tx, eraProtVerLow, sizeTxF)
+import Cardano.Ledger.Core (TopTx, Tx)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Strict as V
-import Lens.Micro ((^.))
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -22,7 +18,8 @@ import Ouroboros.Consensus.Leios.Types
   , encodeLeiosEbMaxFramingSize
   , leiosReferencesCapacity
   )
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (perTxOverhead)
+import Ouroboros.Consensus.Shelley.Ledger.Forge (ebTxBytes)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -129,9 +126,9 @@ prop_referencesCapacityFloorsAtZero =
       , (1, chooseEnum (framing + 1, maxBound))
       ]
 
--- | The length that a Dijkstra endorser block holds for a transaction, the
--- 'serialize'' bytes that forging hashes, never exceeds 'sizeTxF' plus
--- 'perTxOverhead', which 'txEbMeasureDijkstra' reserved for the reference.
+-- | The length of the 'ebTxBytes' of a Dijkstra transaction never exceeds
+-- its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra' reserves for the
+-- reference.
 --
 -- The ledger computes 'sizeTxF' from one encoding and 'serialize'' uses
 -- another, so a ledger change can make the two disagree.
@@ -140,5 +137,5 @@ prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (serialize' (eraProtVerLow @DijkstraEra) tx)
-  mempoolTxSize = fromIntegral (tx ^. sizeTxF) + perTxOverhead
+  ebTxSize = BS.length (ebTxBytes tx)
+  mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)

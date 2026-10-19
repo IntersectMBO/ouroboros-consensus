@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , mkShelleyTx
   , mkShelleyValidatedTx
   , perTxOverhead
+  , txByteSizeWithOverhead
 
     -- * Exported for tests
   , AlonzoMeasure (..)
@@ -203,6 +204,10 @@ fixedBlockBodyOverhead = 1024
 -- | See 'fixedBlockBodyOverhead'.
 perTxOverhead :: Num a => a
 perTxOverhead = 4
+
+-- | The byte size that the mempool measures for a transaction.
+txByteSizeWithOverhead :: L.EraTx era => Tx TopTx era -> Word32
+txByteSizeWithOverhead tx = tx ^. sizeTxF + perTxOverhead
 
 instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
@@ -431,7 +436,7 @@ txInBlockSize ::
 txInBlockSize st (ShelleyTx _txid tx') =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
-    Just $ IgnoringOverflow $ ByteSize32 $ txsz + perTxOverhead
+    Just $ IgnoringOverflow $ ByteSize32 $ txByteSizeWithOverhead tx'
  where
   txsz = tx' ^. sizeTxF
 
