@@ -10,6 +10,7 @@
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( atomically
   , readTChan
@@ -23,7 +24,7 @@ import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
-import Data.List (sortOn)
+import Data.List (nub, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -1116,30 +1117,48 @@ test_closeWithPinnedEb =
 
 -- * The two implementations agree
 
--- | A write to the database.
+-- | An operation on the database: a write, or what the ChainDB has it do as
+-- blocks become immutable.
 data Op
   = OpPoint LeiosPoint
   | OpBody LeiosPoint
   | OpTxs [TxHash]
+  | OpPromote EbHash
+  | OpGc SlotNo
   deriving Show
 
 -- | What each endorser block's body is, by its hash: the same hash always names
 -- the same body, as it would on the wire.
 type Bodies = Map.Map EbHash LeiosEb
 
--- | Property: running the same writes against both implementations, a reader
--- sees the same in each, and each write completes the same endorser blocks.
+-- | Property: running the same operations against both implementations, a
+-- reader sees the same in each, and each write completes the same endorser
+-- blocks.
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
+--
+-- The SQLite implementation copies pinned endorser blocks and sweeps what the
+-- garbage collection marked in the background, so how far it has got at any
+-- moment depends on its load. The in-memory implementation does both at once.
+-- So the SQLite implementation's background work catches up after each
+-- operation, before the next.
 prop_implementationsAgree :: Property
 prop_implementationsAgree =
   forAll genBodies $ \bodies ->
     forAllShrinkShow (genOps bodies) (shrinkList (const [])) show $ \ops ->
       ioProperty $ do
-        inMemory <- withFreshDb InMemory $ \db -> observe db bodies ops
-        sqlite <- withFreshDb SQLite $ \db -> observe db bodies ops
-        pure $ inMemory === sqlite
+        ((nPinned, nEvicted), inMemory) <-
+          withFreshDb InMemory $ \db -> observe db (pure ()) bodies ops
+        (_, sqlite) <-
+          withFreshSQLiteFile $ \volDbPath _immDbPath db ->
+            withSettle volDbPath $ \settle -> observe db settle bodies ops
+        pure $
+          tabulate "endorser blocks pinned" [bucket nPinned] $
+            tabulate "endorser blocks evicted" [bucket nEvicted] $
+              inMemory === sqlite
+ where
+  bucket n = if n >= 3 then "3+" else show n
 
 -- | Three endorser blocks over a pool of eight transactions, so that they share
 -- some. Sometimes a reference misstates its transaction's size.
@@ -1157,53 +1176,82 @@ genBodies =
 genOps :: Bodies -> Gen [Op]
 genOps bodies = listOf genOp
  where
-  genPointOf = MkLeiosPoint <$> (SlotNo . fromIntegral <$> chooseInt (1, 4)) <*> elements (Map.keys bodies)
+  genSlot = SlotNo . fromIntegral <$> chooseInt (1, 4)
+  genPointOf = MkLeiosPoint <$> genSlot <*> elements (Map.keys bodies)
   genOp =
     frequency
       [ (2, OpPoint <$> genPointOf)
       , (2, OpBody <$> genPointOf)
       , (3, OpTxs . map (mkTestTxHash . fromIntegral) <$> sublistOf [1 .. 8 :: Int])
+      , (3, OpPromote <$> elements (Map.keys bodies))
+      , (1, OpGc . (+ 1) <$> genSlot)
       ]
 
 -- | A transaction's bytes, by its index in the pool.
 poolTxBytes :: Int -> BS.ByteString
 poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 
--- | Run the writes, then read back everything a reader can see of each
--- endorser block. The writes meet the preconditions of 'writeEbBody' and
--- 'writeTxs', and a body is written only once per point, since the node never
--- does otherwise.
+-- | Run the operations, then read back everything a reader can see of each
+-- endorser block. Also how many endorser blocks the operations pinned and
+-- evicted.
+--
+-- The operations run only as far as they meet the node's own preconditions: a
+-- body is written once per point, for a point the database holds; a
+-- transaction only if a body the database holds references it; and an
+-- endorser block is promoted only with a complete closure, as the node pins
+-- only what an immutable block certifies, and its ChainSel adopts a block
+-- certifying an endorser block only once it holds that endorser block's
+-- closure. So this tracks which points and
+-- bodies the garbage collection evicts: those of every endorser block all of
+-- whose points are older than its slot, pinned or not, since a pinned one has
+-- a complete closure, so has been copied.
+--
+-- WARNING: the node as of this incomplete port can still pin an endorser block
+-- whose closure is incomplete. Its ChainSel adopts a block certifying an
+-- endorser block without checking it holds that block's closure. TODO Remove
+-- this warning once ChainSel checks.
+--
+-- An endorser block is also promoted at most once: the node pins only what the
+-- immutable chain certifies, and a chain cannot certify the same endorser
+-- block twice, since it cannot be valid twice.
+--
+-- @settle@ runs after each operation.
 observe ::
   LeiosDbHandle IO ->
+  IO () ->
   Bodies ->
   [Op] ->
   IO
-    ( [CompletedEbs]
-    , [ ( [(TxHash, BytesSize)]
-        , Maybe [(TxHash, BS.ByteString)]
-        , [(Int, TxHash, Maybe BS.ByteString)]
-        )
-      ]
+    ( (Int, Int)
+    , ( [CompletedEbs]
+      , [ ( [(TxHash, BytesSize)]
+          , Maybe [(TxHash, BS.ByteString)]
+          , [(Int, TxHash, Maybe BS.ByteString)]
+          )
+        ]
+      )
     )
-observe db bodies ops = withRW db $ \rw -> do
-  completed <- go rw [] [] ops
+observe db settle bodies ops = withRW db $ \rw -> do
+  (counts, completed) <- go rw [] [] [] 0 ops
   seen <- forM (Map.toList bodies) $ \(ebHash, eb) ->
     (,,)
       <$> rwLookupEbBody rw ebHash
       <*> rwLookupEbClosure rw ebHash
       <*> rwBatchRetrieveTxs rw ebHash [0 .. V.length (leiosEbTxs eb)]
-  pure (completed, seen)
+  pure (counts, (completed, seen))
  where
-  go _rw _points _bodied [] = pure []
-  go rw points bodied (op : rest) = case op of
+  go _rw _points _bodied pinned nEvicted [] = pure ((length pinned, nEvicted), [])
+  go rw points bodied pinned nEvicted (op : rest) = case op of
     OpPoint point -> do
       rwInsertEbPoint rw point (encodeLeiosEbSize (bodies Map.! pointEbHash point))
-      go rw (point : points) bodied rest
+      settle
+      go rw (point : points) bodied pinned nEvicted rest
     OpBody point
       | point `elem` points && point `notElem` bodied -> do
           done <- rwInsertEbBody rw point (bodies Map.! pointEbHash point)
-          (sortOn show done :) <$> go rw points (point : bodied) rest
-      | otherwise -> go rw points bodied rest
+          settle
+          fmap (sortOn show done :) <$> go rw points (point : bodied) pinned nEvicted rest
+      | otherwise -> go rw points bodied pinned nEvicted rest
     OpTxs txHashes -> do
       let referenced =
             [ txHash
@@ -1218,4 +1266,58 @@ observe db bodies ops = withRW db $ \rw -> do
           , txHash `elem` txHashes
           , txHash `elem` referenced
           ]
-      (sortOn show done :) <$> go rw points bodied rest
+      settle
+      fmap (sortOn show done :) <$> go rw points bodied pinned nEvicted rest
+    OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` pinned] of
+      point : _ -> do
+        complete <- isJust <$> rwLookupEbClosure rw ebHash
+        if complete
+          then do
+            leiosDbPromoteToImmutable db [point]
+            settle
+            go rw points bodied (nub (ebHash : pinned)) nEvicted rest
+          else go rw points bodied pinned nEvicted rest
+      [] -> go rw points bodied pinned nEvicted rest
+    OpGc slot -> do
+      leiosDbGarbageCollect db slot
+      settle
+      let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
+          evicted =
+            nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
+          kept p = pointEbHash p `notElem` evicted
+      go rw (filter kept points) (filter kept bodied) pinned (nEvicted + length evicted) rest
+
+-- | Hand the action a wait for the SQLite implementation's background work to
+-- catch up: for its sweep to have evicted every row the garbage collection
+-- marked, and the transactions that left orphaned, and for its copier to have
+-- copied every pinned endorser block.
+withSettle :: FilePath -> (IO () -> IO a) -> IO a
+withSettle volDbPath action =
+  bracket (SQL.open (T.pack volDbPath)) SQL.close $ \conn -> do
+    SQL.exec conn (T.pack "pragma busy_timeout = 1000;")
+    bracket (SQL.prepare conn sqlBackgroundWork) SQL.finalize $ \stmt -> do
+      let backlog = do
+            _ <- SQL.step stmt
+            n <- SQL.columnInt64 stmt 0
+            SQL.reset stmt
+            pure n
+          poll =
+            backlog >>= \case
+              0 -> pure ()
+              _ -> threadDelay 1_000 >> poll
+          settle =
+            Timeout.timeout settleTimeoutMicros poll >>= \case
+              Just () -> pure ()
+              Nothing -> assertFailure "the SQLite implementation's background work did not catch up"
+      action settle
+ where
+  settleTimeoutMicros = 10_000_000
+
+-- | How many rows the SQLite implementation's background work has yet to deal
+-- with: those pinned (status 1) or marked for the sweep (status 3), and the
+-- staged orphan candidates.
+sqlBackgroundWork :: T.Text
+sqlBackgroundWork =
+  T.pack
+    "SELECT (SELECT COUNT(*) FROM ebs WHERE status IN (1, 3))\n\
+    \     + (SELECT COUNT(*) FROM gcTxCandidates)"
