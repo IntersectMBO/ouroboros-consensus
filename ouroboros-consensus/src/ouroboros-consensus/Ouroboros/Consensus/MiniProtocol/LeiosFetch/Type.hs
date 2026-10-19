@@ -400,7 +400,7 @@ maxBitmapEntries maxTxs = (maxTxs + 63) `div` 64
 -- non-zero. The indices must be strictly ascending, and each must be below
 -- 'maxBitmapEntries'.
 --
--- Accepts either CBOR map encoding. We write the indefinite one, but a decoder
+-- Accepts either CBOR map encoding. We encode the indefinite one, but a decoder
 -- that rejects the definite one would reject a peer that is within spec. A
 -- declared length is checked before the loop, so neither form reads more
 -- entries than the cap.
