@@ -267,6 +267,9 @@ instance LogFormatting TraceLeiosKernel where
       [CounterM "leiosDbSweepErrors" (Just 1)]
     TraceLeiosDb TraceLeiosDbCopyError{} ->
       [CounterM "leiosDbCopyErrors" (Just 1)]
+    -- The running count of freshly announced bytes; it restarts at zero.
+    TraceLeiosFreshBytes _ _ total ->
+      [IntM "leiosFreshBytes" (fromIntegral total)]
     _ -> []
 
 instance MetaTrace TraceLeiosKernel where

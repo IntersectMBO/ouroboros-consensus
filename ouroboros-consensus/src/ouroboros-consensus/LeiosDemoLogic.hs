@@ -108,6 +108,7 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import LeiosFreshBytes (FreshBytes, addFresh, isFreshAge)
 import LeiosTxCache (LeiosTxCache (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
@@ -754,6 +755,8 @@ nextLeiosFetchClientCommand ::
   , MVar m ()
   ) ->
   LeiosTxCache m () ProtVerParity SerializedEbBody ->
+  -- | Refilled by fresh closures (see 'processLeiosBlock')
+  FreshBytes m ->
   LeiosDbWriter m ->
   -- | For reporting each arriving EB's age (see 'processLeiosBlock').
   SystemTime m ->
@@ -768,7 +771,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer systemTime pullFromMempool peerId reqsVar = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache freshBytes writer systemTime pullFromMempool peerId reqsVar = do
   StrictSTM.atomically checkOrBlock >>= \case
     Right result -> pure $ Right result
     Left () -> pure $ Left (StrictSTM.atomically awaitStopOrRequest)
@@ -812,6 +815,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
               tracer
               kernelVars
               txCache
+              freshBytes
               writer
               systemTime
               pullFromMempool
@@ -882,6 +886,8 @@ processLeiosBlock ::
   , MVar m ()
   ) ->
   LeiosTxCache m () ProtVerParity SerializedEbBody ->
+  -- | Refilled by the closure once the body is claimed, if its announcement is fresh
+  FreshBytes m ->
   LeiosDbWriter m ->
   -- | For reporting the EB's age on arrival (now minus its recorded onset).
   SystemTime m ->
@@ -895,7 +901,7 @@ processLeiosBlock ::
   LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer systemTime pullFromMempool source eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes writer systemTime pullFromMempool source eb = do
   now <- systemTimeCurrent systemTime
   -- validate it
   let (mbPeer, point, ebBytesSize, mbMaxEbTxsSize) = case source of
@@ -1130,14 +1136,32 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                     (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                     (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
                     (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
-            MVar.modifyMVar_ outstandingVar $
-              pure . Leios.acquireEbBody ebHash jobPool
+            -- The claim is where the closure's bytes refill the egress credit,
+            -- once per EB (see 'LeiosFreshBytes'): a second delivery that read
+            -- as novel during this write window settles after this one and
+            -- finds the body held. Fresh by the announcement's onset at
+            -- arrival; a forged body is.
+            let MkLeiosEb ebv = eb
+            credited <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+              let outstanding' = Leios.acquireEbBody ebHash jobPool outstanding
+                  held = maybe False Leios.ebStateHasBody . Map.lookup ebHash . Leios.ebState
+                  fresh = case source of
+                    ForgedBlock{} -> True
+                    ReceivedBlockFrom{} ->
+                      maybe False (isFreshAge freshBytes) (ebPointAge now (Leios.ebState outstanding) point)
+                  closureBytes = V.foldl' (\acc (_, sz) -> acc + fromIntegral sz) 0 ebv
+              credited <-
+                if held outstanding' && not (held outstanding) && fresh && closureBytes > 0
+                  then Just . (,) closureBytes <$> StrictSTM.atomically (addFresh freshBytes closureBytes)
+                  else pure Nothing
+              pure (outstanding', credited)
+            forM_ credited $ \(added, total) ->
+              traceWith ktracer $ TraceLeiosFreshBytes Leios.FreshClosure added total
             -- Point the cache at THIS EB as the durable holder of the txs it just
             -- filled locally, so a re-endorsement fills from the youngest holder
             -- (evicted last) rather than the older source that goes first. Fetched
             -- txs are recorded by 'ingestAcquiredTxs'; together every durable
             -- holder points the cache at itself.
-            let MkLeiosEb ebv = eb
             setTxLocations txCache ebHash [(off, fst (ebv V.! off)) | off <- filledOffs]
             void $ MVar.tryPutMVar readyVar ()
             st <- Leios.ebState <$> MVar.readMVar outstandingVar
@@ -2411,6 +2435,8 @@ onForgedLeiosEb ::
   , MVar m ()
   ) ->
   LeiosTxCache m () ProtVerParity SerializedEbBody ->
+  -- | Refilled by the forged closure (see 'processLeiosBlock')
+  FreshBytes m ->
   LeiosDbWriter m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
@@ -2419,7 +2445,7 @@ onForgedLeiosEb ::
   AnnouncingHeader blk ->
   Leios.ForgedLeiosEb ->
   m ()
-onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedEb = do
+onForgedLeiosEb kernelTracer centralVar kv txCache freshBytes writer systemTime anc forgedEb = do
   processAnnouncementCentrally
     kernelTracer
     centralVar
@@ -2437,6 +2463,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     nullTracer
     kv
     txCache
+    freshBytes
     writer
     systemTime
     noMempoolPull -- the forge holds the whole closure

@@ -37,6 +37,7 @@ import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
 import qualified Test.LeiosDemoLogic.Invariants (tests)
 import qualified Test.LeiosDemoTypes (tests)
+import qualified Test.LeiosFreshBytes (tests)
 import qualified Test.LeiosTxCache.Optimized (tests)
 import qualified Test.LeiosTxCache.Optimized.MutableHashTable (tests)
 import qualified Test.LeiosTxCache.Reference (tests)
@@ -114,6 +115,7 @@ tests =
         , Test.LeiosDemoLogic.tests
         , Test.LeiosDemoLogic.Announcements.tests
         , Test.LeiosDemoLogic.Invariants.tests
+        , Test.LeiosFreshBytes.tests
         , Test.LeiosTxCache.Optimized.tests
         , Test.LeiosTxCache.Optimized.MutableHashTable.tests
         , Test.LeiosTxCache.Reference.tests

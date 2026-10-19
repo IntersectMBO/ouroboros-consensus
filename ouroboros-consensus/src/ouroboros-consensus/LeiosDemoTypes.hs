@@ -1705,6 +1705,23 @@ data TraceLeiosKernel
   | -- | One completed iteration of the LeiosFetch decision logic: its wall-clock
     -- duration and a size sample of the resulting 'LeiosOutstanding' state.
     TraceLeiosFetchDecision !NominalDiffTime !LeiosOutstandingStats !LeiosDecisionStats
+  | -- | The count of freshly announced bytes grew (see 'LeiosFreshBytes'): what
+    -- added to it, by how much, and its new total.
+    TraceLeiosFreshBytes !FreshBytesSource !Int !Int
+
+-- | What added to the count of freshly announced bytes.
+data FreshBytesSource
+  = -- | Newly adopted blocks: their sizes and their EBs' list sizes
+    FreshAdopted
+  | -- | An EB's closure, when its body was first claimed
+    FreshClosure
+  deriving (Eq, Show)
+
+-- | The source's name, the same in both renderings of 'TraceLeiosFreshBytes'.
+freshBytesSourceText :: FreshBytesSource -> Text
+freshBytesSourceText = \case
+  FreshAdopted -> "adopted"
+  FreshClosure -> "closure"
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -1881,6 +1898,13 @@ traceLeiosKernelToObject = \case
     mconcat
       [ "kind" .= Aeson.String "LeiosFetchTxsArrival"
       , fabObject fab
+      ]
+  TraceLeiosFreshBytes src added total ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosFreshBytes"
+      , "source" .= Aeson.String (freshBytesSourceText src)
+      , "added" .= added
+      , "total" .= total
       ]
   TraceLeiosFetchDecision d stats dec ->
     let inflight = summarizePeerDist (losInflightBytesDesc stats)
@@ -2168,6 +2192,7 @@ data LeiosKernelNS
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
   | LKNSFetchDecision
+  | LKNSFreshBytes
   deriving (Eq, Show, Enum, Bounded)
 
 leiosKernelNSOf :: TraceLeiosKernel -> LeiosKernelNS
@@ -2202,6 +2227,7 @@ leiosKernelNSOf = \case
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
   TraceLeiosAnnouncementAccepted{} -> LKNSAnnouncementAccepted
   TraceLeiosFetchDecision{} -> LKNSFetchDecision
+  TraceLeiosFreshBytes{} -> LKNSFreshBytes
 
 leiosKernelNSInfo :: LeiosKernelNS -> LeiosNSInfo
 leiosKernelNSInfo = \case
@@ -2298,6 +2324,15 @@ leiosKernelNSInfo = \case
   LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
   LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
   LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []
+  LKNSFreshBytes ->
+    LeiosNSInfo
+      ["FreshBytes"]
+      LSInfo
+      [
+        ( "leiosFreshBytes"
+        , "Bytes the chain has freshly announced since start; the egress credit refills from it."
+        )
+      ]
 
 -- | Every kernel namespace suffix, for @allNamespaces@.
 leiosKernelNSPaths :: [[Text]]
@@ -2416,6 +2451,8 @@ traceLeiosKernelForHuman = \case
       <> T.pack (show fields)
       <> " age="
       <> showT mbAge
+  TraceLeiosFreshBytes src added total ->
+    "Fresh bytes +" <> showT added <> " (" <> freshBytesSourceText src <> "), total " <> showT total
   TraceLeiosFetchDecision d stats dec ->
     "LeiosFetch decision took "
       <> showT d
