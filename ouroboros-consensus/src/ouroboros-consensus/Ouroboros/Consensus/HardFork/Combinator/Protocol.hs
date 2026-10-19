@@ -478,6 +478,15 @@ instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtoco
       WrapValidateView blk ->
       K (Maybe LeiosAnnouncement) blk
     getOne (WrapValidateView v) = K $ getLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
+  getContainsLeiosCert _proxy (OneEraValidateView view) =
+    hcollapse $ hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne view
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlockAndLeiosProtocol blk =>
+      WrapValidateView blk ->
+      K Bool blk
+    getOne (WrapValidateView v) = K $ getContainsLeiosCert (Proxy @(BlockProtocol blk)) v
   validateLeiosAnnouncement = validateAnnouncement
   getLeiosLedgerView _proxy view =
     hcollapse $

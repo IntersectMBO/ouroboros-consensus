@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Leios.Protocol
   , LeiosLedgerView (..)
   , LeiosProtocol (..)
   , OCINStaleness (..)
+  , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   , defaultGetLeiosAnnouncement
@@ -95,6 +96,10 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- | The announcement carried by the header with this view, if any.
   getLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
 
+  -- | Whether the block whose header has this view contains a Leios
+  -- certificate, which certifies the endorser block its predecessor announced.
+  getContainsLeiosCert :: proxy p -> ValidateView p -> Bool
+
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to
   -- the header's slot, rather than against the header's predecessor.
@@ -118,6 +123,11 @@ class ConsensusProtocol p => LeiosProtocol p where
 -- announcement.
 defaultGetLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
 defaultGetLeiosAnnouncement _proxy _view = Nothing
+
+-- | 'getContainsLeiosCert' for a protocol whose blocks never contain a Leios
+-- certificate.
+defaultGetContainsLeiosCert :: proxy p -> ValidateView p -> Bool
+defaultGetContainsLeiosCert _proxy _view = False
 
 -- | 'validateLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement, which is therefore never called.

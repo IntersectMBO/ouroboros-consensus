@@ -15,6 +15,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
@@ -43,6 +44,7 @@ data instance ConsensusConfig (WithLeaderSchedule p) = WLSConfig
 
 instance ConsensusProtocol p => LeiosProtocol (WithLeaderSchedule p) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
+  getContainsLeiosCert = defaultGetContainsLeiosCert
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

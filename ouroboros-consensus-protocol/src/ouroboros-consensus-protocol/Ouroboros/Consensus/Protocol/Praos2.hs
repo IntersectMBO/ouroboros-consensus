@@ -41,6 +41,7 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), LeiosProtocol (
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( WhyNotCertifiable (..)
+  , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
   , markUncertifiable
@@ -127,6 +128,7 @@ instance HasMaxMajorProtVer (Praos2 c) where
 
 instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
   getLeiosAnnouncement _proxy = getLeiosAnnouncementPolyPraos
+  getContainsLeiosCert _proxy = getContainsLeiosCertPolyPraos
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
   getLeiosLedgerView _proxy = getLeiosLedgerViewPolyPraos

@@ -67,6 +67,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateKESSignature'
+  , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
@@ -770,6 +771,14 @@ getLeiosAnnouncementPolyPraos b =
     )
     Nothing
     (Views.hvLeios b)
+
+-- | 'getContainsLeiosCert' for every Praos.
+getContainsLeiosCertPolyPraos ::
+  Foldable (WhenLeios proto) =>
+  Views.PolyPraosValidateView proto c ->
+  Bool
+getContainsLeiosCertPolyPraos b =
+  foldr (\(containsCert, _mbAnn) _ -> containsCert) False (Views.hvLeios b)
 
 -- | The announcement a header carries, given its issuer.
 mkLeiosAnnouncement :: KeyHash SL.BlockIssuer -> EbReferencesAnnouncement -> LeiosAnnouncement
