@@ -463,6 +463,7 @@ library tracing
   other-modules:
     Ouroboros.Consensus.Tracing.BlockReplayProgress
     Ouroboros.Consensus.Tracing.ChainDB
+    Ouroboros.Consensus.Tracing.Committee
     Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.ConvertTxId
@@ -472,6 +473,7 @@ library tracing
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.KESInfo
+    Ouroboros.Consensus.Tracing.Peras
 
   build-depends:
     aeson,
