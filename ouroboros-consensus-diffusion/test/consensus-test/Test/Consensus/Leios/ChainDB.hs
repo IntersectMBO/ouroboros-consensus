@@ -34,10 +34,11 @@ tests =
         snd (runSimOrThrow bodiesAfterGc) @?= []
     ]
 
--- | The node holds endorser blocks A and B. The chain's first block announces
--- A, its second certifies A, and its third announces B, which nothing
--- certifies. Once the immutable tip has passed both announcements and the GC
--- has run, these are the bodies of A and B that the LeiosDB still holds.
+-- | The node holds endorser blocks A and B, with their transactions. The
+-- chain's first block announces A, its second certifies A, and its third
+-- announces B, which nothing certifies. Once the immutable tip has passed both
+-- announcements and the GC has run, these are the bodies of A and B that the
+-- LeiosDB still holds.
 bodiesAfterGc :: IOSim s ([(TxHash, BytesSize)], [(TxHash, BytesSize)])
 bodiesAfterGc = withNode $ \nut -> do
   let leiosDb = getLeiosDB (nutKernel nut)
@@ -45,6 +46,11 @@ bodiesAfterGc = withNode $ \nut -> do
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
       await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
       void $ await =<< writeEbBody writer point eb
+      void $
+        await
+          =<< writeTxs
+            writer
+            [(txHash, BS.replicate (fromIntegral size) 0) | (txHash, size) <- V.toList (leiosEbTxs eb)]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) chain
