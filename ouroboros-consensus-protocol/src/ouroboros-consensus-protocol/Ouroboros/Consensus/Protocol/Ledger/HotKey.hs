@@ -189,7 +189,9 @@ data HotKey c m = HotKey
   -- POSTCONDITION: the signature is in normal form.
   , finalize :: m ()
   -- ^ Release any resources held by the 'HotKey', including the signing key
-  -- itself. This should be called exactly once per 'HotKey' instance.
+  -- itself: the key is poisoned (its mlocked memory erased) and any key
+  -- producer thread is stopped. This should be called exactly once per
+  -- 'HotKey' instance; calling it again is a no-op.
   }
 
 deriving via (OnlyCheckWhnfNamed "HotKey" (HotKey c m)) instance NoThunks (HotKey c m)
@@ -340,9 +342,13 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay = do
       -- here
       pure (cancel keyThreadAsync >> unset)
     Nothing ->
-      -- we don't need to do anything here, since we haven't spawned any other
-      -- threads to communicate with the KES agent
-      pure $ pure ()
+      -- No key-producer thread to stop, but the key itself must still be
+      -- erased: without this, a 'HotKey' built from an initial key (the
+      -- file-based credentials) would keep its mlocked signing key alive
+      -- after 'finalize' until the GC happens to run the allocator's
+      -- finaliser. Poisoning here erases it deterministically, e.g. when the
+      -- node reloads its credentials on SIGHUP.
+      pure unset
 
   return
     HotKey

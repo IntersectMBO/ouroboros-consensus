@@ -41,6 +41,8 @@ tests =
     [ testCase "evolve forward" test_evolveForward
     , testCase "refuse a key from the future" test_refuseKeyFromTheFuture
     , testCase "before the start period is unchanged" test_beforeStartUnchanged
+    , testCase "finalize poisons a file-mode key" test_finalizePoisons
+    , testCase "finalize is idempotent" test_finalizeIdempotent
     ]
 
 {-------------------------------------------------------------------------------
@@ -166,3 +168,36 @@ test_beforeStartUnchanged = withTestHotKey $ \hotKey _vk -> do
   evolveUpdated hotKey 5 >>= assertEvolution "before start period" 2
   getInfo hotKey >>= assertEvolution "getInfo after period before start" 2
   isPoisoned hotKey >>= assertBool "not poisoned" . not
+
+{-------------------------------------------------------------------------------
+  Finalising
+-------------------------------------------------------------------------------}
+
+-- | A hot key without a key producer (the file-based credentials) poisons its
+-- key on 'finalize', so the previous key is erased deterministically when the
+-- node reloads its credentials.
+test_finalizePoisons :: Assertion
+test_finalizePoisons = withTestHotKey $ \hotKey _vk -> do
+  void $ evolveUpdated hotKey 12
+  isPoisoned hotKey >>= assertBool "not poisoned before finalize" . not
+
+  finalize hotKey
+
+  isPoisoned hotKey >>= assertBool "poisoned after finalize"
+  getOCertMaybe hotKey >>= \case
+    Nothing -> pure ()
+    Just _ -> assertFailure "OCert still available after finalize"
+  evolve hotKey (KESPeriod 13) >>= \case
+    UpdateFailed (HotKey.KESKeyAlreadyPoisoned info target) -> do
+      assertEqual "target period in the error" (KESPeriod 13) target
+      assertEvolution "info in the error is the last info" 2 info
+    UpdateFailed err -> assertFailure $ "unexpected error: " <> show err
+    Updated info ->
+      assertFailure $ "expected UpdateFailed, got Updated with " <> show info
+
+-- | Finalising twice is harmless (the second call finds a poisoned key).
+test_finalizeIdempotent :: Assertion
+test_finalizeIdempotent = withTestHotKey $ \hotKey _vk -> do
+  finalize hotKey
+  finalize hotKey
+  isPoisoned hotKey >>= assertBool "poisoned after double finalize"
