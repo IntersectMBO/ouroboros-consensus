@@ -89,6 +89,7 @@ serveEb ::
   LeiosPoint ->
   m LeiosEb
 serveEb tracer reader point = do
+  -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
   -- The one body's tx references, in order. A stored body is never empty, so
   -- no references means the node does not hold the body.
@@ -109,6 +110,7 @@ serveTxs ::
   TxBitmaps ->
   m (V.Vector LeiosTx)
 serveTxs tracer reader point bitmaps = do
+  -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
   rows <- traceDbExceptionAndThrow tracer point (batchRetrieveTxs reader (pointEbHash point) offsets)
   let held = IntMap.fromList [(offset, MkLeiosTx bytes) | (offset, _txHash, Just bytes) <- rows]
@@ -138,8 +140,6 @@ traceDbExceptionAndThrow tracer point action =
 
 -- | Thrown by the node's LeiosFetch server, which disconnects a client that
 -- requests what the node does not hold.
---
--- TODO Disconnect it also for requesting what the node never offered it.
 data ExnLeiosInvalidRequest
   = -- | An endorser block whose body the node does not hold.
     ExnLeiosUnknownBlockRequested !LeiosPoint
