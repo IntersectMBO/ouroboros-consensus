@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey
   , HotKey (..)
   , KESEvolutionError (..)
   , KESEvolutionInfo
+  , KESPersistCallback
   , getOCert
   , mkDynamicHotKey
   , mkEmptyHotKey
@@ -39,11 +40,13 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey
 
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.KES as Relative (Period)
+import Cardano.Crypto.Libsodium.Memory (MLockedForeignPtr)
 import Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Control.Monad (forM_)
 import Data.Word (Word64)
+import Foreign.C.Types (CChar)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
@@ -156,6 +159,17 @@ data KESEvolutionError
 
 -- | Result of evolving the KES key.
 type KESEvolutionInfo = UpdateInfo KESInfo KESEvolutionError
+
+-- | A callback that receives a serialised copy of the signing key after an
+-- evolution: the absolute KES period the key is now at, a locked buffer with
+-- the raw serialisation of the key, and the length of that buffer.
+--
+-- The callback owns the buffer and must erase it (with
+-- 'Cardano.Crypto.Libsodium.Memory.finalizeMLockedForeignPtr') once it is
+-- done. The node uses this to persist the evolved key to disk; the 'HotKey'
+-- does not invoke it yet.
+type KESPersistCallback m =
+  Absolute.KESPeriod -> MLockedForeignPtr CChar -> Int -> m ()
 
 -- | API to interact with the key.
 data HotKey c m = HotKey

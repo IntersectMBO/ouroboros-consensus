@@ -1,4 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -12,6 +14,7 @@ module Ouroboros.Consensus.Protocol.Praos.AgentClient
   , KESAgentClientTrace (..)
   , KESAgentContext
   , KESKeyFileNotSupportedInSimulation (..)
+  , KESPersistHook (..)
   , MonadKESAgent (..)
   , runKESAgentClient
   ) where
@@ -23,6 +26,7 @@ import Cardano.Crypto.DirectSerialise
 import Cardano.Crypto.KES.Class
 import Cardano.Crypto.Libsodium.Memory
   ( MLockedAllocator (..)
+  , MLockedForeignPtr
   , finalizeMLockedForeignPtr
   , mlockedMalloc
   , withMLockedForeignPtr
@@ -47,8 +51,11 @@ import Data.Coerce (coerce)
 import Data.Kind
 import Data.Typeable
 import Data.Word (Word8)
+import Foreign.C.Types (CChar)
 import Foreign.Ptr (Ptr, plusPtr)
 import Network.Socket
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
+import Ouroboros.Consensus.Protocol.Ledger.HotKey (KESPersistCallback)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.RawBearer
 import Ouroboros.Network.Snocket
@@ -117,6 +124,20 @@ class (MonadFail m, Show (Addr m)) => MonadKESAgent m where
   -- 'KESKeyFileNotSupportedInSimulation'.
   withKESKeyFileLocked :: FilePath -> (Ptr Word8 -> Int -> m a) -> m a
 
+  -- | Turn a 'KESPersistHook' installed by the node into a
+  -- 'KESPersistCallback' in this monad. 'IO' runs the hook; 'IOSim' has
+  -- nowhere to persist to, so it only erases the buffer it was handed, as
+  -- the ownership rule of 'KESPersistCallback' requires.
+  runKESPersistHook :: KESPersistHook -> KESPersistCallback m
+
+-- | A callback the node installs to persist the evolved KES signing key, see
+-- 'KESPersistCallback'. It lives in 'IO' because the node implements it; the
+-- hot key reaches it through 'runKESPersistHook'. The hot key does not invoke
+-- it yet; the field that carries it is accepted and ignored for now.
+newtype KESPersistHook
+  = KESPersistHook (OCert.KESPeriod -> MLockedForeignPtr CChar -> Int -> IO ())
+  deriving NoThunks via OnlyCheckWhnfNamed "KESPersistHook" KESPersistHook
+
 -- | Thrown by 'withKESKeyFileLocked' under 'IOSim', which has no filesystem.
 newtype KESKeyFileNotSupportedInSimulation
   = KESKeyFileNotSupportedInSimulation FilePath
@@ -154,6 +175,7 @@ instance MonadKESAgent IO where
         | otherwise = do
             n <- hGetBuf h (ptr `plusPtr` off) (size - off)
             if n <= 0 then pure off else go (off + n)
+  runKESPersistHook (KESPersistHook hook) = hook
 
 instance MonadKESAgent (IOSim s) where
   type FD (IOSim s) = SimSnocket.FD (IOSim s) (TestAddress FilePath)
@@ -168,6 +190,7 @@ instance MonadKESAgent (IOSim s) where
   makeAddress _ = TestAddress
   withKESKeyFileLocked path _ =
     throwIO (KESKeyFileNotSupportedInSimulation path)
+  runKESPersistHook _ _ buf _ = finalizeMLockedForeignPtr buf
 
 instance SimSnocket.GlobalAddressScheme FilePath where
   getAddressType = const SimSnocket.IPv4Address

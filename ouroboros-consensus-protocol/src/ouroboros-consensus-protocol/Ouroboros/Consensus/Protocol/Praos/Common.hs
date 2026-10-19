@@ -5,7 +5,10 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -21,12 +24,22 @@ module Ouroboros.Consensus.Protocol.Praos.Common
 
     -- * node support
   , PraosCredentialsSource (..)
+  , KESEnvelopeError (..)
+  , KESFileLoadError (..)
+  , KESFileLoadReason (..)
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
   ) where
 
 import qualified Cardano.Crypto.KES.Class as KES
+import Cardano.Crypto.KES.Locked (deserialiseSignKeyKESFromLockedBuf)
+import Cardano.Crypto.Libsodium.Hex (HexDecodeError, hexDecodeToMLocked)
+import Cardano.Crypto.Libsodium.Memory
+  ( finalizeMLockedForeignPtr
+  , withMLockedForeignPtr
+  )
+import Cardano.Crypto.Libsodium.Memory.Internal (unsafeIOToMonadST)
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
@@ -38,16 +51,24 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
+import Control.Monad (filterM, unless, when, zipWithM)
+import Control.Monad.Except (ExceptT, runExceptT, throwError)
+import Control.Monad.IO.Class (liftIO)
 import qualified Control.Tracer as Tracer
+import Data.Char (ord)
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
-import Data.Word (Word64)
+import Data.Proxy (Proxy (..))
+import Data.Word (Word64, Word8)
+import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Storable (peekByteOff)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
+import Ouroboros.Consensus.Util.IOLike (Exception, MonadCatch (..), MonadThrow (..))
 
 -- | The maximum major protocol version.
 --
@@ -295,6 +316,18 @@ data PraosCredentialsSource c where
   -- | Connect to a KES agent listening on a service socket at the given path.
   PraosCredentialsAgent ::
     Agent.DSIGN (ACrypto c) ~ DSIGN => FilePath -> PraosCredentialsSource c
+  -- | Pass an opcert and the path of a KES signing key file (a cardano-api
+  -- text envelope of type @KesSigningKey_\<algorithm\>@ holding the key at
+  -- evolution 0). The file is read when the credentials are instantiated,
+  -- straight into mlocked memory; no copy of the key ever reaches the GHC
+  -- heap. Carrying a path rather than a key keeps the key's ownership with
+  -- the 'HotKey.HotKey', which erases it on every evolution and on
+  -- finalisation.
+  --
+  -- The optional 'KESPersistHook' is reserved for persisting the evolved key
+  -- back to the file; it is not invoked yet.
+  PraosCredentialsFile ::
+    OCert.OCert c -> FilePath -> Maybe KESPersistHook -> PraosCredentialsSource c
 
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c) where
   wNoThunks ctxt = \case
@@ -304,8 +337,62 @@ instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (P
         , noThunks ctxt k
         ]
     PraosCredentialsAgent fp -> noThunks ctxt fp
+    PraosCredentialsFile oca fp hook ->
+      allNoThunks
+        [ noThunks ctxt oca
+        , noThunks ctxt fp
+        , noThunks ctxt hook
+        ]
 
   showTypeOf _ = "PraosCredentialsSource"
+
+-- | Why the text envelope of a KES signing key file could not be used. The
+-- constructors carry field names, offsets and lengths only, never any of the
+-- file's contents, so the error can be logged safely.
+--
+-- This is the shape of the three-field envelope that @cardano-cli@ writes:
+-- a JSON object with exactly the string fields @type@, @description@ and
+-- @cborHex@, in any order.
+data KESEnvelopeError
+  = -- | The file is not a JSON object with exactly those three string fields.
+    EnvelopeNotAnObject
+  | -- | The named field is absent.
+    EnvelopeMissingField !String
+  | -- | The @type@ field is not a KES signing key type this code knows.
+    EnvelopeUnknownType
+  | -- | The @cborHex@ field is not valid hex.
+    EnvelopeBadHex !HexDecodeError
+  | -- | The decoded @cborHex@ is not a single CBOR byte string.
+    EnvelopeBadCbor
+  | -- | The CBOR byte string does not have the expected length: expected and
+    -- actual length of the key in bytes.
+    EnvelopeBadLength !Int !Int
+  deriving (Show, Eq)
+
+-- | Why 'instantiatePraosCredentials' rejected a 'PraosCredentialsFile'.
+-- Never carries file contents.
+data KESFileLoadReason
+  = -- | The file's envelope could not be used.
+    KESFileEnvelope !KESEnvelopeError
+  | -- | The envelope is of a known KES signing key type that this loader
+    -- does not accept (currently the period-carrying type).
+    KESFileUnsupportedType
+  | -- | The verification key derived from the file's signing key is not the
+    -- hot key named in the operational certificate.
+    KESFileKeyMismatch
+  deriving (Show, Eq)
+
+-- | Thrown by 'instantiatePraosCredentials' for a 'PraosCredentialsFile'. It
+-- is the only exception type the file case introduces; reading the file
+-- itself can still throw the usual 'IOError's (for instance when the file
+-- does not exist).
+data KESFileLoadError = KESFileLoadError
+  { kesFilePath :: FilePath
+  , kesFileReason :: KESFileLoadReason
+  }
+  deriving Show
+
+instance Exception KESFileLoadError
 
 instantiatePraosCredentials ::
   forall m c.
@@ -328,6 +415,204 @@ instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = d
   HotKey.mkDynamicHotKey
     maxKESEvolutions
     (Just $ runKESAgentClient tr path)
+instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path _persistHook) =
+  withKESKeyFileLocked path $ \filePtr fileLen -> do
+    -- Locate the field values in the raw file bytes. Only offsets leave this
+    -- step; the hex text stays in the locked buffer.
+    spans <-
+      unsafeIOToMonadST (scanKESEnvelope filePtr fileLen)
+        >>= either (throwLoad . KESFileEnvelope) pure
+
+    -- Check the envelope type before touching the key material.
+    isEvolutionZero <- unsafeIOToMonadST $ spanEquals filePtr (esType spans) evolutionZeroType
+    unless isEvolutionZero $ do
+      isWithPeriod <- unsafeIOToMonadST $ spanEquals filePtr (esType spans) withPeriodType
+      throwLoad $
+        if isWithPeriod
+          then KESFileUnsupportedType
+          else KESFileEnvelope EnvelopeUnknownType
+
+    -- Hex-decode the @cborHex@ value in place into a second locked buffer,
+    -- strip the CBOR byte-string header and build the key from the payload.
+    let (hexOff, hexLen) = esCborHex spans
+    (hexBuf, decodedLen) <-
+      hexDecodeToMLocked (filePtr `plusPtr` hexOff) hexLen
+        >>= either (throwLoad . KESFileEnvelope . EnvelopeBadHex) pure
+    sk <-
+      ( withMLockedForeignPtr hexBuf $ \decoded -> do
+          (headerLen, payloadLen) <-
+            unsafeIOToMonadST (cborByteStringHeader decoded decodedLen)
+              >>= maybe (throwLoad (KESFileEnvelope EnvelopeBadCbor)) pure
+          when (payloadLen /= expectedKeyLen) $
+            throwLoad (KESFileEnvelope (EnvelopeBadLength expectedKeyLen payloadLen))
+          deserialiseSignKeyKESFromLockedBuf @(KES c)
+            (castPtr (decoded `plusPtr` headerLen))
+            payloadLen
+      )
+        `finally` finalizeMLockedForeignPtr hexBuf
+
+    -- From here on the key is live in locked memory: erase it on every
+    -- failure, since nobody else will.
+    vk <- KES.deriveVerKeyKES sk `onException` KES.forgetSignKeyKES sk
+    when (vk /= OCert.ocertVkHot ocert) $ do
+      KES.forgetSignKeyKES sk
+      throwLoad KESFileKeyMismatch
+
+    HotKey.mkHotKeyAtEvolution 0 ocert sk (OCert.ocertKESPeriod ocert) maxKESEvolutions
+      `onException` KES.forgetSignKeyKES sk
+ where
+  throwLoad :: forall a. KESFileLoadReason -> m a
+  throwLoad = throwIO . KESFileLoadError path
+
+  algorithmName :: String
+  algorithmName = KES.algorithmNameKES (Proxy @(KES c))
+
+  -- The envelope type cardano-cli writes for a freshly generated key.
+  evolutionZeroType :: String
+  evolutionZeroType = "KesSigningKey_" <> algorithmName
+
+  -- The envelope type of a key stored together with its absolute KES period;
+  -- recognised so that it can be reported as unsupported rather than unknown.
+  withPeriodType :: String
+  withPeriodType = "KesSigningKeyWithPeriod_" <> algorithmName
+
+  expectedKeyLen :: Int
+  expectedKeyLen = fromIntegral (KES.signKeySizeKES (Proxy @(KES c)))
+
+{-------------------------------------------------------------------------------
+  Scanning the KES signing key file
+-------------------------------------------------------------------------------}
+
+-- | Byte offset and length of a field value, into the raw file bytes.
+type Span = (Int, Int)
+
+-- | Where the field values of a KES signing key text envelope are.
+data EnvelopeSpans = EnvelopeSpans
+  { esType :: !Span
+  , esCborHex :: !Span
+  }
+
+-- | Find the field values of the three-field text envelope in the raw file
+-- bytes. This is a hand-rolled scanner rather than a JSON parser on purpose:
+-- it only ever produces offsets, so the hex-encoded key never has to be
+-- copied out of the (locked) file buffer.
+--
+-- Accepted: a JSON object with exactly the string members @type@,
+-- @description@ and @cborHex@, in any order, with any JSON whitespace around
+-- the tokens. The spans point at the raw string contents between the quotes;
+-- escape sequences are skipped over but not interpreted (a value with an
+-- escape in it simply fails the checks that follow).
+scanKESEnvelope :: Ptr Word8 -> Int -> IO (Either KESEnvelopeError EnvelopeSpans)
+scanKESEnvelope ptr len = runExceptT $ do
+  start <- skipWs 0 >>= expectByte 0x7b >>= skipWs -- '{'
+  (fields, afterObject) <- members start []
+  end <- skipWs afterObject
+  unless (end == len) notAnObject
+  esType <- field "type" fields
+  _ <- field "description" fields
+  esCborHex <- field "cborHex" fields
+  pure EnvelopeSpans{esType, esCborHex}
+ where
+  notAnObject :: ExceptT KESEnvelopeError IO a
+  notAnObject = throwError EnvelopeNotAnObject
+
+  -- Every read is bounds-checked; running off the end is a malformed file.
+  peek8 :: Int -> ExceptT KESEnvelopeError IO Word8
+  peek8 i
+    | i < 0 || i >= len = notAnObject
+    | otherwise = liftIO (peekByteOff ptr i)
+
+  skipWs :: Int -> ExceptT KESEnvelopeError IO Int
+  skipWs i
+    | i >= len = pure i
+    | otherwise = do
+        b <- peek8 i
+        if b == 0x20 || b == 0x0a || b == 0x0d || b == 0x09
+          then skipWs (i + 1)
+          else pure i
+
+  expectByte :: Word8 -> Int -> ExceptT KESEnvelopeError IO Int
+  expectByte expected i = do
+    b <- peek8 i
+    if b == expected then pure (i + 1) else notAnObject
+
+  -- A string literal starting at the given offset: the span of its contents
+  -- and the offset just after the closing quote.
+  stringLit :: Int -> ExceptT KESEnvelopeError IO (Span, Int)
+  stringLit quoteAt = do
+    contentStart <- expectByte 0x22 quoteAt -- '"'
+    let go i = do
+          b <- peek8 i
+          if
+            | b == 0x22 -> pure ((contentStart, i - contentStart), i + 1)
+            | b == 0x5c -> go (i + 2) -- backslash: skip the escaped byte
+            | b < 0x20 -> notAnObject -- control characters are not allowed
+            | otherwise -> go (i + 1)
+    go contentStart
+
+  -- The members of the object, starting just after '{' (and whitespace).
+  -- Returns the named members and the offset just after the closing '}'.
+  members :: Int -> [(String, Span)] -> ExceptT KESEnvelopeError IO ([(String, Span)], Int)
+  members i acc = do
+    b <- peek8 i
+    if b == 0x7d && null acc -- '}' of an empty object
+      then pure (acc, i + 1)
+      else do
+        (key, afterKey) <- stringLit i
+        valueAt <- skipWs afterKey >>= expectByte 0x3a >>= skipWs -- ':'
+        (value, afterValue) <- stringLit valueAt
+        name <- fieldName key
+        when (name `elem` map fst acc) notAnObject
+        let acc' = (name, value) : acc
+        next <- skipWs afterValue
+        b' <- peek8 next
+        if
+          | b' == 0x2c -> skipWs (next + 1) >>= \i' -> members i' acc' -- ','
+          | b' == 0x7d -> pure (acc', next + 1) -- '}'
+          | otherwise -> notAnObject
+
+  fieldName :: Span -> ExceptT KESEnvelopeError IO String
+  fieldName key = do
+    matches <- liftIO $ filterM (spanEquals ptr key) ["type", "description", "cborHex"]
+    case matches of
+      [name] -> pure name
+      _ -> notAnObject
+
+  field :: String -> [(String, Span)] -> ExceptT KESEnvelopeError IO Span
+  field name fields =
+    maybe (throwError (EnvelopeMissingField name)) pure (lookup name fields)
+
+-- | Does the span hold exactly this ASCII string?
+spanEquals :: Ptr Word8 -> Span -> String -> IO Bool
+spanEquals ptr (off, n) s
+  | n /= length s = pure False
+  | otherwise =
+      and <$> zipWithM (\k c -> (== fromIntegral (ord c)) <$> peekByteOff @Word8 ptr (off + k)) [0 ..] s
+
+-- | Read the header of a single CBOR byte string (major type 2, definite
+-- length) that must span the whole buffer. Returns the header length and the
+-- payload length, or 'Nothing' when the buffer is not exactly one byte
+-- string.
+cborByteStringHeader :: Ptr Word8 -> Int -> IO (Maybe (Int, Int))
+cborByteStringHeader ptr len
+  | len < 1 = pure Nothing
+  | otherwise = do
+      b0 <- peekByteOff @Word8 ptr 0
+      header <-
+        if
+          | b0 >= 0x40 && b0 <= 0x57 -> pure (Just (1, fromIntegral (b0 - 0x40)))
+          | b0 == 0x58 && len >= 2 -> do
+              b1 <- peekByteOff @Word8 ptr 1
+              pure (Just (2, fromIntegral b1))
+          | b0 == 0x59 && len >= 3 -> do
+              b1 <- peekByteOff @Word8 ptr 1
+              b2 <- peekByteOff @Word8 ptr 2
+              pure (Just (3, fromIntegral b1 * 256 + fromIntegral b2))
+          | otherwise -> pure Nothing
+      pure $ case header of
+        Just (headerLen, payloadLen)
+          | headerLen + payloadLen == len -> Just (headerLen, payloadLen)
+        _ -> Nothing
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces
