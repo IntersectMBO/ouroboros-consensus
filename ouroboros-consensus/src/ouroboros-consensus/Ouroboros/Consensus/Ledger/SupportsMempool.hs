@@ -584,8 +584,10 @@ instance TxMeasurePhase2Metrics () where
   txMeasureMetricRefScriptsSizeBytes () = mempty
 
 class TxEbMeasureMetrics msr where
-  -- | The reference bytes that an endorser-block measure counts, without the
-  -- CBOR framing. 'Nothing' when the measure has no reference size.
+  -- | The size of the transaction references that an endorser-block measure
+  -- counts, without the CBOR framing. A reference is the hash and the size of
+  -- one transaction, as 'Ouroboros.Consensus.Leios.Types.encodeLeiosEb'
+  -- writes it. 'Nothing' when the measure has no reference size.
   txEbMeasureMetricReferencesSize :: msr -> Maybe ByteSize32
 
 instance TxEbMeasureMetrics (TxMeasure blk) where
