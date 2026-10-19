@@ -17,6 +17,8 @@ data ShelleyNodeToClientVersion
   = -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
     -- New queries introduced: QueryDRepDelegations
     ShelleyNodeToClientVersion15
+  | -- | New queries introduced: QueryStakePoolState, QueryLeiosCommittee
+    ShelleyNodeToClientVersion16
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
@@ -34,6 +36,8 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
   supportedNodeToClientVersions _ =
     Map.fromList
       [ (NodeToClientV_23, ShelleyNodeToClientVersion15)
+      -- There is no V24 in Network yet, but once there is we will have to add this line
+      -- , (NodeToClientV_24, ShelleyNodeToClientVersion16)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
