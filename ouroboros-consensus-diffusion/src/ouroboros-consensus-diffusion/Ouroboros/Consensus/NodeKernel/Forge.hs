@@ -119,10 +119,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-        selectedTxs@TransactionsToForge
-          { rankingBlockTxs = txs
-          , endorserBlockTxs = ebTxs
-          } <-
+        selectedTxs <-
           getTransactionsToForge
             cfg
             mempool
@@ -137,8 +134,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
                 , Block.fbCurrentSlotNo = currentSlot
                 , Block.fbPerasCert = Nothing -- No PerasCert for now
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-                , Block.fbTxs = txs
-                , Block.fbEbTxs = ebTxs
+                , Block.fbTxs = rankingBlockTxs selectedTxs
+                , Block.fbEbTxs = endorserBlockTxs selectedTxs
                 , Block.fbIsLeader = proof
                 }
         pure
@@ -148,26 +145,25 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           )
 
   -- Actually produce the block
-  Block.ForgeBlockResult
-    { Block.rankingBlock = newBlock
-    , Block.endorserBlock = mForgedEb
-    } <-
-    lift $ Block.forgeBlock blockForging fbArgs
+  forgeRes <- lift $ Block.forgeBlock blockForging fbArgs
 
-  lift $ whenJust mForgedEb (onForgedLeiosEb (getHeader newBlock))
+  lift $
+    whenJust
+      (Block.endorserBlock forgeRes)
+      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)))
 
   trace $
     TraceForgedBlock
       currentSlot
       forgingOnTopOf
-      newBlock
+      (Block.rankingBlock forgeRes)
       (forgingMempoolSize selectedTxs)
       (rankingBlockMeasure selectedTxs)
 
-  whenJust mForgedEb $ \eb ->
+  whenJust (Block.endorserBlock forgeRes) $ \eb ->
     trace $ TraceForgedEndorserBlock currentSlot eb (endorserBlockMeasure selectedTxs)
 
-  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
+  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) (Block.rankingBlock forgeRes)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
