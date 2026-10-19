@@ -506,7 +506,7 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
 
   let
     certSize = toMempoolMeasure <$> mbPerasCert
-    (txs, payloadSz, ebTxs, ebMeasure) =
+    (rankingBlockTxs, rankingBlockMeasure, endorserBlockTxs, endorserBlockMeasure) =
       snapshotPartitionWithInitialPayload
         mempoolSnapshot
         certSize
@@ -533,13 +533,13 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 
-  _ <- evaluate (length txs)
+  _ <- evaluate (length rankingBlockTxs)
 
   pure
     TransactionsToForge
-      { rankingBlockTxs = txs
-      , rankingBlockMeasure = payloadSz
-      , endorserBlockTxs = ebTxs
-      , endorserBlockMeasure = ebMeasure
+      { rankingBlockTxs
+      , rankingBlockMeasure
+      , endorserBlockTxs
+      , endorserBlockMeasure
       , forgingMempoolSize = snapshotMempoolSize mempoolSnapshot
       }
