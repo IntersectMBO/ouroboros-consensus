@@ -492,11 +492,14 @@ runWith ::
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
     -- Opened outside the registry, so that it outlives every thread that reads
-    -- it.
+    -- it. The ChainDB and the NodeKernel share it.
     --
-    -- TODO The ChainDB will need it too: its replay re-applies blocks that
-    -- carry a certificate, and its garbage collection and its copying to the
-    -- ImmutableDB must drive the LeiosDB's.
+    -- TODO Once the ledger reads the closures of certified endorser blocks:
+    -- the ChainDB's replay must resolve them, ChainSel must not select a block
+    -- certifying an endorser block whose closure the node lacks, and copying
+    -- such a block to the ImmutableDB must wait until that closure is in the
+    -- LeiosDB's immutable partition, so that the non-immutable database
+    -- directory can be deleted between restarts.
     llrnWithLeiosDB $ \leiosDB -> withRegistry $ \registry ->
       handleJust
         -- Ignore exception thrown in connection handlers and diffusion.
