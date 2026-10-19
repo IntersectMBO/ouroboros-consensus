@@ -135,6 +135,23 @@ data KESEvolutionError
       -- | Target period outside the range of the current KES key. Typically
       -- the current KES period according to the wallclock slot.
       Absolute.KESPeriod
+  | -- | The KES key is already at an evolution /after/ the target period: the
+    -- key comes from the future relative to the node's clock. A KES key can
+    -- only evolve forward, so we cannot produce the evolution the verifiers
+    -- will expect for this period. Signing with the current (higher)
+    -- evolution would produce invalid blocks, so we refuse instead. The key
+    -- is left untouched and becomes usable again once the target period
+    -- catches up with its evolution.
+    --
+    -- Typical causes: a wallclock stepped backwards across a KES period
+    -- boundary, a KES agent delivering a key evolved ahead of this node's
+    -- clock, or a persisted evolved key file copied from a node that is
+    -- ahead.
+    KESKeyFromTheFuture
+      KESInfo
+      -- | Target period, below the key's current period. Typically the
+      -- current KES period according to the wallclock slot.
+      Absolute.KESPeriod
   deriving Show
 
 -- | Result of evolving the KES key.
@@ -146,6 +163,9 @@ data HotKey c m = HotKey
   -- ^ Evolve the KES signing key to the given absolute KES period.
   --
   -- When the key cannot evolve anymore, we poison it.
+  --
+  -- When the key is already /past/ the given period, we return
+  -- 'UpdateFailed' with 'KESKeyFromTheFuture' and leave the key untouched.
   , getInfo :: m KESInfo
   -- ^ Return 'KESInfo' of the signing key.
   , getOCertMaybe :: m (Maybe (OCert.OCert c))
@@ -375,8 +395,15 @@ poisonState kesState = do
 -- poison the key and return 'UpdateFailed'.
 --
 -- When the given KES period is before the start period of the 'HotKey' or
--- when the given period is before the key's period, we don't evolve the key
+-- when the given period is equal to the key's period, we don't evolve the key
 -- and return 'Updated'.
+--
+-- When the given KES period is within the range of the 'HotKey' but before
+-- the key's current period, we don't touch the key and return 'UpdateFailed'
+-- with 'KESKeyFromTheFuture': a KES key cannot evolve backwards, and signing
+-- with a higher evolution than the verifiers expect would produce invalid
+-- blocks. The key is not poisoned; it becomes usable again once the given
+-- period catches up with it.
 --
 -- When the given KES period is within the range of the 'HotKey' and the given
 -- period is after the key's period, we evolve the key and return 'Updated'.
@@ -410,8 +437,15 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
         return (poisonedState, UpdateFailed err)
       InKESRange targetEvolution
         -- No evolving needed
-        | targetEvolution <= kesEvolution info ->
+        | targetEvolution == kesEvolution info ->
             return (kesState, Updated info)
+        -- The key is already past the target period. It cannot be evolved
+        -- backwards, and signing with the current evolution would produce
+        -- blocks the verifiers reject, so refuse to update and leave the key
+        -- as it is.
+        | targetEvolution < kesEvolution info ->
+            let err = KESKeyFromTheFuture info targetPeriod
+             in return (kesState, UpdateFailed err)
         -- Evolving needed
         | otherwise ->
             (\s' -> (s', Updated (kesStateInfo s')))

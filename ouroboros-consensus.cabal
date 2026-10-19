@@ -1027,10 +1027,12 @@ test-suite protocol-test
   hs-source-dirs: ouroboros-consensus-protocol/test/protocol-test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Protocol.Ledger.HotKey
     Test.Consensus.Protocol.Praos.SelectView
 
   build-depends:
     base,
+    bytestring,
     cardano-crypto-class,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-protocol-tpraos,
@@ -1039,6 +1041,7 @@ test-suite protocol-test
     QuickCheck,
     serialise,
     tasty,
+    tasty-hunit,
     tasty-quickcheck,
 
 library diffusion
