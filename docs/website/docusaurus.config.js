@@ -208,10 +208,16 @@ const config = {
             from: '/docs/for-developers/utxo-hd/overview',
             to: '/docs/references/miscellaneous/utxo-hd/',
           },
-          {
-            from: '/docs/for-developers/utxo-hd/Overview/',
-            to: '/docs/references/miscellaneous/utxo-hd/',
-          },
+          // On case-insensitive filesystems (Windows) this collides with the
+          // lowercase redirect above, so only emit it elsewhere.
+          ...(process.platform === 'win32'
+            ? []
+            : [
+                {
+                  from: '/docs/for-developers/utxo-hd/Overview/',
+                  to: '/docs/references/miscellaneous/utxo-hd/',
+                },
+              ]),
           {
             from: '/docs/for-developers/PreflightGuide/',
             to: '/docs/tutorials/preflight_guide/',
