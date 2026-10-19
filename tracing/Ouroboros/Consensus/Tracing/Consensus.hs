@@ -1532,10 +1532,11 @@ instance
                 $ blockPrevHash blk
             )
       ]
-  forMachine _dtal (TraceForgedEndorserBlock slotNo eb ebMeasure) =
+  forMachine _dtal (TraceForgedEndorserBlock slotNo rbHash eb ebMeasure) =
     mconcat
       [ "kind" .= String "TraceForgedEndorserBlock"
       , "slot" .= toJSON (unSlotNo slotNo)
+      , "rankingBlock" .= String (renderHeaderHash (Proxy @blk) rbHash)
       , "endorserBlock" .= jsonEb eb
       , "measure" .= jsonTxMeasure ebMeasure
       ]
@@ -1654,11 +1655,13 @@ instance
       <> showT (unSlotNo mpSlot)
   forHuman (TraceForgedBlock slotNo _ _ _ _) =
     "Forged block in slot " <> showT (unSlotNo slotNo)
-  forHuman (TraceForgedEndorserBlock slotNo eb _) =
+  forHuman (TraceForgedEndorserBlock slotNo rbHash eb _) =
     "Forged endorser block in slot "
       <> showT (unSlotNo slotNo)
       <> ": "
       <> Crypto.hashToTextAsHex (extractHash $ hashLeiosEb eb)
+      <> " on top of "
+      <> renderHeaderHash (Proxy @blk) rbHash
   forHuman (TraceDidntAdoptBlock slotNo _) =
     "Didn't adopt forged block in slot " <> showT (unSlotNo slotNo)
   forHuman (TraceForgedInvalidBlock slotNo _ reason) =

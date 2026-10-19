@@ -161,7 +161,12 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
       (rankingBlockMeasure selectedTxs)
 
   whenJust (Block.endorserBlock forgeRes) $ \eb ->
-    trace $ TraceForgedEndorserBlock currentSlot eb (endorserBlockMeasure selectedTxs)
+    trace $
+      TraceForgedEndorserBlock
+        currentSlot
+        (blockHash (Block.rankingBlock forgeRes))
+        eb
+        (endorserBlockMeasure selectedTxs)
 
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) (Block.rankingBlock forgeRes)
 

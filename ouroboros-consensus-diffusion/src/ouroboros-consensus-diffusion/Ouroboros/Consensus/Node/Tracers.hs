@@ -420,9 +420,10 @@ data TraceForgeEvent blk
   | -- | We forged an endorser block. The block of the preceding
     -- 'TraceForgedBlock' announces it.
     --
-    -- We record the current slot number, the endorser block, and the total
-    -- mempool measure of the transactions selected for it.
-    TraceForgedEndorserBlock SlotNo LeiosEb (MempoolMeasure blk)
+    -- We record the current slot number, the hash of the ranking block that
+    -- announces the endorser block, the endorser block, and the total mempool
+    -- measure of the transactions selected for it.
+    TraceForgedEndorserBlock SlotNo (HeaderHash blk) LeiosEb (MempoolMeasure blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
