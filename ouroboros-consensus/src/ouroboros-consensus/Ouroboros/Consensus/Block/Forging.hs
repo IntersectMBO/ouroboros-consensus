@@ -290,12 +290,7 @@ data ForgeBlockResult blk = ForgeBlockResult
   { rankingBlock :: !blk
   -- ^ The forged block.
   , endorserBlock :: !(Maybe LeiosEb)
-  -- ^ The endorser block that 'rankingBlock' announces.
-  --
-  -- Only an era that supports Leios builds an endorser block. This era builds
-  -- it from 'fbEbTxs'. Every other era returns 'Nothing'.
-  --
-  -- This value holds only the body of the endorser block. It does not hold the
-  -- bytes of the transactions that the body references.
+  -- ^ The endorser block that 'rankingBlock' announces. 'forgeBlock' builds
+  -- it from 'fbEbTxs'. A @blk@ that does not support Leios returns 'Nothing'.
   }
   deriving stock Functor
