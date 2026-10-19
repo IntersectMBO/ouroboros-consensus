@@ -19,6 +19,7 @@ import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
 import Ouroboros.Consensus.Node.DbLock
 import Ouroboros.Consensus.Node.DbMarker (DbMarkerError)
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -119,6 +120,8 @@ consensusRethrowPolicy pb =
     -- others merely mean that we should disconnect from this client
     -- because we have diverged too much.
     <> mkRethrowPolicy (\_ctx (_ :: ChainSyncClientException) -> theyBuggyOrEvil)
+    -- A LeiosFetch client requested what the node does not hold.
+    <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosInvalidRequest) -> theyBuggyOrEvil)
     -- Dispatch on nested exception
     <> mkRethrowPolicy
       ( \ctx (ExceptionInLinkedThread _ e) ->
