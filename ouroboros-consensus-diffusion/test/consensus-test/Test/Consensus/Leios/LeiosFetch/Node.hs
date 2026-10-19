@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Tests of the node's LeiosFetch client and server, over real connections,
 -- against peers run by the Leios node-vs-environment tests.
@@ -57,26 +58,33 @@ tests =
   testGroup
     "node vs environment"
     [ testCase "the node's server ends when the peer sends MsgDone" $
-        runSimOrThrow (timeout 100 (nodeServerAgainst doneClient)) @?= Just ServerEnded
+        runSimFinishing (nodeServerAgainst doneClient) >>= (@?= ServerEnded)
     , testCase "the node serves an endorser block it holds" $
-        runSimOrThrow (timeout 100 (nodeAnswers (requestBlock heldPoint)))
-          @?= Just (Just (ReplyBlock heldEb), ServerEnded)
+        runSimFinishing (nodeAnswers (requestBlock heldPoint))
+          >>= (@?= (Just (ReplyBlock heldEb), ServerEnded))
     , testCase "the node serves the transactions it holds" $
-        runSimOrThrow (timeout 100 (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 63, 64]))))
-          @?= Just (Just (ReplyTxs (map heldTx [0, 63, 64])), ServerEnded)
+        runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 63, 64])))
+          >>= (@?= (Just (ReplyTxs (map heldTx [0, 63, 64])), ServerEnded))
     , testCase "the node disconnects a client that requests an endorser block it does not hold" $
-        runSimOrThrow (timeout 100 (nodeAnswers (requestBlock unknownPoint)))
-          @?= Just (Nothing, ServerFailed (show (ExnLeiosUnknownBlockRequested unknownPoint)))
+        runSimFinishing (nodeAnswers (requestBlock unknownPoint))
+          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownBlockRequested unknownPoint))))
     , testCase "the node disconnects a client that requests transactions it does not hold" $
         -- The first is held, the second is not, and the third is past the end
         -- of the endorser block.
-        runSimOrThrow (timeout 100 (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100]))))
-          @?= Just (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100])))
+        runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100])))
+          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100]))))
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosFetch NodeToNodeV_16)) @?= Just (True, True)
+        runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosFetch NodeToNodeV_15)) @?= Just (False, False)
+        runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_15) >>= (@?= (False, False))
     ]
+
+-- | Run the simulation, and fail the test if it has not finished after 100
+-- simulated seconds.
+runSimFinishing :: (forall s. IOSim s a) -> IO a
+runSimFinishing sim = case runSimOrThrow (timeout 100 sim) of
+  Nothing -> assertFailure "the simulation did not finish within 100 seconds"
+  Just a -> pure a
 
 {-------------------------------------------------------------------------------
   The node's server
