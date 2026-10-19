@@ -7,7 +7,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   ( -- * Handle
     LeiosDbHandle (..)
   , LeiosDbStats (..)
-  , LeiosEbNotification (..)
 
     -- * Reading
   , LeiosDbReader (..)
@@ -20,12 +19,10 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
-  , CompletedEbs
   , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
@@ -36,13 +33,12 @@ import Ouroboros.Consensus.Leios.Types
   , EbHash
   , LeiosEb
   , LeiosPoint
-  , TxHash
   , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
--- | The Leios database. Hands out readers, writers and subscriptions.
+-- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
   { closeLeiosDbHandle :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs
@@ -52,10 +48,6 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Get a new reader. No interaction between readers or writers.
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
-  , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
-  -- ^ New EBs and EB closures as they are stored, from the moment of
-  -- subscription.
-  -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Trigger garbage collection of the LeiosDB.
   --
@@ -76,25 +68,24 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
-  -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
-  -- not complete.
+  , lookupEbBody :: HasCallStack => EbHash -> m (Maybe ByteString)
+  -- ^ The EB "body" as received, in its wire encoding ('encodeLeiosEb'), to
+  -- serve as is.
+  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [ByteString])
+  -- ^ The EB "closure": the bytes of its txs in body order, or 'Nothing' if
+  -- the EB body is not stored. Txs not written yet are zeroes: whether the EB
+  -- is complete, and whether the bytes match the body's hashes, is for the
+  -- caller to know.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EbHash -> [Int] -> m [(Int, ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, in ascending order: the
+  -- offsets the body declares, each with its bytes, zeroes if not written yet.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
   -- ^ Every announced EB point.
   --
   -- Not used in production, only used in tests to observe point
   -- writes and truncation.
-  , scanCompleteEbClosuresNotOlderThanSlot ::
-      HasCallStack =>
-      SlotNo -> m [LeiosPoint]
-  -- ^ EBs whose closure is complete and whose announcer is no older than the
-  -- given slot. Seeds the ChainDB's acquired-closures set at startup.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 
@@ -108,17 +99,15 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
-  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
-  --
-  -- The returned EB is only used for tracing and too broad: it can actually only
-  -- be this same EB which got completed.
+  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m ())
+  -- ^ Persist an EB body.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'. Whether that
+  -- completes the EB is for the caller to know: the LeiosDB does not track it.
   --
   -- No backend uses the point's slot: the tx bytes belong to the EB body,
   -- which every point with the same EB hash shares.
@@ -132,8 +121,9 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- A transaction may be dropped by the implementation if:
   -- - is not in the body,
-  -- - or it is already stored,
   -- - or its size is not the declared one.
+  --
+  -- A transaction written again overwrites itself, with the same bytes.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -149,21 +139,6 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
-
--- | EBs whose tx closure became complete as a result of a write.
-type CompletedEbs = [LeiosPoint]
-
-data LeiosEbNotification
-  = -- | An EB body was written.
-    AcquiredEb
-      -- | the EB's point
-      LeiosPoint
-      -- | its size in bytes
-      BytesSize
-  | -- | Every tx of the EB is now in the DB.
-    AcquiredEbTxs
-      -- | the EB's point
-      LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader

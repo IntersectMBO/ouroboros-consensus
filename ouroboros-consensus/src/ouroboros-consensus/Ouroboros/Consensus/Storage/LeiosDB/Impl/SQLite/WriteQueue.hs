@@ -43,7 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , leiosEbTxs
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -74,14 +74,14 @@ data WriteJob
       -- | the EB body
       !LeiosEb
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult ())
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult ())
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -200,8 +200,8 @@ maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 -- each upstream peer's fetch client, the forge, and the maintenance
 -- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
 -- little slack. Deliberately shallow: depth beyond that adds no throughput
--- (there is one worker) and only delays the commit-time notifications that
--- gate vote scheduling and chain selection. A producer that outruns the disk
+-- (there is one worker) and only delays the commits that gate vote
+-- scheduling and chain selection. A producer that outruns the disk
 -- blocks on submission, which is the backpressure.
 writerQueueDepth :: Natural
 writerQueueDepth = numUpstreamPeers + forge + maintenance + slack

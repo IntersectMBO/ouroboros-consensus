@@ -11,8 +11,8 @@ The EBs and their closures are copied from the volatile to the immutable partiti
 ## Database schema
 
 - `ebs` has one row for each pair of slot and EB hash that an announcement named; announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written. Thus one EB hash can occur at several slots.
-- `ebTxs` is the EB body. It has one row for each transaction of the EB, in order. It stores each EB body only once, however many `ebs` rows name its hash.
-- `ebTxBytes` stores the transaction bytes of the EB closure, one row for each `ebTxs` row, with the same key. The EB owns these bytes: a transaction that belongs to two EBs is stored twice (ie duplicated aka denormalized.)
+- `ebBodies` is the EB body, one row per EB hash, however many `ebs` rows name it. `body` is the body as received, in its wire encoding, so serving it is a copy. `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size.
+- `ebClosures` stores the EB closure, one row per EB hash: `txs` is the bytes of its transactions, concatenated. The EB owns these bytes: a transaction that belongs to two EBs is stored twice (ie duplicated aka denormalized.)
 
 ## Volatile partition
 
@@ -22,31 +22,27 @@ erDiagram
         INTEGER ebSlot PK
         BLOB ebHashBytes PK
         INTEGER ebBytesSize
-        INTEGER missingTxCount "NULL: no body yet; >0: txs missing; 0: just completed; <0: notified"
         INTEGER status "0: volatile; 1: pinned for copy; 2: copied; 3: marked for GC"
     }
-    ebTxs {
+    ebBodies {
         BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        BLOB txHashBytes
-        INTEGER txBytesSize
+        BLOB txBounds "n + 1 u32 positions in txs"
+        BLOB body "wire encoding"
     }
-    ebTxBytes {
+    ebClosures {
         BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        INTEGER filled "0: not yet arrived; 1: arrived"
-        BLOB txBytes
+        BLOB txs "zeroes until written"
     }
 
-    ebs }|--o{ ebTxs : "ebHashBytes"
-    ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
+    ebs }|--o| ebBodies : "ebHashBytes"
+    ebBodies ||--o| ebClosures : "ebHashBytes"
 ```
 
-The queries join the tables on the EB hash (`ebHashBytes`) and the transaction offset (`txOffset`).
-
-- When an EB body arrives, rows are inserted in `ebTxs`. In the same transaction, one `ebTxBytes` row is allocated for each of them: a zero-filled blob of the declared size, with `filled = 0`. Then `missingTxCount` is set to the number of unfilled rows.
-- When transactions arrive, they overwrite their rows in place and set `filled = 1`. A write is dropped if its row does not exist, is already filled, or has a different size. Also, the `missingTxCount` of every `ebs` row whose EB has already arrived and references the arriving transactions is decreased by the number of `ebTxBytes` rows filled for that EB. Note that a tx will decrement the `missingTxCount` columns only of EBs that referred to that tx with the correct size.
-- The GC sweep phase deletes the `ebTxBytes`, `ebTxs` and `ebs` rows of an EB by its hash: three range deletes.
+- When an EB body arrives, one `ebBodies` row is inserted.
+- When the first transactions arrive, the `ebClosures` row is inserted with zeroes for all of them. Each write then fills its transactions in place, through SQLite's incremental blob API. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A transaction not written yet reads as zeroes.
+- Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither decodes the EB.
+- Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
+- The GC sweep phase deletes the `ebClosures`, `ebBodies` and `ebs` rows of an EB by its hash.
 
 Indexes:
 
@@ -87,23 +83,20 @@ erDiagram
         BLOB ebHashBytes PK
         INTEGER ebBytesSize
     }
-    ebTxs {
+    ebBodies {
         BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        BLOB txHashBytes
-        INTEGER txBytesSize
+        BLOB txBounds
+        BLOB body
     }
-    ebTxBytes {
+    ebClosures {
         BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        INTEGER filled
-        BLOB txBytes
+        BLOB txs
     }
 
-    ebs }|--|{ ebTxs : "ebHashBytes"
-    ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
+    ebs }|--|| ebBodies : "ebHashBytes"
+    ebBodies ||--|| ebClosures : "ebHashBytes"
 ```
 
-The copier copies only complete EBs, and GC never removes EBs from this partition.
-Thus every `ebs` row has its full body in `ebTxs`, and every `ebTxs` row has its filled `ebTxBytes` row.
-For the same reason, the immutable partition does not have `missingTxCount`, `status`, or any index other than `idx_ebs_ebHashBytes`.
+The copier copies only EBs whose certificate is on the chain, hence complete, and GC never removes EBs from this partition.
+Thus every `ebs` row has its body in `ebBodies` and its closure in `ebClosures`.
+For the same reason, the immutable partition does not have `status`, or any index other than `idx_ebs_ebHashBytes`.
