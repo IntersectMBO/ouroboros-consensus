@@ -27,6 +27,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteDbError (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
@@ -80,6 +81,9 @@ consensusRethrowPolicy pb =
             ImmutableDB.UnexpectedFailure{} -> shutdownNode
       )
     <> mkRethrowPolicy (\_ctx (_ :: FsError) -> shutdownNode)
+    -- Except for the LeiosDB: peers might provoke some of its failures, eg
+    -- SQLite's BUSY, so these conservatively disconnect only the peer.
+    <> mkRethrowPolicy (\_ctx (_ :: LeiosDbException) -> ShutdownPeer)
     -- When the system clock moved back, we have to restart the node.
     <> mkRethrowPolicy (\_ctx (_ :: SystemClockMovedBackException) -> shutdownNode)
     -- Some chain DB errors are indicative of a bug in our code, others
