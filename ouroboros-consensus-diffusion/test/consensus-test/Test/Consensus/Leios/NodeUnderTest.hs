@@ -34,6 +34,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNode
   , withNodeCommittee
   , withNodeForecastingOnly
+  , withNodeOver
   , withNodeUnderTest
   ) where
 
@@ -116,7 +117,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -237,9 +238,10 @@ withNodeUnderTest ::
   NodeUnderTestConfig ->
   Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs body = do
+withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = nodeSeeds cfg
@@ -248,7 +250,6 @@ withNodeUnderTest cfg tracers nodeDBs body = do
   -- on the way out, the body finishes first, then the node's threads stop, and
   -- only then does the ChainDB close.
   withRegistry $ \dbRegistry -> do
-    leiosDB <- newLeiosDBInMemory
     bracket
       ( fst
           <$> openChainDB
@@ -346,27 +347,39 @@ withNodeCommittee ::
   LeiosCommittee -> SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nullTracers nodeDBs body
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest (forecastingOnly committee range) nullTracers nodeDBs leiosDB body
+
+-- | 'withNode' over the given LeiosDB, which a test can fill before the node
+-- starts.
+withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeOver leiosDB body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTest (forecastingOnly emptyLeiosCommittee 100000) nullTracers nodeDBs leiosDB body
+
+-- | The configuration of a node whose ledger view has this committee and
+-- forecasts this many slots past its immutable tip.
+forecastingOnly :: LeiosCommittee -> SlotNo -> NodeUnderTestConfig
+forecastingOnly committee range =
+  defaultNodeUnderTestConfig
+    k
+    LeiosTestLedgerConfig
+      { ltlcHardForkParams =
+          HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
+      , ltlcForecastRange = range
+      , ltlcLeios =
+          MkLeiosLedgerView
+            { llvCommittee = committee
+            , llvQuorumStakeThreshold = maxBound
+            , llvAnnouncementPeriod = Milliseconds32 1000
+            , llvVotePeriod = Milliseconds32 4000
+            , llvDiffusionPeriod = Milliseconds32 1000
+            , llvMaxEbBodySize = maxEbBodySize
+            , llvMaxEbTxsSize = maxEbBodySize
+            }
+      }
  where
   k = SecurityParam $ knownNonZeroBounded @10
-  cfg =
-    defaultNodeUnderTestConfig
-      k
-      LeiosTestLedgerConfig
-        { ltlcHardForkParams =
-            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = range
-        , ltlcLeios =
-            MkLeiosLedgerView
-              { llvCommittee = committee
-              , llvQuorumStakeThreshold = maxBound
-              , llvAnnouncementPeriod = Milliseconds32 1000
-              , llvVotePeriod = Milliseconds32 4000
-              , llvDiffusionPeriod = Milliseconds32 1000
-              , llvMaxEbBodySize = maxEbBodySize
-              , llvMaxEbTxsSize = maxEbBodySize
-              }
-        }
 
 -- | The largest endorser block, and total size of the transactions it
 -- references, that the NUT's ledger admits.

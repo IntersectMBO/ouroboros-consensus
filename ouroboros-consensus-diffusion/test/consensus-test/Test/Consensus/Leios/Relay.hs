@@ -123,6 +123,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
@@ -687,7 +688,8 @@ newtype VerifyingTime = VerifyingTime DiffTime
 withNode :: VerifyingTime -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNode (VerifyingTime verifying) body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) tracers nodeDBs body
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) tracers nodeDBs leiosDB body
  where
   tracers =
     nullTracers
