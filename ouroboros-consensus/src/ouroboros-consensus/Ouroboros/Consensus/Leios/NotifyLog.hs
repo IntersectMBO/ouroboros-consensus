@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Leios.NotifyLog
   , NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
+  , expiredNotifyEntry
   , newNotifyLog
   , nextNotifyLog
   , notifyLogPruner
@@ -67,8 +68,9 @@ import Ouroboros.Consensus.Util.IOLike
 data NotifyEntry blk
   = -- | An announcement, with its election slot's wall-clock onset.
     NotifyAnnouncement !RelativeTime !(AnnouncingHeader blk)
-  | -- | A vote, with the end of its window, when it stops being relayed.
-    NotifyVote !RelativeTime !LeiosVote
+  | -- | A vote, with the onset of its announcement's election slot, and the end
+    -- of its window.
+    NotifyVote !RelativeTime !RelativeTime !LeiosVote
   -- TODO: add offers
   deriving stock Generic
 
@@ -122,13 +124,20 @@ nextNotifyLog notifyLog cursor = do
 pruneNotifyLog :: IOLike m => NotifyLog m blk -> RelativeTime -> STM m ()
 pruneNotifyLog notifyLog now = do
   entries <- readTVar (notifyEntries notifyLog)
-  let kept = Map.filter (not . expired) entries
+  let kept = Map.filter (not . expiredNotifyEntry now) entries
   unless (Map.size kept == Map.size entries) $
     writeTVar (notifyEntries notifyLog) kept
+
+-- | Whether the entry is no longer worth relaying at the given time.
+--
+-- A vote expires with its announcement at the latest, as a peer that connects
+-- later would not know what the vote is for.
+expiredNotifyEntry :: RelativeTime -> NotifyEntry blk -> Bool
+expiredNotifyEntry now = \case
+  NotifyAnnouncement onset _anc -> announcementExpired onset
+  NotifyVote onset windowEnd _vote -> announcementExpired onset || now > windowEnd
  where
-  expired = \case
-    NotifyAnnouncement onset _anc -> diffRelTime now onset > maxAnnouncementAgeSend
-    NotifyVote windowEnd _vote -> now > windowEnd
+  announcementExpired onset = diffRelTime now onset > maxAnnouncementAgeSend
 
 -- | Prune the log every second.
 --

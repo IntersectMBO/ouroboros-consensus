@@ -182,7 +182,7 @@ leiosNotifyServer notifyLog = do
     modifyTVar requests (subtract 1)
     pure $ case entry of
       NotifyAnnouncement _onset anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
-      NotifyVote _windowEnd vote -> MsgLeiosVotes (vote :| [])
+      NotifyVote _onset _windowEnd vote -> MsgLeiosVotes (vote :| [])
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.

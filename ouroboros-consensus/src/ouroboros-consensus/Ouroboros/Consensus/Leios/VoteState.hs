@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
+  , expiredNotifyEntry
   )
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -69,15 +70,15 @@ newVoteState announceState' notifyLog =
 
 -- | Accept a vote that arrived at the given time, and relay it if it is the
 -- first valid vote of its seat in its election, the node relays the
--- announcement it is for, and its window has not ended.
+-- announcement it is for, and it has not expired; see 'expiredNotifyEntry'.
 --
 -- Throws 'ExnLeiosInvalidVote' if the vote is invalid, to disconnect the peer
 -- that sent it. The signature is verified between two transactions, so that a
 -- retry does not repeat a BLS verification.
 onAcceptedVote :: IOLike m => VoteState m blk -> RelativeTime -> AcceptedVote -> m ()
-onAcceptedVote st now MkAcceptedVote{acceptedVote, voteElectionSlot, voteWindowEnd, voteCommittee} =
+onAcceptedVote st now accepted =
   -- a peer accepts a late vote only within its grace, which relaying would eat into
-  when (now <= voteWindowEnd) $ do
+  unless (expiredNotifyEntry now entry) $ do
     worthVerifying <- atomically $ do
       wanted <- isWanted
       relayedAnnouncement <-
@@ -92,8 +93,13 @@ onAcceptedVote st now MkAcceptedVote{acceptedVote, voteElectionSlot, voteWindowE
         wanted <- isWanted
         when wanted $ do
           modifyTVar (votes st) (recordVote voteElectionSlot acceptedVote)
-          appendNotifyLog (relayLog st) (NotifyVote voteWindowEnd acceptedVote)
+          appendNotifyLog (relayLog st) entry
  where
+  MkAcceptedVote{acceptedVote, voteElectionSlot, voteElectionOnset, voteWindowEnd, voteCommittee} =
+    accepted
+
+  entry = NotifyVote voteElectionOnset voteWindowEnd acceptedVote
+
   isWanted = wantsVote voteElectionSlot (voteSeatId acceptedVote) <$> readTVar (votes st)
 
 -- | Whether the vote's seat has a key in the committee, and the signature

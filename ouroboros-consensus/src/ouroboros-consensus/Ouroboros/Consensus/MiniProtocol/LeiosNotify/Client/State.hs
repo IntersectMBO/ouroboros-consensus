@@ -375,6 +375,8 @@ instance Exception ExnLeiosNotifyInvalidVotes
 data AcceptedVote = MkAcceptedVote
   { acceptedVote :: !LeiosVote
   , voteElectionSlot :: !SlotNo
+  , voteElectionOnset :: !RelativeTime
+  -- ^ When the election slot began, as did its announcement's.
   , voteWindowEnd :: !RelativeTime
   -- ^ 3 L_hdr + L_vote after the election slot began, when the vote is no
   -- longer relayed.
@@ -440,7 +442,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
       throwError (ExnLeiosVoteTooLate rbHash slot age)
     pure
       ( st{lnpsVotes = Set.insert (slot, seat) (lnpsVotes st)}
-      , MkAcceptedVote vote slot (addRelTime (3 * lHdr + lVote) onset) llvCommittee : accepted
+      , MkAcceptedVote vote slot onset (addRelTime (3 * lHdr + lVote) onset) llvCommittee : accepted
       )
    where
     rbHash = voteAnnouncingRbHash vote

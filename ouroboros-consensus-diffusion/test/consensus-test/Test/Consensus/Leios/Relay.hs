@@ -61,7 +61,7 @@ import Data.Void (Void)
 import Data.Word (Word16)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), Header, SlotNo (..), blockHash, blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), addRelTime)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.AnnounceState
@@ -69,7 +69,15 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
   )
-import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog, nextNotifyLog, notifyLogStart)
+import Ouroboros.Consensus.Leios.NotifyLog
+  ( NotifyLog
+  , appendNotifyLog
+  , newNotifyLog
+  , nextNotifyLog
+  , notifyLogStart
+  , pruneNotifyLog
+  )
+import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types
   ( EbHash (..)
@@ -87,6 +95,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   ( AnnouncingHeader (ancElectionId)
   , ValidAnnouncement (..)
   , maxAnnouncementAgeRecv
+  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State (voteLateGrace)
@@ -183,6 +192,8 @@ tests =
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
     , testCase "the node does not relay an announcement of an election pruned while validating it" $
         prunedWhileValidating @?= []
+    , testCase "the node prunes a vote with its announcement, however long its window" $
+        votesOutlivingAnnouncement @?= []
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -614,6 +625,33 @@ prunedWhileValidating = runSimOrThrow $ do
       , announcementAge = 0
       , announcementStaleness = FreshOCIN
       }
+
+-- | The votes the node's log still holds once the announcement they are for has
+-- expired, though their window has not ended.
+votesOutlivingAnnouncement :: [LeiosVote]
+votesOutlivingAnnouncement = runSimOrThrow $ do
+  notifyLog <- newNotifyLog
+  atomically $ do
+    appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement onset anc)
+    appendNotifyLog
+      notifyLog
+      (NotifyLog.NotifyVote onset (addRelTime 1000 onset) (voteOf someAnnouncingBlock 0))
+    pruneNotifyLog notifyLog (addRelTime (maxAnnouncementAgeSend + 1) onset)
+  atomically $
+    (\entries -> [v | NotifyLog.NotifyVote _ _ v <- entries]) <$> notifyLogEntries notifyLog
+ where
+  onset = RelativeTime 1
+  anc =
+    fromMaybe (error "votesOutlivingAnnouncement: an announcement") $
+      mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
+
+-- | Every entry in the log.
+notifyLogEntries :: NotifyLog (IOSim s) Blk -> STM (IOSim s) [NotifyLog.NotifyEntry Blk]
+notifyLogEntries notifyLog = go notifyLogStart
+ where
+  go cursor =
+    (nextNotifyLog notifyLog cursor >>= \(entry, cursor') -> (entry :) <$> go cursor')
+      `orElse` pure []
 
 {-------------------------------------------------------------------------------
   Fixtures
