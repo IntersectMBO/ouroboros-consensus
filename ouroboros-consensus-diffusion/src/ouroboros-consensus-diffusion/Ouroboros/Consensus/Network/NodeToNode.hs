@@ -694,6 +694,8 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tPerasVoteDiffusionTracer :: f (TraceLabelPeer peer (TraceSendRecv (PerasVoteDiffusion blk)))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
+  , tLeiosNotifyTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint (Header blk) LeiosVote)))
   , tLeiosFetchTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
   }
@@ -710,6 +712,7 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tPerasVoteDiffusionTracer = f tPerasVoteDiffusionTracer
       , tKeepAliveTracer = f tKeepAliveTracer
       , tPeerSharingTracer = f tPeerSharingTracer
+      , tLeiosNotifyTracer = f tLeiosNotifyTracer
       , tLeiosFetchTracer = f tLeiosFetchTracer
       }
    where
@@ -733,6 +736,7 @@ nullTracers =
     , tPerasVoteDiffusionTracer = nullTracer
     , tKeepAliveTracer = nullTracer
     , tPeerSharingTracer = nullTracer
+    , tLeiosNotifyTracer = nullTracer
     , tLeiosFetchTracer = nullTracer
     }
 
@@ -760,6 +764,7 @@ showTracers tr =
     , tPerasVoteDiffusionTracer = show >$< tr
     , tKeepAliveTracer = show >$< tr
     , tPeerSharingTracer = show >$< tr
+    , tLeiosNotifyTracer = show >$< tr
     , tLeiosFetchTracer = show >$< tr
     }
 
@@ -1349,7 +1354,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       ((), trailing) <-
         withLeiosNotifyClientState (getLeiosNotifyClientStates kernel) them $ \stateVar ->
           runPipelinedPeerWithLimits
-            nullTracer
+            (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
             (cLeiosNotifyCodec (mkCodecs version))
             blLeiosNotify
             timeLimitsLeiosNotify
@@ -1368,7 +1373,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     channel = do
       labelThisThread "LeiosNotifyServer"
       runLookaheadFixedSenderPeerWithLimits
-        nullTracer
+        (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
         (cLeiosNotifyCodec (mkCodecs version))
         blLeiosNotify
         timeLimitsLeiosNotify
