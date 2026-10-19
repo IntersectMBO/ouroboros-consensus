@@ -442,7 +442,7 @@ nodeClientTooOld = withNode $ \nut -> do
 -- | By the time the node connects, the current slot is past what its
 -- immutable tip, still at genesis, can forecast to.
 nodeClientGated :: IOSim s Int
-nodeClientGated = withNodeForecasting 5 $ \nut -> do
+nodeClientGated = withNodeForecastingOnly 5 $ \nut -> do
   threadDelay 10
   requests <- newTVarIO 0
   let envPeer =

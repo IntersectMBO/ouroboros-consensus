@@ -32,7 +32,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , defaultNodeUnderTestConfig
   , maxEbBodySize
   , withNode
-  , withNodeForecasting
+  , withNodeForecastingOnly
   , withNodeUnderTest
   ) where
 
@@ -331,11 +331,11 @@ withNodeUnderTest cfg nodeDBs body = do
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode = withNodeForecasting 100000
+withNode = withNodeForecastingOnly 100000
 
 -- | A node whose ledger view forecasts this many slots past its immutable tip.
-withNodeForecasting :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecasting range body = do
+withNodeForecastingOnly :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeForecastingOnly range body = do
   nodeDBs <- emptyNodeDBs
   withNodeUnderTest cfg nodeDBs body
  where
