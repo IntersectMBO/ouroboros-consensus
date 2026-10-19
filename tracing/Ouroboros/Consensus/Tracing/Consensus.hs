@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Tracing.Consensus
   , txsMempoolTimeoutSoftCounterName
   , txsSyncDurationTotalCounterName
   , impliesMempoolTimeoutSoft
-  , jsonTxReferencesSize
   ) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
@@ -1298,14 +1297,9 @@ jsonTxMeasure m =
     , "refScriptsSizeBytes" .= unByteSize32 (txMeasureMetricRefScriptsSizeBytes m)
     ]
 
--- | The reference-size dimension of an endorser-block measure, when present.
--- This excludes CBOR framing and reports the size used by capacity checks.
-jsonTxReferencesSize :: TxEbMeasureMetrics msr => msr -> Aeson.Object
-jsonTxReferencesSize measure =
-  mconcat
-    [ "txReferencesSize" .= unByteSize32 size
-    | Just size <- [txEbMeasureMetricReferencesSize measure]
-    ]
+jsonTxEbMeasure :: TxEbMeasureMetrics msr => msr -> Aeson.Object
+jsonTxEbMeasure m =
+  "txReferencesSize" .= unByteSize32 (txEbMeasureMetricReferencesSize m)
 
 instance LogFormatting MempoolSize where
   forMachine _dtal MempoolSize{msNumTxs, msNumBytes} =
@@ -1539,7 +1533,7 @@ instance
       , "size" .= toJSON (encodeLeiosEbSize eb)
       , "measure" .= jsonTxMeasure ebMeasure
       ]
-      <> jsonTxReferencesSize (mmTxEbMeasure ebMeasure)
+      <> jsonTxEbMeasure (mmTxEbMeasure ebMeasure)
   forMachine _dtal (TraceDidntAdoptBlock slotNo _) =
     mconcat
       [ "kind" .= String "TraceDidntAdoptBlock"

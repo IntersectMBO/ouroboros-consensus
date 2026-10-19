@@ -828,7 +828,7 @@ data DijkstraEbMeasure = DijkstraEbMeasure
     via (InstantiatedAt Generic DijkstraEbMeasure)
 
 instance TxEbMeasureMetrics DijkstraEbMeasure where
-  txEbMeasureMetricReferencesSize = Just . unIgnoringOverflow . txReferencesSize
+  txEbMeasureMetricReferencesSize = unIgnoringOverflow . txReferencesSize
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes
