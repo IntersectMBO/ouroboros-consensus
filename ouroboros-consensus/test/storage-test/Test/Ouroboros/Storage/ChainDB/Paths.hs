@@ -243,9 +243,10 @@ headerToBlockInfo hdr =
     , biBlockNo = blockNo hdr
     , biPrevHash = headerPrevHash hdr
     , biIsEBB = headerToIsEBB hdr
-    , -- We don't care about those two
+    , -- We don't care about these
       biHeaderOffset = 0
     , biHeaderSize = 0
+    , biLeios = VolatileDB.noLeiosBlockInfo
     }
 
 headersToBlockInfo ::

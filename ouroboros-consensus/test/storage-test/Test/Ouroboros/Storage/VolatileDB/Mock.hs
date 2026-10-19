@@ -40,6 +40,7 @@ openDBMock maxBlocksPerFile ccfg = do
       , getBlockComponent = queryE .: getBlockComponentModel
       , putBlock = updateE_ . putBlockModel
       , garbageCollect = updateE_ . garbageCollectModel
+      , getLeiosAnnouncers = querySTME $ getLeiosAnnouncersModel
       , filterByPredecessor = querySTME $ filterByPredecessorModel
       , getBlockInfo = querySTME $ getBlockInfoModel
       , getMaxSlotNo = querySTME $ getMaxSlotNoModel

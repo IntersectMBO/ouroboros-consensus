@@ -47,12 +47,15 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Types (EbHash)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
@@ -75,6 +78,7 @@ data VolatileDBEnv m blk = forall h. Eq h => VolatileDBEnv
   , varInternalState :: !(RAWLock m (InternalState blk h))
   , maxBlocksPerFile :: !BlocksPerFile
   , checkIntegrity :: !(blk -> Bool)
+  , leiosBlockInfo :: !(blk -> LeiosBlockInfo)
   , codecConfig :: !(CodecConfig blk)
   , tracer :: !(Tracer m (TraceEvent blk))
   }
@@ -104,6 +108,8 @@ data OpenState blk h = OpenState
   -- ^ Where to find each block based on its slot number.
   , currentSuccMap :: !(SuccessorsIndex blk)
   -- ^ The successors for each block.
+  , currentAnnouncers :: !(Map EbHash (Set (HeaderHash blk)))
+  -- ^ The blocks announcing each endorser block.
   , currentMaxSlotNo :: !MaxSlotNo
   -- ^ Highest stored SlotNo.
   --
@@ -312,11 +318,12 @@ mkOpenState ::
   CodecConfig blk ->
   HasFS m h ->
   (blk -> Bool) ->
+  (blk -> LeiosBlockInfo) ->
   BlockValidationPolicy ->
   Tracer m (TraceEvent blk) ->
   BlocksPerFile ->
   m (OpenState blk h)
-mkOpenState ccfg hasFS@HasFS{..} checkInvariants validationPolicy tracer maxBlocksPerFile = do
+mkOpenState ccfg hasFS@HasFS{..} checkInvariants leiosInfo validationPolicy tracer maxBlocksPerFile = do
   createDirectoryIfMissing True dbDir
   allFiles <- map toFsPath . Set.toList <$> listDirectory dbDir
   filesWithIds <- logInvalidFiles $ parseAllFds allFiles
@@ -324,6 +331,7 @@ mkOpenState ccfg hasFS@HasFS{..} checkInvariants validationPolicy tracer maxBloc
     ccfg
     hasFS
     checkInvariants
+    leiosInfo
     validationPolicy
     tracer
     maxBlocksPerFile
@@ -364,12 +372,13 @@ mkOpenStateHelper ::
   CodecConfig blk ->
   HasFS m h ->
   (blk -> Bool) ->
+  (blk -> LeiosBlockInfo) ->
   BlockValidationPolicy ->
   Tracer m (TraceEvent blk) ->
   BlocksPerFile ->
   [(FileId, FsPath)] ->
   m (OpenState blk h)
-mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPerFile files = do
+mkOpenStateHelper ccfg hasFS checkIntegrity leiosInfo validationPolicy tracer maxBlocksPerFile files = do
   (currentMap', currentRevMap', currentSuccMap') <-
     foldM validateFile (Index.empty, Map.empty, Map.empty) files
 
@@ -406,13 +415,20 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
       , currentMap = currentMap''
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
+      , currentAnnouncers =
+          Map.fromListWith
+            (<>)
+            [ (ebHash, Set.singleton hash)
+            | (hash, ibi) <- Map.toList currentRevMap'
+            , SJust ebHash <- [lbiAnnouncedEb (biLeios (ibiBlockInfo ibi))]
+            ]
       , currentMaxSlotNo = FileInfo.maxSlotNoInFiles (Index.elems currentMap')
       }
  where
   validateFile :: Indices blk -> (FileId, FsPath) -> m (Indices blk)
   validateFile (currentMap, currentRevMap, currentSuccMap) (fd, file) = do
     (parsedBlocks, mErr) <-
-      parseBlockFile ccfg hasFS checkIntegrity validationPolicy file
+      parseBlockFile ccfg hasFS checkIntegrity leiosInfo validationPolicy file
     whenJust mErr $ \(e, offset) ->
       truncateError file e offset
 
