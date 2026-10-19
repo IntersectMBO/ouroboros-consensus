@@ -72,6 +72,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.Praos.Common as Praos
+import qualified Ouroboros.Consensus.Protocol.Praos2 as Praos2
 import Ouroboros.Consensus.Protocol.TPraos (TPraosCannotForge (..))
 import Ouroboros.Consensus.Shelley.Ledger hiding (TxId)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Consensus
@@ -2067,7 +2068,7 @@ instance
 
 instance
   Ledger.Crypto crypto =>
-  LogFormatting (Praos.PraosValidationErr crypto)
+  LogFormatting (Praos.PolyPraosValidationErr (Praos.Praos crypto) crypto)
   where
   forMachine _ err' =
     case err' of
@@ -2142,6 +2143,105 @@ instance
         mconcat
           [ "kind" .= String "NoCounterForKeyHashOCERT"
           , "stakePoolKeyHash" .= stakePoolKeyHash
+          ]
+
+instance
+  Ledger.Crypto crypto =>
+  LogFormatting (Praos.PolyPraosValidationErr (Praos2.Praos2 crypto) crypto)
+  where
+  forMachine _ err' =
+    case err' of
+      Praos.VRFKeyUnknown unknownKeyHash ->
+        mconcat
+          [ "kind" .= String "VRFKeyUnknown"
+          , "vrfKey" .= unknownKeyHash
+          ]
+      Praos.VRFKeyWrongVRFKey stakePoolKeyHash registeredVrfForSaidStakepool wrongKeyHashInBlockHeader ->
+        mconcat
+          [ "kind" .= String "VRFKeyWrongVRFKey"
+          , "stakePoolKeyHash" .= stakePoolKeyHash
+          , "stakePoolVrfKey" .= registeredVrfForSaidStakepool
+          , "blockHeaderVrfKey" .= wrongKeyHashInBlockHeader
+          ]
+      Praos.VRFKeyBadProof slotNo nonce vrfCalculatedVal ->
+        mconcat
+          [ "kind" .= String "VRFKeyBadProof"
+          , "slotNumberUsedInVrfCalculation" .= slotNo
+          , "nonceUsedInVrfCalculation" .= nonce
+          , "calculatedVrfValue" .= String (textShow vrfCalculatedVal)
+          ]
+      Praos.VRFLeaderValueTooBig leaderValue sigma f ->
+        mconcat
+          [ "kind" .= String "VRFLeaderValueTooBig"
+          , "leaderValue" .= leaderValue
+          , "sigma" .= sigma
+          , "f" .= activeSlotLog f
+          ]
+      Praos.KESBeforeStartOCERT startKesPeriod currKesPeriod ->
+        mconcat
+          [ "kind" .= String "KESBeforeStartOCERT"
+          , "opCertStartingKesPeriod" .= kesPeriodValue startKesPeriod
+          , "currentKesPeriod" .= kesPeriodValue currKesPeriod
+          ]
+      Praos.KESAfterEndOCERT currKesPeriod startKesPeriod maxKesKeyEvos ->
+        mconcat
+          [ "kind" .= String "KESAfterEndOCERT"
+          , "opCertStartingKesPeriod" .= kesPeriodValue startKesPeriod
+          , "currentKesPeriod" .= kesPeriodValue currKesPeriod
+          , "maxKesKeyEvolutions" .= maxKesKeyEvos
+          ]
+      Praos.CounterTooSmallOCERT lastCounter currentCounter ->
+        mconcat
+          [ "kind" .= String "CounterTooSmallOCERT"
+          , "lastCounter" .= lastCounter
+          , "currentCounter" .= currentCounter
+          ]
+      Praos.CounterOverIncrementedOCERT lastCounter currentCounter ->
+        mconcat
+          [ "kind" .= String "CounterOverIncrementedOCERT"
+          , "lastCounter" .= lastCounter
+          , "currentCounter" .= currentCounter
+          ]
+      Praos.InvalidSignatureOCERT counter oCertStartKesPeriod err ->
+        mconcat
+          [ "kind" .= String "InvalidSignatureOCERT"
+          , "counter" .= counter
+          , "opCertStartingKesPeriod" .= kesPeriodValue oCertStartKesPeriod
+          , "error" .= err
+          ]
+      Praos.InvalidKesSignatureOCERT currentKesPeriod opCertStartKesPeriod expectedKesEvos maxKesEvos err ->
+        mconcat
+          [ "kind" .= String "InvalidKesSignatureOCERT"
+          , "currentKesPeriod" .= currentKesPeriod
+          , "opCertStartingKesPeriod" .= opCertStartKesPeriod
+          , "expectedKesEvolutions" .= expectedKesEvos
+          , "maximumKesEvos" .= maxKesEvos
+          , "error" .= err
+          ]
+      Praos.NoCounterForKeyHashOCERT stakePoolKeyHash ->
+        mconcat
+          [ "kind" .= String "NoCounterForKeyHashOCERT"
+          , "stakePoolKeyHash" .= stakePoolKeyHash
+          ]
+      Praos.LeiosCertWithoutAnnouncement _ reason predecessorSlot headerSlot ->
+        mconcat
+          [ "kind" .= String "LeiosCertWithoutAnnouncement"
+          , "reason" .= String (textShow reason)
+          , "predecessorSlot" .= fmap unSlotNo (withOriginToMaybe predecessorSlot)
+          , "headerSlot" .= unSlotNo headerSlot
+          ]
+      Praos.LeiosCertTooYoung _ announcingSlot headerSlot earliestSlot ->
+        mconcat
+          [ "kind" .= String "LeiosCertTooYoung"
+          , "announcingSlot" .= unSlotNo announcingSlot
+          , "headerSlot" .= unSlotNo headerSlot
+          , "earliestSlot" .= unSlotNo earliestSlot
+          ]
+      Praos.LeiosEbTooBig _ announcedSize maximumSize ->
+        mconcat
+          [ "kind" .= String "LeiosEbTooBig"
+          , "announcedSize" .= announcedSize
+          , "maximumSize" .= maximumSize
           ]
 
 instance LogFormatting (Praos.PraosCannotForge crypto) where
