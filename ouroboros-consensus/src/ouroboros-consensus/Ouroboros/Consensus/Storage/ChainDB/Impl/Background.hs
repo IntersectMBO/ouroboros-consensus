@@ -473,7 +473,9 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 -------------------------------------------------------------------------------}
 
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
--- the VolatileDB.
+-- the VolatileDB, and for the endorser blocks in the LeiosDB all of whose
+-- announcements are older than it. 'copyToImmutableDB' has already pinned the
+-- certified ones, which the LeiosDB keeps.
 --
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --
@@ -487,6 +489,7 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
+  leiosDbGarbageCollect cdbLeiosDb slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
