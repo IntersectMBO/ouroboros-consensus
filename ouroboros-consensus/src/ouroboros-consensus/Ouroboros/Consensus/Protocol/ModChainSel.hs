@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Protocol.ModChainSel
@@ -9,9 +11,11 @@ module Ouroboros.Consensus.Protocol.ModChainSel
   , ConsensusConfig (..)
   ) where
 
+import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 
 data ModChainSel p t
@@ -44,5 +48,19 @@ instance
   updateChainDepState = updateChainDepState . mcsConfigP
   reupdateChainDepState = reupdateChainDepState . mcsConfigP
   protocolSecurityParam = protocolSecurityParam . mcsConfigP
+
+instance
+  ( LeiosProtocol p
+  , ChainOrder t
+  , Show t
+  , Typeable t
+  , NoThunks t
+  ) =>
+  LeiosProtocol (ModChainSel p t)
+  where
+  getLeiosAnnouncement _proxy = getLeiosAnnouncement (Proxy @p)
+  getContainsLeiosCert _proxy = getContainsLeiosCert (Proxy @p)
+  validateLeiosAnnouncement = validateLeiosAnnouncement . mcsConfigP
+  getLeiosLedgerView _proxy = getLeiosLedgerView (Proxy @p)
 
 instance ConsensusProtocol p => NoThunks (ConsensusConfig (ModChainSel p t))
