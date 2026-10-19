@@ -1301,6 +1301,14 @@ jsonTxEbMeasure :: TxEbMeasureMetrics msr => msr -> Aeson.Object
 jsonTxEbMeasure m =
   "txReferencesSize" .= unByteSize32 (txEbMeasureMetricReferencesSize m)
 
+jsonEb :: LeiosEb -> Aeson.Object
+jsonEb eb =
+  mconcat
+    [ "hash" .= String (Crypto.hashToTextAsHex $ extractHash $ hashLeiosEb eb)
+    , "references" .= length (leiosEbTxs eb)
+    , "size" .= encodeLeiosEbSize eb
+    ]
+
 instance LogFormatting MempoolSize where
   forMachine _dtal MempoolSize{msNumTxs, msNumBytes} =
     mconcat
@@ -1528,9 +1536,7 @@ instance
     mconcat
       [ "kind" .= String "TraceForgedEndorserBlock"
       , "slot" .= toJSON (unSlotNo slotNo)
-      , "endorserBlock" .= String (Crypto.hashToTextAsHex $ extractHash $ hashLeiosEb eb)
-      , "references" .= toJSON (length $ leiosEbTxs eb)
-      , "size" .= toJSON (encodeLeiosEbSize eb)
+      , "endorserBlock" .= jsonEb eb
       , "measure" .= jsonTxMeasure ebMeasure
       ]
       <> jsonTxEbMeasure (mmTxEbMeasure ebMeasure)
