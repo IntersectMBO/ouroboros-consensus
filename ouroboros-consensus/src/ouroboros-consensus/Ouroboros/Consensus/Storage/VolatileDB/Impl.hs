@@ -131,12 +131,14 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
@@ -171,6 +173,10 @@ data VolatileDbArgs f m blk = VolatileDbArgs
   , volValidationPolicy :: BlockValidationPolicy
   -- ^ Should the parser for the VolatileDB fail when it encounters a
   -- corrupt/invalid block?
+  , volLeiosBlockInfo :: HKD f (blk -> LeiosBlockInfo)
+  -- ^ What each block says about Leios endorser blocks. Provided by the
+  -- ChainDB, which has the 'Ouroboros.Consensus.Block.Abstract.BlockConfig'
+  -- this query requires.
   }
 
 -- \^ Should the parser for the VolatileDB fail when it encounters a
@@ -186,6 +192,7 @@ defaultArgs =
     , volMaxBlocksPerFile = mkBlocksPerFile 1000
     , volTracer = nullTracer
     , volValidationPolicy = NoValidation
+    , volLeiosBlockInfo = noDefault
     }
 
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the VolatileDB.
@@ -213,6 +220,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
       volCodecConfig
       hasFS
       volCheckIntegrity
+      volLeiosBlockInfo
       volValidationPolicy
       volTracer
       volMaxBlocksPerFile
@@ -225,6 +233,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
           , tracer = volTracer
           , codecConfig = volCodecConfig
           , checkIntegrity = volCheckIntegrity
+          , leiosBlockInfo = volLeiosBlockInfo
           }
       volatileDB =
         VolatileDB
@@ -232,6 +241,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
           , getBlockComponent = getBlockComponentImpl env
           , putBlock = putBlockImpl env
           , garbageCollect = garbageCollectImpl env
+          , getLeiosAnnouncers = getLeiosAnnouncersImpl env
           , filterByPredecessor = filterByPredecessorImpl env
           , getBlockInfo = getBlockInfoImpl env
           , getMaxSlotNo = getMaxSlotNoImpl env
@@ -385,7 +395,7 @@ putBlockImpl ::
   blk ->
   m ()
 putBlockImpl
-  env@VolatileDBEnv{maxBlocksPerFile, tracer, codecConfig}
+  env@VolatileDBEnv{maxBlocksPerFile, tracer, codecConfig, leiosBlockInfo}
   blk =
     appendOpenState env $ \hasFS -> do
       OpenState{currentRevMap, currentWriteHandle} <- get
@@ -398,7 +408,7 @@ putBlockImpl
           fileIsFull <- state $ updateStateAfterWrite bytesWritten
           when fileIsFull $ nextFile hasFS
    where
-    blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash} = extractBlockInfo blk
+    blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash, biLeios} = extractBlockInfo leiosBlockInfo blk
 
     updateStateAfterWrite ::
       forall h.
@@ -434,6 +444,9 @@ putBlockImpl
           , currentMap = currentMap'
           , currentRevMap = currentRevMap'
           , currentSuccMap = insertMapSet biPrevHash biHash currentSuccMap
+          , currentAnnouncers = case lbiAnnouncedEb biLeios of
+              SNothing -> currentAnnouncers
+              SJust ebHash -> insertMapSet ebHash biHash currentAnnouncers
           , currentMaxSlotNo = currentMaxSlotNo `max` MaxSlotNo biSlotNo
           }
 
@@ -524,7 +537,7 @@ garbageCollectFile ::
 garbageCollectFile hasFS (fileId, fileInfo) = do
   lift $ lift $ removeFile hasFS $ filePath fileId
 
-  st@OpenState{currentMap, currentRevMap, currentSuccMap} <- get
+  st@OpenState{currentMap, currentRevMap, currentSuccMap, currentAnnouncers} <- get
 
   let hashes = FileInfo.hashes fileInfo
       currentRevMap' = Map.withoutKeys currentRevMap hashes
@@ -534,12 +547,21 @@ garbageCollectFile hasFS (fileId, fileInfo) = do
           (Set.toList hashes)
       currentSuccMap' =
         List.foldl' (flip (uncurry deleteMapSet)) currentSuccMap deletedPairs
+      deletedAnnouncements =
+        [ (ebHash, h)
+        | h <- Set.toList hashes
+        , Just ibi <- [Map.lookup h currentRevMap]
+        , SJust ebHash <- [lbiAnnouncedEb (biLeios (ibiBlockInfo ibi))]
+        ]
+      currentAnnouncers' =
+        List.foldl' (flip (uncurry deleteMapSet)) currentAnnouncers deletedAnnouncements
 
   put
     st
       { currentMap = Index.delete fileId currentMap
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
+      , currentAnnouncers = currentAnnouncers'
       }
 
 filterByPredecessorImpl ::
@@ -549,6 +571,14 @@ filterByPredecessorImpl ::
   STM m (ChainHash blk -> Set (HeaderHash blk))
 filterByPredecessorImpl = getterSTM $ \st hash ->
   fromMaybe Set.empty (Map.lookup hash (currentSuccMap st))
+
+getLeiosAnnouncersImpl ::
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m (EndorserBlockHash -> Set (HeaderHash blk))
+getLeiosAnnouncersImpl = getterSTM $ \st ebHash ->
+  fromMaybe Set.empty (Map.lookup ebHash (currentAnnouncers st))
 
 getBlockInfoImpl ::
   forall m blk.

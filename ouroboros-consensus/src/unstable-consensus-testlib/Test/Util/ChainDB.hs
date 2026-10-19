@@ -13,18 +13,22 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
+import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
+  , configBlock
   , configCodec
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (leiosBlockInfo)
 import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -91,6 +95,7 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , LedgerDbSerialiseConstraints blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
@@ -122,6 +127,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , volMaxBlocksPerFile = VolatileDB.mkBlocksPerFile 4
           , volTracer = nullTracer
           , volValidationPolicy = VolatileDB.ValidateAll
+          , volLeiosBlockInfo = leiosBlockInfo (configBlock mcdbTopLevelConfig)
           }
     , cdbLgrDbArgs =
         LedgerDbArgs

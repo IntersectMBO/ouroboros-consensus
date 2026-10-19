@@ -618,6 +618,7 @@ test cmds = do
           , volMaxBlocksPerFile = testMaxBlocksPerFile
           , volTracer = tracer
           , volValidationPolicy = ValidateAll
+          , volLeiosBlockInfo = const noLeiosBlockInfo
           }
 
   (hist, res, trace) <- bracket

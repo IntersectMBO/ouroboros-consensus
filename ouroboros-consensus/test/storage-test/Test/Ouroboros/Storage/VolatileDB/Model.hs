@@ -19,6 +19,7 @@ module Test.Ouroboros.Storage.VolatileDB.Model
   , garbageCollectModel
   , getBlockComponentModel
   , getBlockInfoModel
+  , getLeiosAnnouncersModel
   , getMaxSlotNoModel
   , isOpenModel
   , putBlockModel
@@ -48,6 +49,7 @@ import Data.TreeDiff
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Common
   ( BlockComponent (..)
   , extractHeader
@@ -366,12 +368,18 @@ filterByPredecessorModel dbm = whenOpen dbm $ \predecessor ->
       Map.empty
       (getBlockToPredecessor dbm)
 
+-- | The model's blocks announce no endorser block.
+getLeiosAnnouncersModel ::
+  DBModel blk ->
+  Either (VolatileDBError blk) (EndorserBlockHash -> Set (HeaderHash blk))
+getLeiosAnnouncersModel dbm = whenOpen dbm $ const Set.empty
+
 getBlockInfoModel ::
   (GetPrevHash blk, HasBinaryBlockInfo blk) =>
   DBModel blk ->
   Either (VolatileDBError blk) (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoModel dbm = whenOpen dbm $ \hash ->
-  extractBlockInfo <$> Map.lookup hash (blockIndex dbm)
+  extractBlockInfo (const noLeiosBlockInfo) <$> Map.lookup hash (blockIndex dbm)
 
 getMaxSlotNoModel ::
   HasHeader blk =>
