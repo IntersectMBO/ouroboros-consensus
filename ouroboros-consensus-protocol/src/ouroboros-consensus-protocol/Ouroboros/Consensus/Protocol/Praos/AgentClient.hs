@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( AgentCrypto (..)
   , KESAgentClientTrace (..)
   , KESAgentContext
+  , KESKeyFileNotSupportedInSimulation (..)
   , MonadKESAgent (..)
   , runKESAgentClient
   ) where
@@ -20,6 +21,12 @@ import Cardano.Crypto.DirectSerialise
   , DirectSerialise
   )
 import Cardano.Crypto.KES.Class
+import Cardano.Crypto.Libsodium.Memory
+  ( MLockedAllocator (..)
+  , finalizeMLockedForeignPtr
+  , mlockedMalloc
+  , withMLockedForeignPtr
+  )
 import Cardano.Crypto.VRF.Class
 import qualified Cardano.KESAgent.KES.Bundle as Agent
 import qualified Cardano.KESAgent.KES.Crypto as Agent
@@ -39,11 +46,14 @@ import Control.Tracer
 import Data.Coerce (coerce)
 import Data.Kind
 import Data.Typeable
+import Data.Word (Word8)
+import Foreign.Ptr (Ptr, plusPtr)
 import Network.Socket
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.RawBearer
 import Ouroboros.Network.Snocket
 import qualified Simulation.Network.Snocket as SimSnocket
+import System.IO (IOMode (ReadMode), hFileSize, hGetBuf, withBinaryFile)
 import System.IOManager
 import Test.Ouroboros.Network.Data.AbsBearerInfo as ABI
 
@@ -97,6 +107,23 @@ class (MonadFail m, Show (Addr m)) => MonadKESAgent m where
   makeRawBearer :: MakeRawBearer m (FD m)
   makeAddress :: Proxy m -> FilePath -> Addr m
 
+  -- | Read a whole file into a fresh mlocked buffer and run the continuation
+  -- on that buffer and the number of bytes read. The buffer is erased and
+  -- released when the continuation returns or throws. No part of the file
+  -- ever passes through the GHC heap, which is what makes this suitable for
+  -- a KES signing key file: the hex text in such a file /is/ the secret.
+  --
+  -- Only 'IO' has a filesystem; the 'IOSim' instance throws
+  -- 'KESKeyFileNotSupportedInSimulation'.
+  withKESKeyFileLocked :: FilePath -> (Ptr Word8 -> Int -> m a) -> m a
+
+-- | Thrown by 'withKESKeyFileLocked' under 'IOSim', which has no filesystem.
+newtype KESKeyFileNotSupportedInSimulation
+  = KESKeyFileNotSupportedInSimulation FilePath
+  deriving Show
+
+instance Exception KESKeyFileNotSupportedInSimulation
+
 instance MonadKESAgent IO where
   type FD IO = Socket
   type Addr IO = SockAddr
@@ -105,6 +132,28 @@ instance MonadKESAgent IO where
       inner (socketSnocket ioManager)
   makeRawBearer = makeSocketRawBearer
   makeAddress _ = SockAddrUnix
+  withKESKeyFileLocked path k =
+    withBinaryFile path ReadMode $ \h -> do
+      size <- fromInteger <$> hFileSize h
+      -- Never ask the allocator for zero bytes; an empty file still hands
+      -- the continuation a length of 0.
+      buf <- mlAllocate mlockedMalloc (fromIntegral (max 1 size))
+      ( withMLockedForeignPtr buf $ \ptr -> do
+          n <- readFully h ptr size
+          k ptr n
+        )
+        `finally` finalizeMLockedForeignPtr buf
+   where
+    -- 'hGetBuf' returns short only at end of file, but the file may have
+    -- changed size since 'hFileSize', so read until the buffer is full or
+    -- the file is exhausted and hand on the number of bytes actually read.
+    readFully h ptr size = go 0
+     where
+      go off
+        | off >= size = pure off
+        | otherwise = do
+            n <- hGetBuf h (ptr `plusPtr` off) (size - off)
+            if n <= 0 then pure off else go (off + n)
 
 instance MonadKESAgent (IOSim s) where
   type FD (IOSim s) = SimSnocket.FD (IOSim s) (TestAddress FilePath)
@@ -117,6 +166,8 @@ instance MonadKESAgent (IOSim s) where
       $ \snocket _observe -> inner snocket
   makeRawBearer = SimSnocket.makeFDRawBearer nullTracer
   makeAddress _ = TestAddress
+  withKESKeyFileLocked path _ =
+    throwIO (KESKeyFileNotSupportedInSimulation path)
 
 instance SimSnocket.GlobalAddressScheme FilePath where
   getAddressType = const SimSnocket.IPv4Address
