@@ -68,17 +68,9 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
-  -- | 'forge' calls this function after the ChainDB adopts the forged ranking
-  -- block. The arguments are the header of this block and the forged
-  -- endorser block.
-  --
-  -- 'forge' waits for this function to return. In the node kernel,
-  -- 'forkBlockForging' runs 'forge' in 'knownSlotWatcher', which reads the
-  -- current slot again only after 'forge' returns. So if this function is
-  -- slow, the node does no leadership check for the slots that start in the
-  -- meantime. The forging thread is a linked thread
-  -- ('forkLinkedWatcherAllocate'), so an exception from this function stops
-  -- the node. Do slow work, such as a storage write, in another thread.
+  -- | 'forge' calls this function after 'forgeBlock' and before
+  -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
+  -- block and the endorser block that it announces.
   (Header blk -> LeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
