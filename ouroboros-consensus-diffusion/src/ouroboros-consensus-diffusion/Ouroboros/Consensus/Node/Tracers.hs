@@ -417,8 +417,8 @@ data TraceForgeEvent blk
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
     TraceForgedBlock SlotNo (Point blk) blk MempoolSize (MempoolMeasure blk)
-  | -- | We forged an endorser block. The block of the preceding
-    -- 'TraceForgedBlock' announces it.
+  | -- | We forged an endorser block. The ranking block with the recorded hash
+    -- announces it.
     --
     -- We record the current slot number, the hash of the ranking block that
     -- announces the endorser block, the endorser block, and the total mempool

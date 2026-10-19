@@ -1991,15 +1991,16 @@ instance MetaTrace (TraceForgeEvent blk) where
   documentFor (Namespace _ ["ForgedEndorserBlock"]) =
     Just $
       mconcat
-        [ "We forged an endorser block. The block of the preceding ForgedBlock"
-        , "  announces it."
+        [ "We forged an endorser block. The ranking block with the hash"
+        , "  rankingBlock announces it."
         , "\n"
-        , "  We record the current slot number, the hash of the endorser block, the"
-        , "  number of transactions that it references, its size in bytes, and the"
-        , "  selected transactions' measure (transaction bytes, execution units, and"
-        , "  reference-script bytes)."
-        , "  When the measure tracks reference bytes, txReferencesSize reports"
-        , "  that size excluding CBOR framing; size includes the framing."
+        , "  We record the current slot number, the hash of the ranking block, the"
+        , "  hash of the endorser block, the number of transactions that it"
+        , "  references, its size in bytes, and the selected transactions' measure"
+        , "  (transaction bytes, execution units, and reference-script bytes)."
+        , "  txReferencesSize is the size of the transaction references without the"
+        , "  CBOR framing, and size includes the framing. txReferencesSize is zero"
+        , "  when the measure has no reference size."
         ]
   documentFor (Namespace _ ["DidntAdoptBlock"]) =
     Just $
