@@ -42,3 +42,11 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- [POC] hardened KES key file: cardano-crypto-class from perturbing/harden-kes-file-poc/1-locked-hex-deserialise
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  --sha256: sha256-4dqxXfvoqYFZD8CFAh6mVloYwHw/9df4UlSCJN+EHwY=
+  tag: 0fa8421c850f6d4aae57cc4e90c76f9bc5ed9511
+  subdir: cardano-crypto-class
