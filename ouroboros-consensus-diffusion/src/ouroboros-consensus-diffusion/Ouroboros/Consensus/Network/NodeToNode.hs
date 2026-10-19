@@ -694,6 +694,8 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tPerasVoteDiffusionTracer :: f (TraceLabelPeer peer (TraceSendRecv (PerasVoteDiffusion blk)))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
+  , tLeiosFetchTracer ::
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
   }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
@@ -708,6 +710,7 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tPerasVoteDiffusionTracer = f tPerasVoteDiffusionTracer
       , tKeepAliveTracer = f tKeepAliveTracer
       , tPeerSharingTracer = f tPeerSharingTracer
+      , tLeiosFetchTracer = f tLeiosFetchTracer
       }
    where
     f ::
@@ -730,6 +733,7 @@ nullTracers =
     , tPerasVoteDiffusionTracer = nullTracer
     , tKeepAliveTracer = nullTracer
     , tPeerSharingTracer = nullTracer
+    , tLeiosFetchTracer = nullTracer
     }
 
 showTracers ::
@@ -756,6 +760,7 @@ showTracers tr =
     , tPerasVoteDiffusionTracer = show >$< tr
     , tKeepAliveTracer = show >$< tr
     , tPeerSharingTracer = show >$< tr
+    , tLeiosFetchTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------
@@ -1385,7 +1390,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "LeiosFetchClient"
       ((), trailing) <-
         runPeerWithLimits
-          nullTracer
+          (TraceLabelPeer them `contramap` tLeiosFetchTracer)
           (cLeiosFetchCodec (mkCodecs version))
           blLeiosFetch
           timeLimitsLeiosFetch
@@ -1409,7 +1414,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         closeReader
         $ \reader ->
           runPeerWithLimits
-            nullTracer
+            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
             (cLeiosFetchCodec (mkCodecs version))
             blLeiosFetch
             timeLimitsLeiosFetch
