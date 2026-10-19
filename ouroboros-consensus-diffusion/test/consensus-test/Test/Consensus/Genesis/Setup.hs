@@ -24,7 +24,8 @@ import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
 import Data.SOP (All, Top)
 import Ouroboros.Consensus.Block.Abstract
-  ( ChainHash (..)
+  ( BlockProtocol
+  , ChainHash (..)
   , ConvertRawHash
   , GetHeader
   , Header
@@ -40,6 +41,7 @@ import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
@@ -162,6 +164,7 @@ runGenesisTest ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -225,6 +228,7 @@ runConformanceTest ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk

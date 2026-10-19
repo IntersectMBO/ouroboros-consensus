@@ -7,6 +7,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Background tasks:
 --
@@ -54,6 +55,7 @@ import Control.Tracer
 import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes)
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import Data.Time.Clock
@@ -61,10 +63,12 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (configBlock)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
   , AddPerasCertChainSelOutcome (..)
@@ -78,6 +82,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..))
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -98,6 +103,7 @@ launchBgTasks ::
   ( IOLike m
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -158,12 +164,16 @@ launchBgTasks cdb@CDB{..} = do
 --
 -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
 -- returned. This can be used for a garbage collection on the VolatileDB.
+--
+-- Before copying any of the blocks, this pins in the LeiosDB the endorser
+-- blocks they certify, so that the LeiosDB's garbage collection never evicts
+-- them. A crash in between leaves only the pins, and copying the same blocks
+-- again after the restart pins the same endorser blocks.
 copyToImmutableDB ::
   forall m blk.
   ( IOLike m
-  , ConsensusProtocol (BlockProtocol blk)
-  , HasHeader blk
-  , GetHeader blk
+  , BlockSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -173,11 +183,8 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
     curChain <- icWithoutTime <$> readTVar cdbChain
     curChainVolSuffix <- Query.getCurrentChain cdb
     let nbToCopy = max 0 $ AF.length curChain - AF.length curChainVolSuffix
-        toCopy :: [Point blk]
-        toCopy =
-          map headerPoint $
-            AF.toOldestFirst $
-              AF.takeOldest nbToCopy curChain
+        toCopy :: [Header blk]
+        toCopy = AF.toOldestFirst $ AF.takeOldest nbToCopy curChain
     return toCopy
 
   if null toCopy
@@ -186,30 +193,66 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
     -- manually, which means it might be called when there are no blocks to
     -- copy.
     then trace NoBlocksToCopyToImmutableDB
-    else forM_ toCopy $ \pt -> do
-      let hash = case pointHash pt of
-            BlockHash h -> h
-            -- There is no actual genesis block that can occur on a chain
-            GenesisHash -> error "genesis block on current chain"
-      slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
-      assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
-      -- When the block is corrupt, the function below will throw an
-      -- exception. This exception will make sure that we shut down the node
-      -- and that the next time we start, validation will be enabled.
-      blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
-      -- We're the only one modifying the ImmutableDB, so the tip cannot
-      -- have changed since we last checked it.
-      ImmutableDB.appendBlock cdbImmutableDB blk
-      -- TODO the invariant of 'cdbChain' is shortly violated between
-      -- these two lines: the tip was updated on the line above, but the
-      -- anchor point is only updated on the line below.
-      atomically $ removeFromChain pt
-      trace $ CopiedBlockToImmutableDB pt
+    else do
+      leiosDbPromoteToImmutable cdbLeiosDb =<< certifiedEbs toCopy
+      forM_ (map headerPoint toCopy) $ \pt -> do
+        let hash = case pointHash pt of
+              BlockHash h -> h
+              -- There is no actual genesis block that can occur on a chain
+              GenesisHash -> error "genesis block on current chain"
+        slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
+        assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
+        -- When the block is corrupt, the function below will throw an
+        -- exception. This exception will make sure that we shut down the node
+        -- and that the next time we start, validation will be enabled.
+        blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
+        -- We're the only one modifying the ImmutableDB, so the tip cannot
+        -- have changed since we last checked it.
+        ImmutableDB.appendBlock cdbImmutableDB blk
+        -- TODO the invariant of 'cdbChain' is shortly violated between
+        -- these two lines: the tip was updated on the line above, but the
+        -- anchor point is only updated on the line below.
+        atomically $ removeFromChain pt
+        trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB
   (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)
  where
   trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
+
+  -- The endorser block each of these headers certifies, if its block contains
+  -- a certificate: the one its predecessor announced. The oldest one's
+  -- predecessor is the ImmutableDB's tip, whose header is read only if the
+  -- oldest one contains a certificate.
+  certifiedEbs :: [Header blk] -> m [LeiosPoint]
+  certifiedEbs = \case
+    [] -> pure []
+    hdrs@(oldest : _) -> do
+      mbTip <- if containsCert oldest then immutableTipHeader else pure Nothing
+      pure $ catMaybes $ zipWith certifiedBy (mbTip : map Just hdrs) hdrs
+
+  certifiedBy :: Maybe (Header blk) -> Header blk -> Maybe LeiosPoint
+  certifiedBy mbPredecessor hdr
+    | containsCert hdr = mbPredecessor >>= announcedEb
+    | otherwise = Nothing
+
+  announcedEb :: Header blk -> Maybe LeiosPoint
+  announcedEb hdr =
+    MkLeiosPoint (blockSlot hdr) . announcementEbHash
+      <$> getLeiosAnnouncement (Proxy @(BlockProtocol blk)) (validateView bcfg hdr)
+
+  containsCert :: Header blk -> Bool
+  containsCert = getContainsLeiosCert (Proxy @(BlockProtocol blk)) . validateView bcfg
+
+  immutableTipHeader :: m (Maybe (Header blk))
+  immutableTipHeader =
+    atomically (ImmutableDB.getTip cdbImmutableDB) >>= \case
+      Origin -> pure Nothing
+      NotOrigin tip ->
+        Just
+          <$> ImmutableDB.getKnownBlockComponent cdbImmutableDB GetHeader (ImmutableDB.tipToRealPoint tip)
+
+  bcfg = configBlock cdbTopLevelConfig
 
   -- \| Remove the header corresponding to the given point from the beginning
   -- of the current chain fragment.
@@ -259,6 +302,7 @@ copyToImmutableDBRunner ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
@@ -360,9 +404,8 @@ ledgerDbTaskWatcher CDB{cdbLedgerDB} (LedgerDbTasksTrigger varSt) =
 snapshotRunner ::
   forall m blk.
   ( IOLike m
-  , ConsensusProtocol (BlockProtocol blk)
-  , HasHeader blk
-  , GetHeader blk
+  , BlockSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->

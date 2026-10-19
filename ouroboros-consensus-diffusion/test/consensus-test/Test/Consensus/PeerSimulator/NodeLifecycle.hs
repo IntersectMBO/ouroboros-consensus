@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
@@ -140,6 +141,7 @@ mkChainDb ::
   IOLike m =>
   ( All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -195,6 +197,7 @@ restoreNode ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -226,6 +229,7 @@ lifecycleStart ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
