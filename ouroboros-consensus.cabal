@@ -292,6 +292,7 @@ library
     Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
     Ouroboros.Consensus.Storage.ChainDB.Impl.Follower
     Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
+    Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
     Ouroboros.Consensus.Storage.ChainDB.Impl.Paths
     Ouroboros.Consensus.Storage.ChainDB.Impl.Query
     Ouroboros.Consensus.Storage.ChainDB.Impl.Types

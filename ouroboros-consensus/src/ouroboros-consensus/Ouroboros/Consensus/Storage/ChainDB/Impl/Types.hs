@@ -53,6 +53,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelQueue -- opaque
   , addBlockToAdd
   , addPerasCertToQueue
+  , addReprocessLeiosEb
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -100,6 +101,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Types (EbHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -118,6 +120,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
   )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredLeiosEbs)
 import Ouroboros.Consensus.Storage.ImmutableDB
   ( ImmutableDB
   , ImmutableDbSerialiseConstraints
@@ -389,6 +392,10 @@ data ChainDbEnv m blk = CDB
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   , cdbLeiosDb :: !(LeiosDbHandle m)
   -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
+  , cdbAcquiredLeiosEbs :: !(StrictTVar m AcquiredLeiosEbs)
+  -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
+  -- can park the blocks certifying the others. Seeded from the LeiosDB at
+  -- open, then grown from its notifications.
   }
   deriving Generic
 
@@ -619,6 +626,9 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | Reprocess the blocks parked on the endorser block with this hash, whose
+    -- closure is now acquired.
+    ChainSelReprocessLeiosEb !EbHash
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -704,6 +714,12 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
     AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
+-- | Enqueue a reprocess of the blocks parked on the endorser block with the
+-- given hash.
+addReprocessLeiosEb :: IOLike m => ChainSelQueue m blk -> EbHash -> m ()
+addReprocessLeiosEb ChainSelQueue{varChainSelQueue} ebHash =
+  atomically $ writeTBQueue varChainSelQueue (ChainSelReprocessLeiosEb ebHash)
+
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the
 -- given tracer.
@@ -742,6 +758,7 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
+    ChainSelReprocessLeiosEb{} -> pure ()
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
@@ -755,6 +772,8 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
       tryPutTMVar varProcessed PerasCertNotProcessedClosing
     ChainSelReprocessLoEBlocks varProcessed ->
       tryPutTMVar varProcessed ()
+    ChainSelReprocessLeiosEb{} ->
+      pure True
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -770,6 +789,8 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddPerasCert{} ->
     pure ()
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  ChainSelReprocessLeiosEb{} ->
     pure ()
 
 -- | Return a function to test the membership
@@ -929,6 +950,9 @@ data TraceAddBlockEvent blk
     AddedReprocessLoEBlocksToQueue (Enclosing' Word)
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
+  | -- | ChainSel reconsiders this many blocks parked on the endorser block
+    -- with this hash, whose closure the LeiosDB now holds.
+    ReconsideredParkedBlocks EbHash Int
   | -- | A block was added to the Volatile DB
     AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
   | -- | The block fits onto the current chain, we'll try to use it to extend

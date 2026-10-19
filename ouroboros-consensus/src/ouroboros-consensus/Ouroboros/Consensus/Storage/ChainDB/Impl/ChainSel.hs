@@ -85,6 +85,11 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
   ( BlockCache
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( AcquiredLeiosEbs
+  , ignoreParkedCertRB
+  , ignoreParkedCertRBSuc
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -124,6 +129,8 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  -- | The endorser blocks whose closure is acquired ('cdbAcquiredLeiosEbs').
+  STM m AcquiredLeiosEbs ->
   LoE () ->
   PerasWeightSnapshot blk ->
   m (AnchoredFragment (Header blk))
@@ -134,6 +141,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
+  getAcquiredLeiosEbs
   loE
   weights = do
     -- TODO: Improve the user experience by trimming any potential
@@ -157,9 +165,12 @@ initialChainSelection
     -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
+      acquired <- getAcquiredLeiosEbs
+      lookupBlockInfo <- VolatileDB.getBlockInfo volatileDB
       (,)
         <$> ImmutableDB.getTipAnchor immutableDB
         <*> ( ignoreInvalidSuc volatileDB invalid
+                . ignoreParkedCertRBSuc acquired lookupBlockInfo
                 <$> VolatileDB.filterByPredecessor volatileDB
             )
 
@@ -416,6 +427,48 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
     Nothing -> pure ()
 
   atomically $ putTMVar varProcessed ()
+-- The blocks parked on an endorser block are the blocks containing a
+-- certificate that succeed the blocks announcing it. Now that its closure is
+-- acquired, ChainSel no longer hides them, so construct the candidates through
+-- them, as for the LoE above.
+chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
+  (announcers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+    invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    (,,,,)
+      <$> VolatileDB.getLeiosAnnouncers cdbVolatileDB
+      <*> ( ignoreInvalidSuc cdbVolatileDB invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
+      <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+  let
+    unparkedPoints :: [RealPoint blk]
+    unparkedPoints =
+      [ RealPoint (VolatileDB.biSlotNo bi) succHash
+      | announcer <- Set.toList (announcers ebHash)
+      , succHash <- Set.toList (succsOf (BlockHash announcer))
+      , Just bi <- [lookupBlockInfo succHash]
+      , VolatileDB.lbiHasCert (VolatileDB.biLeios bi)
+      ]
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+
+  traceWith (TraceAddBlockEvent >$< cdbTracer) $
+    ReconsideredParkedBlocks ebHash (length unparkedPoints)
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      unparkedPoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
 chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
@@ -723,9 +776,17 @@ constructPreferableCandidates ::
 constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,)
-      <$> (ignoreInvalidSuc p invalid <$> VolatileDB.filterByPredecessor cdbVolatileDB)
-      <*> (ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
+    -- Parked blocks ('ignoreParkedCertRB') are absent as invalid ones are, but
+    -- only until the closure they wait for is acquired.
+    acquired <- readTVar cdbAcquiredLeiosEbs
+    rawLookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
+    rawSuccsOf <- VolatileDB.filterByPredecessor cdbVolatileDB
+    pure
+      ( ignoreInvalidSuc p invalid $
+          ignoreParkedCertRBSuc acquired rawLookupBlockInfo rawSuccsOf
+      , ignoreInvalid p invalid $
+          ignoreParkedCertRB acquired rawLookupBlockInfo
+      )
 
   loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
   traceWith

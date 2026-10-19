@@ -19,7 +19,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo (..))
+import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo (..), LeiosBlockInfo)
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
 import Ouroboros.Consensus.Util.CBOR
   ( ReadIncrementalErr (..)
@@ -60,13 +60,14 @@ parseBlockFile ::
   CodecConfig blk ->
   HasFS m h ->
   (blk -> Bool) ->
+  (blk -> LeiosBlockInfo) ->
   BlockValidationPolicy ->
   FsPath ->
   m
     ( [ParsedBlockInfo blk]
     , Maybe (ParseError blk, BlockOffset)
     )
-parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
+parseBlockFile ccfg hasFS isNotCorrupt leiosInfo validationPolicy fsPath =
   withStreamIncrementalOffsets hasFS (decodeDisk ccfg) fsPath $
     checkEntries []
  where
@@ -89,7 +90,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
         return (reverse parsed, bimap BlockReadErr BlockOffset <$> mbErr)
       Right ((offset, (size, blk)), stream')
         | noValidation || isNotCorrupt blk ->
-            let !blockInfo = extractBlockInfo blk
+            let !blockInfo = extractBlockInfo leiosInfo blk
                 !newParsed =
                   ParsedBlockInfo
                     { pbiBlockOffset = BlockOffset offset
@@ -112,9 +113,10 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
 
 extractBlockInfo ::
   (GetPrevHash blk, HasBinaryBlockInfo blk) =>
+  (blk -> LeiosBlockInfo) ->
   blk ->
   BlockInfo blk
-extractBlockInfo blk =
+extractBlockInfo leiosInfo blk =
   BlockInfo
     { biHash = blockHash blk
     , biSlotNo = blockSlot blk
@@ -123,6 +125,7 @@ extractBlockInfo blk =
     , biPrevHash = blockPrevHash blk
     , biHeaderOffset = headerOffset
     , biHeaderSize = headerSize
+    , biLeios = leiosInfo blk
     }
  where
   BinaryBlockInfo{headerOffset, headerSize} = getBinaryBlockInfo blk
