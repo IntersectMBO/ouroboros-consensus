@@ -175,7 +175,6 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   whenJust mForgedEb $ \eb ->
     trace $ TraceForgedEndorserBlock currentSlot eb (endorserBlockMeasure selectedTxs)
 
-  -- If the ChainDB does not adopt the block, 'addBlockToChainDB' exits early.
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
 
 -- | Context required to forge a block
