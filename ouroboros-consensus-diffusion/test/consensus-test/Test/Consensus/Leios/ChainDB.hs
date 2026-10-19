@@ -14,6 +14,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbReader (..)
   , LeiosDbWriter (..)
@@ -37,6 +38,8 @@ tests =
     , testCase "ChainSel parks a certifying block until the closure arrives" $
         runSimOrThrow tipsAroundClosure
           @?= (blockPoint announcingA, blockPoint certifyingA)
+    , testCase "ChainSel selects a certifying block whose closure the LeiosDB held at start" $
+        runSimOrThrow tipWithClosureBeforeStart @?= blockPoint certifyingA
     ]
 
 -- | The node holds endorser blocks A and B, with their transactions. The
@@ -109,3 +112,23 @@ tipsAroundClosure = withNode $ \nut -> do
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)
+
+-- | As 'tipsAroundClosure', except that the LeiosDB holds A's closure before
+-- the node starts. The tip of the selected chain.
+tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
+tipWithClosureBeforeStart = do
+  leiosDb <- newLeiosDBInMemory
+  withWriter leiosDb $ \writer -> do
+    await =<< writeEbPoint writer pointA (encodeLeiosEbSize ebA)
+    void $ await =<< writeEbBody writer pointA ebA
+    void $
+      await
+        =<< writeTxs
+          writer
+          [(txHash, BS.replicate (fromIntegral size) 0) | (txHash, size) <- V.toList (leiosEbTxs ebA)]
+  withNodeOver leiosDb $ \nut -> do
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 20
+    mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) [announcingA, certifyingA]
+    threadDelay 1
+    atomically $ ChainDB.getTipPoint (nutChainDB nut)

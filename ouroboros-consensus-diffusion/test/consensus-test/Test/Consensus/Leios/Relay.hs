@@ -76,6 +76,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   ( leiosNotifyPipelineDepth
   , runLookaheadFixedSenderPeerWithLimits
   )
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
@@ -266,7 +267,8 @@ sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNode body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) nodeDBs body
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) nodeDBs leiosDB body
 
 k :: SecurityParam
 k = SecurityParam $ knownNonZeroBounded @10
