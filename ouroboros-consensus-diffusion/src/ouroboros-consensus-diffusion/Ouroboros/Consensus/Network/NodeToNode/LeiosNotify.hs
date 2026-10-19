@@ -143,7 +143,7 @@ leiosNotifyClient
                   runExcept (checkLeiosVotes cfg maxClockSkew immLedger now votes st)
               writeTVar stateVar st'
               pure accepted
-            mapM_ (onAcceptedVote voteState now) accepted
+            mapM_ (onAcceptedVote voteState systemTime) accepted
           MsgCanceled -> pure ()
       )
    where

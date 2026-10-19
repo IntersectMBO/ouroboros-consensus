@@ -247,6 +247,17 @@ tests =
         (ups, downs) <- relay 70 (withControl [[(67, vote someAnnouncingBlock 0)]]) [0]
         concatMap votes downs @?= [control]
         map poNodeClientEnded ups @?= [Nothing, Nothing]
+    , testCase "the node accepts a vote early within the clock skew, but relays it once its window opens" $ do
+        -- the window opens 4 s in; the client accepts the vote from 2 s in
+        (ups, downs) <- relay 20 [[announce someAnnouncingBlock, (2.5, vote someAnnouncingBlock 0)]] [0]
+        map votes downs @?= [[voteOf someAnnouncingBlock 0]]
+        map voteTimes downs @?= [[Time 4]]
+        map poNodeClientEnded ups @?= [Nothing]
+    , testCase "the node relays every early vote of a message once their window opens" $ do
+        let early = voteOf someAnnouncingBlock 0 :| map (voteOf someAnnouncingBlock) [1, 2]
+        down <- relayToOne 0 [[announce someAnnouncingBlock, (2.5, NotifyVotes early)]]
+        votes down @?= toList early
+        voteTimes down @?= [Time 4, Time 4, Time 4]
     , testCase "a peer that connects during a vote's window receives the vote" $ do
         down <- relayToOne 6 [votedFor0]
         votes down @?= [voteOf someAnnouncingBlock 0]
@@ -303,7 +314,8 @@ genVotingPeers = do
     pure $ map announce blks <> sortOn fst vs
   genVote blks signed seat = do
     blk <- elements blks
-    at <- realToFrac <$> choose (4.1 :: Double, 7.9)
+    -- from as early as the clock skew lets the node's client accept
+    at <- realToFrac <$> choose (2.1 :: Double, 7.9)
     pure (at, signed blk seat)
   -- a seat without a key cannot sign validly, and others sign with a wrong key
   invalidVote blk seat
@@ -373,7 +385,8 @@ prop_relay peers =
 -- it would: an announcement must be neither a repeat nor the third of its
 -- election, nor older than 'maxAnnouncementAgeRecv'; a vote must follow the
 -- announcement it is for, be the first of its seat in that election, verify
--- against the committee, and arrive within its window.
+-- against the committee, and arrive within its window, even by a clock as far
+-- behind the node's as the clock skew allows.
 honest :: [(Time, Notification)] -> Property
 honest received = case honestViolations received of
   [] -> property True

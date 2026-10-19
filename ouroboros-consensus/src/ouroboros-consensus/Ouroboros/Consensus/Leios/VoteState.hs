@@ -33,7 +33,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block (SlotNo)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemTime (..), diffRelTime)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, hasRelayedAnnouncement)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyEntry (..)
@@ -48,6 +48,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
+  , MonadDelay (threadDelay)
   , StrictTVar
   , atomically
   , modifyTVar
@@ -55,6 +56,7 @@ import Ouroboros.Consensus.Util.IOLike
   , readTVar
   , throwIO
   )
+import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | The node's votes, and where it learns which announcements it relays and
 -- relays the votes.
@@ -68,17 +70,19 @@ newVoteState :: IOLike m => AnnounceState m blk -> NotifyLog m blk -> m (VoteSta
 newVoteState announceState' notifyLog =
   MkVoteState <$> newTVarIO Map.empty <*> pure announceState' <*> pure notifyLog
 
--- | Accept a vote that arrived at the given time, and relay it if it is the
--- first valid vote of its seat in its election, the node relays the
--- announcement it is for, and it has not expired; see 'expiredNotifyEntry'.
+-- | Accept a vote, and relay it if it is the first valid vote of its seat in
+-- its election, the node relays the announcement it is for, and it has not
+-- expired; see 'expiredNotifyEntry'.
+--
+-- Waits until the vote's window opens to relay a vote that arrived early.
 --
 -- Throws 'ExnLeiosInvalidVote' if the vote is invalid, to disconnect the peer
 -- that sent it. The signature is verified between two transactions, so that a
 -- retry does not repeat a BLS verification.
-onAcceptedVote :: IOLike m => VoteState m blk -> RelativeTime -> AcceptedVote -> m ()
-onAcceptedVote st now accepted =
+onAcceptedVote :: IOLike m => VoteState m blk -> SystemTime m -> AcceptedVote -> m ()
+onAcceptedVote st systemTime accepted =
   -- a peer accepts a late vote only within its grace, which relaying would eat into
-  unless (expiredNotifyEntry now entry) $ do
+  whenUnexpired $ do
     worthVerifying <- atomically $ do
       wanted <- isWanted
       relayedAnnouncement <-
@@ -88,15 +92,30 @@ onAcceptedVote st now accepted =
       unless (validVote voteCommittee acceptedVote) $
         throwIO $
           ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
-      atomically $ do
+      -- a peer whose clock is behind ours would reject it, or one relaying it
+      now <- systemTimeCurrent systemTime
+      when (now < voteWindowStart) $
+        threadDelay (nominalDelay (diffRelTime voteWindowStart now))
+      whenUnexpired $ atomically $ do
         -- another peer may have delivered the same vote meanwhile
         wanted <- isWanted
         when wanted $ do
           modifyTVar (votes st) (recordVote voteElectionSlot acceptedVote)
           appendNotifyLog (relayLog st) entry
  where
-  MkAcceptedVote{acceptedVote, voteElectionSlot, voteElectionOnset, voteWindowEnd, voteCommittee} =
-    accepted
+  whenUnexpired act = do
+    now <- systemTimeCurrent systemTime
+    unless (expiredNotifyEntry now entry) act
+
+  MkAcceptedVote
+    { acceptedVote
+    , voteElectionSlot
+    , voteElectionOnset
+    , voteWindowStart
+    , voteWindowEnd
+    , voteCommittee
+    } =
+      accepted
 
   entry = NotifyVote voteElectionOnset voteWindowEnd acceptedVote
 
