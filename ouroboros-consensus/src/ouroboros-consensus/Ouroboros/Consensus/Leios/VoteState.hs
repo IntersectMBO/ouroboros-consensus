@@ -33,6 +33,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block (SlotNo)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, hasRelayedAnnouncement)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyEntry (..)
@@ -66,29 +67,32 @@ newVoteState :: IOLike m => AnnounceState m blk -> NotifyLog m blk -> m (VoteSta
 newVoteState announceState' notifyLog =
   MkVoteState <$> newTVarIO Map.empty <*> pure announceState' <*> pure notifyLog
 
--- | Accept a vote, and relay it if it is the first valid vote of its seat in
--- its election and the node relays the announcement it is for.
+-- | Accept a vote that arrived at the given time, and relay it if it is the
+-- first valid vote of its seat in its election, the node relays the
+-- announcement it is for, and its window has not ended.
 --
 -- Throws 'ExnLeiosInvalidVote' if the vote is invalid, to disconnect the peer
 -- that sent it. The signature is verified between two transactions, so that a
 -- retry does not repeat a BLS verification.
-onAcceptedVote :: IOLike m => VoteState m blk -> AcceptedVote -> m ()
-onAcceptedVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteWindowEnd, voteCommittee} = do
-  worthVerifying <- atomically $ do
-    wanted <- isWanted
-    relayedAnnouncement <-
-      hasRelayedAnnouncement (announceState st) (voteAnnouncingRbHash acceptedVote)
-    pure (wanted && relayedAnnouncement)
-  when worthVerifying $ do
-    unless (validVote voteCommittee acceptedVote) $
-      throwIO $
-        ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
-    atomically $ do
-      -- another peer may have delivered the same vote meanwhile
+onAcceptedVote :: IOLike m => VoteState m blk -> RelativeTime -> AcceptedVote -> m ()
+onAcceptedVote st now MkAcceptedVote{acceptedVote, voteElectionSlot, voteWindowEnd, voteCommittee} =
+  -- a peer accepts a late vote only within its grace, which relaying would eat into
+  when (now <= voteWindowEnd) $ do
+    worthVerifying <- atomically $ do
       wanted <- isWanted
-      when wanted $ do
-        modifyTVar (votes st) (recordVote voteElectionSlot acceptedVote)
-        appendNotifyLog (relayLog st) (NotifyVote voteWindowEnd acceptedVote)
+      relayedAnnouncement <-
+        hasRelayedAnnouncement (announceState st) (voteAnnouncingRbHash acceptedVote)
+      pure (wanted && relayedAnnouncement)
+    when worthVerifying $ do
+      unless (validVote voteCommittee acceptedVote) $
+        throwIO $
+          ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
+      atomically $ do
+        -- another peer may have delivered the same vote meanwhile
+        wanted <- isWanted
+        when wanted $ do
+          modifyTVar (votes st) (recordVote voteElectionSlot acceptedVote)
+          appendNotifyLog (relayLog st) (NotifyVote voteWindowEnd acceptedVote)
  where
   isWanted = wantsVote voteElectionSlot (voteSeatId acceptedVote) <$> readTVar (votes st)
 

@@ -231,6 +231,11 @@ tests =
                 [[announce equivocation], [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
             )
         votes down @?= [control]
+    , testCase "the node accepts a vote late within the grace, but does not relay it" $ do
+        -- the window ends 8 s in; the client accepts the vote until 68 s in
+        (ups, downs) <- relay 70 (withControl [[(67, vote someAnnouncingBlock 0)]]) [0]
+        concatMap votes downs @?= [control]
+        map poNodeClientEnded ups @?= [Nothing, Nothing]
     , testCase "a peer that connects during a vote's window receives the vote" $ do
         down <- relayToOne 6 [votedFor0]
         votes down @?= [voteOf someAnnouncingBlock 0]
