@@ -84,6 +84,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeLeiosVote
   , maxTxsPerEndorserBlock
   )
+import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
@@ -266,7 +267,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       FetchedMetricsTracer m ->
-      BlockFetchClient (HeaderWithTime blk) blk blk m ()
+      BlockFetchClient (HeaderWithTime blk) blk (MatchedBlock blk) m ()
   , hBlockFetchServer ::
       ConnectionId addr ->
       NodeToNodeVersion ->

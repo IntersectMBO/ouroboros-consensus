@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -182,7 +183,7 @@ startChainSyncConnectionThread ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk (MatchedBlock blk) m ->
   SharedResources m blk ->
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
@@ -232,7 +233,7 @@ startBlockFetchConnectionThread ::
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk (MatchedBlock blk) m ->
   KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   SharedResources m blk ->

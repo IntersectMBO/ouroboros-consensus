@@ -17,6 +17,7 @@ import Control.Monad.Except
 import Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe)
 import qualified Data.Measure as Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -33,6 +34,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.Leios.Types (EndorserBlock)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
@@ -92,7 +94,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -142,6 +144,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           ( fbArgs
           , selectedTxs
           , ledgerTipPoint (ledgerState unticked)
+          , maybeToStrictMaybe $
+              getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
           )
 
   -- Actually produce the block
@@ -168,7 +172,15 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
         eb
         (endorserBlockMeasure selectedTxs)
 
-  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) (Block.rankingBlock forgeRes)
+  addBlockToChainDB
+    trace
+    chainDB
+    mempool
+    currentSlot
+    (fbTxs fbArgs)
+    (pointSlot forgingOnTopOf)
+    leiosView
+    (Block.rankingBlock forgeRes)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -291,9 +303,13 @@ addBlockToChainDB ::
   Mempool m blk ->
   SlotNo ->
   [Validated (GenTx blk)] ->
+  -- | The slot of the block's predecessor
+  WithOrigin SlotNo ->
+  -- | The Leios part of the ledger view at the block's slot
+  StrictMaybe LeiosLedgerView ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot txs newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosView newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -303,7 +319,7 @@ addBlockToChainDB trace chainDB mempool currentSlot txs newBlock = do
   -- 'uninterruptibleMask_' to make sure that async exceptions do not
   -- interrupt it.
   uninterruptibleMask_ $ do
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessorSlot leiosView newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 

@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.Leios.Protocol (trivialLeiosLedgerView)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
   , ChainSyncClientHandleCollection (..)
@@ -107,7 +108,12 @@ run = withRegistry \registry -> do
     varGetLoEFragment
 
   chainDB <- openChainDB registry (join $ readTVarIO varGetLoEFragment)
-  let addBlk = ChainDB.addBlock_ chainDB Punishment.noPunishment
+  let addBlk predecessorSlot =
+        ChainDB.addBlock_
+          chainDB
+          Punishment.noPunishment
+          predecessorSlot
+          (trivialLeiosLedgerView (Proxy @TestBlock))
 
   chainSyncHandles <- atomically newChainSyncClientHandleCollection
 
@@ -140,7 +146,7 @@ run = withRegistry \registry -> do
             AF.Empty AF.AnchorGenesis AF.:> getHeader blkA
     hdl <- atomically $ mkTestChainSyncClientHandle initialFrag
     atomically $ cschcAddHandle chainSyncHandles peer1 hdl
-    addBlk blkA
+    addBlk Origin blkA
 
     -- Then, send C.
     atomically $ modifyTVar (cschState hdl) $ \s ->
@@ -151,7 +157,7 @@ run = withRegistry \registry -> do
         , csLatestSlot = pure $ NotOrigin $ blockSlot blkC
         , csIdling = csIdling s
         }
-    addBlk blkC
+    addBlk (NotOrigin (blockSlot blkA)) blkC
 
     -- Finally, roll back to the initial fragment and idle.
     atomically $ modifyTVar (cschState hdl) $ \_s ->
@@ -169,7 +175,7 @@ run = withRegistry \registry -> do
           attachSlotTimeToFragment cfg $
             AF.Empty AF.AnchorGenesis AF.:> getHeader blkB
     atomically $ cschcAddHandle chainSyncHandles peer2 hdl
-    addBlk blkB
+    addBlk Origin blkB
 
     -- Finally, idle.
     atomically $ modifyTVar (cschState hdl) $ \s ->

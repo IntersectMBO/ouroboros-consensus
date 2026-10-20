@@ -14,7 +14,6 @@ import Ouroboros.Consensus.Block (Point, blockPoint, blockSlot)
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbReader (..)
@@ -65,7 +64,7 @@ bodiesAfterGc = withNode $ \nut -> do
             ]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
-  mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) chain
+  addBlocks nut chain
   -- Long enough for the copy to the ImmutableDB and for the delayed GC.
   threadDelay 100
   withReader leiosDb $ \reader ->
@@ -105,7 +104,7 @@ tipsAroundClosure = withNode $ \nut -> do
     void $ await =<< writeEbBody writer pointA ebA
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
-  mapM_ (ChainDB.addBlock_ chainDB noPunishment) [announcingA, certifyingA]
+  addBlocks nut [announcingA, certifyingA]
   threadDelay 1
   tipBefore <- atomically $ ChainDB.getTipPoint chainDB
   withWriter leiosDb $ \writer ->
@@ -140,6 +139,6 @@ tipWithClosureBeforeStart = do
   withNodeOver leiosDb $ \nut -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
-    mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) [announcingA, certifyingA]
+    addBlocks nut [announcingA, certifyingA]
     threadDelay 1
     atomically $ ChainDB.getTipPoint (nutChainDB nut)
