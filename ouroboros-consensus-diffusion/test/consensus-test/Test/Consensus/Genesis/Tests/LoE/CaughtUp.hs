@@ -145,7 +145,9 @@ run = withRegistry \registry -> do
     -- Then, send C.
     atomically $ modifyTVar (cschState hdl) $ \s ->
       ChainSyncState
-        { csCandidate = csCandidate s AF.:> attachSlotTime cfg (getHeader blkC)
+        { csCandidate =
+            csCandidate s
+              AF.:> attachSlotTime cfg (AF.headSlot (csCandidate s)) (getHeader blkC)
         , csLatestSlot = pure $ NotOrigin $ blockSlot blkC
         , csIdling = csIdling s
         }

@@ -90,7 +90,7 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.Proxy
 import Data.Typeable
 import Data.Word (Word64)
@@ -114,6 +114,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricalChainSyncMessage (..)
   , HistoricityCheck
@@ -1157,8 +1158,8 @@ findIntersectionTop cfgEnv dynEnv intEnv =
       continueWithState kis $
         knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
 
--- | Augment the given fragment of headers with the times specified in
--- the given state history.
+-- | Augment the given fragment of headers with the times and Leios ledger views
+-- specified in the given state history.
 --
 -- PRECONDITION: the fragment must be a prefix of the state history.
 withTime ::
@@ -1180,14 +1181,23 @@ withTime fragment (HeaderStateHistory history) =
     )
     $ AF.fromOldestFirst
       (AF.castAnchor $ AF.anchor fragment)
-    $ fmap addTimeToHeader
-    $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
+    $ zipWith3 addTimeToHeader hdrs predecessorSlots (AF.toOldestFirst history)
  where
-  addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
-  addTimeToHeader (hdr, hsWt) =
+  hdrs = AF.toOldestFirst fragment
+
+  predecessorSlots =
+    AF.anchorToSlotNo (AF.anchor fragment) : map (NotOrigin . blockSlot) hdrs
+
+  addTimeToHeader ::
+    Header blk -> WithOrigin SlotNo -> HeaderStateWithTime blk -> HeaderWithTime blk
+  addTimeToHeader hdr predecessorSlot hsWt =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
+      , hwtPredecessorSlot = predecessorSlot
+      , -- The state the header's block produced gives the view at the header's
+        -- slot; see 'hwtLeiosLedgerView'.
+        hwtLeiosLedgerView = hswtLeiosLedgerView hsWt
       }
 
 {-------------------------------------------------------------------------------
@@ -1936,6 +1946,10 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
+        , hwtPredecessorSlot = AF.headSlot theirFrag
+        , hwtLeiosLedgerView =
+            maybeToStrictMaybe $
+              getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same
