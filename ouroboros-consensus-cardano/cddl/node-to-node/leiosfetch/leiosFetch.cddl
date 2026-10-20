@@ -1,0 +1,38 @@
+; The messages of the LeiosFetch mini-protocol, as the cardano-blueprint's
+; network/node-to-node/leios-fetch/messages.cddl has them, except that a
+; transaction is any bytes in tag 24, where the blueprint's says which CBOR
+; those bytes hold.
+;
+; Neither LeiosFetch nor the LeiosDB decodes those bytes, so neither checks
+; that they are CBOR at all. So this file is the more honest reference, and
+; testing our codec against it is stronger than testing it against the
+; blueprint's: the test checks the codec's framing around any bytes.
+
+leiosFetchMessage
+  = msgDone
+  / msgLeiosBlockRequest
+  / msgLeiosBlock
+  / msgLeiosBlockTxsRequest
+  / msgLeiosBlockTxs
+
+msgDone                 = [0]
+msgLeiosBlockRequest    = [1, point]
+msgLeiosBlock           = [2, endorser_block]
+msgLeiosBlockTxsRequest = [3, point, bitmaps]
+msgLeiosBlockTxs        = [4, [* tx]]
+
+point = [slot, eb_hash]
+slot = uint .size 8
+eb_hash = bytes .size 32
+
+; the hash and size of each transaction the endorser block names
+endorser_block = { + tx_hash => tx_size }
+tx_hash = bytes .size 32
+tx_size = uint .size 4
+
+; from the index of each run of 64 transactions to the bitmap of those 64
+bitmaps = { * uint .size 2 => uint .size 8 }
+
+; meant to hold the block_transaction of the era the endorser block was
+; announced in, eg #6.24(bytes .cbor dijkstra.block_transaction)
+tx = #6.24(bytes)

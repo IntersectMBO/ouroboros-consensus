@@ -83,6 +83,7 @@ import Test.Consensus.Leios.Environment
   ( EnvPeer (..)
   , LeiosNotifyCodec
   , envLeiosNotifyCodec
+  , refusingLeiosFetchServer
   , withNodeVsEnvConnection
   )
 import Test.Consensus.Leios.NodeUnderTest
@@ -202,6 +203,8 @@ runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
         EnvPeer
           { epLeiosNotifyServer = runFeedingServer c (readTQueue queue)
           , epLeiosNotifyClient = Just $ runRecordingClient c received
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withAsync (feedAt queue psSends) $ \_feeder ->
     withNodeVsEnvConnection nut addr envPeer $ \_conn -> do

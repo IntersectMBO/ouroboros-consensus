@@ -20,4 +20,6 @@ import Ouroboros.Consensus.Tracing.Era.Shelley ()
 import Ouroboros.Consensus.Tracing.Formatting ()
 import Ouroboros.Consensus.Tracing.HasIssuer
 import Ouroboros.Consensus.Tracing.KESInfo
+import Ouroboros.Consensus.Tracing.LeiosDB ()
+import Ouroboros.Consensus.Tracing.LeiosFetch ()
 import Ouroboros.Consensus.Tracing.Render

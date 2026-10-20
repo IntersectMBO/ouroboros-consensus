@@ -8,8 +8,6 @@
 -- connections against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -28,13 +26,8 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word8)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.Config (SecurityParam (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EbHash (..)
+  ( EbHash (..)
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
@@ -79,7 +72,6 @@ import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
@@ -280,35 +272,6 @@ tests =
         runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_15)) @?= Just (False, False)
     ]
 
-withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode = withNodeForecasting 100000
-
--- | A node whose ledger view forecasts this many slots past its immutable tip.
-withNodeForecasting :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecasting range body = do
-  nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
- where
-  k = SecurityParam $ knownNonZeroBounded @10
-  cfg =
-    defaultNodeUnderTestConfig
-      k
-      LeiosTestLedgerConfig
-        { ltlcHardForkParams =
-            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = range
-        , ltlcLeios =
-            MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
-              , llvQuorumStakeThreshold = maxBound
-              , llvAnnouncementPeriod = Milliseconds32 1000
-              , llvVotePeriod = Milliseconds32 4000
-              , llvDiffusionPeriod = Milliseconds32 1000
-              , llvMaxEbBodySize = maxEbBodySize
-              , llvMaxEbTxsSize = maxEbBodySize
-              }
-        }
-
 -- | The node's LeiosNotify client on the connection.
 nodeLeiosNotifyClient ::
   NodeVsEnvConnection (IOSim s) ->
@@ -416,6 +379,8 @@ runNodeClientAgainst nut next target = do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests next
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     client <- nodeLeiosNotifyClient conn
@@ -477,13 +442,15 @@ nodeClientTooOld = withNode $ \nut -> do
 -- | By the time the node connects, the current slot is past what its
 -- immutable tip, still at genesis, can forecast to.
 nodeClientGated :: IOSim s Int
-nodeClientGated = withNodeForecasting 5 $ \nut -> do
+nodeClientGated = withNodeForecastingOnly 5 $ \nut -> do
   threadDelay 10
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests retry
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     threadDelay 10
@@ -502,6 +469,8 @@ nodePrunesClientState = withNode $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withAsync
     ( feedAt
@@ -618,9 +587,6 @@ someAnnouncement = MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBloc
 someOfferedPoint :: LeiosPoint
 someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
 
-maxEbBodySize :: BytesSize
-maxEbBodySize = 5000
-
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)
 
@@ -636,6 +602,8 @@ nodeServerCancels = withNode $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient = Just $ runPipelinedClient codec' replies 3 stop
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     threadDelay 10
@@ -658,6 +626,8 @@ nodeServerExcessive = withNode $ \nut -> do
           { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient =
               Just $ runPipelinedClient codec' replies (leiosNotifyPipelineDepth + 1) stop
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     server <- nodeLeiosNotifyServer conn

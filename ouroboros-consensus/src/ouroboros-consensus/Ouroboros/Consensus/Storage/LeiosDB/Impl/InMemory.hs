@@ -10,7 +10,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, maybeToList, when)
+import Cardano.Prelude (Generic, forM_, maybeToList, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -220,6 +220,9 @@ imInsertEbBody stateVar notificationChan point eb = do
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
+  known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
+  unless known $
+    throwLeiosDbException "writeEbBody: point not registered (programmer error)"
   atomically $ do
     let entries =
           IntMap.fromList

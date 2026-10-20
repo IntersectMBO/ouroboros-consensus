@@ -147,6 +147,11 @@ sqlBatchRetrieveTxs conn ebHash offsets = do
       retrieveLoop stmt []
   -- Zero rows means the EB's body is absent from the volatile partition
   -- entirely (a present body joins every requested offset): copied+evicted.
+  --
+  -- TODO This misses an EB that was copied to the immutable partition, evicted
+  -- from the volatile partition, and then fetched again: until the volatile
+  -- partition has all of its txs again, the missing ones read as absent,
+  -- although the immutable partition holds them.
   if null vol && not (null offsets)
     then immBatchRetrieveTxs conn ebHash offsets
     else pure vol

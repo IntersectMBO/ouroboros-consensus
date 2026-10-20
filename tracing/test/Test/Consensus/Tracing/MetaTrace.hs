@@ -39,6 +39,7 @@ import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server (TraceBlockFetchServer
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server (TraceChainSyncServerEvent)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent
   )
@@ -59,6 +60,7 @@ import Ouroboros.Consensus.Node.Tracers
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb)
 import Ouroboros.Consensus.Tracing
   ( ClientMetrics
   , ConsensusStartupException
@@ -125,6 +127,11 @@ tests =
         , metaTrace @(TracePerasCertDiffusionOutbound Blk) "TracePerasCertDiffusionOutbound"
         , metaTrace @(TracePerasVoteDiffusionInbound Blk) "TracePerasVoteDiffusionInbound"
         , metaTrace @(TracePerasVoteDiffusionOutbound Blk) "TracePerasVoteDiffusionOutbound"
+        ]
+    , testGroup
+        "leios"
+        [ metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
+        , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]
     ]
 

@@ -43,6 +43,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Test.Consensus.Leios.LeiosNotify.Protocol (P, codec)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.Serialisation.CBOR (definite, indefinite)
 
 tests :: TestTree
 tests =
@@ -106,12 +107,6 @@ indefiniteVote :: LeiosVote -> CBOR.Encoding
 indefiniteVote (MkLeiosVote rbHash seat signature) =
   indefinite
     [encodeRbHash rbHash, CBOR.encodeWord16 (leiosSeatIndex seat), encodeFixedSized signature]
-
-definite :: [CBOR.Encoding] -> CBOR.Encoding
-definite xs = CBOR.encodeListLen (fromIntegral $ length xs) <> mconcat xs
-
-indefinite :: [CBOR.Encoding] -> CBOR.Encoding
-indefinite xs = CBOR.encodeListLenIndef <> mconcat xs <> CBOR.encodeBreak
 
 votesKey :: CBOR.Encoding
 votesKey = CBOR.encodeWord 7

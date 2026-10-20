@@ -61,6 +61,9 @@ withCDDLs f =
             ntnLeiosNotify <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/leiosnotify/leiosNotify.cddl"
             BS.writeFile "ntnleiosnotify.cddl" . cddlSpec $ ntnLeiosNotify
 
+            ntnLeiosFetch <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/leiosfetch/leiosFetch.cddl"
+            BS.writeFile "ntnleiosfetch.cddl" . cddlSpec $ ntnLeiosFetch
+
             diskState <- cddlc "ouroboros-consensus-cardano/cddl/disk/ledger/stateFile.cddl"
             BS.writeFile "diskstate.cddl" . cddlSpec $ diskState
         )
@@ -70,6 +73,7 @@ withCDDLs f =
             D.removeFile "ntntx.cddl"
             D.removeFile "ntntxid.cddl"
             D.removeFile "ntnleiosnotify.cddl"
+            D.removeFile "ntnleiosfetch.cddl"
             D.removeFile "diskstate.cddl"
         )
         (\_ -> f)

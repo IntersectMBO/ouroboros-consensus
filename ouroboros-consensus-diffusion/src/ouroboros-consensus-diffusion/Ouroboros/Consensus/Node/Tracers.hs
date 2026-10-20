@@ -42,6 +42,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CS
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( TraceChainSyncServerEvent
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
@@ -55,6 +56,7 @@ import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb)
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
   ( TraceFetchClientState
@@ -79,6 +81,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
+  , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
+  , leiosDbTracer :: f TraceLeiosDb
   , txInboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
   , txOutboundTracer ::
@@ -124,6 +128,8 @@ instance
       , blockFetchDecisionTracer = f blockFetchDecisionTracer
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
+      , leiosFetchServerTracer = f leiosFetchServerTracer
+      , leiosDbTracer = f leiosDbTracer
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
@@ -169,6 +175,8 @@ nullTracers =
     , blockFetchDecisionTracer = nullTracer
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
+    , leiosFetchServerTracer = nullTracer
+    , leiosDbTracer = nullTracer
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
@@ -224,6 +232,8 @@ showTracers tr =
     , blockFetchDecisionTracer = show >$< tr
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
+    , leiosFetchServerTracer = show >$< tr
+    , leiosDbTracer = show >$< tr
     , txInboundTracer = show >$< tr
     , txOutboundTracer = show >$< tr
     , localTxSubmissionServerTracer = show >$< tr

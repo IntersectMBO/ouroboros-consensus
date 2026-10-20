@@ -221,6 +221,10 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -471,6 +475,8 @@ library tracing
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.KESInfo
+    Ouroboros.Consensus.Tracing.LeiosDB
+    Ouroboros.Consensus.Tracing.LeiosFetch
 
   build-depends:
     aeson,
@@ -621,6 +627,7 @@ library unstable-consensus-testlib
     Test.Util.RefEnv
     Test.Util.SanityCheck
     Test.Util.Schedule
+    Test.Util.Serialisation.CBOR
     Test.Util.Serialisation.CDDL
     Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden
@@ -1309,9 +1316,11 @@ library diffusion
   visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
+    Ouroboros.Consensus.Network.LeiosFetch
     Ouroboros.Consensus.Network.LeiosNotify
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
+    Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
     Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
     Ouroboros.Consensus.Node
     Ouroboros.Consensus.Node.DbLock
@@ -1358,6 +1367,7 @@ library diffusion
     time,
     transformers,
     typed-protocols:{stateful, typed-protocols} ^>=1.2.2,
+    vector,
 
 library unstable-diffusion-testlib
   import: common-lib
@@ -1496,6 +1506,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.Leios.Environment
+    Test.Consensus.Leios.LeiosFetch
+    Test.Consensus.Leios.LeiosFetch.Codec
+    Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Leios.LeiosNotify.Codec
     Test.Consensus.Leios.LeiosNotify.Node
@@ -1968,6 +1981,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.LeiosFetch
     Test.Consensus.Cardano.LeiosNotify
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
@@ -2030,6 +2044,7 @@ test-suite cardano-test
     unstable-byron-testlib,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
+    vector,
 
 library unstable-cardano-tools
   import: common-lib

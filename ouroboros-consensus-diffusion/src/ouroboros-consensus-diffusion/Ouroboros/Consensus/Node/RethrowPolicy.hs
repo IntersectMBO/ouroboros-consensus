@@ -19,6 +19,7 @@ import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
 import Ouroboros.Consensus.Node.DbLock
 import Ouroboros.Consensus.Node.DbMarker (DbMarkerError)
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -27,6 +28,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteDbError (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
@@ -80,6 +82,9 @@ consensusRethrowPolicy pb =
             ImmutableDB.UnexpectedFailure{} -> shutdownNode
       )
     <> mkRethrowPolicy (\_ctx (_ :: FsError) -> shutdownNode)
+    -- Except for the LeiosDB: peers might provoke some of its failures, eg
+    -- SQLite's BUSY, so these conservatively disconnect only the peer.
+    <> mkRethrowPolicy (\_ctx (_ :: LeiosDbException) -> ShutdownPeer)
     -- When the system clock moved back, we have to restart the node.
     <> mkRethrowPolicy (\_ctx (_ :: SystemClockMovedBackException) -> shutdownNode)
     -- Some chain DB errors are indicative of a bug in our code, others
@@ -115,6 +120,8 @@ consensusRethrowPolicy pb =
     -- others merely mean that we should disconnect from this client
     -- because we have diverged too much.
     <> mkRethrowPolicy (\_ctx (_ :: ChainSyncClientException) -> theyBuggyOrEvil)
+    -- A LeiosFetch client requested what the node does not hold.
+    <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosInvalidRequest) -> theyBuggyOrEvil)
     -- Dispatch on nested exception
     <> mkRethrowPolicy
       ( \ctx (ExceptionInLinkedThread _ e) ->

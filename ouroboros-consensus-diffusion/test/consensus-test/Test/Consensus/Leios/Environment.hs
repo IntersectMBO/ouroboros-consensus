@@ -18,12 +18,15 @@
 --   header;
 -- - BlockFetch and TxSubmission by never saying anything, which is all the node
 --   sees of a peer with nothing to offer;
--- - LeiosNotify with whatever the test gives it.
+-- - LeiosNotify and LeiosFetch with whatever the test gives it.
 module Test.Consensus.Leios.Environment
   ( EnvPeer (..)
+  , LeiosFetchCodec
   , LeiosNotifyCodec
   , NodeVsEnvConnection (..)
+  , envLeiosFetchCodec
   , envLeiosNotifyCodec
+  , refusingLeiosFetchServer
   , withNodeVsEnvConnection
   ) where
 
@@ -51,8 +54,14 @@ import Network.TypedProtocol.Codec (Codec)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (Header, Point, pattern BlockPoint, pattern GenesisPoint)
 import Ouroboros.Consensus.Config (configCodec)
-import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
+import Ouroboros.Consensus.Leios.Types (LeiosEb, LeiosPoint, LeiosTx, LeiosVote)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+  ( LeiosFetchRequestHandler (..)
+  , leiosFetchServerPeer
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (LeiosFetch)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
+import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
 import Ouroboros.Consensus.Network.LeiosNotify (leiosNotifyMiniProtocolNum)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
@@ -110,12 +119,19 @@ import Test.Consensus.Leios.NodeUnderTest
 type LeiosNotifyCodec s =
   Codec (LeiosNotify LeiosPoint (Header Blk) LeiosVote) DeserialiseFailure (IOSim s) ByteString
 
--- | What a peer runs for LeiosNotify.
+type LeiosFetchCodec s =
+  Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx) DeserialiseFailure (IOSim s) ByteString
+
+-- | What a peer runs for the Leios mini-protocols.
 data EnvPeer m = EnvPeer
   { epLeiosNotifyServer :: Channel m ByteString -> m ()
   -- ^ Answers the node's client.
   , epLeiosNotifyClient :: Maybe (Channel m ByteString -> m ())
   -- ^ Talks to the node's server, if the test has the peer do so.
+  , epLeiosFetchServer :: Channel m ByteString -> m ()
+  -- ^ Answers the node's LeiosFetch client.
+  , epLeiosFetchClient :: Maybe (Channel m ByteString -> m ())
+  -- ^ Talks to the node's LeiosFetch server, if the test has the peer do so.
   }
 
 -- | A connection from the node to a peer, once the handshake has settled on a
@@ -131,6 +147,8 @@ data NodeVsEnvConnection m = NodeVsEnvConnection
   -- ^ The result of each of the node's responders.
   , connPeerLeiosNotifyClient :: Maybe (STM m (Either SomeException ()))
   -- ^ The result of the peer's LeiosNotify client, if it runs one.
+  , connPeerLeiosFetchClient :: Maybe (STM m (Either SomeException ()))
+  -- ^ The result of the peer's LeiosFetch client, if it runs one.
   }
 
 -- | Connect the node to the peer at the given address, run the body, then shut
@@ -186,6 +204,14 @@ withNodeVsEnvConnection nut addr envPeer body = do
             Mx.InitiatorDirection
             Mx.StartEagerly
             (fmap (,Nothing) . client)
+      connPeerLeiosFetchClient <-
+        for (epLeiosFetchClient envPeer) $ \client ->
+          Mx.runMiniProtocol
+            peerMux
+            leiosFetchMiniProtocolNum
+            Mx.InitiatorDirection
+            Mx.StartEagerly
+            (fmap (,Nothing) . client)
       nodeProtocols <-
         for protocols $ \MiniProtocol{miniProtocolNum, miniProtocolStart, miniProtocolRun} ->
           case miniProtocolRun of
@@ -220,6 +246,7 @@ withNodeVsEnvConnection nut addr envPeer body = do
             , connNodeInitiators = Map.fromList (map fst nodeProtocols)
             , connNodeResponders = Map.fromList (map snd nodeProtocols)
             , connPeerLeiosNotifyClient
+            , connPeerLeiosFetchClient
             }
       Mx.stop nodeMux
       Mx.stop peerMux
@@ -282,6 +309,8 @@ peerResponder codecs peerSharingAPI envPeer num chan
         (peerSharingServerPeer (peerSharingServer peerSharingAPI))
   | num == leiosNotifyMiniProtocolNum =
       (,Nothing) <$> epLeiosNotifyServer envPeer chan
+  | num == leiosFetchMiniProtocolNum =
+      (,Nothing) <$> epLeiosFetchServer envPeer chan
   | otherwise =
       atomically retry
 
@@ -326,6 +355,7 @@ type NodeCodecs s =
     ByteString
     ByteString
     ByteString
+    ByteString
 
 envCodecs :: NodeUnderTest (IOSim s) -> NodeToNodeVersion -> NodeCodecs s
 envCodecs nut =
@@ -337,3 +367,14 @@ envCodecs nut =
 
 envLeiosNotifyCodec :: NodeUnderTest (IOSim s) -> LeiosNotifyCodec s
 envLeiosNotifyCodec nut = NTN.cLeiosNotifyCodec (envCodecs nut maxBound)
+
+envLeiosFetchCodec :: NodeUnderTest (IOSim s) -> LeiosFetchCodec s
+envLeiosFetchCodec nut = NTN.cLeiosFetchCodec (envCodecs nut maxBound)
+
+-- | A LeiosFetch server that disconnects a client that sends any request.
+refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+refusingLeiosFetchServer nut chan =
+  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer refuse)
+ where
+  refuse = MkLeiosFetchRequestHandler $ \_request ->
+    throwIO $ userError "the environment's LeiosFetch server serves nothing"
