@@ -21,8 +21,10 @@ import Control.Monad (when)
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (addRelTime)
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( NotifyEntry (..)
+  ( Notification (..)
+  , NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
   )
@@ -60,7 +62,8 @@ newAnnounceState ::
 newAnnounceState notifyLog =
   MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
 
--- | Accept a valid announcement, and relay it if it is new and fresh enough.
+-- | Accept a valid announcement, and relay it if it is new and fresh enough,
+-- until 'maxAnnouncementAgeSend' after its election slot began.
 --
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
@@ -78,7 +81,10 @@ onValidAnnouncement st valid = do
       Right seen' -> do
         writeTVar announced seen'
         when (announcementAge <= maxAnnouncementAgeSend) $
-          appendNotifyLog relayLog (NotifyAnnouncement announcementOnset announcingHeader)
+          appendNotifyLog relayLog $
+            MkNotifyEntry
+              (addRelTime maxAnnouncementAgeSend announcementOnset)
+              (NotifyAnnouncement announcingHeader)
  where
   electionId = ancElectionId announcingHeader
 
