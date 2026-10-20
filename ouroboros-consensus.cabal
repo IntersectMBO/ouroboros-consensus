@@ -231,6 +231,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server

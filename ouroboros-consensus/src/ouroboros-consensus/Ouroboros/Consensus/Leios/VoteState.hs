@@ -1,4 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | The votes the node has accepted, from whichever peer.
@@ -11,7 +13,8 @@
 module Ouroboros.Consensus.Leios.VoteState
   ( VoteState
   , newVoteState
-  , onAcceptedVote
+  , AddVoteResult (..)
+  , addVote
   , voteRelay
 
     -- * The votes kept
@@ -31,7 +34,7 @@ import Cardano.Crypto.Leios
   , resolveLeiosSeat
   )
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import Control.Monad (forever, unless, when)
+import Control.Monad (forever, unless)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, registerDelay)
 import Data.Either (isRight)
 import Data.Map.Strict (Map)
@@ -55,7 +58,6 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
-  , ExnLeiosNotifyInvalidVotes (ExnLeiosInvalidVote)
   , VoteRelayWindow (..)
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -67,7 +69,6 @@ import Ouroboros.Consensus.Util.IOLike
   , modifyTVar
   , newTVarIO
   , readTVar
-  , throwIO
   , writeTVar
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
@@ -95,45 +96,69 @@ newVoteState announceState' notifyLog =
     <*> pure announceState'
     <*> pure notifyLog
 
--- | Accept a vote, and relay it if it is the first valid vote of its seat in
--- its election, for an announcement the node relays, and its window has not
--- closed; if its window has not opened yet, 'voteRelay' relays it then.
+-- | What 'addVote' did with a vote.
+data AddVoteResult
+  = -- | Its window had closed, so it was not worth verifying.
+    Expired
+  | -- | We already saw a vote of its seat in its election.
+    AlreadyKnown
+  | -- | We did not relay the announcement it is for.
+    NotAnnounced
+  | -- | Its seat has no key in the committee, or its signature does not verify
+    -- under it.
+    VoteInvalid !LeiosVote
+  | -- | The node keeps the vote and relays it, once its window opens if it has
+    -- not yet; see 'voteRelay'.
+    Added !LeiosVote
+  deriving stock (Eq, Show)
+
+-- | Add a vote, if it is the first valid vote of its seat in its election, for
+-- an announcement the node relays, and its window has not closed.
 --
--- Throws 'ExnLeiosInvalidVote' if the vote is invalid, to disconnect the peer
--- that sent it. The signature is verified between two transactions, so that a
--- retry does not repeat a BLS verification.
-onAcceptedVote ::
+-- The signature is verified between two transactions, so that a retry does
+-- not repeat a BLS verification.
+addVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) =>
-  VoteState m blk -> SystemTime m -> AcceptedVote -> m ()
-onAcceptedVote st systemTime accepted = do
+  VoteState m blk -> SystemTime m -> AcceptedVote -> m AddVoteResult
+addVote st systemTime accepted = do
   received <- systemTimeCurrent systemTime
   -- A vote no longer worth relaying is not worth verifying either.
-  worthVerifying <-
-    if received > relayUntil voteRelayWindow
-      then pure False
-      else atomically $ do
-        seen <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
-        -- NOTE: The client only checked that its peer announced it, but the
-        -- node does not relay a third announcement of an election, nor one of
-        -- a stale OCIN, so it must not relay their votes either.
-        announced <-
+  if received > relayUntil voteRelayWindow
+    then pure Expired
+    else do
+      seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
+      -- NOTE: The client only checked that its peer announced it, but the
+      -- node does not relay a third announcement of an election, nor one of a
+      -- stale OCIN, so it must not relay their votes either.
+      announced <-
+        atomically $
           hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
-        pure (not seen && announced)
-  when worthVerifying $ do
-    unless (validVote voteCommittee acceptedVote) $
-      throwIO $
-        ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
-    now <- systemTimeCurrent systemTime
-    atomically $ do
-      -- Another peer may have delivered the same vote meanwhile.
-      seen <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
-      unless seen $ do
-        recordVote st voteElectionSlot acceptedVote
-        if now < relayFrom voteRelayWindow
-          then holdVote st (relayFrom voteRelayWindow) entry
-          else relay entry
+      if
+        | seen -> pure AlreadyKnown
+        | not announced -> pure NotAnnounced
+        | not (validVote voteCommittee acceptedVote) -> pure (VoteInvalid acceptedVote)
+        | otherwise -> do
+            -- NOTE: We do not check the window again. Verifying takes about a
+            -- millisecond, and peers allow a grace after the window.
+            now <- systemTimeCurrent systemTime
+            atomically $ do
+              -- Another peer may have delivered the same vote meanwhile.
+              seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
+              if seenMeanwhile
+                then pure AlreadyKnown
+                else do
+                  recordVote st voteElectionSlot acceptedVote
+                  if now < relayFrom voteRelayWindow
+                    then holdVote st (relayFrom voteRelayWindow) entry
+                    else relay entry
+                  pure (Added acceptedVote)
  where
-  MkAcceptedVote{acceptedVote, voteElectionSlot, voteCommittee, voteRelayWindow} = accepted
+  MkAcceptedVote
+    { acceptedVote
+    , voteElectionSlot
+    , voteCommittee
+    , voteRelayWindow
+    } = accepted
 
   entry = MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
 
