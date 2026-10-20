@@ -26,6 +26,8 @@ module Test.Consensus.Leios.NodeUnderTest
   , NodeVersions
   , PeerAddr (..)
   , Seeds (..)
+  , addBlocks
+  , addBlocksAfter
   , decodePeerAddr
   , encodePeerAddr
   , nodeVersionData
@@ -34,11 +36,11 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNode
   , withNodeForecastingOnly
   , withNodeOver
+  , withNodeOverDBs
   , withNodeUnderTest
   ) where
 
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.Diffusion.Configuration
   ( defaultChainSyncIdleTimeout
   , defaultTxSubmissionLogicVersion
@@ -61,9 +63,10 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
+import Data.Maybe.Strict (StrictMaybe (SJust))
 import Data.Proxy (Proxy (..))
 import qualified Network.Mux as Mux
-import Ouroboros.Consensus.Block (SlotNo)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
@@ -113,6 +116,7 @@ import Ouroboros.Consensus.NodeKernel
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
@@ -133,6 +137,7 @@ import System.FS.API.Types (mkFsPath)
 import System.FS.Sim.MockFS (MockFS)
 import System.FS.Sim.STM (simHasFS)
 import System.Random (StdGen, mkStdGen, random, splitGen)
+import Test.Consensus.Leios.Committee (testCommittee, testQuorumStakeThreshold)
 import Test.Consensus.Leios.TestBlock
 import Test.Util.ChainDB (NodeDBs (..), emptyNodeDBs)
 import Test.Util.FS.Subdirectory (subdirectoryHasFS)
@@ -193,6 +198,26 @@ data NodeUnderTest m = NodeUnderTest
   , nutVersions :: NodeVersions m
   , nutSeeds :: Seeds StdGen
   }
+
+-- | Add a chain to the node's ChainDB, oldest first, starting at genesis
+addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
+addBlocks nut = addBlocksAfter nut Origin
+
+-- | Add a chain to the node's ChainDB, oldest first, given the slot of its
+-- first block's predecessor
+--
+-- A 'LeiosTestBlock''s ledger view is the same at every slot.
+addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin SlotNo -> [Blk] -> m ()
+addBlocksAfter nut predecessorSlot blks =
+  sequence_ $
+    zipWith
+      ( \predSlot ->
+          ChainDB.addBlock_ (nutChainDB nut) noPunishment predSlot leiosView
+      )
+      (predecessorSlot : map (NotOrigin . blockSlot) blks)
+      blks
+ where
+  leiosView = SJust (ltlcLeios (configLedger (nutTopLevelConfig nut)))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =
@@ -347,7 +372,16 @@ withNodeForecastingOnly range body = do
 withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeOver leiosDB body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (forecastingOnly 100000) nodeDBs leiosDB body
+  withNodeOverDBs nodeDBs leiosDB body
+
+-- | 'withNode' over the given databases, which a test can fill before the node
+-- starts, or reuse to restart it.
+withNodeOverDBs ::
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverDBs = withNodeUnderTest (forecastingOnly 100000)
 
 -- | The configuration of a node whose ledger view forecasts this many slots
 -- past its immutable tip.
@@ -361,8 +395,8 @@ forecastingOnly range =
       , ltlcForecastRange = range
       , ltlcLeios =
           MkLeiosLedgerView
-            { llvCommittee = emptyLeiosCommittee
-            , llvQuorumStakeThreshold = maxBound
+            { llvCommittee = testCommittee
+            , llvQuorumStakeThreshold = testQuorumStakeThreshold
             , llvAnnouncementPeriod = Milliseconds32 1000
             , llvVotePeriod = Milliseconds32 4000
             , llvDiffusionPeriod = Milliseconds32 1000

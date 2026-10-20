@@ -46,12 +46,15 @@ instance
   protocolLedgerView _cfg =
     SL.forecastToTPraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
 
+  ledgerViewAtTip _cfg =
+    SL.forecastToTPraosLedgerView . SL.currentForecast . shelleyLedgerState
+
   -- Extra context available in
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HardWonWisdom.md#why-doesnt-ledger-code-ever-return-pasthorizonexception
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
       | NotOrigin for == at ->
-          return $ SL.forecastToTPraosLedgerView (SL.currentForecast shelleyLedgerState)
+          return $ ledgerViewAtTip cfg ledgerState
       | for < maxFor ->
           return $ futureLedgerView for
       | otherwise ->
@@ -84,6 +87,7 @@ instance
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where
   protocolLedgerView = protocolLedgerViewPolyPraos
+  ledgerViewAtTip = ledgerViewAtTipPolyPraos
   ledgerViewForecastAt = ledgerViewForecastAtPolyPraos
 
 -- | 'protocolLedgerView' for every Praos.
@@ -100,6 +104,18 @@ protocolLedgerViewPolyPraos ::
 protocolLedgerViewPolyPraos _cfg =
   Praos.forecastToPolyPraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
 
+-- | 'ledgerViewAtTip' for every Praos.
+ledgerViewAtTipPolyPraos ::
+  forall proto era mk.
+  ( Praos.ForecastToPolyPraosLedgerView proto era
+  , SL.EraForecast era
+  ) =>
+  LedgerConfig (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) mk ->
+  Praos.PolyPraosLedgerView proto
+ledgerViewAtTipPolyPraos _cfg =
+  Praos.forecastToPolyPraosLedgerView . SL.currentForecast . shelleyLedgerState
+
 -- | 'ledgerViewForecastAt' for every Praos.
 ledgerViewForecastAtPolyPraos ::
   forall proto era mk.
@@ -112,8 +128,7 @@ ledgerViewForecastAtPolyPraos ::
 ledgerViewForecastAtPolyPraos cfg ledgerState = Forecast at $ \for ->
   if
     | NotOrigin for == at ->
-        return $
-          Praos.forecastToPolyPraosLedgerView (SL.currentForecast shelleyLedgerState)
+        return $ ledgerViewAtTipPolyPraos cfg ledgerState
     | for < maxFor ->
         return $ futureLedgerView for
     | otherwise ->
@@ -146,4 +161,5 @@ instance
   LedgerSupportsProtocol (ShelleyBlock (Praos2 c) era)
   where
   protocolLedgerView = protocolLedgerViewPolyPraos
+  ledgerViewAtTip = ledgerViewAtTipPolyPraos
   ledgerViewForecastAt = ledgerViewForecastAtPolyPraos

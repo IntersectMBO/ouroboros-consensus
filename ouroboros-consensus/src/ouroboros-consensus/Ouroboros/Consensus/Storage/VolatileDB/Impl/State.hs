@@ -110,6 +110,10 @@ data OpenState blk h = OpenState
   -- ^ The successors for each block.
   , currentAnnouncers :: !(Map EbHash (Set (HeaderHash blk)))
   -- ^ The blocks announcing each endorser block.
+  , currentForgotten :: !(Set (HeaderHash blk))
+  -- ^ Blocks that are stored but that the DB does not admit to holding. They
+  -- stand in for deleting those blocks, which the append-only files cannot do;
+  -- see 'forgetLeiosCertsAtStartUpExcept'. Empty until that function is called.
   , currentMaxSlotNo :: !MaxSlotNo
   -- ^ Highest stored SlotNo.
   --
@@ -422,6 +426,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity leiosInfo validationPolicy tracer ma
             | (hash, ibi) <- Map.toList currentRevMap'
             , SJust ebHash <- [lbiAnnouncedEb (biLeios (ibiBlockInfo ibi))]
             ]
+      , currentForgotten = Set.empty
       , currentMaxSlotNo = FileInfo.maxSlotNoInFiles (Index.elems currentMap')
       }
  where

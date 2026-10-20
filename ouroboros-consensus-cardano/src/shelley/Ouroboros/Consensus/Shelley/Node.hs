@@ -29,7 +29,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Abstract
@@ -119,6 +118,5 @@ instance
   , SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
   , ShowProxy (PerasCert (ShelleyBlock proto era))
   , ShowProxy (PerasVote (ShelleyBlock proto era))
-  , LeiosProtocol proto
   ) =>
   RunNode (ShelleyBlock proto era)

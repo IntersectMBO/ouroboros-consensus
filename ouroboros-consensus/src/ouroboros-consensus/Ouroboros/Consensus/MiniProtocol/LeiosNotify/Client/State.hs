@@ -209,7 +209,7 @@ instance Exception ExnLeiosNotifyInvalidOffer
 -- received claimed.
 checkLeiosBlockOffer ::
   forall blk.
-  (LedgerSupportsProtocol blk, LeiosProtocol (BlockProtocol blk)) =>
+  LedgerSupportsProtocol blk =>
   TopLevelConfig blk ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
@@ -289,7 +289,6 @@ onLeiosNotifyAnnouncement ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , ConvertRawHash blk
-  , LeiosProtocol (BlockProtocol blk)
   ) =>
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
@@ -371,7 +370,6 @@ checkLeiosVotes ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasHardForkHistory blk
-  , LeiosProtocol (BlockProtocol blk)
   ) =>
   TopLevelConfig blk ->
   -- | the most that an honest peer's clock may differ from ours

@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -39,6 +40,7 @@ module Ouroboros.Consensus.HeaderStateHistory
 import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -51,7 +53,15 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , leiosLedgerViewAtTip
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosLedgerView
+  , LeiosProtocol (getLeiosLedgerView)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
@@ -151,11 +161,13 @@ rewind p (HeaderStateHistory history) = do
 -------------------------------------------------------------------------------}
 
 -- | A 'HeaderState' together with the 'RelativeTime' corresponding to the tip
--- slot of the state. For a state at 'Origin', we use the same time as for slot
--- 0.
+-- slot of the state and the Leios part of the ledger view at that slot. For a
+-- state at 'Origin', we use the same time as for slot 0.
 data HeaderStateWithTime blk = HeaderStateWithTime
   { hswtHeaderState :: !(HeaderState blk)
   , hswtSlotTime :: !RelativeTime
+  , hswtLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
+  -- ^ 'SNothing' if and only if the era has no Leios
   }
   deriving stock Generic
 
@@ -184,18 +196,21 @@ castHeaderStateWithTime hswt =
   HeaderStateWithTime
     { hswtHeaderState = castHeaderState $ hswtHeaderState hswt
     , hswtSlotTime = hswtSlotTime hswt
+    , hswtLeiosLedgerView = hswtLeiosLedgerView hswt
     }
 
 mkHeaderStateWithTimeFromSummary ::
-  (HasCallStack, HasAnnTip blk) =>
-  -- | Must be able to convert the tip slot of the 'HeaderState' to a time.
+  (HasCallStack, LedgerSupportsProtocol blk) =>
+  LedgerConfig blk ->
+  -- | Must be able to convert the tip slot of the ledger state to a time.
   Summary (HardForkIndices blk) ->
-  HeaderState blk ->
+  ExtLedgerState blk mk ->
   HeaderStateWithTime blk
-mkHeaderStateWithTimeFromSummary summary hst =
+mkHeaderStateWithTimeFromSummary lcfg summary (ExtLedgerState lst hst _) =
   HeaderStateWithTime
     { hswtHeaderState = hst
     , hswtSlotTime = slotTime
+    , hswtLeiosLedgerView = leiosLedgerViewAtTip lcfg lst
     }
  where
   (slotTime, _) = Qry.runQueryPure qry summary
@@ -203,16 +218,16 @@ mkHeaderStateWithTimeFromSummary summary hst =
   slot = fromWithOrigin 0 $ pointSlot $ headerStatePoint hst
 
 mkHeaderStateWithTime ::
-  (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
+  (HasCallStack, HasHardForkHistory blk, LedgerSupportsProtocol blk) =>
   LedgerConfig blk ->
   ExtLedgerState blk mk ->
   HeaderStateWithTime blk
-mkHeaderStateWithTime lcfg (ExtLedgerState lst hst _) =
-  mkHeaderStateWithTimeFromSummary summary hst
+mkHeaderStateWithTime lcfg st =
+  mkHeaderStateWithTimeFromSummary lcfg summary st
  where
   -- A summary can always translate the tip slot of the ledger state it was
   -- created from.
-  summary = hardForkSummary lcfg lst
+  summary = hardForkSummary lcfg (ledgerState st)
 
 {-------------------------------------------------------------------------------
   Validation
@@ -236,7 +251,15 @@ validateHeader ::
   Except (HeaderError blk) (HeaderStateHistory blk)
 validateHeader cfg lv hdr slotTime history = do
   st' <- HeaderValidation.validateHeader cfg lv hdr st
-  return $ append (HeaderStateWithTime st' slotTime) history
+  return $
+    append
+      HeaderStateWithTime
+        { hswtHeaderState = st'
+        , hswtSlotTime = slotTime
+        , hswtLeiosLedgerView =
+            maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) lv
+        }
+      history
  where
   st :: Ticked (HeaderState blk)
   st =
@@ -258,7 +281,7 @@ fromChain ::
   forall blk.
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
-  , HasAnnTip blk
+  , LedgerSupportsProtocol blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state

@@ -9,7 +9,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Node () where
 
 import Data.Proxy
 import Data.SOP.BasicFunctors
-import Data.SOP.Constraint (All)
 import Data.SOP.Strict
 import GHC.Stack
 import Ouroboros.Consensus.Config.SupportsNode
@@ -25,7 +24,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
-import Ouroboros.Consensus.HardFork.Combinator.Protocol (SingleEraBlockAndLeiosProtocol)
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -70,6 +68,5 @@ instance
   , HasSizeForBlockBodyInclusion (TxMeasurePhase1 (HardForkBlock xs)) (OneEraPerasCert xs)
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
-  , All SingleEraBlockAndLeiosProtocol xs
   ) =>
   RunNode (HardForkBlock xs)

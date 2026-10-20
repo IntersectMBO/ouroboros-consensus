@@ -49,8 +49,6 @@ import Ouroboros.Consensus.Network.LeiosNotify
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import Ouroboros.Consensus.NodeKernel (getLeiosNotifyClientStates)
-import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (ProtocolLimitFailure (..))
@@ -549,7 +547,7 @@ equivocation = ann 2 (forkLeiosBlock (firstLeiosBlock 0))
 advanceImmutableTip :: NodeUnderTest (IOSim s) -> IOSim s ()
 advanceImmutableTip nut = do
   threadDelay 20
-  mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) $
+  addBlocks nut $
     take 12 $
       iterate successorLeiosBlock (firstLeiosBlock 1)
   threadDelay 1

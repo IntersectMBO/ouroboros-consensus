@@ -1,10 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Initialization of the 'BlockFetchConsensusInterface'
 module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
   ( ChainDbView (..)
+  , MatchedBlock (..)
   , defaultChainDbView
   , mkBlockFetchConsensusInterface
   , readFetchModeDefault
@@ -20,6 +22,7 @@ import Cardano.Network.PeerSelection.Bootstrap
 import Control.Monad
 import Control.Tracer (Tracer)
 import Data.Map.Strict (Map)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Time.Clock (UTCTime)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -31,6 +34,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
@@ -60,13 +64,31 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   )
 import Ouroboros.Network.SizeInBytes
 
+-- | A fetched block, together with what validating the header it matched
+-- revealed
+--
+-- BlockFetch derives this from the header and the block together, which is
+-- what ties the annotation to the very header the block was matched against.
+data MatchedBlock blk = MatchedBlock
+  { matchedBlock :: !blk
+  , matchedBlockPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of the block's predecessor
+  , matchedBlockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
+  -- ^ The Leios part of the ledger view at the block's slot
+  }
+
 -- | Abstract over the ChainDB
 data ChainDbView m blk = ChainDbView
   { getCurrentChain :: STM m (AnchoredFragment (Header blk))
   , getCurrentChainWithTime :: STM m (AnchoredFragment (HeaderWithTime blk))
   , getIsFetched :: STM m (Point blk -> Bool)
   , getMaxSlotNo :: STM m MaxSlotNo
-  , addBlockAsync :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+  , addBlockAsync ::
+      InvalidBlockPunishment m ->
+      WithOrigin SlotNo ->
+      StrictMaybe LeiosLedgerView ->
+      blk ->
+      m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   }
@@ -144,7 +166,7 @@ mkBlockFetchConsensusInterface ::
   -- | See 'readFetchMode'.
   STM m FetchMode ->
   DiffusionPipeliningSupport ->
-  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk blk m
+  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk (MatchedBlock blk) m
 mkBlockFetchConsensusInterface
   csjTracer
   bcfg
@@ -158,9 +180,15 @@ mkBlockFetchConsensusInterface
     getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
 
-    blockMatchesHeader :: HeaderWithTime blk -> blk -> Maybe blk
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Maybe (MatchedBlock blk)
     blockMatchesHeader hwt b
-      | Block.blockMatchesHeader (hwtHeader hwt) b = Just b
+      | Block.blockMatchesHeader (hwtHeader hwt) b =
+          Just
+            MatchedBlock
+              { matchedBlock = b
+              , matchedBlockPredecessorSlot = hwtPredecessorSlot hwt
+              , matchedBlockLeiosLedgerView = hwtLeiosLedgerView hwt
+              }
       | otherwise = Nothing
 
     readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
@@ -174,7 +202,7 @@ mkBlockFetchConsensusInterface
 
     -- See 'mkAddFetchedBlock_'
     mkAddFetchedBlock ::
-      STM m (Point blk -> blk -> m ())
+      STM m (Point blk -> MatchedBlock blk -> m ())
     mkAddFetchedBlock = do
       pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
       pure $ mkAddFetchedBlock_ pipeliningPunishment pipelining
@@ -189,9 +217,14 @@ mkBlockFetchConsensusInterface
       ) ->
       DiffusionPipeliningSupport ->
       Point blk ->
-      blk ->
+      MatchedBlock blk ->
       m ()
-    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt blk = void $ do
+    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt matched = void $ do
+      let MatchedBlock
+            { matchedBlock = blk
+            , matchedBlockPredecessorSlot
+            , matchedBlockLeiosLedgerView
+            } = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
       -- range; anything else will incur a disconnect. And in 'FetchDeadline'
@@ -227,6 +260,8 @@ mkBlockFetchConsensusInterface
       addBlockAsync
         chainDB
         punishment
+        matchedBlockPredecessorSlot
+        matchedBlockLeiosLedgerView
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo

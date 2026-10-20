@@ -8,6 +8,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Init
   , map
   ) where
 
+import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Ouroboros.Consensus.Block (WithOrigin (Origin))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -18,8 +20,11 @@ import Prelude hiding (map)
 
 -- | Restricted interface to the 'ChainDB' used on node initialization
 data InitChainDB m blk = InitChainDB
-  { addBlock :: blk -> m ()
-  -- ^ Add a block to the DB
+  { addTheFirstEbb :: blk -> m ()
+  -- ^ Add the EBB that begins the chain
+  --
+  -- Only Byron has EBBs, so only a chain that starts in Byron calls this, and
+  -- only once.
   , getCurrentLedger :: m (LedgerState blk EmptyMK)
   -- ^ Return the current ledger state
   }
@@ -29,8 +34,9 @@ fromFull ::
   ChainDB m blk -> InitChainDB m blk
 fromFull db =
   InitChainDB
-    { addBlock =
-        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment
+    { addTheFirstEbb =
+        -- The first block's predecessor is genesis, and Byron has no Leios.
+        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment Origin SNothing
     , getCurrentLedger =
         atomically $ ledgerState <$> ChainDB.getCurrentLedger db
     }
@@ -43,6 +49,6 @@ map ::
   InitChainDB m blk'
 map f g db =
   InitChainDB
-    { addBlock = addBlock db . f
+    { addTheFirstEbb = addTheFirstEbb db . f
     , getCurrentLedger = g <$> getCurrentLedger db
     }

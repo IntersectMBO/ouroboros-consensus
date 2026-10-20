@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Block.SupportsProtocol (BlockSupportsProtocol (..), s
 
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Protocol.Abstract
 
 {-------------------------------------------------------------------------------
@@ -17,6 +18,7 @@ class
   ( GetHeader blk
   , GetPrevHash blk
   , ConsensusProtocol (BlockProtocol blk)
+  , LeiosProtocol (BlockProtocol blk)
   , NoThunks (Header blk)
   , NoThunks (BlockConfig blk)
   , NoThunks (CodecConfig blk)

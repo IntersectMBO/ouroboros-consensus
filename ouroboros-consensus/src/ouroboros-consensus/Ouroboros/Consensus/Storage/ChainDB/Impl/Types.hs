@@ -101,6 +101,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
 import Ouroboros.Consensus.Leios.Types (EbHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -120,7 +121,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredLeiosEbs)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredLeiosEbs, LeiosValidClaims)
 import Ouroboros.Consensus.Storage.ImmutableDB
   ( ImmutableDB
   , ImmutableDbSerialiseConstraints
@@ -396,6 +397,9 @@ data ChainDbEnv m blk = CDB
   -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
   -- can park the blocks certifying the others. Seeded from the LeiosDB at
   -- open, then grown from its notifications.
+  , cdbLeiosValidClaims :: !(StrictTVar m LeiosValidClaims)
+  -- ^ The claims that the Leios certificates of arriving blocks established;
+  -- see 'LeiosValidClaims'.
   }
   deriving Generic
 
@@ -607,6 +611,11 @@ data BlockToAdd m blk = BlockToAdd
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
   , blockToAdd :: !blk
+  , blockPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of the block's predecessor, as validating its header revealed it
+  , blockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
+  -- ^ The Leios part of the ledger view at the block's slot, as validating its
+  -- header revealed it
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
   , varBlockProcessed :: !(StrictTMVar m (AddBlockResult blk))
@@ -647,15 +656,19 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
+  StrictMaybe LeiosLedgerView ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessorSlot leiosView blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
           , blockToAdd = blk
+          , blockPredecessorSlot = predecessorSlot
+          , blockLeiosLedgerView = leiosView
           , varBlockWrittenToDisk
           , varBlockProcessed
           }

@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Shelley.Eras
   ) where
 
 import Cardano.Binary (FromCBOR, ToCBOR)
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
@@ -145,11 +146,11 @@ class
   getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
   getShelleyEraPerasRoundLength _ = NoPerasEnabled
 
-  -- | Whether this block body carries a Leios certificate.
+  -- | The Leios certificate this block body carries, if any.
   --
   -- Eras that don't support Leios define this as
-  -- 'defaultBlockBodyContainsLeiosCert'.
-  blockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
+  -- 'defaultBlockBodyLeiosCert'.
+  blockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -183,8 +184,8 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
 
-defaultBlockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
-defaultBlockBodyContainsLeiosCert _ = False
+defaultBlockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
+defaultBlockBodyLeiosCert _ = SNothing
 
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -193,7 +194,7 @@ instance ShelleyBasedEra ShelleyEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -202,7 +203,7 @@ instance ShelleyBasedEra AllegraEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -211,7 +212,7 @@ instance ShelleyBasedEra MaryEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -220,7 +221,7 @@ instance ShelleyBasedEra AlonzoEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -229,7 +230,7 @@ instance ShelleyBasedEra BabbageEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -239,7 +240,7 @@ instance ShelleyBasedEra ConwayEra where
   mkEraMkMempoolApplyTxError _prx =
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
-  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -253,7 +254,7 @@ instance ShelleyBasedEra DijkstraEra where
 
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
 
-  blockBodyContainsLeiosCert bb = isSJust (bb ^. leiosCertBlockBodyL)
+  blockBodyLeiosCert bb = bb ^. leiosCertBlockBodyL
 
 applyAlonzoBasedTx ::
   forall era.

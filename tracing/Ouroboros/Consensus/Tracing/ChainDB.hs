@@ -3329,6 +3329,16 @@ instance StandardHash blk => LogFormatting (VolDB.TraceEvent blk) where
       ]
   forMachine _dtal VolDB.DBClosed =
     mconcat ["kind" .= String "DBClosed"]
+  forMachine _dtal (VolDB.ForgotLeiosCertBlocks n) =
+    mconcat
+      [ "kind" .= String "ForgotLeiosCertBlocks"
+      , "count" .= n
+      ]
+  forMachine _dtal (VolDB.ReadmittedForgottenBlock blockId) =
+    mconcat
+      [ "kind" .= String "ReadmittedForgottenBlock"
+      , "blockId" .= String (showT blockId)
+      ]
 
 instance MetaTrace (VolDB.TraceEvent blk) where
   namespaceFor VolDB.DBAlreadyClosed{} = Namespace [] ["DBAlreadyClosed"]
@@ -3336,12 +3346,16 @@ instance MetaTrace (VolDB.TraceEvent blk) where
   namespaceFor VolDB.Truncate{} = Namespace [] ["Truncate"]
   namespaceFor VolDB.InvalidFileNames{} = Namespace [] ["InvalidFileNames"]
   namespaceFor VolDB.DBClosed{} = Namespace [] ["DBClosed"]
+  namespaceFor VolDB.ForgotLeiosCertBlocks{} = Namespace [] ["ForgotLeiosCertBlocks"]
+  namespaceFor VolDB.ReadmittedForgottenBlock{} = Namespace [] ["ReadmittedForgottenBlock"]
 
   severityFor (Namespace _ ["DBAlreadyClosed"]) _ = Just Debug
   severityFor (Namespace _ ["BlockAlreadyHere"]) _ = Just Debug
   severityFor (Namespace _ ["Truncate"]) _ = Just Debug
   severityFor (Namespace _ ["InvalidFileNames"]) _ = Just Debug
   severityFor (Namespace _ ["DBClosed"]) _ = Just Debug
+  severityFor (Namespace _ ["ForgotLeiosCertBlocks"]) _ = Just Info
+  severityFor (Namespace _ ["ReadmittedForgottenBlock"]) _ = Just Debug
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["DBAlreadyClosed"]) =
@@ -3359,6 +3373,12 @@ instance MetaTrace (VolDB.TraceEvent blk) where
   documentFor (Namespace _ ["DBClosed"]) =
     Just
       "Closing the volatile DB"
+  documentFor (Namespace _ ["ForgotLeiosCertBlocks"]) =
+    Just
+      "How many blocks containing a Leios certificate, not on the initial selection, the DB forgot at start-up."
+  documentFor (Namespace _ ["ReadmittedForgottenBlock"]) =
+    Just
+      "A forgotten block was added again, so the DB knows it once more."
   documentFor _ = Nothing
 
   allNamespaces =
@@ -3367,6 +3387,8 @@ instance MetaTrace (VolDB.TraceEvent blk) where
     , Namespace [] ["Truncate"]
     , Namespace [] ["InvalidFileNames"]
     , Namespace [] ["DBClosed"]
+    , Namespace [] ["ForgotLeiosCertBlocks"]
+    , Namespace [] ["ReadmittedForgottenBlock"]
     ]
 
 --------------------------------------------------------------------------------
@@ -3545,6 +3567,11 @@ instance
       [ "kind" .= String "ExtValidationErrorPerasCertInBlock"
       , "error" .= String (showT err)
       ]
+  forMachine _dtal (ExtValidationErrorLeiosCert err) =
+    mconcat
+      [ "kind" .= String "ExtValidationErrorLeiosCert"
+      , "error" .= String (showT err)
+      ]
 
   forHuman (ExtValidationErrorLedger err) = forHuman err
   forHuman (ExtValidationErrorHeader err) = forHuman err
@@ -3552,11 +3579,14 @@ instance
     "Could not resolve the Peras epoch context: " <> showT err
   forHuman (ExtValidationErrorPerasCertInBlock err) =
     "Invalid Peras certificate in block: " <> showT err
+  forHuman (ExtValidationErrorLeiosCert err) =
+    "Invalid Leios certificate in block: " <> showT err
 
   asMetrics (ExtValidationErrorLedger err) = asMetrics err
   asMetrics (ExtValidationErrorHeader err) = asMetrics err
   asMetrics ExtValidationErrorPerasEpochContextResolver{} = []
   asMetrics ExtValidationErrorPerasCertInBlock{} = []
+  asMetrics ExtValidationErrorLeiosCert{} = []
 
 instance
   Show (PBFT.PBftVerKeyHash c) =>

@@ -51,16 +51,16 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (All, Top)
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
@@ -81,7 +81,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Backgrou
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (acquiredLeiosEbsFromList)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( acquiredLeiosEbsFromList
+  , emptyLeiosValidClaims
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -117,9 +120,9 @@ withDB ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -135,9 +138,9 @@ openDB ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -152,9 +155,9 @@ openDBInternal ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -238,7 +241,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredLeiosEbs <- newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
-    chain <-
+    varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
+    chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
         volatileDB
@@ -251,18 +255,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
 
-    curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
-    let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
+    let chain = AF.mapAnchoredFragment hwtHeader chainWithTime
 
-        -- the volatile tip ledger state can translate the slots of the volatile
-        -- headers
-        chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
-            chain
+    -- Keep the anchor too: it is the immutable tip, which the VolatileDB may
+    -- still hold and which copying to the ImmutableDB looks up as a predecessor.
+    VolatileDB.forgetLeiosCertsAtStartUpExcept volatileDB $
+      Set.fromList $
+        [h | BlockHash h <- [AF.anchorToHash (AF.anchor chain)]]
+          <> map headerHash (AF.toOldestFirst chain)
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
@@ -307,6 +307,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosValidClaims = varLeiosValidClaims
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -314,7 +315,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
+            { addBlockAsync = \punish predecessorSlot leiosView blk ->
+                getEnv h $ \cdb ->
+                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime

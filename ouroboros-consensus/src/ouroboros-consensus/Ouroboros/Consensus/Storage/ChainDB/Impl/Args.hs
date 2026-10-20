@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
   , LoE (LoEDisabled)
@@ -173,7 +172,6 @@ ensureValidateAll args =
 
 completeChainDbArgs ::
   ( BlockSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , IOLike m
   ) =>
   ResourceRegistry m ->

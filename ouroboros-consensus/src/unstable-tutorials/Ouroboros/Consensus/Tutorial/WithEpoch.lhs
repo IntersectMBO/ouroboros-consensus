@@ -88,6 +88,7 @@ And imports, of course:
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (ConsensusConfig, SecurityParam, ConsensusProtocol (..), NoTiebreaker (..))
+> import Ouroboros.Consensus.Leios.Protocol
 
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -629,6 +630,14 @@ from the block header, and `tiebreakerView` returning 'NoTiebreaker':
 
 >   tiebreakerView _bcfg _hdr = NoTiebreaker
 
+As in the simple tutorial, `PrtclD` does not use Leios:
+
+> instance LeiosProtocol PrtclD where
+>   getLeiosAnnouncement = defaultGetLeiosAnnouncement
+>   getContainsLeiosCert = defaultGetContainsLeiosCert
+>   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+>   getLeiosLedgerView = defaultGetLeiosLedgerView
+
 All that remains is to establish `PrtclD` as the protocol for
 `BlockD`:
 
@@ -647,6 +656,9 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >   protocolLedgerView _ldgrCfg (TickedLedgerStateD ldgrSt) =
 >     LVD $ lsbd_snapshot2 ldgrSt
 >       -- note that we use the snapshot from 2 epochs ago.
+
+>   ledgerViewAtTip _ldgrCfg ldgrSt =
+>     LVD $ lsbd_snapshot2 ldgrSt
 
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
 >   ledgerViewForecastAt _lccf ldgrSt =
