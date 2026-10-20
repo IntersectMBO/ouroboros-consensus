@@ -363,7 +363,7 @@ data ExnLeiosNotifyInvalidVotes
       -- | the election slot
       !SlotNo
   | -- | A vote whose seat has no key in the committee, or whose signature does
-    -- not verify under it. The node's 'VoteState' throws this, and only for a
+    -- not verify under it, as the node's 'VoteState' finds, and only for a
     -- vote it does not have yet.
     ExnLeiosInvalidVote
       -- | The announcing block.
