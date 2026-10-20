@@ -30,6 +30,13 @@ record EpochStructure : Type₁ where
         firstSlot                     : Epoch → Slot
         StabilityWindow               : Slot
         RandomnessStabilisationWindow : Slot
+        -- The genesis slot length, with which CIP-164's Leios timing protocol
+        -- parameters are converted from durations to slot counts. A constant
+        -- rather than the conversion itself, so that `slotsFromDuration` below
+        -- rounds up in every instance and not merely in ℕEpochStructure: the
+        -- security argument depends on the delay not being shortened.
+        SlotLength                    : Milliseconds
+        ⦃ NonZero-SlotLength ⦄        : NonZero SlotLength
         sucᵉ                          : Epoch → Epoch
         kesPeriod                     : Slot → KESPeriod
         _+ᵏ_                          : KESPeriod → ℕ → KESPeriod
@@ -70,6 +77,15 @@ record EpochStructure : Type₁ where
   ℕtoEpoch zero    = epoch 0#
   ℕtoEpoch (suc n) = sucᵉ (ℕtoEpoch n)
 
+  -- The canonical image of a number in the slot semiring, i.e. that many
+  -- slots. Relies on 1# denoting one slot, as `addSlot` below already does.
+  ℕtoSlot : ℕ → Slot
+  ℕtoSlot n = additionVia (1# +ˢ_) n 0#
+
+  -- The number of slots spanning a wall-clock duration, rounded up.
+  slotsFromDuration : Milliseconds → Slot
+  slotsFromDuration d = ℕtoSlot (durationToSlots SlotLength d)
+
   instance
     addSlot : HasAdd Slot
     addSlot ._+_ = _+ˢ_
@@ -86,6 +102,7 @@ record GlobalConstants : Type₁ where
          SlotsPerEpochᶜ : ℕ; ⦃ NonZero-SlotsPerEpochᶜ ⦄ : NonZero SlotsPerEpochᶜ
          StabilityWindowᶜ : ℕ
          RandomnessStabilisationWindowᶜ : ℕ
+         SlotLengthᶜ : Milliseconds; ⦃ NonZero-SlotLengthᶜ ⦄ : NonZero SlotLengthᶜ
          Quorum : ℕ
          NetworkId : Network
          SlotsPerKESPeriodᶜ : ℕ; ⦃ NonZero-SlotsPerKESPeriodᶜ ⦄ : NonZero SlotsPerKESPeriodᶜ
@@ -106,6 +123,7 @@ record GlobalConstants : Type₁ where
     .firstSlot e                   → e * SlotsPerEpochᶜ
     .StabilityWindow               → StabilityWindowᶜ
     .RandomnessStabilisationWindow → RandomnessStabilisationWindowᶜ
+    .SlotLength                    → SlotLengthᶜ
     .sucᵉ                          → suc
     ._+ᵉ'_                         → _+_
     .kesPeriod slot                → slot / SlotsPerKESPeriodᶜ

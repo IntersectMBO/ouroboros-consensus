@@ -5,6 +5,9 @@ This chapter introduces the view of the blockchain layer as required for the
 consensus. The main transition rule is $\mathsf{CHAINHEAD}$ which calls the subrules
 $\mathsf{TICKF}$, $\mathsf{TICKN}$ and $\mathsf{PRTCL}$.
 
+Block headers additionally carry the fields by which a block announces and certifies
+an \emph{endorser block}, as introduced by Ouroboros Linear Leios~\cite{cip_164}.
+
 \input{Spec/BlockDefinitions}
 
 \clearpage
