@@ -130,6 +130,7 @@ instance
   LedgerSupportsProtocol (SimplePraosBlock c c')
   where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt _ st = constantForecastOf () (getTipSlot st)
 
 {-------------------------------------------------------------------------------

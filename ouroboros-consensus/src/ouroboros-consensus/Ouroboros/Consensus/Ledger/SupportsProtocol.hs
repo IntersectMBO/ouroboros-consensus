@@ -31,6 +31,16 @@ class
     Ticked LedgerState blk mk ->
     LedgerView (BlockProtocol blk)
 
+  -- | Extract the ledger view at the slot of the given ledger state's tip
+  --
+  -- 'protocolLedgerView' cannot provide this, since a ledger state cannot be
+  -- ticked to the slot of its own tip. When the tip has a slot (ie it's not
+  -- 'Origin'), then this agrees with 'ledgerViewForecastAt' at that slot.
+  ledgerViewAtTip ::
+    LedgerConfig blk ->
+    LedgerState blk mk ->
+    LedgerView (BlockProtocol blk)
+
   -- | Get a forecast at the given ledger state.
   --
   -- This forecast can be used to validate headers of blocks within the range of

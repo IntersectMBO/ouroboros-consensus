@@ -648,6 +648,9 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >     LVD $ lsbd_snapshot2 ldgrSt
 >       -- note that we use the snapshot from 2 epochs ago.
 
+>   ledgerViewAtTip _ldgrCfg ldgrSt =
+>     LVD $ lsbd_snapshot2 ldgrSt
+
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
 >   ledgerViewForecastAt _lccf ldgrSt =
 >     Forecast { forecastAt = at

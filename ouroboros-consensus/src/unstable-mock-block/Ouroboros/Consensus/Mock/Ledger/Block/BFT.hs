@@ -117,6 +117,7 @@ instance
   LedgerSupportsProtocol (SimpleBftBlock c c')
   where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
 {-------------------------------------------------------------------------------

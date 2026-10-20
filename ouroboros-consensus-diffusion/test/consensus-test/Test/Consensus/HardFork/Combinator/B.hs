@@ -296,6 +296,7 @@ instance BlockSupportsProtocol BlockB where
 
 instance LedgerSupportsProtocol BlockB where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
 instance LedgerStateSupportsPeras (LedgerState BlockB)
