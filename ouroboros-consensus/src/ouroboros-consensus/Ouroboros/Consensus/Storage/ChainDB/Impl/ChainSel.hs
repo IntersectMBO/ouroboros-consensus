@@ -58,7 +58,6 @@ import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
   ( HeaderWithTime (..)
-  , mkHeaderWithTime
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -133,7 +132,7 @@ initialChainSelection ::
   STM m AcquiredLeiosEbs ->
   LoE () ->
   PerasWeightSnapshot blk ->
-  m (AnchoredFragment (Header blk))
+  m (AnchoredFragment (HeaderWithTime blk))
 initialChainSelection
   immutableDB
   volatileDB
@@ -177,7 +176,7 @@ initialChainSelection
     chains <- constructChains i succsOf
 
     -- We use the empty fragment anchored at @i@ as the current chain (and
-    -- ledger) and the default in case there is no better candidate.
+    -- ledger).
     let curChain :: AnchoredFragment (Header blk)
         curChain = Empty (AF.castAnchor i)
 
@@ -187,9 +186,9 @@ initialChainSelection
       , ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain chain]
       ] of
       -- If there are no candidates, no chain selection is needed
-      Nothing -> pure curChain
+      Nothing -> pure (Empty (AF.castAnchor i))
       Just chains' ->
-        fromMaybe curChain <$> chainSelection' curChain chains'
+        fromMaybe (Empty (AF.castAnchor i)) <$> chainSelection' curChain chains'
    where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -243,7 +242,7 @@ initialChainSelection
       -- @i@.
       NonEmpty (AnchoredFragment (Header blk), ReasonForSwitch' blk) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (AnchoredFragment (Header blk)))
+      m (Maybe (AnchoredFragment (HeaderWithTime blk)))
     chainSelection' curChain candidates =
       assert (all ((curpt ==) . castPoint . AF.anchorPoint . fst) candidates) $
         assert (all (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . fst) candidates) $ do
@@ -252,7 +251,7 @@ initialChainSelection
             <$> chainSelection
               cse
               (first Diff.extend <$> candidates)
-              (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
+              (\_ _ -> MkSuccessForkerAction $ \_validated -> join . atomically . forkerCommit)
      where
       curpt = AF.anchorPoint curChain
       chainSelEnv = do
@@ -961,7 +960,7 @@ switchTo ::
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
   SuccessForkerAction m ExtLedgerState blk
-switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
+switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \validated forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -975,16 +974,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
       Nothing ->
         error "chainDiff doesn't fit onto current chain"
       Just newChain -> do
-        let lcfg = configLedger cdbTopLevelConfig
-            diffWithTime =
-              -- the new ledger state can translate the slots of the new
-              -- headers
-              Diff.map
-                ( mkHeaderWithTime
-                    lcfg
-                    (ledgerState newLedger)
-                )
-                chainDiff
+        let diffWithTime = ChainDiff (Diff.getRollback chainDiff) validated
             newChainWithTime =
               case Diff.apply curChainWithTime diffWithTime of
                 Nothing -> error "chainDiff failed for HeaderWithTime"
@@ -1185,10 +1175,10 @@ chainSelection ::
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
   (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
-  -- | The (valid) chain diff and corresponding LedgerDB that was selected,
-  -- or 'Nothing' if there is no valid chain diff preferred over the current
-  -- chain.
-  m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+  -- | The (valid) chain diff that was selected, with the headers its
+  -- validation produced, or 'Nothing' if there is no valid chain diff
+  -- preferred over the current chain.
+  m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
 chainSelection chainSelEnv chainDiffs onSuccess =
   assert
     ( all
@@ -1216,7 +1206,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
   --        [Ouroboros] below.
   go ::
     [(ChainDiff (Header blk), ReasonForSwitch' blk)] ->
-    m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+    m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
   go [] = pure Nothing
   go ((candidate, reason) : candidates0) = do
     case NE.nonEmpty (AF.toOldestFirst $ getSuffix candidate) of
@@ -1226,7 +1216,8 @@ chainSelection chainSelEnv chainDiffs onSuccess =
         validateCandidate chainSelEnv candidate neHeaders (onSuccess candidate reason) >>= \case
           FullyValid candidate' ->
             -- The entire candidate is valid
-            assert (Diff.getTip candidate == Diff.getTip candidate') $ pure (Just (candidate, reason))
+            assert (Diff.getTip candidate == castPoint (Diff.getTip candidate')) $
+              pure (Just (candidate', reason))
           ValidPrefix candidate' -> do
             whenJust mTentativeHeader clearTentativeHeader
             -- Prefix of the candidate because it contained rejected blocks
@@ -1326,8 +1317,9 @@ chainSelection chainSelEnv chainDiffs onSuccess =
 
 -- | Result of 'validateCandidate'.
 data ValidationResult blk
-  = -- | The entire candidate fragment was valid.
-    FullyValid (ChainDiff (Header blk))
+  = -- | The entire candidate fragment was valid, with the headers its
+    -- validation produced.
+    FullyValid (ChainDiff (HeaderWithTime blk))
   | -- | The candidate fragment contained invalid blocks that had to be
     -- truncated from the fragment. We only return the (potentially empty) valid
     -- prefix.
@@ -1408,9 +1400,9 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
         -- three blocks in a row have the same slot.)
 
         pure $ ValidPrefix chainDiff'
-      ValidateSuccessful -> do
+      ValidateSuccessful validated -> do
         traceWith validationTracer (ValidCandidate suffix)
-        pure $ FullyValid chainDiff
+        pure $ FullyValid (ChainDiff rollback validated)
  where
   ChainSelEnv
     { lgrDB

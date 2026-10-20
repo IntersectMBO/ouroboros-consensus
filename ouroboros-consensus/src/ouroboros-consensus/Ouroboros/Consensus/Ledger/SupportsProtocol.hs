@@ -1,17 +1,25 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   , LedgerSupportsProtocol (..)
+  , leiosLedgerViewAtTip
   ) where
 
 import Control.Monad.Except
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosLedgerView
+  , LeiosProtocol (getLeiosLedgerView)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 
 -- | Link protocol to ledger
@@ -81,6 +89,18 @@ class
     LedgerConfig blk ->
     LedgerState blk mk ->
     Forecast (LedgerView (BlockProtocol blk))
+
+-- | The Leios part of 'ledgerViewAtTip', if the ledger state's era has Leios
+leiosLedgerViewAtTip ::
+  forall blk mk.
+  LedgerSupportsProtocol blk =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  StrictMaybe LeiosLedgerView
+leiosLedgerViewAtTip cfg =
+  maybeToStrictMaybe
+    . getLeiosLedgerView (Proxy @(BlockProtocol blk))
+    . ledgerViewAtTip cfg
 
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick ::

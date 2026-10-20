@@ -45,7 +45,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   , mkHeaderStateWithTimeFromSummary
   )
-import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -171,8 +170,11 @@ implMkLedgerDb ::
   , HasCallStack
   , StandardHash (l blk)
   , LedgerSupportsProtocol blk
-  , HasHardForkHistory blk
   , ApplyBlock l blk
+  , -- for validation, which needs 'ApplyBlock ExtLedgerState'
+    BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , All Top (HardForkIndices blk)
   ) =>
   LedgerDBHandle m l blk ->
   SnapshotManager m blk (StateRef m l blk) ->
@@ -285,9 +287,8 @@ implGetPastLedgerState env point =
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
-  , IsLedger LedgerState blk
   , HasHardForkHistory blk
-  , HasAnnTip blk
+  , LedgerSupportsProtocol blk
   ) =>
   LedgerDBEnv m ExtLedgerState blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
@@ -296,11 +297,10 @@ implGetHeaderStateHistory env = do
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
       -- ledger state (Property 17.1 in the Consensus report).
-      summary = hardForkSummary (configLedger $ getExtLedgerCfg $ ledgerDbCfg $ ldbCfg env) currentLedgerState
+      lcfg = configLedger $ getExtLedgerCfg $ ledgerDbCfg $ ldbCfg env
+      summary = hardForkSummary lcfg currentLedgerState
       mkHeaderStateWithTime' =
-        mkHeaderStateWithTimeFromSummary summary
-          . headerState
-          . state
+        mkHeaderStateWithTimeFromSummary lcfg summary . state
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
@@ -314,6 +314,8 @@ implValidate ::
   , ApplyBlock l blk
   , StandardHash (l blk)
   , LedgerSupportsProtocol blk
+  , HasHardForkHistory blk
+  , l ~ ExtLedgerState
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->

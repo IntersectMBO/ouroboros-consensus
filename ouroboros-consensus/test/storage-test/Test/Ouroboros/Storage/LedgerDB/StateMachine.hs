@@ -575,9 +575,9 @@ openLedgerDB flavArgs env cfg fs = do
           BlockCache.empty
           0
           (NE.map getHeader volBlocks')
-          (MkSuccessForkerAction $ Monad.join . atomically . forkerCommit)
+          (MkSuccessForkerAction $ \_validated -> Monad.join . atomically . forkerCommit)
       case vr of
-        ValidateSuccessful -> pure ()
+        ValidateSuccessful _ -> pure ()
         _ -> error "Couldn't restart the chain, failed to apply volatile blocks!"
   pure (ldb, od, getNumOpenHandles)
 
@@ -631,7 +631,7 @@ instance RunModel Model (StateT Environment IO) where
             modifyTVar (dbBlocks chainDb) $
               repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) $ NE.toList blks)
 
-          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \forker -> do
+          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \_validated forker -> do
             atomically $
               modifyTVar (dbChain chainDb) $
                 (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)
@@ -642,7 +642,7 @@ instance RunModel Model (StateT Environment IO) where
             garbageCollect ldb . fromWithOrigin 0 $ pointSlot immTipPoint
             atomically $ writeTVar (dbImmTip chainDb) $ castPoint immTipPoint
           case vr of
-            ValidateSuccessful -> pure $ Right ()
+            ValidateSuccessful _ -> pure $ Right ()
             ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
             ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
   perform state@(Model _ _ secParam) (DropAndRestore n salt) lk = do

@@ -378,6 +378,7 @@ type AllComponents blk =
 type TestConstraints blk =
   ( All Top (HardForkIndices blk)
   , ConsensusProtocol (BlockProtocol blk)
+  , LedgerView (BlockProtocol blk) ~ ()
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

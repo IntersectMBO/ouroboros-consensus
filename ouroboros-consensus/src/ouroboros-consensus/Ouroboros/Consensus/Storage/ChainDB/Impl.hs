@@ -56,8 +56,8 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context
@@ -234,7 +234,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredLeiosEbs <- newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
-    chain <-
+    chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
         volatileDB
@@ -247,18 +247,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
 
-    curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
-    let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
-
-        -- the volatile tip ledger state can translate the slots of the volatile
-        -- headers
-        chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
-            chain
+    let chain = AF.mapAnchoredFragment hwtHeader chainWithTime
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
