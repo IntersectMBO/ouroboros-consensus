@@ -5,7 +5,7 @@ open import Spec.Foreign.ExternalFunctions
 open import Foreign.Haskell.Coerce
 
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ; positive)
-open import Data.Rational.Ext using (InPosUnitInterval)
+open import stdlib.Data.Rational.Ext using (InPosUnitInterval)
 open import Spec.Foreign.HSConsensus.BaseTypes
 open import Spec.Protocol DummyCrypto DummyNonces DummyEpochStructure DummyBlockStructure DummyAbstractFunctions DummyRationalExtStructure hiding (lookupPoolDistr)
 
