@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
+  , TentativeHeaderPermission (..)
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
@@ -279,6 +280,7 @@ initialChainSelection
               pipeliningTracer = nullTracer
             , varTentativeState
             , varTentativeHeader
+            , tentativeHeaderPermission = MayNotSetTentativeHeader
             , punish = Nothing
             , getTentativeFollowers = pure []
             }
@@ -421,7 +423,8 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv =
+      mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
 
   chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
     for
@@ -464,7 +467,8 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
       , VolatileDB.lbiHasCert (VolatileDB.biLeios bi)
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv =
+      mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
 
   traceWith (TraceAddBlockEvent >$< cdbTracer) $
     ReconsideredParkedBlocks ebHash (length unparkedPoints)
@@ -521,7 +525,12 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
         lift $ deliverWrittenToDisk True
         lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView b) >>= \case
           Right () ->
-            chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+            chainSelectionForBlock
+              cdb
+              (BlockCache.singleton b)
+              hdr
+              MaySetTentativeHeader
+              blockPunish
           Left rejection -> lift $ do
             let e = ExtValidationErrorLeiosCert rejection
             traceWith (AddBlockValidation >$< addBlockTracer) $
@@ -608,7 +617,13 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
 
     -- Trigger chain selection for the boosted block.
     lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
-    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+    lift $
+      chainSelectionForBlock
+        cdb
+        BlockCache.empty
+        boostedHdr
+        MayNotSetTentativeHeader
+        noPunishment
     pure $ addedCertRes
 
   -- Deliver promise indicating that we processed the cert.
@@ -703,9 +718,10 @@ chainSelectionForBlock ::
   ChainDbEnv m blk ->
   BlockCache blk ->
   Header blk ->
+  TentativeHeaderPermission ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
+chainSelectionForBlock cdb@CDB{..} blockCache hdr permission punish = electric $ do
   (invalid, curChain, weights) <-
     atomically $
       (,,)
@@ -751,7 +767,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain (Just (p, punish))
+            chainSelEnv =
+              mkChainSelEnv cdb blockCache weights curChain permission (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -1128,6 +1145,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , blockCache :: BlockCache blk
   , weights :: PerasWeightSnapshot blk
   , curChain :: AnchoredFragment (Header blk)
+  , tentativeHeaderPermission :: TentativeHeaderPermission
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
   -- punish action for the peer that sent that block; see
@@ -1156,10 +1174,11 @@ mkChainSelEnv ::
   PerasWeightSnapshot blk ->
   -- | See 'curChain'
   AnchoredFragment (Header blk) ->
+  TentativeHeaderPermission ->
   -- | See 'punish'.
   Maybe (RealPoint blk, InvalidBlockPunishment m) ->
   ChainSelEnv m blk
-mkChainSelEnv CDB{..} blockCache weights curChain punish =
+mkChainSelEnv CDB{..} blockCache weights curChain tentativeHeaderPermission punish =
   ChainSelEnv
     { lgrDB = cdbLedgerDB
     , bcfg = configBlock cdbTopLevelConfig
@@ -1176,8 +1195,30 @@ mkChainSelEnv CDB{..} blockCache weights curChain punish =
         TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
     , pipeliningTracer =
         TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
+    , tentativeHeaderPermission
     , punish
     }
+
+-- | Whether a chain selection may set the tentative header
+--
+-- A downstream peer's LeiosFetch reads the header of a block that contains a
+-- Leios certificate as an offer of the endorser block that the certificate
+-- certifies. So ChainSel must not pipeline the header of a block whose
+-- certificate does not establish its claim: that would offer an endorser block
+-- as certified when it is not.
+--
+-- ChainSel checks a block's certificate when the block arrives
+-- ('checkLeiosCert'), and an invalid certificate makes the block invalid. But
+-- the record of invalid blocks lives in memory, so a restart forgets it. And
+-- every other trigger of chain selection can reconsider blocks that have been
+-- in the VolatileDB since a previous execution: an endorser block's closure
+-- arriving, the LoE fragment moving, or a Peras certificate boosting a block.
+-- So only the chain selection that a block's arrival triggers may set the
+-- tentative header.
+data TentativeHeaderPermission
+  = MaySetTentativeHeader
+  | MayNotSetTentativeHeader
+  deriving (Eq, Show)
 
 -- | Perform chain selection with the given candidates. If a validated candidate
 -- was chosen to replace the current chain, perform the passed continuation and
@@ -1268,9 +1309,11 @@ chainSelection chainSelEnv chainDiffs onSuccess =
     -- out to be invalid.
     setTentativeHeader :: m (Maybe (Header blk, TentativeHeaderState blk))
     setTentativeHeader = do
-      pipeliningResult <-
-        (\ts -> isPipelineable bcfg ts candidate)
-          <$> readTVarIO varTentativeState
+      pipeliningResult <- case tentativeHeaderPermission of
+        MayNotSetTentativeHeader -> pure Nothing
+        MaySetTentativeHeader ->
+          (\ts -> isPipelineable bcfg ts candidate)
+            <$> readTVarIO varTentativeState
       whenJust pipeliningResult $ \(tentativeHeader, _) -> do
         let setTentative = SetTentativeHeader tentativeHeader
         encloseWith (setTentative >$< pipeliningTracer) $
