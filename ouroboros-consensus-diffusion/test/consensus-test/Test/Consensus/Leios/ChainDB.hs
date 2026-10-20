@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 -- | Tests of how the ChainDB and the LeiosDB interact: which endorser blocks the
 -- ChainDB has the LeiosDB keep, once the blocks that announce and certify them
 -- are immutable, and when ChainSel may select a block certifying one.
@@ -10,7 +12,13 @@ import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import Ouroboros.Consensus.Block (Point, blockPoint, blockSlot)
+import Ouroboros.Consensus.Block
+  ( Point
+  , Proxy (..)
+  , blockHash
+  , blockPoint
+  , blockSlot
+  )
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -22,6 +30,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   , withWriter
   )
+import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
 import Test.Tasty
@@ -84,7 +93,10 @@ pointB = MkLeiosPoint (blockSlot announcingB) (UnsafeHash (SBS.replicate 32 2))
 -- the third, which announces B.
 announcingA, certifyingA, announcingB :: LeiosTestBlock
 announcingA = setAnnouncement (pointEbHash pointA) (encodeEndorserBlockSize ebA) (firstLeiosBlock 1)
-certifyingA = setLeiosCert (successorLeiosBlock announcingA)
+certifyingA =
+  setLeiosCert
+    (certOf (toRankingBlockHash (Proxy @LeiosTestBlock) (blockHash announcingA)) [0, 1, 2])
+    (successorLeiosBlock announcingA)
 announcingB =
   setAnnouncement (pointEbHash pointB) (encodeEndorserBlockSize ebB) (successorLeiosBlock certifyingA)
 

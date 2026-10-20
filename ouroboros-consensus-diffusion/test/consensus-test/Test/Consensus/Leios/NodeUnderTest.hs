@@ -40,8 +40,7 @@ module Test.Consensus.Leios.NodeUnderTest
   ) where
 
 import Cardano.Crypto.Leios (LeiosCommittee)
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), UnitInterval, knownNonZeroBounded)
 import Cardano.Network.Diffusion.Configuration
   ( defaultChainSyncIdleTimeout
   , defaultTxSubmissionLogicVersion
@@ -138,6 +137,7 @@ import System.FS.API.Types (mkFsPath)
 import System.FS.Sim.MockFS (MockFS)
 import System.FS.Sim.STM (simHasFS)
 import System.Random (StdGen, mkStdGen, random, splitGen)
+import Test.Consensus.Leios.Committee (testCommittee, testQuorumStakeThreshold)
 import Test.Consensus.Leios.TestBlock
 import Test.Util.ChainDB (NodeDBs (..), emptyNodeDBs)
 import Test.Util.FS.Subdirectory (subdirectoryHasFS)
@@ -358,27 +358,41 @@ withNode = withNodeForecastingOnly 100000
 
 -- | A node whose ledger view forecasts this many slots past its immutable tip.
 withNodeForecastingOnly :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecastingOnly = withNodeCommittee emptyLeiosCommittee
+withNodeForecastingOnly range body = do
+  nodeDBs <- emptyNodeDBs
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold range)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
 
--- | 'withNodeForecastingOnly', with this committee in the node's ledger view.
+-- | 'withNodeForecastingOnly', but with this committee in the node's ledger
+-- view, and the largest quorum stake threshold.
 withNodeCommittee ::
   LeiosCommittee -> SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
   leiosDB <- newLeiosDBInMemory
-  withNodeUnderTest (forecastingOnly committee range) nullTracers nodeDBs leiosDB body
+  withNodeUnderTest (forecastingOnly committee maxBound range) nullTracers nodeDBs leiosDB body
 
 -- | 'withNode' over the given LeiosDB, which a test can fill before the node
 -- starts.
 withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeOver leiosDB body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (forecastingOnly emptyLeiosCommittee 100000) nullTracers nodeDBs leiosDB body
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
 
--- | The configuration of a node whose ledger view has this committee and
--- forecasts this many slots past its immutable tip.
-forecastingOnly :: LeiosCommittee -> SlotNo -> NodeUnderTestConfig
-forecastingOnly committee range =
+-- | The configuration of a node whose ledger view has this committee and quorum
+-- stake threshold and forecasts this many slots past its immutable tip.
+forecastingOnly :: LeiosCommittee -> UnitInterval -> SlotNo -> NodeUnderTestConfig
+forecastingOnly committee quorumStakeThreshold range =
   defaultNodeUnderTestConfig
     k
     LeiosTestLedgerConfig
@@ -388,7 +402,7 @@ forecastingOnly committee range =
       , ltlcLeios =
           MkLeiosLedgerView
             { llvCommittee = committee
-            , llvQuorumStakeThreshold = maxBound
+            , llvQuorumStakeThreshold = quorumStakeThreshold
             , llvAnnouncementPeriod = Milliseconds32 1000
             , llvVotePeriod = Milliseconds32 4000
             , llvDiffusionPeriod = Milliseconds32 1000
