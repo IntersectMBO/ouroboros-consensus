@@ -102,6 +102,7 @@ library
     Ouroboros.Consensus.Block.NestedContent
     Ouroboros.Consensus.Block.RealPoint
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+    Ouroboros.Consensus.Block.SupportsLeios
     Ouroboros.Consensus.Block.SupportsMetrics
     Ouroboros.Consensus.Block.SupportsPeras
     Ouroboros.Consensus.Block.SupportsProtocol
@@ -1678,6 +1679,7 @@ library cardano
     cardano-binary,
     cardano-crypto,
     cardano-crypto-class:cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.10,
     cardano-ledger-alonzo ^>=1.17,

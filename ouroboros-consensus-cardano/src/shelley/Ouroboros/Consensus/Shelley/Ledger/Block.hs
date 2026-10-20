@@ -65,6 +65,7 @@ import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
+import Data.Maybe.Strict (isSJust, strictMaybeToMaybe)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
@@ -232,10 +233,14 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
-    bodyContainsCert = blockBodyContainsLeiosCert blockBody
+    bodyContainsCert = isSJust (blockBodyLeiosCert blockBody)
     bodyContainsTxs = not (null (blockBody ^. SL.txSeqBlockBodyL))
 
   headerIsEBB = const Nothing
+
+instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
+  blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
+    strictMaybeToMaybe (blockBodyLeiosCert blockBody)
 
 mkShelleyHeader ::
   ShelleyCompatible proto era =>

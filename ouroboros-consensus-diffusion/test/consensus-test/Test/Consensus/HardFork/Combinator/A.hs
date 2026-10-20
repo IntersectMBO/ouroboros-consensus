@@ -578,6 +578,9 @@ instance NodeInitStorage BlockA where
 instance BlockSupportsMetrics BlockA where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsLeios BlockA where
+  blockLeiosCert = defaultBlockLeiosCert
+
 deriving via
   SelectViewDiffusionPipelining BlockA
   instance
