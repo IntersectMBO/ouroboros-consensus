@@ -756,6 +756,7 @@ instance ValidateEnvelope TestBlock where
 
 instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
 instance LedgerStateSupportsPeras (LedgerState TestBlock)

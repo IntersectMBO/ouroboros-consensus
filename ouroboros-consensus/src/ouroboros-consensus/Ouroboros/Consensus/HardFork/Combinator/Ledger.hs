@@ -472,6 +472,28 @@ instance
         WrapLedgerView $
           protocolLedgerView (completeLedgerConfig' ei cfg) st
 
+  ledgerViewAtTip
+    ledgerCfg@HardForkLedgerConfig{..}
+    (HardForkLedgerState ledgerSt) =
+      HardForkLedgerView
+        { hardForkLedgerViewTransition =
+            State.mostRecentTransitionInfo ledgerCfg ledgerSt
+        , hardForkLedgerViewPerEra =
+            hczipWith proxySingle viewOne cfgs ledgerSt
+        }
+     where
+      cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei = State.epochInfoLedger ledgerCfg ledgerSt
+
+      viewOne ::
+        SingleEraBlock blk =>
+        WrapPartialLedgerConfig blk ->
+        Flip LedgerState mk blk ->
+        WrapLedgerView blk
+      viewOne cfg (Flip st) =
+        WrapLedgerView $
+          ledgerViewAtTip (completeLedgerConfig' ei cfg) st
+
   ledgerViewForecastAt
     ledgerCfg@HardForkLedgerConfig{..}
     (HardForkLedgerState ledgerSt) =

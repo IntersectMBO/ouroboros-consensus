@@ -283,6 +283,11 @@ instance LedgerSupportsProtocol ByronBlock where
       . CC.getDelegationMap
       . tickedByronLedgerState
 
+  ledgerViewAtTip _cfg =
+    toPBftLedgerView
+      . CC.getDelegationMap
+      . byronLedgerState
+
   -- Create a forecast of the delegation state
   --
   -- We can return forecasts for slots in the @[NOW .. NOW+2k)@ window, where

@@ -560,6 +560,7 @@ instance ValidateEnvelope LeiosTestBlock
 
 instance LedgerSupportsProtocol LeiosTestBlock where
   protocolLedgerView cfg _st = ltlcLeios cfg
+  ledgerViewAtTip cfg _st = ltlcLeios cfg
   ledgerViewForecastAt cfg st =
     constantForecastInRange (Just (ltlcForecastRange cfg)) (ltlcLeios cfg) (getTipSlot st)
 

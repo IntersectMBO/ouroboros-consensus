@@ -577,6 +577,11 @@ instance Bridge m a => LedgerSupportsProtocol (DualBlock m a) where
       (dualLedgerConfigMain cfg)
       (tickedDualLedgerStateMain state)
 
+  ledgerViewAtTip cfg state =
+    ledgerViewAtTip
+      (dualLedgerConfigMain cfg)
+      (dualLedgerStateMain state)
+
   ledgerViewForecastAt cfg state =
     ledgerViewForecastAt
       (dualLedgerConfigMain cfg)
