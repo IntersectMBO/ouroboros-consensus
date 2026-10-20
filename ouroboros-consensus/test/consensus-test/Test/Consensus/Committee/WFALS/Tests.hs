@@ -6,9 +6,10 @@
 -- | Test properties for the weighted Fait-Accompli implementation using TestCrypto.
 module Test.Consensus.Committee.WFALS.Tests (tests) where
 
-import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.BaseTypes hiding ((==>))
+import Data.Containers.ListUtils (nubOrd)
 import Data.Function (on)
-import Data.List (intercalate, sortOn)
+import Data.List (intercalate, partition, sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
@@ -34,6 +35,7 @@ import Ouroboros.Consensus.Committee.Types
   ( LedgerStake (..)
   , PoolId
   , TargetCommitteeSize (..)
+  , VoteWeight (..)
   )
 import Ouroboros.Consensus.Committee.WFA
   ( NonPersistentCommitteeSize (..)
@@ -62,7 +64,11 @@ import Test.QuickCheck
   , forAll
   , forAllShow
   , frequency
+  , once
   , tabulate
+  , (.&&.)
+  , (===)
+  , (==>)
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
@@ -71,6 +77,7 @@ import Test.Util.Committee
   , genEpochNonce
   , genPools
   , mkBucket
+  , mkPoolId
   , onError
   , tabulateNumPools
   , tabulatePoolStake
@@ -93,6 +100,12 @@ tests =
     , testProperty
         "prop_forgeCert_verifyCert"
         prop_forgeCert_verifyCert
+    , testProperty
+        "prop_eligiblePartyVoteWeight_example"
+        (once prop_eligiblePartyVoteWeight_example)
+    , testProperty
+        "prop_nonPersistentVoteWeightProportionalToNumSeats"
+        prop_nonPersistentVoteWeightProportionalToNumSeats
     ]
 
 -- | If a pool is entitled to vote in a given committee, the vote it casts
@@ -299,6 +312,249 @@ prop_forgeCert_verifyCert =
                             ]
                         )
                         $ cmpWitnesses originalWitnesses witnessesFromCert
+
+-- | Regression test for the vote weight of committee members
+--
+--  * Total stake: 1000
+--  * Persistent voter A has 600.
+--  * Non-persistent candidates have 400 in total, among them B has 50 and J
+--    has 20.
+--  * The target is 4 non-persistent seats, so each seat is worth 400 / 4 = 100.
+--  * The lottery gives B 3 seats, J 1 seat, and no seat to anyone else.
+--
+-- The vote weights should then be:
+--
+--  * A (persistent): 600 / 1000 = 0.6
+--  * B (3 seats):    3 * 100 / 1000 = 0.3
+--  * J (1 seat):     1 * 100 / 1000 = 0.1
+--
+-- adding up to exactly 1, since the lottery granted (in that case) exactly
+-- the targeted number of non-persistent seats.
+--
+-- The committee membership and seats are not chosen by hand: they result from
+-- the stake distribution and from the VRF outputs of the voters. The keys,
+-- epoch nonce and election ID used below were found by searching for an
+-- election producing the lottery outcome above.
+--
+-- If this outcome changes (e.g. after a change in the crypto internals or in
+-- the local sortition), a new suitable election ID can be found by running the
+-- following script in @cabal repl ouroboros-consensus:test:consensus-test@
+-- (keep the stakes, key seeds, epoch nonce and target committee size in sync
+-- with the test):
+--
+-- > :set -XTypeApplications -XDataKinds
+-- > import Data.Word (Word64)
+-- > import qualified Data.Map.Strict as Map
+-- > import Cardano.Ledger.BaseTypes (mkNonceFromNumber, unNonZero)
+-- > import Ouroboros.Consensus.Committee.Class
+-- > import Ouroboros.Consensus.Committee.LS
+-- > import Ouroboros.Consensus.Committee.Types
+-- > import Ouroboros.Consensus.Committee.WFA
+-- > import Ouroboros.Consensus.Committee.WFALS
+-- > import Test.Util.Committee
+-- > import qualified Test.Consensus.Committee.TestCrypto as TestCrypto
+-- > import Test.Consensus.Committee.TestCrypto (TestCrypto)
+-- > :{
+-- > let stakes = [("A", 600), ("B", 50), ("C", 50), ("D", 50), ("E", 50), ("F", 50), ("G", 50), ("H", 50), ("I", 30), ("J", 20)] :: [(String, Rational)]
+-- >     pools = Map.fromList [ (mkPoolId name, (sk, pk, LedgerStake stake)) | (seed, (name, stake)) <- zip [0 ..] stakes, let (sk, pk) = TestCrypto.mkDeterministicKeyPair seed ]
+-- >     Right stakeDistr = mkExtWFAStakeDistr unfairWFATiebreaker (Map.map (\(_, pk, stake) -> (stake, pk)) pools)
+-- >     Right committee = mkVotingCommittee @TestCrypto @WFALS (WFALSVotingCommitteeInput (mkNonceFromNumber 0) (TargetCommitteeSize 5) stakeDistr)
+-- >     membership electionId name =
+-- >       let (sk, _, _) = pools Map.! mkPoolId name
+-- >        in case checkShouldVote committee (mkPoolId name) sk electionId of
+-- >             Right Nothing -> "none"
+-- >             Right (Just WFALSPersistentMember{}) -> "persistent"
+-- >             Right (Just (WFALSNonPersistentMember _ _ _ numSeats)) -> show (unLocalSortitionNumSeats (unNonZero numSeats))
+-- >             Left err -> error (show err)
+-- >     expected = [("A", "persistent"), ("B", "3"), ("J", "1")] <> [ (name, "none") | name <- ["C", "D", "E", "F", "G", "H", "I"] ]
+-- > :}
+-- > take 1 [ electionId | electionId <- [0 ..] :: [Word64], all (\(name, m) -> membership electionId name == m) expected ]
+--
+-- NOTE: the non-persistent stake is purposely spread over many candidates.
+-- If a single candidate held a large share of it (e.g. 300 out of 400), the
+-- weighted Fait-Accompli scheme would grant it a persistent seat instead.
+prop_eligiblePartyVoteWeight_example :: Property
+prop_eligiblePartyVoteWeight_example = do
+  let pools =
+        Map.fromList
+          [ (mkPoolId name, (privateKey, publicKey, LedgerStake stake))
+          | (seed, (name, stake)) <- zip [0 ..] stakes
+          , let (privateKey, publicKey) = TestCrypto.mkDeterministicKeyPair seed
+          ]
+  let extWFAStakeDistr =
+        mkExtWFAStakeDistr
+          unfairWFATiebreaker
+          (Map.map (\(_, pubKey, stake) -> (stake, pubKey)) pools)
+          `onError` \err ->
+            error ("mkExtWFAStakeDistr failed: " <> show err)
+  let committee =
+        mkVotingCommittee @TestCrypto @WFALS
+          ( WFALSVotingCommitteeInput
+              epochNonce
+              (TargetCommitteeSize 5)
+              extWFAStakeDistr
+          )
+          `onError` \err ->
+            error ("mkVotingCommittee failed: " <> show err)
+  let witnesses =
+        Map.fromList
+          [ (name, witness)
+          | (name, _) <- stakes
+          , let (privateKey, _, _) = pools Map.! mkPoolId name
+          , Just witness <-
+              [ checkShouldVote
+                  committee
+                  (mkPoolId name)
+                  privateKey
+                  electionId
+                  `onError` \err ->
+                    error ("checkShouldVote failed: " <> show err)
+              ]
+          ]
+  let weights =
+        Map.map (eligiblePartyVoteWeight committee) witnesses
+  (persistentCommitteeSize committee === PersistentCommitteeSize 1)
+    .&&. (nonPersistentCommitteeSize committee === NonPersistentCommitteeSize 4)
+    .&&. ( Map.map showMembership witnesses
+             === Map.fromList
+               [ ("A", "persistent")
+               , ("B", "non-persistent with 3 seat(s)")
+               , ("J", "non-persistent with 1 seat(s)")
+               ]
+         )
+    .&&. ( weights
+             === Map.fromList
+               [ ("A", VoteWeight (6 / 10))
+               , ("B", VoteWeight (3 / 10))
+               , ("J", VoteWeight (1 / 10))
+               ]
+         )
+    .&&. (sum (Map.elems weights) === VoteWeight 1)
+ where
+  epochNonce = mkNonceFromNumber 0
+  electionId = 4669
+
+  stakes =
+    [ ("A", 600)
+    , ("B", 50)
+    , ("C", 50)
+    , ("D", 50)
+    , ("E", 50)
+    , ("F", 50)
+    , ("G", 50)
+    , ("H", 50)
+    , ("I", 30)
+    , ("J", 20)
+    ]
+
+  showMembership :: EligibilityWitness TestCrypto WFALS -> String
+  showMembership = \case
+    WFALSPersistentMember{} ->
+      "persistent"
+    WFALSNonPersistentMember _ _ _ numSeats ->
+      "non-persistent with "
+        <> show (unLocalSortitionNumSeats (unNonZero numSeats))
+        <> " seat(s)"
+
+-- | The vote weight of a non-persistent voter is proportional to the number of
+-- non-persistent seats it obtained, regardless of its stake: all non-persistent
+-- voters of a given election get the same vote weight per seat.
+--
+-- The only exception are /outstanding/ voters, who obtained so many seats that
+-- their vote weight would exceed 1. Their vote weight must be clamped to
+-- exactly 1 instead.
+--
+-- For the proportionality check to be meaningful, we require at least two
+-- regular (i.e. non-outstanding) non-persistent voters.
+prop_nonPersistentVoteWeightProportionalToNumSeats :: Property
+prop_nonPersistentVoteWeightProportionalToNumSeats =
+  forAll (genPools 1000 TestCrypto.genKeyPair) $ \pools ->
+    forAll (genTargetCommitteeSize pools) $ \targetCommitteeSize ->
+      forAll genEpochNonce $ \epochNonce ->
+        forAll TestCrypto.genElectionId $ \electionId -> do
+          let extWFAStakeDistr =
+                mkExtWFAStakeDistr
+                  unfairWFATiebreaker
+                  (Map.map (\(_, pubKey, stake) -> (stake, pubKey)) pools)
+                  `onError` \err ->
+                    error ("mkExtWFAStakeDistr failed: " <> show err)
+          let committee =
+                mkVotingCommittee @TestCrypto @WFALS
+                  ( WFALSVotingCommitteeInput
+                      epochNonce
+                      targetCommitteeSize
+                      extWFAStakeDistr
+                  )
+                  `onError` \err ->
+                    error ("mkVotingCommittee failed: " <> show err)
+          -- Stake, number of seats and vote weight of the non-persistent voters
+          -- elected by local sortition
+          let nonPersistentVoters =
+                [ ( stake
+                  , unLocalSortitionNumSeats (unNonZero numSeats)
+                  , eligiblePartyVoteWeight committee witness
+                  )
+                | (poolId, (privateKey, _, _)) <- Map.toList pools
+                , Just witness@(WFALSNonPersistentMember _ stake _ numSeats) <-
+                    [ checkShouldVote
+                        committee
+                        poolId
+                        privateKey
+                        electionId
+                        `onError` \err ->
+                          error ("checkShouldVote failed: " <> show err)
+                    ]
+                ]
+          let (outstandingVoters, regularVoters) =
+                partition (\(_, _, weight) -> weight >= 1) nonPersistentVoters
+          let numDistinct f =
+                length . nubOrd . fmap f
+          let weightPerSeat (_, numSeats, VoteWeight weight) =
+                weight / fromIntegral numSeats
+          let showVoters voters =
+                show
+                  [ (stake, numSeats, weight, weightPerSeat voter)
+                  | voter@(stake, numSeats, weight) <- voters
+                  ]
+          tabulateNumPools pools
+            . tabulateTargetCommitteeSize targetCommitteeSize
+            . tabulate
+              "Distinct numbers of seats among non-persistent voters"
+              [show (numDistinct (\(_, numSeats, _) -> numSeats) nonPersistentVoters)]
+            . tabulate
+              "Non-persistent voters with different stakes"
+              [show (numDistinct (\(stake, _, _) -> stake) nonPersistentVoters > 1)]
+            . tabulate
+              "Outstanding non-persistent voters"
+              [show (not (null outstandingVoters))]
+            -- Outstanding voters are extremely rare, so we report everything
+            -- needed to reproduce such a case whenever we encounter one.
+            . tabulate
+              "Parameters reproducing outstanding non-persistent voters"
+              [ unlines
+                  [ "epoch nonce: " <> show epochNonce
+                  , "election ID: " <> show electionId
+                  , "target committee size: " <> show targetCommitteeSize
+                  , "outstanding voters [(stake, seats, weight, weight per seat)]: "
+                      <> showVoters outstandingVoters
+                  , "pools [(pool ID, (private key, public key, stake))]: "
+                      <> show (Map.toList pools)
+                  ]
+              | not (null outstandingVoters)
+              ]
+            $ (length regularVoters >= 2)
+            ==> counterexample
+              ( "outstanding voters with a vote weight different from 1 "
+                  <> "[(stake, seats, weight, weight per seat)]: "
+                  <> showVoters outstandingVoters
+              )
+              (all (\(_, _, weight) -> weight == 1) outstandingVoters)
+              .&&. counterexample
+                ( "regular voters with different vote weights per seat "
+                    <> "[(stake, seats, weight, weight per seat)]: "
+                    <> showVoters regularVoters
+                )
+                (numDistinct weightPerSeat regularVoters <= 1)
 
 -- * Generators
 
