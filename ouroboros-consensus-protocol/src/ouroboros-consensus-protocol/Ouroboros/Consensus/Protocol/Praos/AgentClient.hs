@@ -139,8 +139,9 @@ class (MonadFail m, Show (Addr m)) => MonadKESAgent m where
 
 -- | A callback the node installs to persist the evolved KES signing key, see
 -- 'KESPersistCallback'. It lives in 'IO' because the node implements it; the
--- hot key reaches it through 'runKESPersistHook'. The hot key does not invoke
--- it yet; the field that carries it is accepted and ignored for now.
+-- hot key reaches it through 'runKESPersistHook'. A file-based hot key
+-- ('Ouroboros.Consensus.Protocol.Praos.Common.PraosCredentialsFile') invokes
+-- it once per evolution with a serialised copy of the evolved key.
 newtype KESPersistHook
   = KESPersistHook (OCert.KESPeriod -> MLockedForeignPtr CChar -> Int -> IO ())
   deriving NoThunks via OnlyCheckWhnfNamed "KESPersistHook" KESPersistHook

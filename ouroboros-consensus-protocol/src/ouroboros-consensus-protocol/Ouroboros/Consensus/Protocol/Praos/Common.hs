@@ -325,8 +325,11 @@ data PraosCredentialsSource c where
   -- key's ownership with the hot key, which erases it on every evolution and
   -- on finalisation.
   --
-  -- The optional 'KESPersistHook' is reserved for persisting the evolved key
-  -- back to the file; it is not invoked yet.
+  -- The optional 'KESPersistHook' is invoked by the hot key after every
+  -- evolution with a serialised copy of the evolved key (see
+  -- 'HotKey.KESPersistCallback'); the node uses it to persist the evolved key
+  -- back to the file, so that a restart does not start from a stale, earlier
+  -- evolution.
   PraosCredentialsFile ::
     OCert.OCert c -> FilePath -> Maybe KESPersistHook -> PraosCredentialsSource c
 
@@ -406,7 +409,7 @@ instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = d
   HotKey.mkDynamicHotKey
     maxKESEvolutions
     (Just $ runKESAgentClient tr path)
-instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path _persistHook) =
+instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path persistHook) =
   withKESKeyFileLocked path $ \filePtr fileLen -> do
     -- Parse the envelope in place. Only offsets, lengths and the period leave
     -- the file buffer; the key bytes come back in a locked buffer of their
@@ -455,7 +458,8 @@ instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path 
         actual <- firstM (signsAt sk) [e | e <- [0 .. maxKESEvolutions - 1], e /= claimed]
         throwLoad $ maybe KESFileKeyMismatch (KESFileStructureMismatch claimed) actual
 
-      HotKey.mkHotKeyAtEvolution
+      HotKey.mkHotKeyAtEvolutionWithPersist
+        (runKESPersistHook <$> persistHook)
         (fromIntegral claimed)
         ocert
         sk

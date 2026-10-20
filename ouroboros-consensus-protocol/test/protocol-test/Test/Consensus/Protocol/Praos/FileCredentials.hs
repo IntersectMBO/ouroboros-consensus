@@ -20,10 +20,15 @@ module Test.Consensus.Protocol.Praos.FileCredentials (tests) where
 
 import Cardano.Crypto.DSIGN (genKeyDSIGN, signedDSIGN)
 import qualified Cardano.Crypto.KES as KES
+import Cardano.Crypto.KES.Locked (deserialiseSignKeyKESFromLockedBuf)
 import Cardano.Crypto.Libsodium.Hex (HexDecodeError (..))
 import Cardano.Crypto.Libsodium.MLockedSeed
   ( mlockedSeedFinalize
   , mlockedSeedNewRandom
+  )
+import Cardano.Crypto.Libsodium.Memory
+  ( finalizeMLockedForeignPtr
+  , withMLockedForeignPtr
   )
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Cardano.Ledger.Keys (DSIGN)
@@ -40,12 +45,14 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BC
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
 import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey (..), KESInfo (..))
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESPersistHook (..))
 import Ouroboros.Consensus.Protocol.Praos.Common
 import System.FilePath ((</>))
 import System.IO.Error (isDoesNotExistError)
@@ -60,6 +67,7 @@ tests =
     [ testCase "loads a cardano-cli key file" test_loadsCardanoCliLayout
     , testCase "accepts other JSON whitespace and field order" test_loadsOtherLayouts
     , testCase "loads a period-carrying key file at its evolution" test_loadsWithPeriodType
+    , testCase "invokes the persist hook after each evolution" test_persistHook
     , testCase "rejects an unknown envelope type" test_rejectsUnknownType
     , testCase "rejects a period before the opcert's start period" test_rejectsPeriodBeforeOCert
     , testCase "rejects a period beyond the opcert's range" test_rejectsEvolutionTooHigh
@@ -215,11 +223,15 @@ withKeyFile contents k =
     k path
 
 load :: OCert StandardCrypto -> FilePath -> IO (HotKey StandardCrypto IO)
-load ocert path =
+load ocert = loadWith ocert Nothing
+
+loadWith ::
+  OCert StandardCrypto -> Maybe KESPersistHook -> FilePath -> IO (HotKey StandardCrypto IO)
+loadWith ocert hook path =
   instantiatePraosCredentials
     maxKESEvolutions
     nullTracer
-    (PraosCredentialsFile ocert path Nothing)
+    (PraosCredentialsFile ocert path hook)
 
 {-------------------------------------------------------------------------------
   Assertions
@@ -324,6 +336,49 @@ test_loadsOtherLayouts = do
   toUpperHex c
     | c >= 'a' && c <= 'f' = toEnum (fromEnum c - 32)
     | otherwise = c
+
+-- | A hot key loaded with a 'KESPersistHook' invokes it, through
+-- 'runKESPersistHook', once per evolution that advanced the key, with the
+-- key's new absolute period and a serialised copy of the evolved key.
+test_persistHook :: Assertion
+test_persistHook = do
+  fx <- genFixture
+  calls <- newIORef []
+  let msg = BS.pack [4, 5, 6] :: ByteString
+      hook = KESPersistHook $ \period buf len -> do
+        -- The buffer is a serialised copy of the key at this period: it
+        -- deserialises and signs for the fixture's verification key at the
+        -- corresponding evolution.
+        let evolution = unKESPeriod period - unKESPeriod startPeriod
+        sk <- withMLockedForeignPtr buf $ \ptr -> deserialiseSignKeyKESFromLockedBuf @TestKES ptr len
+        sig <- KES.signKES () evolution msg sk
+        KES.forgetSignKeyKES sk
+        finalizeMLockedForeignPtr buf
+        let verifies = KES.verifyKES () (fxVerKey fx) evolution msg sig == Right ()
+        atomicModifyIORef' calls (\cs -> (cs ++ [(period, verifies)], ()))
+      expectCalls what expected = readIORef calls >>= assertEqual what expected
+      start = unKESPeriod startPeriod
+  withKeyFile (keyFile fx) $ \path -> do
+    hotKey <- loadWith (fxOCert fx) (Just hook) path
+    expectCalls "no call on load" []
+    evolve hotKey (KESPeriod (start + 1)) >>= \case
+      Updated KESInfo{kesEvolution = e} -> assertEqual "evolved to 1" 1 e
+      UpdateFailed err -> assertFailure $ "evolve failed: " <> show err
+    expectCalls "one call for the first evolution" [(KESPeriod (start + 1), True)]
+    -- The same period again and a period before the start do not call.
+    forM_ [start + 1, start - 3] $ \p ->
+      evolve hotKey (KESPeriod p) >>= \case
+        Updated _ -> pure ()
+        UpdateFailed err -> assertFailure $ "evolve failed: " <> show err
+    expectCalls "no call without an evolution" [(KESPeriod (start + 1), True)]
+    -- A multi-step evolution calls once, with the final period.
+    evolve hotKey (KESPeriod (start + 4)) >>= \case
+      Updated KESInfo{kesEvolution = e} -> assertEqual "evolved to 4" 4 e
+      UpdateFailed err -> assertFailure $ "evolve failed: " <> show err
+    expectCalls
+      "one call for the multi-step evolution"
+      [(KESPeriod (start + 1), True), (KESPeriod (start + 4), True)]
+    finalize hotKey
 
 -- | A period-carrying file loads at the evolution its period amounts to,
 -- for a key that really is at that evolution.

@@ -35,11 +35,14 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey
   , mkEmptyHotKey
   , mkHotKey
   , mkHotKeyAtEvolution
+  , mkHotKeyAtEvolutionWithPersist
   , sign
   ) where
 
+import Cardano.Crypto.DirectSerialise (DirectSerialise)
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.KES as Relative (Period)
+import Cardano.Crypto.KES.Locked (serialiseSignKeyKESToLockedBuf)
 import Cardano.Crypto.Libsodium.Memory (MLockedForeignPtr)
 import Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
@@ -166,10 +169,24 @@ type KESEvolutionInfo = UpdateInfo KESInfo KESEvolutionError
 --
 -- The callback owns the buffer and must erase it (with
 -- 'Cardano.Crypto.Libsodium.Memory.finalizeMLockedForeignPtr') once it is
--- done. The node uses this to persist the evolved key to disk; the 'HotKey'
--- does not invoke it yet.
+-- done. The node uses this to persist the evolved key to disk. A 'HotKey'
+-- built with 'mkHotKeyAtEvolutionWithPersist' invokes it once per 'evolve'
+-- that advanced the key, after the key has been evolved and the hot key's
+-- lock released, in the thread that called 'evolve'. It is not invoked when
+-- 'evolve' did not change the key (same period, a period before the start, a
+-- period the key is already past, a poisoned or expired key). The callback
+-- should not throw; an exception propagates to the caller of 'evolve' after
+-- the key has already been evolved.
 type KESPersistCallback m =
   Absolute.KESPeriod -> MLockedForeignPtr CChar -> Int -> m ()
+
+-- | How a 'HotKey' hands its evolved key to a 'KESPersistCallback': a
+-- serialiser for the key (into a fresh locked buffer the callback will own)
+-- and the callback itself.
+data Persister c m = Persister
+  { persistSerialise :: KES.SignKeyKES (KES c) -> m (MLockedForeignPtr CChar, Int)
+  , persistCallback :: KESPersistCallback m
+  }
 
 -- | API to interact with the key.
 data HotKey c m = HotKey
@@ -275,9 +292,45 @@ mkHotKeyAtEvolution ::
   m (HotKey c m)
 mkHotKeyAtEvolution evolution ocert initKey startPeriod maxKESEvolutions =
   mkHotKeyWith
+    Nothing
     (Just (ocert, initKey, evolution, startPeriod))
     maxKESEvolutions
     Nothing
+
+-- | 'mkHotKeyAtEvolution' with an optional 'KESPersistCallback': after every
+-- 'evolve' that advanced the key, the new key is serialised into a fresh
+-- locked buffer (a copy; the hot key keeps its own) and the callback is
+-- invoked with the key's absolute period and that buffer, outside the hot
+-- key's lock. The serialisation happens while the lock is held, so the
+-- buffer always holds the key the hot key had right after that evolution. If
+-- serialising fails, the evolution still succeeds and the callback is not
+-- invoked for it.
+--
+-- With 'Nothing' this is exactly 'mkHotKeyAtEvolution'.
+mkHotKeyAtEvolutionWithPersist ::
+  forall m c.
+  (Crypto c, IOLike m, DirectSerialise (KES.SignKeyKES (KES c))) =>
+  Maybe (KESPersistCallback m) ->
+  Word ->
+  OCert.OCert c ->
+  KES.SignKeyKES (KES c) ->
+  -- | Start period
+  Absolute.KESPeriod ->
+  -- | Max KES evolutions
+  Word64 ->
+  m (HotKey c m)
+mkHotKeyAtEvolutionWithPersist mCallback evolution ocert initKey startPeriod maxKESEvolutions =
+  mkHotKeyWith
+    (mkPersister <$> mCallback)
+    (Just (ocert, initKey, evolution, startPeriod))
+    maxKESEvolutions
+    Nothing
+ where
+  mkPersister callback =
+    Persister
+      { persistSerialise = serialiseSignKeyKESToLockedBuf
+      , persistCallback = callback
+      }
 
 -- | Create a new 'HotKey' and initialize it to a poisoned state (containing no
 -- valid KES sign key).
@@ -321,19 +374,21 @@ mkDynamicHotKey ::
   Word64 ->
   Maybe (KeyProducer c m) ->
   m (HotKey c m)
-mkDynamicHotKey = mkHotKeyWith Nothing
+mkDynamicHotKey = mkHotKeyWith Nothing Nothing
 
--- | The most general function for creating a new 'HotKey', accepting an initial
--- set of credentials, a key producer action, and a custom finalizer.
+-- | The most general function for creating a new 'HotKey', accepting an
+-- optional persister for evolved keys, an initial set of credentials and a
+-- key producer action.
 mkHotKeyWith ::
   forall m c.
   (Crypto c, IOLike m) =>
+  Maybe (Persister c m) ->
   Maybe (OCert.OCert c, KES.SignKeyKES (KES c), Word, Absolute.KESPeriod) ->
   -- | Max KES evolutions
   Word64 ->
   Maybe (KeyProducer c m) ->
   m (HotKey c m)
-mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay = do
+mkHotKeyWith persisterMay initialStateMay maxKESEvolutions keyThreadMay = do
   varKESState <- newMVar initKESState
 
   let set newOCert newKey evolution startPeriod =
@@ -366,7 +421,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay = do
 
   return
     HotKey
-      { evolve = evolveKey varKESState
+      { evolve = evolveKey persisterMay varKESState
       , getInfo = kesStateInfo <$> readMVar varKESState
       , getOCertMaybe =
           kesStateKey <$> readMVar varKESState >>= \case
@@ -429,48 +484,77 @@ poisonState kesState = do
 -- period is after the key's period, we evolve the key and return 'Updated'.
 --
 -- When the key is poisoned, we always return 'UpdateFailed'.
+--
+-- When the key was evolved and a persister is given, the evolved key is
+-- serialised while the state is still locked and the persist callback is
+-- invoked with the result once the lock has been released.
 evolveKey ::
   forall m c.
   (IOLike m, KES.ContextKES (KES c) ~ (), KES.KESAlgorithm (KES c)) =>
-  StrictMVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
-evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
-  let info = kesStateInfo kesState
-  -- We mask the evolution process because if we got interrupted after
-  -- calling 'forgetSignKeyKES', which destructively updates the current
-  -- signing key, we would leave an erased key in the state, which might
-  -- cause a segfault when used afterwards.
-  uninterruptibleMask_ $ case kesStateKey kesState of
-    KESKeyPoisoned ->
-      let err = KESKeyAlreadyPoisoned info targetPeriod
-       in return (kesState, UpdateFailed err)
-    KESKey ocert key -> case kesStatus info targetPeriod of
-      -- When the absolute period is before the start period, we can't
-      -- update the key. 'checkCanForge' will say we can't forge because the
-      -- key is not valid yet.
-      BeforeKESStart{} ->
-        return (kesState, Updated info)
-      -- When the absolute period is after the end period, we can't evolve
-      -- anymore and poison the expired key.
-      AfterKESEnd{} -> do
-        let err = KESCouldNotEvolve info targetPeriod
-        poisonedState <- poisonState kesState
-        return (poisonedState, UpdateFailed err)
-      InKESRange targetEvolution
-        -- No evolving needed
-        | targetEvolution == kesEvolution info ->
-            return (kesState, Updated info)
-        -- The key is already past the target period. It cannot be evolved
-        -- backwards, and signing with the current evolution would produce
-        -- blocks the verifiers reject, so refuse to update and leave the key
-        -- as it is.
-        | targetEvolution < kesEvolution info ->
-            let err = KESKeyFromTheFuture info targetPeriod
-             in return (kesState, UpdateFailed err)
-        -- Evolving needed
-        | otherwise ->
-            (\s' -> (s', Updated (kesStateInfo s')))
-              <$> go targetEvolution info ocert key
+  Maybe (Persister c m) ->
+  StrictMVar m (KESState c) ->
+  Absolute.KESPeriod ->
+  m KESEvolutionInfo
+evolveKey persisterMay varKESState targetPeriod = do
+  (result, persist) <- modifyMVar varKESState $ \kesState -> do
+    let info = kesStateInfo kesState
+    -- We mask the evolution process because if we got interrupted after
+    -- calling 'forgetSignKeyKES', which destructively updates the current
+    -- signing key, we would leave an erased key in the state, which might
+    -- cause a segfault when used afterwards.
+    uninterruptibleMask_ $ case kesStateKey kesState of
+      KESKeyPoisoned ->
+        let err = KESKeyAlreadyPoisoned info targetPeriod
+         in return (kesState, (UpdateFailed err, Nothing))
+      KESKey ocert key -> case kesStatus info targetPeriod of
+        -- When the absolute period is before the start period, we can't
+        -- update the key. 'checkCanForge' will say we can't forge because the
+        -- key is not valid yet.
+        BeforeKESStart{} ->
+          return (kesState, (Updated info, Nothing))
+        -- When the absolute period is after the end period, we can't evolve
+        -- anymore and poison the expired key.
+        AfterKESEnd{} -> do
+          let err = KESCouldNotEvolve info targetPeriod
+          poisonedState <- poisonState kesState
+          return (poisonedState, (UpdateFailed err, Nothing))
+        InKESRange targetEvolution
+          -- No evolving needed
+          | targetEvolution == kesEvolution info ->
+              return (kesState, (Updated info, Nothing))
+          -- The key is already past the target period. It cannot be evolved
+          -- backwards, and signing with the current evolution would produce
+          -- blocks the verifiers reject, so refuse to update and leave the key
+          -- as it is.
+          | targetEvolution < kesEvolution info ->
+              let err = KESKeyFromTheFuture info targetPeriod
+               in return (kesState, (UpdateFailed err, Nothing))
+          -- Evolving needed
+          | otherwise -> do
+              kesState' <- go targetEvolution info ocert key
+              persist <- serialiseForPersist kesState'
+              return (kesState', (Updated (kesStateInfo kesState'), persist))
+  -- The callback runs after the lock has been released and outside the mask,
+  -- so a slow or throwing callback cannot hold up or poison the hot key.
+  sequence_ persist
+  return result
  where
+  -- Serialise the evolved key for the persister, still under the lock, and
+  -- return the callback invocation to run once the lock is released. A
+  -- failure to serialise must not fail the evolution: the state's previous
+  -- key has already been erased, so 'modifyMVar' restoring it would leave a
+  -- dangling key behind. Instead the callback is simply not invoked.
+  serialiseForPersist :: KESState c -> m (Maybe (m ()))
+  serialiseForPersist kesState' = case (persisterMay, kesStateKey kesState') of
+    (Just persister, KESKey _ key') ->
+      try (persistSerialise persister key') >>= \case
+        Left (_ :: SomeException) -> return Nothing
+        Right (buf, len) ->
+          return $
+            Just $
+              persistCallback persister (kesAbsolutePeriod (kesStateInfo kesState')) buf len
+    _ -> return Nothing
+
   -- \| PRECONDITION:
   --
   -- > targetEvolution >= curEvolution

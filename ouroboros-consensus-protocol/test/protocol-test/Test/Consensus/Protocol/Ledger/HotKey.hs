@@ -13,9 +13,14 @@ module Test.Consensus.Protocol.Ledger.HotKey (tests) where
 
 import Cardano.Crypto.DSIGN (genKeyDSIGN, signedDSIGN)
 import qualified Cardano.Crypto.KES as KES
+import Cardano.Crypto.KES.Locked (deserialiseSignKeyKESFromLockedBuf)
 import Cardano.Crypto.Libsodium.MLockedSeed
   ( mlockedSeedFinalize
   , mlockedSeedNewRandom
+  )
+import Cardano.Crypto.Libsodium.Memory
+  ( finalizeMLockedForeignPtr
+  , withMLockedForeignPtr
   )
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Cardano.Ledger.Keys (DSIGN)
@@ -25,11 +30,16 @@ import Cardano.Protocol.TPraos.OCert
   , OCert (..)
   , OCertSignable (..)
   )
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
-import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey (..), KESInfo (..))
+import Ouroboros.Consensus.Protocol.Ledger.HotKey
+  ( HotKey (..)
+  , KESInfo (..)
+  , KESPersistCallback
+  )
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -43,6 +53,9 @@ tests =
     , testCase "before the start period is unchanged" test_beforeStartUnchanged
     , testCase "finalize poisons a file-mode key" test_finalizePoisons
     , testCase "finalize is idempotent" test_finalizeIdempotent
+    , testCase "persist callback runs once per advancing evolve" test_persistCallback
+    , testCase "persist callback is not run when the key did not change" test_persistCallbackNoChange
+    , testCase "persist callback sees the final key of a multi-step evolve" test_persistCallbackMultiStep
     ]
 
 {-------------------------------------------------------------------------------
@@ -64,16 +77,43 @@ maxKESEvolutions = 64
 -- passed along so tests can check signatures.
 withTestHotKey ::
   (HotKey StandardCrypto IO -> KES.VerKeyKES TestKES -> IO a) -> IO a
-withTestHotKey k = do
+withTestHotKey = withTestHotKeyPersist Nothing
+
+-- | As 'withTestHotKey', with an optional persist callback.
+withTestHotKeyPersist ::
+  Maybe (KESPersistCallback IO) ->
+  (HotKey StandardCrypto IO -> KES.VerKeyKES TestKES -> IO a) ->
+  IO a
+withTestHotKeyPersist callback k = do
   seed <- mlockedSeedNewRandom
   sk <- KES.genKeyKES @TestKES seed
   mlockedSeedFinalize seed
   vk <- KES.deriveVerKeyKES sk
   -- The hot key takes ownership of @sk@ and erases it when poisoned.
-  hotKey <- HotKey.mkHotKey (mkOCert vk) sk startPeriod maxKESEvolutions
+  hotKey <-
+    HotKey.mkHotKeyAtEvolutionWithPersist callback 0 (mkOCert vk) sk startPeriod maxKESEvolutions
   r <- k hotKey vk
   finalize hotKey
   pure r
+
+-- | A persist callback that records, per call, the period it was given and
+-- whether the buffer held a key that signs for the verification key at the
+-- evolution that period amounts to. It takes ownership of the buffer, as the
+-- contract requires.
+recordingCallback ::
+  KES.VerKeyKES TestKES -> IO (KESPersistCallback IO, IO [(KESPeriod, Bool)])
+recordingCallback vk = do
+  calls <- newIORef []
+  let msg = BS.pack [7, 8, 9] :: ByteString
+      callback period buf len = do
+        let evolution = unKESPeriod period - unKESPeriod startPeriod
+        sk <- withMLockedForeignPtr buf $ \ptr -> deserialiseSignKeyKESFromLockedBuf @TestKES ptr len
+        sig <- KES.signKES () evolution msg sk
+        KES.forgetSignKeyKES sk
+        finalizeMLockedForeignPtr buf
+        let verifies = KES.verifyKES () vk evolution msg sig == Right ()
+        atomicModifyIORef' calls (\cs -> (cs ++ [(period, verifies)], ()))
+  pure (callback, readIORef calls)
 
 -- | An operational certificate for the given hot verification key. Only its
 -- shape matters to the 'HotKey'; the cold key is a fixed throwaway key.
@@ -201,3 +241,79 @@ test_finalizeIdempotent = withTestHotKey $ \hotKey _vk -> do
   finalize hotKey
   finalize hotKey
   isPoisoned hotKey >>= assertBool "poisoned after double finalize"
+
+{-------------------------------------------------------------------------------
+  Persisting
+-------------------------------------------------------------------------------}
+
+-- | Run a test with a fresh hot key at evolution 0 whose persist callback
+-- records its calls (see 'recordingCallback').
+withRecordingHotKey ::
+  (HotKey StandardCrypto IO -> IO [(KESPeriod, Bool)] -> IO a) -> IO a
+withRecordingHotKey k = do
+  seed <- mlockedSeedNewRandom
+  sk <- KES.genKeyKES @TestKES seed
+  mlockedSeedFinalize seed
+  vk <- KES.deriveVerKeyKES sk
+  (callback, getCalls) <- recordingCallback vk
+  hotKey <-
+    HotKey.mkHotKeyAtEvolutionWithPersist (Just callback) 0 (mkOCert vk) sk startPeriod maxKESEvolutions
+  r <- k hotKey getCalls
+  finalize hotKey
+  pure r
+
+-- | Evolving 10 -> 12 invokes the callback exactly once, with period 12 and
+-- a buffer that deserialises to the key at evolution 2.
+test_persistCallback :: Assertion
+test_persistCallback = withRecordingHotKey $ \hotKey getCalls -> do
+  getCalls >>= assertEqual "no call before any evolution" []
+  void $ evolveUpdated hotKey 12
+  getCalls >>= assertEqual "one call, period 12, key at evolution 2" [(KESPeriod 12, True)]
+  -- The hot key still has its own key and signs with it.
+  getInfo hotKey >>= assertEvolution "hot key at evolution 2" 2
+  isPoisoned hotKey >>= assertBool "not poisoned" . not
+
+-- | No call for an evolve that did not advance the key: the same period, a
+-- period the key is already past, a period before the start, a period past
+-- the end (which poisons the key), and any evolve of a poisoned key.
+test_persistCallbackNoChange :: Assertion
+test_persistCallbackNoChange = withRecordingHotKey $ \hotKey getCalls -> do
+  void $ evolveUpdated hotKey 12
+  let afterFirst = [(KESPeriod 12, True)]
+  getCalls >>= assertEqual "one call for 10 -> 12" afterFirst
+
+  void $ evolveUpdated hotKey 12
+  getCalls >>= assertEqual "no call for the same period" afterFirst
+
+  evolve hotKey (KESPeriod 11) >>= \case
+    UpdateFailed HotKey.KESKeyFromTheFuture{} -> pure ()
+    other -> assertFailure $ "expected KESKeyFromTheFuture, got " <> show other
+  getCalls >>= assertEqual "no call for a key from the future" afterFirst
+
+  void $ evolveUpdated hotKey 5
+  getCalls >>= assertEqual "no call for a period before the start" afterFirst
+
+  evolve hotKey (KESPeriod (unKESPeriod startPeriod + maxKESEvolutions)) >>= \case
+    UpdateFailed HotKey.KESCouldNotEvolve{} -> pure ()
+    other -> assertFailure $ "expected KESCouldNotEvolve, got " <> show other
+  isPoisoned hotKey >>= assertBool "poisoned after the end"
+  getCalls >>= assertEqual "no call for a period past the end" afterFirst
+
+  evolve hotKey (KESPeriod 13) >>= \case
+    UpdateFailed HotKey.KESKeyAlreadyPoisoned{} -> pure ()
+    other -> assertFailure $ "expected KESKeyAlreadyPoisoned, got " <> show other
+  getCalls >>= assertEqual "no call for a poisoned key" afterFirst
+
+-- | A multi-step evolve (12 -> 20) invokes the callback once, with the final
+-- period and the final key.
+test_persistCallbackMultiStep :: Assertion
+test_persistCallbackMultiStep = withRecordingHotKey $ \hotKey getCalls -> do
+  void $ evolveUpdated hotKey 12
+  void $ evolveUpdated hotKey 20
+  getCalls
+    >>= assertEqual "one call per advancing evolve" [(KESPeriod 12, True), (KESPeriod 20, True)]
+  forM_ [21, 22] $ \p -> void (evolveUpdated hotKey p)
+  getCalls
+    >>= assertEqual
+      "single steps call once each"
+      [(KESPeriod 12, True), (KESPeriod 20, True), (KESPeriod 21, True), (KESPeriod 22, True)]
