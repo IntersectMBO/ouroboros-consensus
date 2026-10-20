@@ -13,7 +13,6 @@ module Test.Util.Header
 
 import Cardano.Slotting.EpochInfo.API (epochInfoSlotToRelativeTime)
 import Data.Functor.Identity (runIdentity)
-import Data.Maybe.Strict (maybeToStrictMaybe)
 import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
@@ -29,7 +28,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
   , immutableEpochInfo
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (getLeiosLedgerView))
+import Ouroboros.Consensus.Leios.Protocol (trivialLeiosLedgerView)
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -79,8 +78,7 @@ attachSlotTime cfg predecessorSlot hdr =
     , hwtSlotRelativeTime =
         runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
     , hwtPredecessorSlot = predecessorSlot
-    , hwtLeiosLedgerView =
-        maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) ()
+    , hwtLeiosLedgerView = trivialLeiosLedgerView (Proxy @blk)
     }
  where
   ei = immutableEpochInfo cfg

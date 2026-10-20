@@ -323,7 +323,12 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkTestBlockFetchConsensusInterface ::
     STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock))) ->
     BlockFetchClientInterface.ChainDbView m TestBlock ->
-    BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock TestBlock m
+    BlockFetchConsensusInterface
+      PeerId
+      (HeaderWithTime TestBlock)
+      TestBlock
+      (BlockFetchClientInterface.MatchedBlock TestBlock)
+      m
   mkTestBlockFetchConsensusInterface getCandidates chainDbView =
     ( BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
         nullTracer
