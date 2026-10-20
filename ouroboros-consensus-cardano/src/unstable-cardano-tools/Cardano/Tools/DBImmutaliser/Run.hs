@@ -39,7 +39,6 @@ import qualified Dot
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -106,7 +105,6 @@ withDBs ::
   ( IOLike m
   , ConvertRawHash blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , ImmutableDB.ImmutableDbSerialiseConstraints blk
   , VolatileDB.VolatileDbSerialiseConstraints blk
   , NodeInitStorage blk

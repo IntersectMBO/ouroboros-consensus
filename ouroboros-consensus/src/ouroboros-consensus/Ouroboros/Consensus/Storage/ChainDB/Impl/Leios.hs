@@ -66,9 +66,7 @@ import Ouroboros.Consensus.Storage.VolatileDB
 -- | What the block says about Leios endorser blocks, read off its header.
 leiosBlockInfo ::
   forall blk.
-  ( BlockSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
-  ) =>
+  BlockSupportsProtocol blk =>
   BlockConfig blk ->
   blk ->
   LeiosBlockInfo

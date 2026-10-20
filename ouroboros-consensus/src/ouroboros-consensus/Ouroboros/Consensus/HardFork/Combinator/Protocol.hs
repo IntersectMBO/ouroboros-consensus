@@ -27,9 +27,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , HardForkLedgerView
   , HardForkLedgerView_ (..)
 
-    -- * Leios
-  , SingleEraBlockAndLeiosProtocol
-
     -- * Peras
   , SingleEraBlockAndPerasProtocol
 
@@ -443,41 +440,34 @@ deriving instance CanHardFork xs => NoThunks (HardForkValidationErr xs)
   Leios
 -------------------------------------------------------------------------------}
 
--- | Just the conjunction of 'SingleEraBlock' and 'LeiosProtocol' of the block's
--- protocol, as one class, so that 'All' and the SOP combinators can require
--- both.
-class (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockAndLeiosProtocol blk
-
-instance (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockAndLeiosProtocol blk
-
-instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtocol (HardForkProtocol xs) where
+instance CanHardFork xs => LeiosProtocol (HardForkProtocol xs) where
   getLeiosAnnouncement _proxy (OneEraValidateView view) =
-    hcollapse $ hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne view
+    hcollapse $ hcmap proxySingle getOne view
    where
     getOne ::
       forall blk.
-      SingleEraBlockAndLeiosProtocol blk =>
+      SingleEraBlock blk =>
       WrapValidateView blk ->
       K (Maybe LeiosAnnouncement) blk
     getOne (WrapValidateView v) = K $ getLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
   getContainsLeiosCert _proxy (OneEraValidateView view) =
-    hcollapse $ hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne view
+    hcollapse $ hcmap proxySingle getOne view
    where
     getOne ::
       forall blk.
-      SingleEraBlockAndLeiosProtocol blk =>
+      SingleEraBlock blk =>
       WrapValidateView blk ->
       K Bool blk
     getOne (WrapValidateView v) = K $ getContainsLeiosCert (Proxy @(BlockProtocol blk)) v
   validateLeiosAnnouncement = validateAnnouncement
   getLeiosLedgerView _proxy view =
     hcollapse $
-      hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne $
+      hcmap proxySingle getOne $
         State.tip (hardForkLedgerViewPerEra view)
    where
     getOne ::
       forall blk.
-      SingleEraBlockAndLeiosProtocol blk =>
+      SingleEraBlock blk =>
       WrapLedgerView blk ->
       K (Maybe LeiosLedgerView) blk
     getOne (WrapLedgerView v) = K $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) v
@@ -485,7 +475,7 @@ instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtoco
 -- | Like 'update'.
 validateAnnouncement ::
   forall xs.
-  (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) =>
+  CanHardFork xs =>
   ConsensusConfig (HardForkProtocol xs) ->
   OneEraValidateView xs ->
   SlotNo ->
@@ -508,7 +498,7 @@ validateAnnouncement
       Right matched ->
         hcollapse
           . hcizipWith
-            (Proxy @SingleEraBlockAndLeiosProtocol)
+            proxySingle
             ( \index cfg x ->
                 K $ withExcept (injectValidationErr index) $ validateAnnouncementEra slot cfg x
             )
@@ -523,7 +513,7 @@ validateAnnouncement
 
 -- | Like 'updateEra'.
 validateAnnouncementEra ::
-  SingleEraBlockAndLeiosProtocol blk =>
+  SingleEraBlock blk =>
   SlotNo ->
   WrapConsensusConfig blk ->
   Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->

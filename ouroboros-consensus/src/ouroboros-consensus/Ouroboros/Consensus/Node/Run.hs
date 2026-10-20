@@ -34,7 +34,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
@@ -120,7 +119,6 @@ class
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk
-  , LeiosProtocol (BlockProtocol blk)
   , PerasProtocol (BlockProtocol blk)
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
