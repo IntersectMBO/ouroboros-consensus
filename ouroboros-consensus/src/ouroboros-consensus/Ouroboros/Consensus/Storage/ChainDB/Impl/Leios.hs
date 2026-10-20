@@ -7,7 +7,7 @@
 
 -- | What the ChainDB knows about Leios endorser blocks: which closures it has
 -- acquired, and so which blocks certifying an endorser block ChainSel may
--- select; and whether a block's certificate is valid.
+-- select; and which claims some valid certificate has established.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( -- * The Leios facts of a block
     leiosBlockInfo
@@ -23,14 +23,14 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
 
-    -- * Certificates
-  , LeiosCertRejection (..)
-  , verifyBlockLeiosCert
+    -- * Valid claims
+  , LeiosValidClaims
+  , emptyLeiosValidClaims
+  , insertLeiosValidClaim
+  , isLeiosValidClaim
+  , pruneLeiosValidClaims
   ) where
 
-import Cardano.Crypto.Leios (LeiosCert, VerificationError, verifyLeiosCert)
-import Cardano.Ledger.BaseTypes (unboundRational)
-import Data.Bifunctor (first)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -42,9 +42,9 @@ import qualified Data.Set.NonEmpty as NESet
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
-  , LeiosLedgerView (..)
   , LeiosProtocol (..)
   )
 import Ouroboros.Consensus.Leios.Types (EbHash, LeiosPoint (..), RbHash (..))
@@ -171,42 +171,48 @@ ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
   Set.filter (not . isParkedCertRB acquired lookupBlockInfo) . succsOf
 
 {-------------------------------------------------------------------------------
-  Certificates
+  Valid claims
 -------------------------------------------------------------------------------}
 
--- | Why a block's Leios certificate is invalid.
-data LeiosCertRejection
-  = -- | The block's predecessor is genesis, which announces nothing.
-    LeiosCertAtGenesis
-  | -- | The ledger view at the block's slot has no Leios committee.
-    LeiosCertWithoutCommittee
-  | LeiosCertInvalid !VerificationError
-  deriving stock (Eq, Show)
-
--- | Verify a block's Leios certificate, given the block's predecessor and the
--- Leios part of the ledger view at the block's slot. On success, return the
--- hash of the predecessor, which announced the certified endorser block.
+-- | The blocks known to announce an endorser block that some valid certificate
+-- certifies, each with its slot.
 --
--- The committee at the block's slot is the one at its predecessor's slot: the
--- committee is fixed for an epoch, and a header that certifies an announcement
--- from an earlier epoch is invalid.
-verifyBlockLeiosCert ::
-  forall blk.
-  ConvertRawHash blk =>
-  ChainHash blk ->
-  Maybe LeiosLedgerView ->
-  LeiosCert ->
-  Either LeiosCertRejection RbHash
-verifyBlockLeiosCert prevHash mbView cert = case (prevHash, mbView) of
-  (GenesisHash, _) -> Left LeiosCertAtGenesis
-  (BlockHash _, Nothing) -> Left LeiosCertWithoutCommittee
-  (BlockHash h, Just llv) -> do
-    let rbHash = MkRbHash (toRawHash (Proxy @blk) h)
-    _weight <-
-      first LeiosCertInvalid $
-        verifyLeiosCert
-          (llvCommittee llv)
-          (unboundRational (llvQuorumStakeThreshold llv))
-          rbHash
-          cert
-    pure rbHash
+-- A block containing a certificate claims that the endorser block its
+-- predecessor announced is certified. The claims that valid certificates have
+-- established are how LeiosFetch will learn which endorser blocks are
+-- certified, for its Recovery Path; that part is not ported yet. Meanwhile, a
+-- block making an already established claim need not have its certificate
+-- verified.
+data LeiosValidClaims = LeiosValidClaims
+  { lvcSlot :: !(Map RbHash SlotNo)
+  , lvcBySlot :: !(Map SlotNo (NESet RbHash))
+  -- ^ The inverse of 'lvcSlot', so that pruning costs only what it prunes.
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+emptyLeiosValidClaims :: LeiosValidClaims
+emptyLeiosValidClaims = LeiosValidClaims Map.empty Map.empty
+
+-- | Record that some valid certificate established the claim.
+insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> LeiosValidClaims
+insertLeiosValidClaim (LeiosClaim slot rbHash) claims@(LeiosValidClaims slots bySlot)
+  | Map.member rbHash slots = claims
+  | otherwise =
+      LeiosValidClaims
+        (Map.insert rbHash slot slots)
+        (Map.insertWith NESet.union slot (NESet.singleton rbHash) bySlot)
+
+isLeiosValidClaim :: RbHash -> LeiosValidClaims -> Bool
+isLeiosValidClaim rbHash = Map.member rbHash . lvcSlot
+
+-- | Forget every claim whose announcing block is older than the slot: once the
+-- immutable tip has passed it, no block that ChainSel has yet to select can
+-- make the claim.
+pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
+pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot) =
+  LeiosValidClaims
+    (slots `Map.withoutKeys` foldMap NESet.toSet pruned)
+    kept
+ where
+  (pruned, kept) = Map.spanAntitone (< slot) bySlot

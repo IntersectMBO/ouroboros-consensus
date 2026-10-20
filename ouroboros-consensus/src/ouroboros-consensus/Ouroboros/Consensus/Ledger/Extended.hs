@@ -74,6 +74,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection)
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver (..)
@@ -96,6 +97,8 @@ data ExtValidationError blk
   | ExtValidationErrorHeader !(HeaderError blk)
   | ExtValidationErrorPerasEpochContextResolver !PerasEpochContextNotFoundForRound
   | ExtValidationErrorPerasCertInBlock !(PerasError blk)
+  | -- | The block's Leios certificate does not establish its claim.
+    ExtValidationErrorLeiosCert !LeiosCertRejection
   deriving Generic
 
 deriving instance
