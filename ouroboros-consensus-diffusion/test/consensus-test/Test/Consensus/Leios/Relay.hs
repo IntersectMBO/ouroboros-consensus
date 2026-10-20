@@ -58,11 +58,12 @@ import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
 import qualified Data.Set as Set
+import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
 import Data.Word (Word16)
 import Ouroboros.Consensus.Block (Header, SlotNo (..), blockHash, blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), addRelTime)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.AnnounceState
@@ -70,7 +71,16 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
   )
-import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog, nextNotifyLog, notifyLogStart)
+import Ouroboros.Consensus.Leios.NotifyLog
+  ( NotifyEntry (..)
+  , NotifyLog
+  , appendNotifyLog
+  , newNotifyLog
+  , nextNotifyLog
+  , notifyLogStart
+  , pruneNotifyLog
+  )
+import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint
@@ -88,9 +98,14 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   ( AnnouncingHeader (ancElectionId)
   , ValidAnnouncement (..)
   , maxAnnouncementAgeRecv
+  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State (voteLateGrace)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( VoteRelayWindow (..)
+  , leiosVoteRelayWindow
+  , voteLateGrace
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
   , leiosNotifyServerPeerLookahead
@@ -185,6 +200,12 @@ tests =
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
     , testCase "the node does not relay an announcement of an election pruned while validating it" $
         prunedWhileValidating @?= []
+    , testCase "a vote is relayed no longer than its announcement, however long its diffusion period" $
+        relayUntil
+          (leiosVoteRelayWindow leiosLedgerView{llvDiffusionPeriod = Milliseconds32 1000000} (RelativeTime 1))
+          @?= addRelTime maxAnnouncementAgeSend (RelativeTime 1)
+    , testCase "the log prunes each notification once it is no longer worth relaying" $
+        notifyLogAt [(9, 'a'), (300, 'b'), (5, 'c')] 6 @?= "ab"
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -237,6 +258,28 @@ tests =
         -- Voting ends 8 s in, and diffusion 9 s in.
         down <- relayToOne 0 [[announce someAnnouncingBlock, (8.5, vote someAnnouncingBlock 0)]]
         votes down @?= [voteOf someAnnouncingBlock 0]
+    , testCase "the node accepts a vote late within the grace, but does not relay it" $ do
+        -- Diffusion ends 9 s in; the client accepts the vote until 69 s in.
+        (ups, downs) <- relay 70 (withControl [[(68.5, vote someAnnouncingBlock 0)]]) [0]
+        concatMap votes downs @?= [control]
+        map poNodeClientEnded ups @?= [Nothing, Nothing]
+    , testCase "the node accepts a vote early within the clock skew, but relays it once its window opens" $ do
+        -- The window opens 4 s in; the client accepts the vote from 2 s in.
+        (ups, downs) <- relay 20 [[announce someAnnouncingBlock, (2.5, vote someAnnouncingBlock 0)]] [0]
+        map votes downs @?= [[voteOf someAnnouncingBlock 0]]
+        map voteTimes downs @?= [[Time 4]]
+        map poNodeClientEnded ups @?= [Nothing]
+    , testCase "the node relays the early votes of a message once their window opens" $ do
+        let early = voteOf someAnnouncingBlock 0 :| map (voteOf someAnnouncingBlock) [1, 2]
+        down <- relayToOne 0 [[announce someAnnouncingBlock, (2.5, NotifyVotes early)]]
+        votes down @?= toList early
+        voteTimes down @?= map (const (Time 4)) (toList early)
+    , testCase "an early vote does not hold back an announcement from the same peer" $ do
+        down <-
+          relayToOne
+            0
+            [[announce someAnnouncingBlock, (2.5, vote someAnnouncingBlock 0), announceAt 3 equivocation]]
+        [at | (at, NotifyAnnouncement hdr) <- poReceived down, hdr == ltbHeader equivocation] @?= [Time 3]
     , testCase "a peer that connects during a vote's window receives the vote" $ do
         down <- relayToOne 6 [votedFor0]
         votes down @?= [voteOf someAnnouncingBlock 0]
@@ -293,7 +336,8 @@ genVotingPeers = do
     pure $ map announce blks <> sortOn fst vs
   genVote blks signed seat = do
     blk <- elements blks
-    at <- realToFrac <$> choose (4.1 :: Double, 8.9)
+    -- From as early as the clock skew lets the node's client accept.
+    at <- realToFrac <$> choose (2.1 :: Double, 8.9)
     pure (at, signed blk seat)
   -- A seat without a key cannot sign validly, and others sign with a wrong key.
   invalidVote blk seat
@@ -365,7 +409,8 @@ prop_relay peers =
 -- election, nor older than 'maxAnnouncementAgeRecv'; a vote must follow the
 -- announcement it is for, be the first of its seat in that election, verify
 -- against the committee, and arrive between its window opening and its
--- diffusion period ending.
+-- diffusion period ending, even by a clock as far behind the node's as the
+-- clock skew allows.
 honest :: [(Time, Notification)] -> Property
 honest received = case honestViolations received of
   [] -> property True
@@ -620,6 +665,33 @@ prunedWhileValidating = runSimOrThrow $ do
       , announcementAge = 0
       , announcementStaleness = FreshOCIN
       }
+
+-- | The log's notifications once pruned at the given time, of entries worth
+-- relaying until the given times, each a vote of the seat its name stands for.
+notifyLogAt :: [(NominalDiffTime, Char)] -> NominalDiffTime -> String
+notifyLogAt appends now = runSimOrThrow $ do
+  notifyLog <- newNotifyLog @_ @Blk
+  for_ appends $ \(expires, name) ->
+    atomically $
+      appendNotifyLog notifyLog $
+        MkNotifyEntry
+          (RelativeTime expires)
+          (NotifyLog.NotifyVote (voteOf someAnnouncingBlock (seatOf name)))
+  atomically $ pruneNotifyLog notifyLog (RelativeTime now)
+  atomically $ map nameOf <$> notifyLogNotifications notifyLog
+ where
+  seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
+  nameOf = \case
+    NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
+    NotifyLog.NotifyAnnouncement _ -> '?'
+
+-- | Every notification in the log.
+notifyLogNotifications :: NotifyLog (IOSim s) Blk -> STM (IOSim s) [NotifyLog.Notification Blk]
+notifyLogNotifications notifyLog = go notifyLogStart
+ where
+  go cursor =
+    (nextNotifyLog notifyLog cursor >>= \(n, cursor') -> (n :) <$> go cursor')
+      `orElse` pure []
 
 {-------------------------------------------------------------------------------
   Fixtures

@@ -67,7 +67,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
-import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState)
+import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, voteRelay)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -414,6 +414,9 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
         leiosNotifyPruner chainDB leiosAnnounceState leiosNotifyClientStates
+    void $
+      forkLinkedThread registry "NodeKernel.leiosVoteRelay" $
+        voteRelay leiosVoteState systemTime
     void $
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
