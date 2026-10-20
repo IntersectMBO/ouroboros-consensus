@@ -103,7 +103,7 @@ import Ouroboros.Consensus.Committee.Types
   )
 import Ouroboros.Consensus.Committee.WFA
   ( ExtWFAStakeDistr (..)
-  , NonPersistentCommitteeSize
+  , NonPersistentCommitteeSize (..)
   , PersistentCommitteeSize (..)
   , SeatIndex (..)
   , TotalNonPersistentStake (..)
@@ -137,11 +137,15 @@ data instance VotingCommittee crypto WFALS
     candidateSeats :: !(Map PoolId SeatIndex)
   , -- Number of persistent seats granted by the weighted Fait-Accompli scheme
     persistentCommitteeSize :: !PersistentCommitteeSize
-  , -- Expected number of non-persistent voters
+  , -- Targeted number of non-persistent seats (the resulting number of
+    -- non-persistent voters can be smaller if some voters get multiple seats)
     nonPersistentCommitteeSize :: !NonPersistentCommitteeSize
-  , -- Total stake of persistent voters
+  , -- Total absolute stake of persistent voters, equal to the total absolute
+    -- voting weight distributed among them
     totalPersistentStake :: !TotalPersistentStake
-  , -- Total stake of non-persistent voters
+  , -- Total absolute stake of non-persistent _candidates_, equal to the
+    -- targeted total absolute voting weight distributed among the elected
+    -- non-persistent voters.
     totalNonPersistentStake :: !TotalNonPersistentStake
   , --  Epoch nonce of the epoch where this committee selection takes place
     epochNonce :: !Nonce
@@ -510,47 +514,73 @@ implVerifyVote committee = \case
     | otherwise ->
         Left (NotANonPersistentMember seatIndex)
 
--- | Compute the voting power of an eligible committee member
+-- | Compute the *normalized* vote weight of a committee member
 --
--- In this voting committee scheme, the vote weight of a member depends on their
--- membership type:
---   * for a persistent committee member, their vote weight is equal to their
---     (normalised) ledger stake throughout their entire tenure in the
---     committee, whereas
---   * for a non-persistent committee member, their vote weight is equal to
---     their (normalised) non-persistent vote weight. This is computed as the
---     number of seats granted to them by local sortition, scaled by their
---     relative non-persistent stake w.r.t. other non-persistent voters.
+-- Computation of the absolute vote weight follows the implementation note at
+-- https://github.com/tweag/cardano-peras/blob/main/docs/weighted_fait_accompli_impl_note_2025_02.pdf
+--
+-- We then normalize the absolute vote weight of the member by dividing by the
+-- total absolute stake (equal to the _targeted_ total absolute vote weight).
 implEligiblePartyVoteWeight ::
   VotingCommittee crypto WFALS ->
   EligibilityWitness crypto WFALS ->
   VoteWeight
 implEligiblePartyVoteWeight committee = \case
-  -- Persistent members have their voting power equal to their stake
+  -- Persistent members have their absolute voting weight equal to their stake
   WFALSPersistentMember
     _seatIndex
-    (LedgerStake stake) ->
-      mkVoteWeight stake
-  -- Non-persistent members have their voting power proportional to their
-  -- number of seats granted by local sortition and their stake (normalized
-  -- by the total non-persistent stake)
+    (LedgerStake persistentVoterStake) ->
+      mkNormalizedVoteWeightFromAbsoluteVoteWeight persistentVoterStake
+  -- Non-persistent voters have their absolute voting weight corresponding to
+  -- the number of non-persistent seats they obtained, multiplied by the
+  -- absolute vote weight of a non-persistent seat.
   WFALSNonPersistentMember
     _seatIndex
-    (LedgerStake stake)
+    (LedgerStake _nonPersistentVoterStake)
     _vrfOutput
     numSeats ->
-      mkVoteWeight $
-        fromIntegral (unLocalSortitionNumSeats (unNonZero numSeats))
-          * stake
-          / nonPersistentStake
+      mkNormalizedVoteWeightFromAbsoluteVoteWeight
+        (numSeatsToRational numSeats * absoluteNonPersistentSeatWeight)
  where
-  TotalPersistentStake (Cumulative (LedgerStake persistentStake)) =
+  -- Total of stake possessed by SPOs who have been chosen as persistent voters
+  -- in the committee. This is equal to the total absolute voting weight that
+  -- will be distributed to persistent voters.
+  TotalPersistentStake (Cumulative (LedgerStake totPersistentStake)) =
     totalPersistentStake committee
-  TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake)) =
+  -- Total of stake possessed by SPOs who are _candidates_ for non-persistent
+  -- seats. This is equal to the _targeted_ total absolute voting weight that
+  -- will be distributed to elected non-persistent voters.
+  TotalNonPersistentStake (Cumulative (LedgerStake totNonPersistentStake)) =
     totalNonPersistentStake committee
+  -- Target number of non-persistent seats, i.e. in how many parts the
+  -- 'totalNonPersistentStake' will be divided.
+  -- Note that this isn't the number of distinct non-persistent voters; notably,
+  -- if some voters obtain multiple seats, the actual number of non-persistent
+  -- voters will be smaller.
+  NonPersistentCommitteeSize totNonPersistentSeats =
+    nonPersistentCommitteeSize committee
+  -- The absolute vote weight of a non-persistent seat is the total
+  -- non-persistent stake to distribute divided by the (targeted) total number
+  -- of non-persistent seats.
+  absoluteNonPersistentSeatWeight =
+    totNonPersistentStake / fromIntegral totNonPersistentSeats
 
-  mkVoteWeight absoluteStake =
-    VoteWeight (absoluteStake / (persistentStake + nonPersistentStake))
+  numSeatsToRational numSeats =
+    fromIntegral (unLocalSortitionNumSeats (unNonZero numSeats))
+
+  -- We know that the targeted total absolute vote weight is equal to the total
+  -- absolute stake.
+  -- So the normalized vote weight can be obtained by dividing the absolute vote
+  -- weight of the voter by the total absolute stake.
+  mkNormalizedVoteWeightFromAbsoluteVoteWeight absoluteVoteWeight =
+    -- Ensure the normalized vote weight is clamped between 0 and 1.
+    -- In particular, in extremely unlucky/skewed scenarios, a non-persistent
+    -- voter could obtain so much seats that its resulting absolute vote weight
+    -- would exceed the total stake, hence the need for clamping.
+    VoteWeight $
+      max 0 $
+        min 1 $
+          absoluteVoteWeight / (totPersistentStake + totNonPersistentStake)
 
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::
