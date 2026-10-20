@@ -63,7 +63,7 @@ bhb = MkBHBody
   , bhbOc          = oc
   , bhbPv          = (1, 0)
   , bhbAnnouncedEB = Just aeb
-  , bhbCertifiedEB = False
+  , bhbCertifiesEB = False
   }
 
 bh :: BHeader
@@ -137,7 +137,7 @@ chs' = MkChainHeadState
       = 1 ≤ 1 × 1 ≤ 1 × 1 ≤ 2
       = True
 
-    certChecks pp lab certifiedEB slot
+    certChecks pp lab certifiesEB slot
       = certChecks pp lab False 2
       = ⊤                                   -- the header certifies nothing
       = True
@@ -168,7 +168,7 @@ chs' = MkChainHeadState
 -- cases below also pin the direction of the rounding.
 
 certifyingBhbAt :: Slot -> BHBody
-certifyingBhbAt s = bhb { bhbSlot = s , bhbCertifiedEB = True }
+certifyingBhbAt s = bhb { bhbSlot = s , bhbCertifiesEB = True }
 
 -- Certifies at slot 2, i.e. 7 slots too early.
 bhTooEarly :: BHeader

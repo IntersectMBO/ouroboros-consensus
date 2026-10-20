@@ -91,7 +91,7 @@ instance
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
             (no ¬cc) → failure (genErrors ¬cc)
             (yes cc) →
-              case certChecks? pp lab certifiedEB slot of λ where
+              case certChecks? pp lab certifiesEB slot of λ where
                 (no ¬ec) → failure (genErrors ¬ec)
                 (yes ec) → do
                   (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
@@ -110,7 +110,7 @@ instance
            in chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh)
       ... | no ¬cc = contradiction cc ¬cc
       ... | yes _
-        with certChecks? (getPParams forecast) lab certifiedEB slot
+        with certChecks? (getPParams forecast) lab certifiesEB slot
       ... | no ¬ec = contradiction ec ¬ec
       ... | yes _
         with

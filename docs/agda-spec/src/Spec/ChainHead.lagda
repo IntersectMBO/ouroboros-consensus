@@ -174,7 +174,7 @@ from Figure~\ref{fig:ts-funs:chainhead}):
 \end{itemize}
 
 The last of these checks deserves comment, since it is the only one concerned with
-endorser blocks. A block header carries a flag \afld{certifiedEB} recording whether the
+endorser blocks. A block header carries a flag \afld{certifiesEB} recording whether the
 block certifies the endorser block announced by its predecessor; the hash of that
 endorser block is not repeated in the header, as it is already available from the
 predecessor's \afld{announcedEB} field. Consequently the last applied block must
@@ -186,7 +186,7 @@ L_\text{diff}$ has elapsed since the block that announced the endorser
 block~\cite{cip_164}, so that the endorser block has had time to reach the whole
 network. These three protocol parameters are wall-clock durations, so their sum is
 converted to a number of slots by \slotsFromDuration, using the genesis slot length
-and rounding up. A header that sets \afld{certifiedEB} obliges the corresponding body
+and rounding up. A header that sets \afld{certifiesEB} obliges the corresponding body
 to carry a matching certificate, thus this constraint is checked by the ledger rules.
 
 Note that the \afld{size} component of \afld{announcedEB} is deliberately \emph{not}
@@ -219,7 +219,7 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
-    ∙ certChecks pp lab certifiedEB slot
+    ∙ certChecks pp lab certifiesEB slot
     ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
     ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
     ────────────────────────────────
