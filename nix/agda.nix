@@ -108,7 +108,17 @@ let
     hsExe = customAgda.haskell.lib.disableLibraryProfiling (customAgda.haskellPackages.callCabal2nixWithOptions "cardano-consensus-executable-spec" "${hsSrc}/haskell/Spec" "--no-haddock" { });
 
     shell = pkgs.mkShell {
-      packages = [ agda latex customAgda.ghc customAgda.cabal-install ];
+      packages = [
+        agda
+        latex
+        customAgda.ghc
+        customAgda.cabal-install
+        final.pkg-config
+        final.libsodium-vrf
+        final.blst
+        final.secp256k1
+        final.zlib
+      ];
     };
   };
 in
