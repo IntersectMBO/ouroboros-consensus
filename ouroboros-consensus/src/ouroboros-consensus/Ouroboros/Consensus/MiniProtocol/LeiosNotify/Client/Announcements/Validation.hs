@@ -89,7 +89,7 @@ instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
 -- none (so it should not have been relayed as one).
 mkAnnouncingHeader ::
   forall blk.
-  (BlockSupportsProtocol blk, LeiosProtocol (BlockProtocol blk)) =>
+  BlockSupportsProtocol blk =>
   TopLevelConfig blk ->
   Header blk ->
   Maybe (AnnouncingHeader blk)
@@ -224,9 +224,7 @@ deriving stock instance
 -- Returns the OCIN staleness.
 validateAnnouncementHeader ::
   forall blk.
-  ( LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
-  ) =>
+  LedgerSupportsProtocol blk =>
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
@@ -279,7 +277,6 @@ validateAnnouncementHeader cfg extLedger ancHdr = do
 announcementValidity ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   ) =>
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->

@@ -21,7 +21,6 @@ import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node.Abstract
 import Ouroboros.Consensus.Mock.Node.Serialisation ()
@@ -78,7 +77,6 @@ instance
       (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext)))
   , ChainDepStateSupportsPeras
       (Ticked (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext))))
-  , LeiosProtocol (BlockProtocol (SimpleBlock SimpleMockCrypto ext))
   ) =>
   RunNode (SimpleBlock SimpleMockCrypto ext)
 

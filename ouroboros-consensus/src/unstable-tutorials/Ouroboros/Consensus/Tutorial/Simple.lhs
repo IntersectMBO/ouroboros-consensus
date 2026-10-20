@@ -53,6 +53,7 @@ First, some imports we'll need:
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
 >    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
+> import Ouroboros.Consensus.Leios.Protocol
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
 >    ( BlockSupportsProtocol (tiebreakerView, validateView)
@@ -528,6 +529,15 @@ block, again established by our prior instantiation of `BlockProtocol`:
 Given that `ValidateView SP` is of type `()` there is only one possible
 implementation for this typeclass.  Later examples will require more interesting
 views of the block.
+
+`BlockSupportsProtocol` also requires the protocol to say what it knows about
+Leios, which `SP` does not use:
+
+> instance LeiosProtocol SP where
+>   getLeiosAnnouncement = defaultGetLeiosAnnouncement
+>   getContainsLeiosCert = defaultGetContainsLeiosCert
+>   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+>   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 Our example requires some additional configuration instances to be defined -
 we'll gloss over these for the time being but they allow for some additional

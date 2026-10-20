@@ -13,7 +13,6 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
-import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configBlock
@@ -23,7 +22,6 @@ import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -95,7 +93,6 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , LedgerDbSerialiseConstraints blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
