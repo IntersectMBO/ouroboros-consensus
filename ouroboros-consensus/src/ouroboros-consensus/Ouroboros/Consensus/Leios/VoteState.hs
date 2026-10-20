@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -19,7 +21,7 @@ module Ouroboros.Consensus.Leios.VoteState
 
     -- * The votes kept
   , Votes
-  , maxVoteElections
+  , ElectionVotes (..)
   , readVotes
   , recordVote
   , seenVote
@@ -41,6 +43,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, Header, SlotNo)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -147,7 +150,7 @@ addVote st systemTime accepted = do
               if seenMeanwhile
                 then pure AlreadyKnown
                 else do
-                  recordVote st voteElectionSlot acceptedVote
+                  recordVote st now accepted
                   if now < relayFrom voteRelayWindow
                     then holdVote st (relayFrom voteRelayWindow) entry
                     else relay entry
@@ -205,43 +208,44 @@ validVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature}
   The votes kept
 -------------------------------------------------------------------------------}
 
--- | The first valid vote of each seat, per election slot, for the latest
--- 'maxVoteElections' election slots the node has votes for.
-type Votes = Map SlotNo (Map LeiosSeatId LeiosVote)
+-- | The first valid vote of each seat, per election slot, for every election
+-- slot whose votes are still worth relaying.
+type Votes = Map SlotNo ElectionVotes
 
--- | How many election slots the node keeps votes for: far more than the
--- elections whose votes are still within their window.
---
--- TODO: magic number
-maxVoteElections :: Int
-maxVoteElections = 128
+-- | The votes of one election slot, and until when they are worth relaying.
+data ElectionVotes = MkElectionVotes
+  { electionRelayUntil :: !RelativeTime
+  , electionVotes :: !(Map LeiosSeatId LeiosVote)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 readVotes ::
   IOLike m =>
   VoteState m blk -> STM m Votes
 readVotes st = readTVar (votes st)
 
--- | Whether the node may already have seen a vote of this seat in this
--- election slot: it has one, or, once full, the slot is older than all it
--- keeps, so it may have forgotten one.
+-- | Whether the node has a vote of this seat in this election slot.
 seenVote ::
   IOLike m =>
   VoteState m blk -> SlotNo -> LeiosSeatId -> STM m Bool
-seenVote st slot seat = seen <$> readVotes st
- where
-  seen vs = case Map.lookup slot vs of
-    Just seats -> Map.member seat seats
-    Nothing -> Map.size vs >= maxVoteElections && maybe False ((>= slot) . fst) (Map.lookupMin vs)
+seenVote st slot seat = maybe False (Map.member seat . electionVotes) . Map.lookup slot <$> readVotes st
 
--- | Keep a vote the node has not 'seenVote', forgetting the oldest election
--- slot if there are then more than 'maxVoteElections'.
+-- | Keep a vote the node has not 'seenVote', and forget every election slot
+-- whose votes are no longer worth relaying at the given time.
+--
+-- Forgetting them is safe, as 'addVote' finds any later copy of their votes
+-- 'Expired' before it asks whether the node has seen it.
 recordVote ::
   IOLike m =>
-  VoteState m blk -> SlotNo -> LeiosVote -> STM m ()
-recordVote st slot vote = modifyTVar (votes st) insertVote
+  VoteState m blk -> RelativeTime -> AcceptedVote -> STM m ()
+recordVote st now MkAcceptedVote{acceptedVote, voteElectionSlot, voteRelayWindow} =
+  modifyTVar (votes st) $
+    Map.filter ((now <=) . electionRelayUntil) . Map.insertWith keepFirst voteElectionSlot election
  where
-  insertVote vs
-    | Map.size vs' > maxVoteElections = Map.deleteMin vs'
-    | otherwise = vs'
-   where
-    vs' = Map.insertWith Map.union slot (Map.singleton (voteSeatId vote) vote) vs
+  election =
+    MkElectionVotes
+      (relayUntil voteRelayWindow)
+      (Map.singleton (voteSeatId acceptedVote) acceptedVote)
+
+  keepFirst new old = old{electionVotes = Map.union (electionVotes old) (electionVotes new)}
