@@ -5,7 +5,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -33,13 +32,14 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   ) where
 
 import qualified Cardano.Crypto.KES.Class as KES
-import Cardano.Crypto.KES.Locked (deserialiseSignKeyKESFromLockedBuf)
-import Cardano.Crypto.Libsodium.Hex (HexDecodeError, hexDecodeToMLocked)
-import Cardano.Crypto.Libsodium.Memory
-  ( finalizeMLockedForeignPtr
-  , withMLockedForeignPtr
+import Cardano.Crypto.KES.EnvelopeLocked
+  ( KESEnvelopeError (..)
+  , LockedKESEnvelope (..)
+  , finalizeLockedKESEnvelope
+  , readLockedKESEnvelope
   )
-import Cardano.Crypto.Libsodium.Memory.Internal (unsafeIOToMonadST)
+import Cardano.Crypto.KES.Locked (deserialiseSignKeyKESFromLockedBuf)
+import Cardano.Crypto.Libsodium.Memory (withMLockedForeignPtr)
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
@@ -51,18 +51,15 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Monad (filterM, unless, when, zipWithM)
-import Control.Monad.Except (ExceptT, runExceptT, throwError)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad (unless, when)
 import qualified Control.Tracer as Tracer
-import Data.Char (ord)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BC
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
 import Data.Proxy (Proxy (..))
-import Data.Word (Word64, Word8)
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
-import Foreign.Storable (peekByteOff)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
@@ -316,13 +313,17 @@ data PraosCredentialsSource c where
   -- | Connect to a KES agent listening on a service socket at the given path.
   PraosCredentialsAgent ::
     Agent.DSIGN (ACrypto c) ~ DSIGN => FilePath -> PraosCredentialsSource c
-  -- | Pass an opcert and the path of a KES signing key file (a cardano-api
-  -- text envelope of type @KesSigningKey_\<algorithm\>@ holding the key at
-  -- evolution 0). The file is read when the credentials are instantiated,
-  -- straight into mlocked memory; no copy of the key ever reaches the GHC
-  -- heap. Carrying a path rather than a key keeps the key's ownership with
-  -- the 'HotKey.HotKey', which erases it on every evolution and on
-  -- finalisation.
+  -- | Pass an opcert and the path of a KES signing key file: a text envelope
+  -- of type @KesSigningKey_\<algorithm\>@ (what @cardano-cli@ writes, the
+  -- key at evolution 0) or @KesSigningKeyWithPeriod_\<algorithm\>@ (an
+  -- evolved key together with the absolute KES period it is valid for, as
+  -- persisted by the node). The file is read when the credentials are
+  -- instantiated, straight into mlocked memory; no copy of the key ever
+  -- reaches the GHC heap. The key must be the certificate's hot key and must
+  -- really be at the evolution the file claims; the 'HotKey.HotKey' then
+  -- starts at that evolution. Carrying a path rather than a key keeps the
+  -- key's ownership with the hot key, which erases it on every evolution and
+  -- on finalisation.
   --
   -- The optional 'KESPersistHook' is reserved for persisting the evolved key
   -- back to the file; it is not invoked yet.
@@ -346,40 +347,30 @@ instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (P
 
   showTypeOf _ = "PraosCredentialsSource"
 
--- | Why the text envelope of a KES signing key file could not be used. The
--- constructors carry field names, offsets and lengths only, never any of the
--- file's contents, so the error can be logged safely.
---
--- This is the shape of the three-field envelope that @cardano-cli@ writes:
--- a JSON object with exactly the string fields @type@, @description@ and
--- @cborHex@, in any order.
-data KESEnvelopeError
-  = -- | The file is not a JSON object with exactly those three string fields.
-    EnvelopeNotAnObject
-  | -- | The named field is absent.
-    EnvelopeMissingField !String
-  | -- | The @type@ field is not a KES signing key type this code knows.
-    EnvelopeUnknownType
-  | -- | The @cborHex@ field is not valid hex.
-    EnvelopeBadHex !HexDecodeError
-  | -- | The decoded @cborHex@ is not a single CBOR byte string.
-    EnvelopeBadCbor
-  | -- | The CBOR byte string does not have the expected length: expected and
-    -- actual length of the key in bytes.
-    EnvelopeBadLength !Int !Int
-  deriving (Show, Eq)
-
 -- | Why 'instantiatePraosCredentials' rejected a 'PraosCredentialsFile'.
 -- Never carries file contents.
 data KESFileLoadReason
-  = -- | The file's envelope could not be used.
+  = -- | The file's envelope could not be used, see 'KESEnvelopeError'.
     KESFileEnvelope !KESEnvelopeError
-  | -- | The envelope is of a known KES signing key type that this loader
-    -- does not accept (currently the period-carrying type).
-    KESFileUnsupportedType
   | -- | The verification key derived from the file's signing key is not the
-    -- hot key named in the operational certificate.
+    -- hot key named in the operational certificate, or the key does not sign
+    -- for that hot key at any evolution.
     KESFileKeyMismatch
+  | -- | The absolute KES period a period-carrying file claims lies before the
+    -- start period of the operational certificate: the file's period and the
+    -- certificate's start period.
+    KESFilePeriodBeforeOCert !Word64 !Word64
+  | -- | The absolute KES period a period-carrying file claims lies at or
+    -- beyond the end of the certificate's range: the evolution it amounts to
+    -- (the period minus the certificate's start period) and the maximum
+    -- number of evolutions.
+    KESFileEvolutionTooHigh !Word64 !Word64
+  | -- | The evolution the file claims is not the one the key is at: the
+    -- claimed evolution and the evolution at which the key actually signs
+    -- for the certificate's hot key. A sum-composition KES key signs valid
+    -- signatures at exactly one evolution, so trusting the claim would make
+    -- the node forge blocks the verifiers reject.
+    KESFileStructureMismatch !Word64 !Word64
   deriving (Show, Eq)
 
 -- | Thrown by 'instantiatePraosCredentials' for a 'PraosCredentialsFile'. It
@@ -417,49 +408,59 @@ instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = d
     (Just $ runKESAgentClient tr path)
 instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path _persistHook) =
   withKESKeyFileLocked path $ \filePtr fileLen -> do
-    -- Locate the field values in the raw file bytes. Only offsets leave this
-    -- step; the hex text stays in the locked buffer.
-    spans <-
-      unsafeIOToMonadST (scanKESEnvelope filePtr fileLen)
+    -- Parse the envelope in place. Only offsets, lengths and the period leave
+    -- the file buffer; the key bytes come back in a locked buffer of their
+    -- own.
+    envelope <-
+      readLockedKESEnvelope algorithmName filePtr fileLen
         >>= either (throwLoad . KESFileEnvelope) pure
 
-    -- Check the envelope type before touching the key material.
-    isEvolutionZero <- unsafeIOToMonadST $ spanEquals filePtr (esType spans) evolutionZeroType
-    unless isEvolutionZero $ do
-      isWithPeriod <- unsafeIOToMonadST $ spanEquals filePtr (esType spans) withPeriodType
-      throwLoad $
-        if isWithPeriod
-          then KESFileUnsupportedType
-          else KESFileEnvelope EnvelopeUnknownType
-
-    -- Hex-decode the @cborHex@ value in place into a second locked buffer,
-    -- strip the CBOR byte-string header and build the key from the payload.
-    let (hexOff, hexLen) = esCborHex spans
-    (hexBuf, decodedLen) <-
-      hexDecodeToMLocked (filePtr `plusPtr` hexOff) hexLen
-        >>= either (throwLoad . KESFileEnvelope . EnvelopeBadHex) pure
+    -- Build the key from those bytes, then erase them.
     sk <-
-      ( withMLockedForeignPtr hexBuf $ \decoded -> do
-          (headerLen, payloadLen) <-
-            unsafeIOToMonadST (cborByteStringHeader decoded decodedLen)
-              >>= maybe (throwLoad (KESFileEnvelope EnvelopeBadCbor)) pure
-          when (payloadLen /= expectedKeyLen) $
-            throwLoad (KESFileEnvelope (EnvelopeBadLength expectedKeyLen payloadLen))
-          deserialiseSignKeyKESFromLockedBuf @(KES c)
-            (castPtr (decoded `plusPtr` headerLen))
-            payloadLen
+      ( do
+          let keyLen = lkeKeyLen envelope
+          when (keyLen /= expectedKeyLen) $
+            throwLoad (KESFileEnvelope (EnvelopeBadLength expectedKeyLen keyLen))
+          withMLockedForeignPtr (lkeKey envelope) $ \key ->
+            deserialiseSignKeyKESFromLockedBuf @(KES c) key keyLen
       )
-        `finally` finalizeMLockedForeignPtr hexBuf
+        `finally` finalizeLockedKESEnvelope envelope
 
     -- From here on the key is live in locked memory: erase it on every
     -- failure, since nobody else will.
-    vk <- KES.deriveVerKeyKES sk `onException` KES.forgetSignKeyKES sk
-    when (vk /= OCert.ocertVkHot ocert) $ do
-      KES.forgetSignKeyKES sk
-      throwLoad KESFileKeyMismatch
+    (`onException` KES.forgetSignKeyKES sk) $ do
+      vk <- KES.deriveVerKeyKES sk
+      when (vk /= vkHot) $ throwLoad KESFileKeyMismatch
 
-    HotKey.mkHotKeyAtEvolution 0 ocert sk (OCert.ocertKESPeriod ocert) maxKESEvolutions
-      `onException` KES.forgetSignKeyKES sk
+      -- The evolution the file claims: 0 for the type cardano-cli writes,
+      -- the stored period relative to the certificate's start otherwise.
+      claimed <- case lkePeriod envelope of
+        Nothing -> pure 0
+        Just period -> do
+          when (period < start) $
+            throwLoad (KESFilePeriodBeforeOCert period start)
+          let evolution = period - start
+          when (evolution >= maxKESEvolutions) $
+            throwLoad (KESFileEvolutionTooHigh evolution maxKESEvolutions)
+          pure evolution
+
+      -- Cross-check the claim against the key itself. A sum-composition KES
+      -- key holds the leaf key of exactly one evolution; signing at any
+      -- other evolution selects the wrong subtree and does not verify. So
+      -- the claim is right iff a signature at the claimed evolution
+      -- verifies against the hot key. If it does not, find the evolution
+      -- that does, so the error can say where the key really is.
+      signsAtClaimed <- signsAt sk claimed
+      unless signsAtClaimed $ do
+        actual <- firstM (signsAt sk) [e | e <- [0 .. maxKESEvolutions - 1], e /= claimed]
+        throwLoad $ maybe KESFileKeyMismatch (KESFileStructureMismatch claimed) actual
+
+      HotKey.mkHotKeyAtEvolution
+        (fromIntegral claimed)
+        ocert
+        sk
+        (OCert.ocertKESPeriod ocert)
+        maxKESEvolutions
  where
   throwLoad :: forall a. KESFileLoadReason -> m a
   throwLoad = throwIO . KESFileLoadError path
@@ -467,152 +468,31 @@ instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsFile ocert path 
   algorithmName :: String
   algorithmName = KES.algorithmNameKES (Proxy @(KES c))
 
-  -- The envelope type cardano-cli writes for a freshly generated key.
-  evolutionZeroType :: String
-  evolutionZeroType = "KesSigningKey_" <> algorithmName
-
-  -- The envelope type of a key stored together with its absolute KES period;
-  -- recognised so that it can be reported as unsupported rather than unknown.
-  withPeriodType :: String
-  withPeriodType = "KesSigningKeyWithPeriod_" <> algorithmName
-
   expectedKeyLen :: Int
   expectedKeyLen = fromIntegral (KES.signKeySizeKES (Proxy @(KES c)))
 
-{-------------------------------------------------------------------------------
-  Scanning the KES signing key file
--------------------------------------------------------------------------------}
+  vkHot :: KES.VerKeyKES (KES c)
+  vkHot = OCert.ocertVkHot ocert
 
--- | Byte offset and length of a field value, into the raw file bytes.
-type Span = (Int, Int)
+  -- The certificate's start period, in the width of the file's period.
+  start :: Word64
+  start = fromIntegral (OCert.unKESPeriod (OCert.ocertKESPeriod ocert))
 
--- | Where the field values of a KES signing key text envelope are.
-data EnvelopeSpans = EnvelopeSpans
-  { esType :: !Span
-  , esCborHex :: !Span
-  }
+  -- Does a signature made with the key at this evolution verify against the
+  -- certificate's hot key? The message is fixed and public; the signature
+  -- is discarded.
+  signsAt :: KES.SignKeyKES (KES c) -> Word64 -> m Bool
+  signsAt sk evolution = do
+    let e = fromIntegral evolution
+    sig <- KES.signKES () e probeMessage sk
+    pure (KES.verifyKES () vkHot e probeMessage sig == Right ())
 
--- | Find the field values of the three-field text envelope in the raw file
--- bytes. This is a hand-rolled scanner rather than a JSON parser on purpose:
--- it only ever produces offsets, so the hex-encoded key never has to be
--- copied out of the (locked) file buffer.
---
--- Accepted: a JSON object with exactly the string members @type@,
--- @description@ and @cborHex@, in any order, with any JSON whitespace around
--- the tokens. The spans point at the raw string contents between the quotes;
--- escape sequences are skipped over but not interpreted (a value with an
--- escape in it simply fails the checks that follow).
-scanKESEnvelope :: Ptr Word8 -> Int -> IO (Either KESEnvelopeError EnvelopeSpans)
-scanKESEnvelope ptr len = runExceptT $ do
-  start <- skipWs 0 >>= expectByte 0x7b >>= skipWs -- '{'
-  (fields, afterObject) <- members start []
-  end <- skipWs afterObject
-  unless (end == len) notAnObject
-  esType <- field "type" fields
-  _ <- field "description" fields
-  esCborHex <- field "cborHex" fields
-  pure EnvelopeSpans{esType, esCborHex}
- where
-  notAnObject :: ExceptT KESEnvelopeError IO a
-  notAnObject = throwError EnvelopeNotAnObject
+  probeMessage :: ByteString
+  probeMessage = BC.pack "ouroboros-consensus KES signing key file: structural check"
 
-  -- Every read is bounds-checked; running off the end is a malformed file.
-  peek8 :: Int -> ExceptT KESEnvelopeError IO Word8
-  peek8 i
-    | i < 0 || i >= len = notAnObject
-    | otherwise = liftIO (peekByteOff ptr i)
-
-  skipWs :: Int -> ExceptT KESEnvelopeError IO Int
-  skipWs i
-    | i >= len = pure i
-    | otherwise = do
-        b <- peek8 i
-        if b == 0x20 || b == 0x0a || b == 0x0d || b == 0x09
-          then skipWs (i + 1)
-          else pure i
-
-  expectByte :: Word8 -> Int -> ExceptT KESEnvelopeError IO Int
-  expectByte expected i = do
-    b <- peek8 i
-    if b == expected then pure (i + 1) else notAnObject
-
-  -- A string literal starting at the given offset: the span of its contents
-  -- and the offset just after the closing quote.
-  stringLit :: Int -> ExceptT KESEnvelopeError IO (Span, Int)
-  stringLit quoteAt = do
-    contentStart <- expectByte 0x22 quoteAt -- '"'
-    let go i = do
-          b <- peek8 i
-          if
-            | b == 0x22 -> pure ((contentStart, i - contentStart), i + 1)
-            | b == 0x5c -> go (i + 2) -- backslash: skip the escaped byte
-            | b < 0x20 -> notAnObject -- control characters are not allowed
-            | otherwise -> go (i + 1)
-    go contentStart
-
-  -- The members of the object, starting just after '{' (and whitespace).
-  -- Returns the named members and the offset just after the closing '}'.
-  members :: Int -> [(String, Span)] -> ExceptT KESEnvelopeError IO ([(String, Span)], Int)
-  members i acc = do
-    b <- peek8 i
-    if b == 0x7d && null acc -- '}' of an empty object
-      then pure (acc, i + 1)
-      else do
-        (key, afterKey) <- stringLit i
-        valueAt <- skipWs afterKey >>= expectByte 0x3a >>= skipWs -- ':'
-        (value, afterValue) <- stringLit valueAt
-        name <- fieldName key
-        when (name `elem` map fst acc) notAnObject
-        let acc' = (name, value) : acc
-        next <- skipWs afterValue
-        b' <- peek8 next
-        if
-          | b' == 0x2c -> skipWs (next + 1) >>= \i' -> members i' acc' -- ','
-          | b' == 0x7d -> pure (acc', next + 1) -- '}'
-          | otherwise -> notAnObject
-
-  fieldName :: Span -> ExceptT KESEnvelopeError IO String
-  fieldName key = do
-    matches <- liftIO $ filterM (spanEquals ptr key) ["type", "description", "cborHex"]
-    case matches of
-      [name] -> pure name
-      _ -> notAnObject
-
-  field :: String -> [(String, Span)] -> ExceptT KESEnvelopeError IO Span
-  field name fields =
-    maybe (throwError (EnvelopeMissingField name)) pure (lookup name fields)
-
--- | Does the span hold exactly this ASCII string?
-spanEquals :: Ptr Word8 -> Span -> String -> IO Bool
-spanEquals ptr (off, n) s
-  | n /= length s = pure False
-  | otherwise =
-      and <$> zipWithM (\k c -> (== fromIntegral (ord c)) <$> peekByteOff @Word8 ptr (off + k)) [0 ..] s
-
--- | Read the header of a single CBOR byte string (major type 2, definite
--- length) that must span the whole buffer. Returns the header length and the
--- payload length, or 'Nothing' when the buffer is not exactly one byte
--- string.
-cborByteStringHeader :: Ptr Word8 -> Int -> IO (Maybe (Int, Int))
-cborByteStringHeader ptr len
-  | len < 1 = pure Nothing
-  | otherwise = do
-      b0 <- peekByteOff @Word8 ptr 0
-      header <-
-        if
-          | b0 >= 0x40 && b0 <= 0x57 -> pure (Just (1, fromIntegral (b0 - 0x40)))
-          | b0 == 0x58 && len >= 2 -> do
-              b1 <- peekByteOff @Word8 ptr 1
-              pure (Just (2, fromIntegral b1))
-          | b0 == 0x59 && len >= 3 -> do
-              b1 <- peekByteOff @Word8 ptr 1
-              b2 <- peekByteOff @Word8 ptr 2
-              pure (Just (3, fromIntegral b1 * 256 + fromIntegral b2))
-          | otherwise -> pure Nothing
-      pure $ case header of
-        Just (headerLen, payloadLen)
-          | headerLen + payloadLen == len -> Just (headerLen, payloadLen)
-        _ -> Nothing
+  firstM :: forall a. (a -> m Bool) -> [a] -> m (Maybe a)
+  firstM _ [] = pure Nothing
+  firstM f (x : xs) = f x >>= \ok -> if ok then pure (Just x) else firstM f xs
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces

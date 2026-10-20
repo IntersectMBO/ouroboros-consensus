@@ -970,6 +970,7 @@ library protocol
 
   build-depends:
     base,
+    bytestring,
     cardano-binary,
     cardano-crypto-class:cardano-crypto-class ^>=2.5.2,
     cardano-ledger-binary,

@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Protocol.Praos.AgentClient
@@ -24,6 +25,7 @@ import Cardano.Crypto.DirectSerialise
   , DirectSerialise
   )
 import Cardano.Crypto.KES.Class
+import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.Libsodium.Memory
   ( MLockedAllocator (..)
   , MLockedForeignPtr
@@ -47,6 +49,7 @@ import Control.Monad (forever)
 import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim
 import Control.Tracer
+import Data.ByteString (ByteString)
 import Data.Coerce (coerce)
 import Data.Kind
 import Data.Typeable
@@ -86,6 +89,10 @@ class
   , Agent.ServiceClientDrivers (ACrypto c)
   , DirectSerialise (SignKeyKES (KES c))
   , DirectDeserialise (SignKeyKES (KES c))
+  , -- Needed by 'Ouroboros.Consensus.Protocol.Praos.Common.instantiatePraosCredentials'
+    -- to check, by signing a fixed message, that a key file is at the
+    -- evolution it claims.
+    KES.Signable (KES c) ByteString
   ) =>
   AgentCrypto c
   where
