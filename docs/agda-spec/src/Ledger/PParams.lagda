@@ -108,9 +108,7 @@ to the general purpose that each parameter serves.
 
 The Leios parameters governing the timing of endorser block announcement, voting
 and diffusion belong to the \NetworkGroup. They are wall-clock durations rather
-than slot counts, so that they remain meaningful across a change of slot length;
-where they must be compared against a slot, their sum is converted to a number of
-slots by \slotsFromDuration.
+than slot counts, so that sub-second delivery periods can be expressed.
 
 They are deliberately absent from \positivePParams: zero values are the
 protocol's disabled state, and governance must be able to reach it.
