@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, pruneAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( NotifyEntry (..)
+  ( Notification (..)
   , NotifyLog
   , nextNotifyLog
   , notifyLogStart
@@ -137,7 +137,7 @@ leiosNotifyClient
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
-            mapM_ (onAcceptedVote voteState) accepted
+            mapM_ (onAcceptedVote voteState systemTime) accepted
           MsgCanceled -> pure ()
       )
    where
@@ -158,7 +158,7 @@ leiosNotifyClient
     checkAndUpdate_ judge = checkAndUpdate (fmap (,()) . judge)
 
 -- | The node's LeiosNotify server, which relays the node's 'NotifyLog' to one
--- downstream peer, from the log's oldest entry on.
+-- downstream peer, from the log's oldest notification on.
 leiosNotifyServer ::
   IOLike m =>
   NotifyLog m blk ->
@@ -179,12 +179,14 @@ leiosNotifyServer notifyLog = do
         pure NotExcessiveRequests
 
   serveNext requests cursorVar = do
-    (entry, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
+    (n, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
     writeTVar cursorVar cursor
     modifyTVar requests (subtract 1)
-    pure $ case entry of
-      NotifyAnnouncement _onset anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
-      NotifyVote _diffusionEnd vote -> MsgLeiosVotes (vote :| [])
+    pure $ case n of
+      NotifyAnnouncement anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
+      -- One vote per message: the client pipelines its requests, so several
+      -- messages cost about what several votes in one would.
+      NotifyVote v -> MsgLeiosVotes (v :| [])
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.
