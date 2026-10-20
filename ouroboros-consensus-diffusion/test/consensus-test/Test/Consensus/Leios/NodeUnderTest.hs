@@ -36,6 +36,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNode
   , withNodeForecastingOnly
   , withNodeOver
+  , withNodeOverDBs
   , withNodeUnderTest
   ) where
 
@@ -371,7 +372,16 @@ withNodeForecastingOnly range body = do
 withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeOver leiosDB body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (forecastingOnly 100000) nodeDBs leiosDB body
+  withNodeOverDBs nodeDBs leiosDB body
+
+-- | 'withNode' over the given databases, which a test can fill before the node
+-- starts, or reuse to restart it.
+withNodeOverDBs ::
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverDBs = withNodeUnderTest (forecastingOnly 100000)
 
 -- | The configuration of a node whose ledger view forecasts this many slots
 -- past its immutable tip.

@@ -51,6 +51,7 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (All, Top)
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -255,6 +256,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer InitialChainSelected
 
     let chain = AF.mapAnchoredFragment hwtHeader chainWithTime
+
+    -- Keep the anchor too: it is the immutable tip, which the VolatileDB may
+    -- still hold and which copying to the ImmutableDB looks up as a predecessor.
+    VolatileDB.forgetLeiosCertsAtStartUpExcept volatileDB $
+      Set.fromList $
+        [h | BlockHash h <- [AF.anchorToHash (AF.anchor chain)]]
+          <> map headerHash (AF.toOldestFirst chain)
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)

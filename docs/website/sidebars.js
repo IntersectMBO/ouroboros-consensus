@@ -30,6 +30,7 @@ const sidebars = {
               'explanations/queries',
               'explanations/node_tasks',
               'explanations/leiosdb',
+              'explanations/valid_claims_startup',
               'explanations/hard_forks_and_node_to_node_versioning',
              ]
     }

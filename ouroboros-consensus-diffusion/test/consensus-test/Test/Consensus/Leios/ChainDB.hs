@@ -40,6 +40,7 @@ import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
@@ -51,6 +52,10 @@ tests =
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "ChainSel does not verify a certificate again for a claim it established" $
         runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
+    , testCase "a restart forgets a certifying block off the selection, until it arrives again" $
+        runSimOrThrow (heldAcrossRestart BodyOfA) @?= (True, False, True)
+    , testCase "a restart keeps a certifying block on the selection" $
+        runSimOrThrow (heldAcrossRestart ClosureOfA) @?= (True, True, True)
     , testCase "the GC keeps an endorser block an immutable block certifies" $
         fst (runSimOrThrow bodiesAfterGc) @?= V.toList (leiosEbTxs ebA)
     , testCase "the GC evicts an endorser block no block certifies" $
@@ -106,6 +111,49 @@ whyInvalid add blk = withNode $ \nut -> do
   threadDelay 1
   isInvalid <- atomically $ forgetFingerprint <$> ChainDB.getIsInvalidBlock (nutChainDB nut)
   pure $ isInvalid (blockHash blk)
+
+-- | The node adds 'announcingA' and 'certifyingA', restarts, and then adds
+-- 'certifyingA' again. Whether the ChainDB holds 'certifyingA' before the
+-- restart, after it, and after the second add.
+--
+-- Without A's transactions, 'certifyingA' is parked and so not on the
+-- selection.
+heldAcrossRestart :: WhatOfA -> IOSim s (Bool, Bool, Bool)
+heldAcrossRestart whatOfA = do
+  nodeDBs <- emptyNodeDBs
+  leiosDb <- newLeiosDBInMemory
+  withWriter leiosDb $ \writer -> do
+    await =<< writeEbPoint writer pointA (encodeLeiosEbSize ebA)
+    void $ await =<< writeEbBody writer pointA ebA
+    case whatOfA of
+      BodyOfA -> pure ()
+      ClosureOfA ->
+        void $
+          await
+            =<< writeTxs
+              writer
+              [(txHash, BS.replicate (fromIntegral size) 0) | (txHash, size) <- V.toList (leiosEbTxs ebA)]
+  beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 20
+    addBlocks nut [announcingA, certifyingA]
+    threadDelay 1
+    holds nut
+  withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+    afterRestart <- holds nut
+    addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [certifyingA]
+    threadDelay 1
+    afterAddingAgain <- holds nut
+    pure (beforeRestart, afterRestart, afterAddingAgain)
+ where
+  holds nut = atomically $ ($ blockPoint certifyingA) <$> ChainDB.getIsFetched (nutChainDB nut)
+
+-- | What the LeiosDB holds of A
+data WhatOfA
+  = -- | Its body, but not its transactions
+    BodyOfA
+  | -- | Its body and its transactions
+    ClosureOfA
 
 -- | 'certifyingA', except a minority made its certificate.
 minorityCertifyingA :: LeiosTestBlock
