@@ -678,7 +678,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
-                    , Cardano.Diffusion.freshBytes = Just (readFreshBytes (NodeKernel.getFreshBytes nodeKernel))
+                    , Cardano.Diffusion.freshBytes = readFreshBytes (NodeKernel.getFreshBytes nodeKernel)
+                    , Cardano.Diffusion.freshMaxBytes = NodeKernel.getFreshMaxBytes nodeKernel
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
