@@ -64,6 +64,7 @@ module Test.Consensus.Leios.TestBlock
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
@@ -191,14 +192,25 @@ data instance Header LeiosTestBlock = LeiosTestHeader
   -- ^ Whether this header's operational certificate counter is below the one
   -- the immutable tip records for its issuer; see 'setCounterBelowImmTips'.
   , lthLeiosCert :: !LeiosTestCert
-  -- ^ Whether this block contains a Leios certificate; see 'setLeiosCert'.
+  -- ^ The Leios certificate this block contains, if any; see 'setLeiosCert'.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
-data LeiosTestCert = NoLeiosTestCert | HasLeiosTestCert
+data LeiosTestCert = NoLeiosTestCert | HasLeiosTestCert !LeiosCert
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass NoThunks
+
+instance Serialise LeiosTestCert where
+  encode = \case
+    NoLeiosTestCert -> CBOR.encodeListLen 0
+    HasLeiosTestCert cert ->
+      CBOR.encodeListLen 1 <> toPlainEncoding leiosCodecVersion (encCBOR cert)
+  decode =
+    CBOR.Dec.decodeListLen >>= \case
+      0 -> pure NoLeiosTestCert
+      1 -> HasLeiosTestCert <$> toPlainDecoder Nothing leiosCodecVersion decCBOR
+      n -> fail $ "LeiosTestCert: unexpected length " <> show n
 
 data CounterVsImmTip = HeaderCounterNotBelowImmTips | HeaderCounterBelowImmTips
   deriving stock (Eq, Show, Generic)
@@ -303,10 +315,10 @@ setSlot slot = onHeader $ \hdr -> hdr{lthSlot = slot}
 setIssuer :: Word64 -> LeiosTestBlock -> LeiosTestBlock
 setIssuer issuer = onHeader $ \hdr -> hdr{lthIssuer = issuer}
 
--- | Make this block contain a Leios certificate, which certifies the endorser
+-- | Make this block contain the Leios certificate, which certifies the endorser
 -- block its predecessor announced.
-setLeiosCert :: LeiosTestBlock -> LeiosTestBlock
-setLeiosCert = onHeader $ \hdr -> hdr{lthLeiosCert = HasLeiosTestCert}
+setLeiosCert :: LeiosCert -> LeiosTestBlock -> LeiosTestBlock
+setLeiosCert cert = onHeader $ \hdr -> hdr{lthLeiosCert = HasLeiosTestCert cert}
 
 -- | Make the protocol reject this header.
 setInvalid :: LeiosTestBlock -> LeiosTestBlock
@@ -364,7 +376,7 @@ instance LeiosProtocol LeiosTestProtocol where
           }
   getContainsLeiosCert _proxy hdr = case lthLeiosCert hdr of
     NoLeiosTestCert -> False
-    HasLeiosTestCert -> True
+    HasLeiosTestCert{} -> True
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of
@@ -868,6 +880,11 @@ instance NodeInitStorage LeiosTestBlock where
 
 instance BlockSupportsMetrics LeiosTestBlock where
   isSelfIssued = isSelfIssuedConstUnknown
+
+instance BlockSupportsLeios LeiosTestBlock where
+  blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
+    NoLeiosTestCert -> Nothing
+    HasLeiosTestCert cert -> Just cert
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

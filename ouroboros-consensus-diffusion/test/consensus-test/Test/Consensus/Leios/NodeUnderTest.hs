@@ -39,7 +39,6 @@ module Test.Consensus.Leios.NodeUnderTest
   ) where
 
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.Diffusion.Configuration
   ( defaultChainSyncIdleTimeout
   , defaultTxSubmissionLogicVersion
@@ -136,6 +135,7 @@ import System.FS.API.Types (mkFsPath)
 import System.FS.Sim.MockFS (MockFS)
 import System.FS.Sim.STM (simHasFS)
 import System.Random (StdGen, mkStdGen, random, splitGen)
+import Test.Consensus.Leios.Committee (testCommittee, testQuorumStakeThreshold)
 import Test.Consensus.Leios.TestBlock
 import Test.Util.ChainDB (NodeDBs (..), emptyNodeDBs)
 import Test.Util.FS.Subdirectory (subdirectoryHasFS)
@@ -379,8 +379,8 @@ forecastingOnly range =
       , ltlcForecastRange = range
       , ltlcLeios =
           MkLeiosLedgerView
-            { llvCommittee = emptyLeiosCommittee
-            , llvQuorumStakeThreshold = maxBound
+            { llvCommittee = testCommittee
+            , llvQuorumStakeThreshold = testQuorumStakeThreshold
             , llvAnnouncementPeriod = Milliseconds32 1000
             , llvVotePeriod = Milliseconds32 4000
             , llvDiffusionPeriod = Milliseconds32 1000
