@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( Tip
@@ -9,7 +10,12 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncBlocksServer
   , chainSyncHeaderServerFollower
   , chainSyncHeadersServer
+  , RbParentNotFound (..)
+  , findParentPoint
+  , headerOnChain
   , inlineCertifiedEbsFollower
+  , inlineCertifiedEbsFollowerOnChainDB
+  , parentOnChain
 
     -- * Trace events
   , BlockingType (..)
@@ -23,13 +29,15 @@ import Cardano.Binary (DecoderError)
 import qualified Codec.CBOR.Decoding as CBOR.Decoding
 import qualified Codec.CBOR.Read as CBOR.Read
 import qualified Codec.CBOR.Write as CBOR.Write
+import Control.Monad.Trans.Maybe (MaybeT (..))
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Typeable (Typeable)
 import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( BlockComponent (GetHeader, GetRawBlock)
+  ( BlockComponent (GetHeader, GetRawBlock, GetSlot)
   , ChainDB
   , Follower (..)
   , WithPoint (..)
@@ -46,6 +54,8 @@ import Ouroboros.Consensus.Util.Enclose
   , pattern FallingEdge
   )
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block
   ( ChainUpdate (..)
   , Serialised (..)
@@ -96,12 +106,12 @@ chainSyncHeadersServer tracer chainDB flr =
 -- The local node-to-client protocol uses the chain sync mini-protocol with
 -- chains of full blocks (rather than a header \/ body split).
 --
--- The blocks go through 'inlineCertifiedEbsFollower', so a client sees the
--- transactions of a certified EB in the block that announced it.
+-- The blocks go through 'inlineCertifiedEbsFollowerOnChainDB', so a client sees
+-- the transactions of a certified EB in the block that announced it.
 chainSyncBlocksServer ::
   forall m blk.
   ( IOLike m
-  , HasHeader (Header blk)
+  , GetPrevHash blk
   , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
   , EncodeDisk blk blk
@@ -113,9 +123,35 @@ chainSyncBlocksServer ::
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ do
-  flr' <- inlineCertifiedEbsFollower ccfg leiosDbReader flr
+  flr' <- inlineCertifiedEbsFollowerOnChainDB chainDB ccfg leiosDbReader flr
   runChainSyncServer $
     chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr'
+
+-- | 'inlineCertifiedEbsFollower' for a follower of this ChainDB. When a
+-- rollback needs a block or its parent, it reads them from this ChainDB.
+inlineCertifiedEbsFollowerOnChainDB ::
+  forall m blk.
+  ( IOLike m
+  , GetPrevHash blk
+  , ResolveLeiosBlock blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
+  ) =>
+  ChainDB m blk ->
+  CodecConfig blk ->
+  LeiosDbReader m ->
+  Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
+  m (Follower m blk (WithPoint blk (Serialised blk)))
+inlineCertifiedEbsFollowerOnChainDB chainDB ccfg leiosDbReader =
+  inlineCertifiedEbsFollower
+    ccfg
+    leiosDbReader
+    (headerOnChain getChain (ChainDB.getBlockComponent chainDB GetHeader))
+    -- Read only after 'headerOnChain' found RB on the selected chain.
+    (ChainDB.getBlockComponent chainDB (Serialised <$> GetRawBlock))
+    (parentOnChain getChain (ChainDB.getBlockComponent chainDB GetSlot))
+ where
+  getChain = ChainDB.getCurrentChain chainDB
 
 -- | Wrap a follower so that, once an EB is certified, the client gets RB⁺
 -- (RB plus the EB's transactions) in place of the RB that announced it.
@@ -128,24 +164,36 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ 
 -- * __Rule 2: late certificate.__ If a CertRB comes after the client got plain
 --   RB, roll back to RB's parent, then send RB⁺ and the CertRB.
 --
+-- * __Rule 3: one block deeper.__ A rollback to an RB that announced an EB
+--   goes to RB's parent instead, then RB is sent again through rule 1. After a
+--   chain switch or a reconnection, the client may have the wrong version of
+--   RB. Its parent is still right: its version depends only on RB, which the
+--   rollback keeps.
+--
 -- A CertRB can announce its own EB, so it follows the same rules.
 --
--- TODO rule 3: after a chain switch or a reconnection, the client can have RB
--- or RB⁺ at a point the server rolls back to, and the server cannot tell
--- which. Rolling back one block deeper fixes this.
+-- Throws 'RbParentNotFound' if rule 3 cannot find RB's parent, rather than
+-- leave the client with the wrong version of RB.
 inlineCertifiedEbsFollower ::
   forall m blk.
   ( IOLike m
-  , HasHeader (Header blk)
+  , HasHeader blk
   , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
   , EncodeDisk blk blk
   ) =>
   CodecConfig blk ->
   LeiosDbReader m ->
+  -- | Read the header at a rollback point, to see if rule 3 applies.
+  -- 'Nothing' if the point is no longer on the chain.
+  (RealPoint blk -> m (Maybe (Header blk))) ->
+  -- | Read RB, to send it again. 'Nothing' if the ChainDB no longer has it.
+  (RealPoint blk -> m (Maybe (Serialised blk))) ->
+  -- | Find RB's parent. 'Nothing' throws 'RbParentNotFound'.
+  (Header blk -> m (Maybe (Point blk))) ->
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   m (Follower m blk (WithPoint blk (Serialised blk)))
-inlineCertifiedEbsFollower ccfg leiosDbReader f = do
+inlineCertifiedEbsFollower ccfg leiosDbReader lookupHeader lookupRawBlock lookupParent f = do
   -- Unchecked: the state holds headers and raw blocks, and only this
   -- client's thread uses it.
   stVar <- uncheckedNewTVarM initState
@@ -211,17 +259,28 @@ inlineCertifiedEbsFollower ccfg leiosDbReader f = do
       atomically $ modifyTVar stVar $ \st ->
         st{wsClientTip = updatePoint u, wsPlainAnnouncer = Nothing}
       pure u
-    PendingRaw (RollBack pt) -> do
-      atomically $ modifyTVar stVar $ \st ->
-        st
-          { wsClientTip = pt
-          , -- The client still has plain RB only if the rollback keeps it as
-            -- the tip.
-            wsPlainAnnouncer = case wsPlainAnnouncer st of
-              Just pa | blockPoint (fst (withoutPoint (paBlock pa))) == castPoint pt -> Just pa
-              _ -> Nothing
-          }
-      pure (RollBack pt)
+    PendingRaw (RollBack pt) -> case pointToWithOriginRealPoint pt of
+      Origin -> rollBackTo pt
+      NotOrigin rp ->
+        runMaybeT announcingRb >>= \case
+          -- No EB announced, or the block left the chain. If it left, the
+          -- inner follower rolls back past it next.
+          Nothing -> rollBackTo pt
+          -- Rule 3.
+          Just (hdr, sblk) -> do
+            parent <- lookupParent hdr >>= maybe (throwIO (RbParentNotFound rp)) pure
+            -- Send RB next, before anything already queued.
+            atomically $ modifyTVar stVar $ \st ->
+              st{wsPending = PendingRaw (AddBlock (WithPoint (hdr, sblk) pt)) : wsPending st}
+            rollBackTo parent
+       where
+        -- The block at the rollback point, if it announced an EB and is still
+        -- on the chain.
+        announcingRb = do
+          hdr <- MaybeT (lookupHeader rp)
+          _ <- MaybeT (pure (headerLeiosAnnouncement hdr))
+          sblk <- MaybeT (lookupRawBlock rp)
+          pure (hdr, sblk)
     PendingRaw (AddBlock wp@(WithPoint (hdr, sblk) pt)) -> do
       st <- readTVarIO stVar
       case wsPlainAnnouncer st of
@@ -257,6 +316,14 @@ inlineCertifiedEbsFollower ccfg leiosDbReader f = do
                       , paEb = eb
                       }
    where
+    -- After a rollback, rule 2 has nothing to fix: rule 3 never leaves the
+    -- client at an RB that announced an EB. If the parent it rolls back to
+    -- announced one too, the client already has the right version of it.
+    rollBackTo p = do
+      atomically $ modifyTVar stVar $ \st ->
+        st{wsClientTip = p, wsPlainAnnouncer = Nothing}
+      pure (RollBack p)
+
     send out pa = do
       atomically $ modifyTVar stVar $ \st ->
         st{wsClientTip = point out, wsPlainAnnouncer = pa}
@@ -322,6 +389,96 @@ data PlainAnnouncer blk = PlainAnnouncer
   , paEb :: !LeiosPoint
   -- ^ The EB that RB announced.
   }
+
+-- | Thrown by 'inlineCertifiedEbsFollower' when rule 3 cannot find the parent
+-- of this RB, which announced an EB.
+data RbParentNotFound blk = RbParentNotFound !(RealPoint blk)
+
+deriving instance StandardHash blk => Show (RbParentNotFound blk)
+
+instance (StandardHash blk, Typeable blk) => Exception (RbParentNotFound blk)
+
+-- | The header at a point, if the point is on the selected chain.
+--
+-- The node keeps its last k blocks in memory, in order. There are three cases:
+--
+-- * The block is one of them: its header is taken from memory.
+--
+-- * The block is older than all of them: its header is read with the given
+--   function.
+--
+-- * The block is recent but not one of them: it is no longer on the node's
+--   chain, so the result is 'Nothing'.
+headerOnChain ::
+  (IOLike m, HasHeader (Header blk)) =>
+  STM m (AnchoredFragment (Header blk)) ->
+  (RealPoint blk -> m (Maybe (Header blk))) ->
+  RealPoint blk ->
+  m (Maybe (Header blk))
+headerOnChain getChain readHeader rp = do
+  chain <- atomically getChain
+  case AF.splitAfterPoint chain (realPointToPoint rp) of
+    Just (before, _) | Right hdr <- AF.head before -> pure (Just hdr)
+    _
+      | atOrBelowImmutableTip chain (realPointSlot rp) -> readHeader rp
+      | otherwise -> pure Nothing
+
+-- | The point of a header's parent, given a way to read the slot of a block.
+--
+-- The node keeps its last k blocks in memory, in order. There are three cases:
+--
+-- * The block is one of them: its parent is the block just before it.
+--
+-- * The block is older than all of them: 'findParentPoint' finds its parent.
+--
+-- * The block is recent but not one of them: it is no longer on the node's
+--   chain, so the result is 'Nothing'.
+parentOnChain ::
+  (IOLike m, GetPrevHash blk) =>
+  STM m (AnchoredFragment (Header blk)) ->
+  (RealPoint blk -> m (Maybe SlotNo)) ->
+  Header blk ->
+  m (Maybe (Point blk))
+parentOnChain getChain slotOf hdr = do
+  chain <- atomically getChain
+  case AF.splitBeforePoint chain (blockPoint hdr) of
+    Just (before, _) -> pure (Just (castPoint (AF.headPoint before)))
+    Nothing
+      | atOrBelowImmutableTip chain (blockSlot hdr) -> findParentPoint slotOf hdr
+      | otherwise -> pure Nothing
+
+-- | Whether a slot is older than all of the node's last k blocks, which it
+-- keeps in memory.
+atOrBelowImmutableTip :: AnchoredFragment (Header blk) -> SlotNo -> Bool
+atOrBelowImmutableTip chain s = NotOrigin s <= pointSlot (AF.anchorPoint chain)
+
+-- | The point of a block's parent, given a way to read the slot of a block.
+--
+-- The header has the parent's hash but not its slot, so this searches for it:
+--
+-- * It tries each slot, going down from the block's own slot. It starts there,
+--   not one below, because a Byron EBB has the same slot as the next block.
+--
+-- * If the parent is missing, it goes all the way down to slot 0.
+--   'parentOnChain' only calls this for older blocks, whose parent is always on
+--   disk, so that only happens if the ImmutableDB is corrupt.
+findParentPoint ::
+  forall m blk.
+  (Monad m, GetPrevHash blk) =>
+  (RealPoint blk -> m (Maybe SlotNo)) ->
+  Header blk ->
+  m (Maybe (Point blk))
+findParentPoint slotOf hdr = case headerPrevHash hdr of
+  GenesisHash -> pure (Just GenesisPoint)
+  BlockHash h -> go h (blockSlot hdr)
+ where
+  go :: HeaderHash blk -> SlotNo -> m (Maybe (Point blk))
+  go h s =
+    slotOf (RealPoint s h) >>= \case
+      Just s' -> pure (Just (BlockPoint s' h))
+      Nothing
+        | s == 0 -> pure Nothing
+        | otherwise -> go h (s - 1)
 
 -- | A chain sync server.
 --
