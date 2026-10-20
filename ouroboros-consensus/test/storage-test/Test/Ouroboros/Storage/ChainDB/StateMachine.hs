@@ -392,6 +392,7 @@ type TestConstraints blk =
   , LedgerView (BlockProtocol blk) ~ ()
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
   , Eq (LedgerState blk EmptyMK)

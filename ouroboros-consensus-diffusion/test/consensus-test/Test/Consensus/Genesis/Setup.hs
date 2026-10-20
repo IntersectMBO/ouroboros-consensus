@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   ( BlockSupportsDiffusionPipelining
   )
+import Ouroboros.Consensus.Block.SupportsLeios (BlockSupportsLeios)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
@@ -165,6 +166,7 @@ runGenesisTest ::
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -228,6 +230,7 @@ runConformanceTest ::
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk

@@ -6,6 +6,7 @@
 module Test.Consensus.Leios.ChainDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Leios (VerificationError (..))
 import Control.Monad (forM_, void)
 import Control.Monad.Class.MonadSTM (atomically)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -15,10 +16,13 @@ import qualified Data.ByteString.Short as SBS
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
+  , WithOrigin (..)
   , blockHash
   , blockPoint
   , blockSlot
   )
+import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -30,6 +34,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
@@ -40,7 +45,13 @@ tests :: TestTree
 tests =
   testGroup
     "ChainDB and LeiosDB"
-    [ testCase "the GC keeps an endorser block an immutable block certifies" $
+    [ testCase "ChainSel rejects a block whose certificate a minority made" $
+        runSimOrThrow
+          (whyInvalid (\nut -> addBlocks nut [announcingA, minorityCertifyingA]) minorityCertifyingA)
+          @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
+    , testCase "ChainSel does not verify a certificate again for a claim it established" $
+        runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
+    , testCase "the GC keeps an endorser block an immutable block certifies" $
         fst (runSimOrThrow bodiesAfterGc) @?= endorserBlockReferences ebA
     , testCase "the GC evicts an endorser block no block certifies" $
         snd (runSimOrThrow bodiesAfterGc) @?= []
@@ -85,6 +96,40 @@ bodiesAfterGc = withNode $ \nut -> do
   -- announcements.
   chain = take 16 $ announcingA : certifyingA : iterate successorLeiosBlock announcingB
 
+-- | Add the blocks with the given action, then report why the ChainDB judges
+-- the given block invalid, if it does.
+whyInvalid ::
+  (NodeUnderTest (IOSim s) -> IOSim s ()) ->
+  LeiosTestBlock ->
+  IOSim s (Maybe (ExtValidationError LeiosTestBlock))
+whyInvalid add blk = withNode $ \nut -> do
+  -- Let the slots of the blocks pass, so none is from the future.
+  threadDelay 20
+  add nut
+  threadDelay 1
+  isInvalid <- atomically $ forgetFingerprint <$> ChainDB.getIsInvalidBlock (nutChainDB nut)
+  pure $ isInvalid (blockHash blk)
+
+-- | 'certifyingA', except a minority made its certificate.
+minorityCertifyingA :: LeiosTestBlock
+minorityCertifyingA =
+  setLeiosCert (certOf (rbHashOf announcingA) [0]) (successorLeiosBlock announcingA)
+
+-- | A sibling of 'certifyingA', making the same claim, with a certificate a
+-- minority made.
+minoritySibling :: LeiosTestBlock
+minoritySibling =
+  setLeiosCert (certOf (rbHashOf announcingA) [0]) (forkLeiosBlock certifyingA)
+
+-- | Add 'certifyingA', which establishes its claim, and then 'minoritySibling'.
+addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
+addSibling nut = do
+  addBlocks nut [announcingA, certifyingA]
+  addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [minoritySibling]
+
+rbHashOf :: LeiosTestBlock -> RankingBlockHash
+rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
+
 pointA, pointB :: LeiosPoint
 pointA = MkLeiosPoint (blockSlot announcingA) (UnsafeHash (SBS.replicate 32 1))
 pointB = MkLeiosPoint (blockSlot announcingB) (UnsafeHash (SBS.replicate 32 2))
@@ -94,9 +139,7 @@ pointB = MkLeiosPoint (blockSlot announcingB) (UnsafeHash (SBS.replicate 32 2))
 announcingA, certifyingA, announcingB :: LeiosTestBlock
 announcingA = setAnnouncement (pointEbHash pointA) (encodeEndorserBlockSize ebA) (firstLeiosBlock 1)
 certifyingA =
-  setLeiosCert
-    (certOf (toRankingBlockHash (Proxy @LeiosTestBlock) (blockHash announcingA)) [0, 1, 2])
-    (successorLeiosBlock announcingA)
+  setLeiosCert (certOf (rbHashOf announcingA) [0, 1, 2]) (successorLeiosBlock announcingA)
 announcingB =
   setAnnouncement (pointEbHash pointB) (encodeEndorserBlockSize ebB) (successorLeiosBlock certifyingA)
 
