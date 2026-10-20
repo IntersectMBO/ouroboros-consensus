@@ -52,6 +52,9 @@ instance NodeInitStorage (SimpleBlock SimpleMockCrypto ext) where
 instance BlockSupportsMetrics (SimpleBlock c ext) where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsLeios (SimpleBlock c ext) where
+  blockLeiosCert = defaultBlockLeiosCert
+
 deriving via
   SelectViewDiffusionPipelining (SimpleBlock c ext)
   instance

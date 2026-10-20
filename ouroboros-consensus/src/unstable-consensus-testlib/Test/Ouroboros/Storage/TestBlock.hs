@@ -927,6 +927,9 @@ deriving via
   instance
     BlockSupportsDiffusionPipelining TestBlock
 
+instance BlockSupportsLeios TestBlock where
+  blockLeiosCert = defaultBlockLeiosCert
+
 {-------------------------------------------------------------------------------
   Corruption
 -------------------------------------------------------------------------------}

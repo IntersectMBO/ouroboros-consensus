@@ -1142,6 +1142,9 @@ deriving via
     BlockSupportsProtocol (TestBlockWith ptype) =>
     BlockSupportsDiffusionPipelining (TestBlockWith ptype)
 
+instance BlockSupportsLeios (TestBlockWith ptype) where
+  blockLeiosCert = defaultBlockLeiosCert
+
 -----
 
 -- | Given a point to a chain of length L, generates a 'SwitchFork' that

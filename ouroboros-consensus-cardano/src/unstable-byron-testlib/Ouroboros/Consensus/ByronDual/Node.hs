@@ -275,6 +275,9 @@ instance NodeInitStorage DualByronBlock where
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsLeios DualByronBlock where
+  blockLeiosCert = defaultBlockLeiosCert
+
 instance BlockSupportsSanityCheck DualByronBlock where
   configAllSecurityParams = pure . configSecurityParam
 

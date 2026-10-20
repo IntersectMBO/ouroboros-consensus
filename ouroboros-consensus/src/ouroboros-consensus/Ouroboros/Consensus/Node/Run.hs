@@ -115,6 +115,7 @@ class
   , NodeInitStorage blk
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk

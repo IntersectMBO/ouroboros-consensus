@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
-import Control.Monad.Except ()
+import Control.Monad.Except (runExcept)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.State.Strict
@@ -63,6 +63,12 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Cert
+  ( LeiosCertRejection
+  , LeiosClaim (..)
+  , leiosClaim
+  , verifyLeiosClaim
+  )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
@@ -89,6 +95,8 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( AcquiredLeiosEbs
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
+  , insertLeiosValidClaim
+  , isLeiosValidClaim
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -366,6 +374,8 @@ chainSelSync ::
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
@@ -509,7 +519,18 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView b) >>= \case
+          Right () ->
+            chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+          Left rejection -> lift $ do
+            let e = ExtValidationErrorLeiosCert rejection
+            traceWith (AddBlockValidation >$< addBlockTracer) $
+              InvalidBlock e (blockRealPoint b)
+            addInvalidBlock cdbInvalid e (blockRealPoint b)
+            -- The rejected certificate is the block's own.
+            InvalidBlockPunishment.enact
+              blockPunish
+              InvalidBlockPunishment.BlockItself
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -1374,7 +1395,7 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
       ValidateLedgerError (AnnLedgerError lastValid pt e) -> do
         let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
         traceWith validationTracer (InvalidBlock e pt)
-        addInvalidBlock e pt
+        addInvalidBlock varInvalid e pt
         traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
 
         -- punish the peer who sent a block if it is invalid or a block from its
@@ -1417,13 +1438,51 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
 
   traceUpdate = traceWith $ UpdateLedgerDbTraceEvent >$< validationTracer
 
-  -- \| Record the invalid block in 'cdbInvalid' and change its fingerprint.
-  addInvalidBlock :: ExtValidationError blk -> RealPoint blk -> m ()
-  addInvalidBlock e (RealPoint slot hash) = atomically $
-    modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
-      WithFingerprint
-        (Map.insert hash (InvalidBlockInfo e slot) invalid)
-        (succ fp)
+-- | Record the invalid block in the map and change its fingerprint.
+addInvalidBlock ::
+  (IOLike m, StandardHash blk) =>
+  StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  ExtValidationError blk ->
+  RealPoint blk ->
+  m ()
+addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
+  modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
+    WithFingerprint
+      (Map.insert hash (InvalidBlockInfo e slot) invalid)
+      (succ fp)
+
+{-------------------------------------------------------------------------------
+  Leios certificates
+-------------------------------------------------------------------------------}
+
+-- | Check the Leios certificate of an arriving block, if it contains one,
+-- against the Leios part of the ledger view at the block's slot.
+--
+-- If the certificate is valid, then record the claim it establishes; see
+-- 'LeiosValidClaims'. If it is invalid, then so is the block. A block making an
+-- already established claim need not have its certificate verified.
+checkLeiosCert ::
+  (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
+  ChainDbEnv m blk ->
+  -- | The slot of the block's predecessor
+  WithOrigin SlotNo ->
+  StrictMaybe LeiosLedgerView ->
+  blk ->
+  m (Either LeiosCertRejection ())
+checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
+  case blockLeiosCert b of
+    Nothing -> pure $ Right ()
+    Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
+      Left rejection -> pure $ Left rejection
+      Right claim -> do
+        claims <- readTVarIO cdbLeiosValidClaims
+        if
+          | isLeiosValidClaim (leiosClaimRbHash claim) claims -> pure $ Right ()
+          | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
+              Left rejection -> pure $ Left rejection
+              Right () -> do
+                atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim)
+                pure $ Right ()
 
 {-------------------------------------------------------------------------------
   Diffusion pipelining

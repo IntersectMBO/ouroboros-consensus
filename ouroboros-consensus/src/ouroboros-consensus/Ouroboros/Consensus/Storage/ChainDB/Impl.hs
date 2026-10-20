@@ -80,7 +80,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Backgrou
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (acquiredLeiosEbsFromList)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( acquiredLeiosEbsFromList
+  , emptyLeiosValidClaims
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -118,6 +121,7 @@ withDB ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -135,6 +139,7 @@ openDB ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -151,6 +156,7 @@ openDBInternal ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -234,6 +240,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredLeiosEbs <- newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
+    varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
     chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
@@ -292,6 +299,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosValidClaims = varLeiosValidClaims
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env

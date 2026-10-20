@@ -27,6 +27,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , PeerAddr (..)
   , Seeds (..)
   , addBlocks
+  , addBlocksAfter
   , decodePeerAddr
   , encodePeerAddr
   , nodeVersionData
@@ -198,16 +199,21 @@ data NodeUnderTest m = NodeUnderTest
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
+addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
+addBlocks nut = addBlocksAfter nut Origin
+
+-- | Add a chain to the node's ChainDB, oldest first, given the slot of its
+-- first block's predecessor
 --
 -- A 'LeiosTestBlock''s ledger view is the same at every slot.
-addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
-addBlocks nut blks =
+addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin SlotNo -> [Blk] -> m ()
+addBlocksAfter nut predecessorSlot blks =
   sequence_ $
     zipWith
-      ( \predecessorSlot ->
-          ChainDB.addBlock_ (nutChainDB nut) noPunishment predecessorSlot leiosView
+      ( \predSlot ->
+          ChainDB.addBlock_ (nutChainDB nut) noPunishment predSlot leiosView
       )
-      (Origin : map (NotOrigin . blockSlot) blks)
+      (predecessorSlot : map (NotOrigin . blockSlot) blks)
       blks
  where
   leiosView = SJust (ltlcLeios (configLedger (nutTopLevelConfig nut)))

@@ -82,6 +82,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( insertAcquiredLeiosEb
   , isAcquiredLeiosEb
   , pruneAcquiredLeiosEbs
+  , pruneLeiosValidClaims
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -110,6 +111,8 @@ launchBgTasks ::
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>
@@ -361,7 +364,9 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
   scheduleGC' :: WithOrigin SlotNo -> m ()
   scheduleGC' Origin = return ()
   scheduleGC' (NotOrigin slotNo) = do
-    atomically $ modifyTVar cdbAcquiredLeiosEbs (pruneAcquiredLeiosEbs slotNo)
+    atomically $ do
+      modifyTVar cdbAcquiredLeiosEbs (pruneAcquiredLeiosEbs slotNo)
+      modifyTVar cdbLeiosValidClaims (pruneLeiosValidClaims slotNo)
     scheduleGC
       (contramap TraceGCEvent cdbTracer)
       slotNo
@@ -739,6 +744,8 @@ addBlockRunner ::
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
