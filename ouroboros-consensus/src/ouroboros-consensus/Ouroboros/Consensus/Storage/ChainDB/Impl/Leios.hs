@@ -7,7 +7,7 @@
 
 -- | What the ChainDB knows about Leios endorser blocks: which closures it has
 -- acquired, and so which blocks certifying an endorser block ChainSel may
--- select.
+-- select; and whether a block's certificate is valid.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( -- * The Leios facts of a block
     leiosBlockInfo
@@ -22,8 +22,15 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
     -- * Parking
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
+
+    -- * Certificates
+  , LeiosCertRejection (..)
+  , verifyBlockLeiosCert
   ) where
 
+import Cardano.Crypto.Leios (LeiosCert, VerificationError, verifyLeiosCert)
+import Cardano.Ledger.BaseTypes (unboundRational)
+import Data.Bifunctor (first)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -37,9 +44,10 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
   , LeiosProtocol (..)
   )
-import Ouroboros.Consensus.Leios.Types (EbHash, LeiosPoint (..))
+import Ouroboros.Consensus.Leios.Types (EbHash, LeiosPoint (..), RbHash (..))
 import Ouroboros.Consensus.Storage.VolatileDB
   ( BlockInfo (..)
   , LeiosBlockInfo (..)
@@ -163,3 +171,44 @@ ignoreParkedCertRBSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
   Set.filter (not . isParkedCertRB acquired lookupBlockInfo) . succsOf
+
+{-------------------------------------------------------------------------------
+  Certificates
+-------------------------------------------------------------------------------}
+
+-- | Why a block's Leios certificate is invalid.
+data LeiosCertRejection
+  = -- | The block's predecessor is genesis, which announces nothing.
+    LeiosCertAtGenesis
+  | -- | The ledger view at the block's slot has no Leios committee.
+    LeiosCertWithoutCommittee
+  | LeiosCertInvalid !VerificationError
+  deriving stock (Eq, Show)
+
+-- | Verify a block's Leios certificate, given the block's predecessor and the
+-- Leios part of the ledger view at the block's slot. On success, return the
+-- hash of the predecessor, which announced the certified endorser block.
+--
+-- The committee at the block's slot is the one at its predecessor's slot: the
+-- committee is fixed for an epoch, and a header that certifies an announcement
+-- from an earlier epoch is invalid.
+verifyBlockLeiosCert ::
+  forall blk.
+  ConvertRawHash blk =>
+  ChainHash blk ->
+  Maybe LeiosLedgerView ->
+  LeiosCert ->
+  Either LeiosCertRejection RbHash
+verifyBlockLeiosCert prevHash mbView cert = case (prevHash, mbView) of
+  (GenesisHash, _) -> Left LeiosCertAtGenesis
+  (BlockHash _, Nothing) -> Left LeiosCertWithoutCommittee
+  (BlockHash h, Just llv) -> do
+    let rbHash = MkRbHash (toRawHash (Proxy @blk) h)
+    _weight <-
+      first LeiosCertInvalid $
+        verifyLeiosCert
+          (llvCommittee llv)
+          (unboundRational (llvQuorumStakeThreshold llv))
+          rbHash
+          cert
+    pure rbHash
