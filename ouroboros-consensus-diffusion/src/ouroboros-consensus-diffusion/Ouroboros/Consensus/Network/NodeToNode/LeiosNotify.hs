@@ -16,7 +16,10 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
+import Control.Monad ((>=>))
 import Control.Monad.Except (Except, runExcept, runExceptT)
+import Control.Tracer (Tracer, traceWith)
+import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -36,8 +39,8 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogStart
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
-import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
-import Ouroboros.Consensus.Leios.VoteState (VoteState, onAcceptedVote)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote (..))
+import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), VoteState, addVote)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
@@ -48,6 +51,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Ouroboros.Consensus.Network.LeiosNotify
   ( leiosNotifyMiniProtocolNum
@@ -75,6 +79,7 @@ leiosNotifyClient ::
   , ConvertRawHash blk
   , HasHardForkHistory blk
   ) =>
+  Tracer m TraceLeiosNotifyClientEvent ->
   TopLevelConfig blk ->
   ChainDB m blk ->
   AnnounceState m blk ->
@@ -87,6 +92,7 @@ leiosNotifyClient ::
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
 leiosNotifyClient
+  tracer
   cfg
   chainDB
   announceState
@@ -137,7 +143,16 @@ leiosNotifyClient
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
-            mapM_ (onAcceptedVote voteState systemTime) accepted
+            for_ accepted $
+              -- Traced only when added, not per duplicate arrival.
+              addVote voteState systemTime >=> \case
+                Added vote ->
+                  traceWith tracer (TraceLeiosNotifyClientVoteAdded vote)
+                VoteInvalid vote ->
+                  throwIO $ ExnLeiosInvalidVote (voteAnnouncingRbHash vote) (voteSeatId vote)
+                Expired -> pure ()
+                AlreadyKnown -> pure ()
+                NotAnnounced -> pure ()
           MsgCanceled -> pure ()
       )
    where
