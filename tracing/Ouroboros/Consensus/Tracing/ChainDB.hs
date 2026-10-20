@@ -3545,6 +3545,11 @@ instance
       [ "kind" .= String "ExtValidationErrorPerasCertInBlock"
       , "error" .= String (showT err)
       ]
+  forMachine _dtal (ExtValidationErrorLeiosCert err) =
+    mconcat
+      [ "kind" .= String "ExtValidationErrorLeiosCert"
+      , "error" .= String (showT err)
+      ]
 
   forHuman (ExtValidationErrorLedger err) = forHuman err
   forHuman (ExtValidationErrorHeader err) = forHuman err
@@ -3552,11 +3557,14 @@ instance
     "Could not resolve the Peras epoch context: " <> showT err
   forHuman (ExtValidationErrorPerasCertInBlock err) =
     "Invalid Peras certificate in block: " <> showT err
+  forHuman (ExtValidationErrorLeiosCert err) =
+    "Invalid Leios certificate in block: " <> showT err
 
   asMetrics (ExtValidationErrorLedger err) = asMetrics err
   asMetrics (ExtValidationErrorHeader err) = asMetrics err
   asMetrics ExtValidationErrorPerasEpochContextResolver{} = []
   asMetrics ExtValidationErrorPerasCertInBlock{} = []
+  asMetrics ExtValidationErrorLeiosCert{} = []
 
 instance
   Show (PBFT.PBftVerKeyHash c) =>
