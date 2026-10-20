@@ -36,6 +36,7 @@ import qualified Data.Text as Text
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AnnouncementFields (..)
+  , BytesSize
   , EbAnnouncement (..)
   , LeiosClosureError (..)
   , LeiosPoint (..)
@@ -63,6 +64,10 @@ import Ouroboros.Consensus.Protocol.Praos
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as PP
+import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios)
+import Cardano.Ledger.Chain (ChainChecksPParams (..))
+import qualified Cardano.Protocol.TPraos.API as TP
+import Data.Foldable (toList)
 import Ouroboros.Consensus.Protocol.Praos2
   ( ConsensusConfig (..)
   , LeiosCrypto
@@ -115,12 +120,32 @@ import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
   the default no-op instance.
 -------------------------------------------------------------------------------}
 
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra) where
+  getFreshMaxBytesFromView _ = tpraosFreshMaxBytes
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra) where
+  getFreshMaxBytesFromView _ = tpraosFreshMaxBytes
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra) where
+  getFreshMaxBytesFromView _ = tpraosFreshMaxBytes
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra) where
+  getFreshMaxBytesFromView _ = tpraosFreshMaxBytes
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra) where
+  getFreshMaxBytesFromView _ = praosFreshMaxBytes
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra) where
+  getFreshMaxBytesFromView _ = praosFreshMaxBytes
+
+-- | What one announcement can carry at most before Leios: the block body.
+tpraosFreshMaxBytes :: TP.TPraosLedgerView -> BytesSize
+tpraosFreshMaxBytes lv = fromIntegral (ccMaxBBSize (TP.tplvChainChecks lv))
+
+-- | What one announcement can carry at most: the block body plus, where the
+-- protocol has Leios, an endorser block itself and its closure, each at its
+-- maximum. A protocol without Leios has nothing in those two fields, so it
+-- answers the block body alone.
+praosFreshMaxBytes :: Foldable (WhenLeios proto) => PP.PolyPraosLedgerView proto -> BytesSize
+praosFreshMaxBytes lv =
+  fromIntegral (PP.plvMaxBodySize lv)
+    + sum (fromIntegral <$> toList (PP.plvMaxEbBodySize lv))
+    + sum (fromIntegral <$> toList (PP.plvMaxEbTxsSize lv))
 
 instance
   forall c.
@@ -136,6 +161,8 @@ instance
   getLeiosMaxEbTxsSizeFromView _ lv =
     case PP.plvMaxEbTxsSize lv of
       Praos2HasLeios sz -> sz
+
+  getFreshMaxBytesFromView _ = praosFreshMaxBytes
 
   resolveLeiosClosure leiosDb ebHash = do
     lookupEbClosure leiosDb ebHash >>= \case

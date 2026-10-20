@@ -2045,6 +2045,7 @@ test-suite cardano-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Cardano.Capacity
+    Test.Consensus.Cardano.FreshMax
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden

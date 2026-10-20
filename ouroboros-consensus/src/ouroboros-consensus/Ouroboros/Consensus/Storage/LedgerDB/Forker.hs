@@ -986,6 +986,20 @@ class ResolveLeiosBlock blk where
     BytesSize
   getLeiosMaxEbTxsSizeFromView _ _ = 0
 
+  -- | The most bytes one announcement can carry under this view's parameters:
+  -- the block body at its maximum plus, where the era has Leios, an endorser
+  -- block's own size and its closure's at theirs. Sizes diffusion's egress
+  -- credit buckets, so a chain without Leios, not yet or no longer, is served
+  -- at Praos sizes. Read from a view, like 'getLeiosMaxEbTxsSizeFromView', so
+  -- a parameter change is seen as soon as the ledger carries it.
+  --
+  -- An era whose view says nothing about sizes answers 0.
+  getFreshMaxBytesFromView ::
+    proxy blk ->
+    LedgerView (BlockProtocol blk) ->
+    BytesSize
+  getFreshMaxBytesFromView _ _ = 0
+
   -- | The most recent EB announcement in the 'HeaderState', if any: the
   -- election that made it, the endorser block's hash, and its body size.
   -- 'Nothing' for headers in eras that don't carry Leios announcements.
