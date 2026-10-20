@@ -1642,6 +1642,12 @@ instance
       protocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra) praosSt
     _ -> Nothing
 
+  tickedProtocolStateLeiosAnnouncement tcds = case tickedHardForkChainDepStatePerEra tcds of
+    State.HardForkState
+      (TeleDijkstra _ _ _ _ _ _ _ (State.Current _ (Comp (WrapTickedChainDepState praosSt)))) ->
+        tickedProtocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra) praosSt
+    _ -> Nothing
+
   assumeValidatedClosureTx cfg slot st tx = case (tx, matchTickedDijkstra cfg st) of
     (GenTxDijkstra inner, Just (dijkstraCfg, dijkstraSt)) ->
       HardForkValidatedGenTx
@@ -1653,6 +1659,16 @@ instance
       -- Only Dijkstra has a Leios closure to validate, so only Dijkstra txs
       -- ever reach here (see 'resolveLeiosClosure' above).
       error "assumeValidatedClosureTx: closure tx or ledger state from a non-Dijkstra era"
+
+  -- XXX: cfg is not really needed here
+  leiosCurrentProtVer cfg st = case matchTickedDijkstra cfg st of
+    Just (dijkstraCfg, dijkstraSt) -> leiosCurrentProtVer dijkstraCfg dijkstraSt
+    Nothing -> error "leiosCurrentProtVer: ledger state from a non-Dijkstra era"
+
+  leiosValidatedTxProtVer vtx = case vtx of
+    HardForkValidatedGenTx (OneEraValidatedGenTx (TagDijkstra (WrapValidatedGenTx inner))) ->
+      leiosValidatedTxProtVer inner
+    _ -> error "leiosValidatedTxProtVer: tx from a non-Dijkstra era"
 
   leiosClosureTxKeySets tx = case tx of
     GenTxDijkstra inner ->

@@ -33,7 +33,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Database.SQLite3 as DB
-import LeiosDemoTypes (txHashBytes)
+import LeiosDemoTypes (ProtVerParity, txHashBytes)
 import LeiosTxCache.API
   ( LeiosTxCache (..)
   , ReferencesTxsByHash (..)
@@ -47,7 +47,7 @@ import LeiosTxCache.API
 -- @fsync@ the file before reading, so the query connection's pages are clean and
 -- hence evictable by @posix_fadvise@.
 newSQLiteLeiosTxCacheForPopulation ::
-  ReferencesTxsByHash b => FilePath -> IO (LeiosTxCache IO () () b)
+  ReferencesTxsByHash b => FilePath -> IO (LeiosTxCache IO () ProtVerParity b)
 newSQLiteLeiosTxCacheForPopulation =
   newSQLiteLeiosTxCacheWith
     [ "PRAGMA page_size = 32768;"
@@ -79,7 +79,7 @@ newSQLiteLeiosTxCacheForPopulation =
 -- cosmetic.) @cacheSize@ is the @PRAGMA cache_size@ value; @nParams@ the fixed
 -- probe length, so the statement is prepared once per connection.
 newSQLiteLeiosTxCacheForQueries ::
-  Int -> Int -> FilePath -> IO (LeiosTxCache IO () () b, IO ())
+  Int -> Int -> FilePath -> IO (LeiosTxCache IO () ProtVerParity b, IO ())
 newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
   -- A large @IN (?,..)@ rather than the @json_each(?)@ + @unhex@ form that
   -- LeiosDB.SQLite uses: json_each was measured both slower (parsing the
@@ -141,7 +141,7 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
 -- is meaningful; a present tx reads back as @Just (Left ())@, an absent one as
 -- 'Nothing'.
 newSQLiteLeiosTxCacheWith ::
-  ReferencesTxsByHash b => [Text] -> FilePath -> IO (LeiosTxCache IO () () b)
+  ReferencesTxsByHash b => [Text] -> FilePath -> IO (LeiosTxCache IO () ProtVerParity b)
 newSQLiteLeiosTxCacheWith pragmas path = do
   db <- DB.open (fromString path)
   mapM_ (DB.exec db) pragmas

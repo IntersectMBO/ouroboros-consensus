@@ -89,6 +89,7 @@ module Test.Util.LeiosTestBlock
   ) where
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Cardano.Ledger.BaseTypes (ProtVer (..))
 import Cardano.Ledger.Binary (decodeFull', serialize', shelleyProtVer)
 import Cardano.Slotting.EpochInfo (epochInfoEpoch, fixedEpochInfo)
 import Codec.CBOR.Decoding (Decoder, decodeBytes)
@@ -498,6 +499,9 @@ instance ResolveLeiosBlock LeiosTestBlock where
 
   protocolStateLeiosAnnouncement = ltcdsAnnouncement
 
+  tickedProtocolStateLeiosAnnouncement (TickedLeiosTestChainDepState cds) =
+    ltcdsAnnouncement cds
+
   -- The closure the LeiosDb holds for this endorser block, decoded back into
   -- transactions. A CertRB is not selectable until this succeeds.
   resolveLeiosClosure leiosDb ebHash =
@@ -526,6 +530,10 @@ instance ResolveLeiosBlock LeiosTestBlock where
   leiosClosureTxKeySets = getTransactionKeySets
 
   assumeValidatedClosureTx _ _ _ = ValidatedLeiosTestGenTx
+
+  -- No protocol versions here, any works as long as its consistent
+  leiosCurrentProtVer _ _ = ProtVer (toEnum 12) 0
+  leiosValidatedTxProtVer _ = ProtVer (toEnum 12) 0
 
 -- | The committee lives in the ledger view, which the forecast computes from
 -- the ledger config; the ledger /state/ carries none, so the voting-path

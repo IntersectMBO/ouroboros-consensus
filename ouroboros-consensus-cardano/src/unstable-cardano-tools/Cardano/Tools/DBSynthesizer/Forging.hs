@@ -386,6 +386,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
           (configLedger cfg)
           currentSlot
           unticked
+          tickedChainDepState
 
     (rbTxs, ebTxs, commitLeftovers) <- withReadOnlyForkerAtPoint'
       chainDB

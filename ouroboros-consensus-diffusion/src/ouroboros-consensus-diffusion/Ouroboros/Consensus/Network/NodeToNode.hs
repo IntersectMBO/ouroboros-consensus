@@ -7,7 +7,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -1198,8 +1197,7 @@ nullTracers =
     }
 
 showTracers ::
-  ( Monad m
-  , Show blk
+  ( Show blk
   , Show ntnAddr
   , Show (Header blk)
   , Show (GenTx blk)

@@ -329,6 +329,16 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
       (ShelleyBlock proto era)
       QFNoTables
       (Map SL.DRep (Set (SL.Credential SL.Staking)))
+  GetStakePoolState ::
+    Maybe (Set (KeyHash LC.StakePool)) ->
+    Bool ->
+    BlockQuery
+      (ShelleyBlock proto era)
+      QFNoTables
+      (Map (KeyHash LC.StakePool) (SL.QueryResultStakePoolState era))
+  -- | The Leios voting committees of the current and the next epoch.
+  GetLeiosCommittee ::
+    BlockQuery (ShelleyBlock proto era) QFNoTables SL.QueryResultLeiosCommittee
 
 -- WARNING: please add new queries to the end of the list and stick to this
 -- order in all other pattern matches on queries. This helps in particular
@@ -395,7 +405,7 @@ instance
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        SL.queryPoolState st mPoolIds
+        SL.queryPoolState st mPoolIds (SL.networkId globals)
       GetStakeSnapshots mPoolIds ->
         SL.queryStakeSnapshots st mPoolIds
       GetStakeDelegDeposits stakeCreds ->
@@ -454,6 +464,10 @@ instance
           $ cfg
       GetDRepDelegations dreps ->
         SL.queryDRepDelegations st dreps
+      GetStakePoolState mset b ->
+        SL.queryStakePoolState st mset b
+      GetLeiosCommittee ->
+        SL.queryLeiosCommittee st
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -511,6 +525,10 @@ instance
     GetStakeDistribution2{} -> const True
     GetMaxMajorProtocolVersion -> const True
     GetDRepDelegations{} -> const True
+    -- The prototype only negotiates 'ShelleyNodeToClientVersion15', as network
+    -- has no node-to-client version for 'ShelleyNodeToClientVersion16' yet.
+    GetStakePoolState{} -> const True
+    GetLeiosCommittee -> const True
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
@@ -662,6 +680,10 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
     | otherwise =
         Nothing
   sameDepIndex2 GetDRepDelegations{} _ = Nothing
+  sameDepIndex2 GetStakePoolState{} GetStakePoolState{} = Just Refl
+  sameDepIndex2 GetStakePoolState{} _ = Nothing
+  sameDepIndex2 GetLeiosCommittee GetLeiosCommittee = Just Refl
+  sameDepIndex2 GetLeiosCommittee _ = Nothing
 
 deriving instance Eq (BlockQuery (ShelleyBlock proto era) fp result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
@@ -705,6 +727,8 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     GetStakeDistribution2{} -> show
     GetMaxMajorProtocolVersion{} -> show
     GetDRepDelegations{} -> show
+    GetStakePoolState{} -> show
+    GetLeiosCommittee -> show
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -806,6 +830,10 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 38
   GetDRepDelegations dreps ->
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 39 <> LC.toEraCBOR @era dreps
+  GetStakePoolState mset b ->
+    CBOR.encodeListLen 3 <> CBOR.encodeWord8 40 <> toCBOR mset <> toCBOR b
+  GetLeiosCommittee ->
+    CBOR.encodeListLen 1 <> CBOR.encodeWord8 41
 
 decodeShelleyQuery ::
   forall era proto.
@@ -886,6 +914,11 @@ decodeShelleyQuery = do
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
     (1, 38) -> return $ SomeBlockQuery GetMaxMajorProtocolVersion
     (2, 39) -> requireCG $ SomeBlockQuery . GetDRepDelegations <$> LC.fromEraCBOR @era
+    (3, 40) -> do
+      mset <- fromCBOR
+      b <- fromCBOR
+      return $ SomeBlockQuery $ GetStakePoolState mset b
+    (1, 41) -> return $ SomeBlockQuery GetLeiosCommittee
     _ -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -933,6 +966,8 @@ encodeShelleyResult v query = case query of
   GetStakeDistribution2{} -> LC.toEraCBOR @era
   GetMaxMajorProtocolVersion -> toCBOR
   GetDRepDelegations{} -> LC.toEraCBOR @era
+  GetStakePoolState{} -> LC.toEraCBOR @era
+  GetLeiosCommittee -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
   forall proto era fp result.
@@ -979,6 +1014,8 @@ decodeShelleyResult v query = case query of
   GetStakeDistribution2 -> LC.fromEraCBOR @era
   GetMaxMajorProtocolVersion -> fromCBOR
   GetDRepDelegations{} -> LC.fromEraCBOR @era
+  GetStakePoolState{} -> LC.fromEraCBOR @era
+  GetLeiosCommittee -> LC.fromEraCBOR @era
 
 -- | The codec for the result of 'GetGenesisConfig'.
 --
@@ -996,6 +1033,10 @@ genesisConfigEnDecoding ::
 genesisConfigEnDecoding ShelleyNodeToClientVersion15 =
   ( encodeShelleyGenesisNoExtraConfig . getCompactGenesis
   , compactGenesis <$> decodeShelleyGenesisNoExtraConfig
+  )
+genesisConfigEnDecoding ShelleyNodeToClientVersion16 =
+  ( toCBOR . getCompactGenesis
+  , compactGenesis <$> fromCBOR
   )
 
 {-------------------------------------------------------------------------------

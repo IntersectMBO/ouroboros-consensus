@@ -4,8 +4,8 @@
 
 module Test.Consensus.Shelley.Dijkstra (tests) where
 
-import Cardano.Binary (serialize')
 import Cardano.Crypto.Leios (LeiosCert)
+import Cardano.Ledger.Alonzo.Tx (AlonzoEraTx (isPhase2ValidTxL), IsPhase2Valid (..))
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Block as SL (pattern Block)
 import qualified Cardano.Ledger.Core as Core (BlockBody, hashBlockBody, sizeTxF, txSeqBlockBodyL)
@@ -21,6 +21,7 @@ import Cardano.Protocol.Leios.BlockHeader
   )
 import qualified Data.ByteString as BS
 import Data.Proxy (Proxy (..))
+import LeiosDemoTypes (deserializeTxForLeios, serializeTxForLeios)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs, txId)
 import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
@@ -56,26 +57,41 @@ tests =
             "the mempool never charges a transaction less than 'forgeLeiosEb' writes for it"
             prop_leiosEbItemChargeCoversEncoder
         , testProperty
+            "an endorser block's codec preserves the tx's phase-2 validity flag"
+            prop_leiosTxKeepsPhase2Validity
+        , testProperty
             "'inlineLeiosClosure' appends the EB's transactions after the block's own, in order"
             prop_inlineLeiosClosureAppends
         ]
     ]
 
--- | An endorser-block reference records the length of the serialised
--- transaction ('serialize'', the mempool-submission encoding), while the
--- mempool charges the ledger's size computation ('sizeTxF'). At the current
--- ledger pin the two encodings agree exactly; this fails on a ledger bump
+-- | An endorser-block reference records the length of the block-body encoding
+-- ('serializeTxForLeios'), while the mempool charges the ledger's size
+-- computation ('sizeTxF') plus 'perTxOverhead'. This fails on a ledger bump
 -- that lets the wire size drift above the charge, before that drift can
 -- produce an endorser block no peer accepts.
 prop_leiosEbItemChargeCoversEncoder :: Property
 prop_leiosEbItemChargeCoversEncoder =
   forAll (arbitrary :: Gen (GenTx (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))) $
     \(ShelleyTx _txid tx) ->
-      let wireSize = toInteger $ BS.length (serialize' tx)
-          chargedSize = toInteger $ tx ^. Core.sizeTxF
-       in counterexample
-            ("serialize': " <> show wireSize <> " bytes, sizeTxF: " <> show chargedSize)
-            $ wireSize <= chargedSize
+      let wireSize = toInteger $ BS.length (serializeTxForLeios tx)
+          chargedSize = toInteger (tx ^. Core.sizeTxF) + perTxOverhead
+       in wireSize === chargedSize
+
+-- | An endorser block must not launder a phase-2-invalid tx into a valid one:
+-- the flag survives the round trip and is covered by the tx's hash.
+prop_leiosTxKeepsPhase2Validity :: Property
+prop_leiosTxKeepsPhase2Validity =
+  forAll (arbitrary :: Gen (GenTx (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))) $
+    \(ShelleyTx _txid tx) ->
+      let invalidTx = tx & isPhase2ValidTxL .~ Phase2Invalid
+          validTx = tx & isPhase2ValidTxL .~ Phase2Valid
+          roundTrip = fmap (^. isPhase2ValidTxL) . deserializeTxForLeios . serializeTxForLeios
+       in conjoin
+            [ roundTrip invalidTx === Right Phase2Invalid
+            , roundTrip validTx === Right Phase2Valid
+            , serializeTxForLeios invalidTx =/= serializeTxForLeios validTx
+            ]
 
 -- | 'inlineLeiosClosure' returns the block's own transactions followed by the
 -- EB's, and leaves the header unchanged.

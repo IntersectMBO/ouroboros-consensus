@@ -307,7 +307,9 @@ data PolyPraosState proto = PraosState
   , praosStateLeiosAnnouncement ::
       !(WhenLeios proto (StrictMaybe AnnouncedBy))
   -- ^ The announcement carried by the most recently applied header, if any.
-  -- A header with no announcement clears it.
+  -- A header with no announcement clears it, and so does ticking into a new
+  -- epoch, since an endorser block may not be certified across an epoch
+  -- boundary.
   }
   deriving Generic
 
@@ -460,8 +462,9 @@ data PolyPraosValidationErr proto c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | -- | The header sets its cert bit, but its predecessor announced no endorser
-    -- block, so there is nothing for the certificate to certify.
+  | -- | The header sets its cert bit, but there is nothing for the certificate
+    -- to certify: its predecessor announced no endorser block, or announced it
+    -- in the previous epoch.
     LeiosCertWithoutAnnouncement
       !(VoidUnlessLeios proto ())
   | -- | The header sets its cert bit too soon after its predecessor's
@@ -536,14 +539,17 @@ checkIsLeaderPolyPraos
 -- Updating the chain dependent state for Praos.
 --
 -- If we are not in a new epoch, then nothing happens. If we are in a new
--- epoch, we do three things:
+-- epoch, we do four things:
 -- - Store the existing current epoch nonce as the "previous epoch" nonce.
 --   This is needed to validate Peras certificates when they appear in blocks.
 -- - Update the epoch nonce to the combination of the candidate nonce and the
 --   nonce derived from the last block of the previous epoch.
 -- - Update the "last block of previous epoch" nonce to the nonce derived
 --   from the last applied block.
+-- - Clear the pending announcement, since an endorser block may not be
+--   certified across an epoch boundary.
 tickChainDepStatePolyPraos ::
+  Functor (WhenLeios proto) =>
   EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosLedgerView proto ->
   SlotNo ->
@@ -575,6 +581,8 @@ tickChainDepStatePolyPraos
                 praosStateEpochNonce st
             , praosStateLastEpochBlockNonce =
                 praosStateLabNonce st
+            , praosStateLeiosAnnouncement =
+                SNothing <$ praosStateLeiosAnnouncement st
             }
         else st
 

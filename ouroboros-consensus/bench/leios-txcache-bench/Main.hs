@@ -36,6 +36,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
 import LeiosDemoTypes
   ( EbHash
+  , ProtVerParity
   , RbHash (..)
   , TxHash
   , maxTxsPerEb
@@ -98,7 +99,7 @@ instance ReferencesTxsByHash BenchBody where
             (i + 1)
     dummySize = 0
 
-type BenchCache = LeiosTxCache IO () () BenchBody
+type BenchCache = LeiosTxCache IO () ProtVerParity BenchBody
 
 -- * Main
 

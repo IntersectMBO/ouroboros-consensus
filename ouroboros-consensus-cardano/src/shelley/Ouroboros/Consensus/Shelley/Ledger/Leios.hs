@@ -14,9 +14,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
-import Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
-import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
 import qualified Cardano.Ledger.Block as Core
 import Cardano.Ledger.Core (injectFailure)
 import qualified Cardano.Ledger.Core as Core
@@ -30,7 +28,6 @@ import Control.Monad (foldM, forM)
 import Control.Monad.Except (catchError, throwError)
 import qualified Control.State.Transition as STS
 import Data.Bifunctor (first)
-import qualified Data.ByteString.Lazy as BL
 import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
@@ -44,8 +41,10 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , RbHash (..)
+  , deserializeTxForLeios
   , fromCodecEbAnnouncement
   , hashLeiosTx
+  , serializeTxForLeios
   )
 import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -88,10 +87,12 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , Ticked (..)
+  , getPParams
   , shelleyLedgerGlobals
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (ShelleyTx)
+  , Validated (ShelleyValidatedTx)
   , mkShelleyTx
   , mkShelleyValidatedTx
   )
@@ -126,12 +127,11 @@ instance
   (LeiosCrypto c, ShelleyCompatible (Praos2 c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos2 c) DijkstraEra)
   where
-  -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
-  -- 'forgeLeiosEb'): 'serialize'' the tx, and hash exactly those bytes. Matching
-  -- this encoding is what lets the mempool key its txs by the same 'TxHash' an EB
-  -- lists, so the body-arrival mempool pull can find them.
-  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serialize' tx)
-  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
+  -- The bytes and 'TxHash' a forged EB records for each tx (see 'forgeLeiosEb').
+  -- Matching them is what lets the mempool key its txs by the same 'TxHash' an
+  -- EB lists, so the body-arrival mempool pull can find them.
+  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serializeTxForLeios tx)
+  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serializeTxForLeios tx)))
 
   getLeiosMaxEbTxsSizeFromView _ lv =
     case PP.plvMaxEbTxsSize lv of
@@ -145,7 +145,7 @@ instance
         -- Stops at the first undecodable tx: a closure is only useful whole, so
         -- decoding the rest would be work thrown away.
         pure $ forM closureEntries $ \(txh, bs) ->
-          case decodeFullAnnotator (Core.eraProtVerLow @DijkstraEra) "Leios Tx" decCBOR (BL.fromStrict bs) of
+          case deserializeTxForLeios bs of
             Left err -> Left $ LeiosClosureTxUndecodable ebHash txh $ Text.pack (show err)
             Right !tx -> Right (txh, mkShelleyTx tx)
 
@@ -162,6 +162,11 @@ instance
         tx
    where
     innerSt = tickedShelleyLedgerState (stowLedgerTables st)
+
+  leiosCurrentProtVer _cfg st =
+    getPParams (tickedShelleyLedgerState st) ^. Core.ppProtocolVersionL
+
+  leiosValidatedTxProtVer (ShelleyValidatedTx _ vtx) = SL.getValidatedTxProtocolVersion vtx
 
   leiosClosureTxKeySets = getTransactionKeySets
 
@@ -306,6 +311,10 @@ instance
         , announcementEbHash = ann.ebAnnouncementHash
         , announcementEbBodySize = ann.ebAnnouncementSize
         }
+
+  tickedProtocolStateLeiosAnnouncement =
+    protocolStateLeiosAnnouncement @(ShelleyBlock (Praos2 c) DijkstraEra)
+      . tickedPraosStateChainDepState
 
   -- The announcing RB is this block's parent
   announcingRbHash blk =

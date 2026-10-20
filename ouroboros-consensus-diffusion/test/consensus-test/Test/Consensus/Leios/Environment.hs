@@ -641,7 +641,7 @@ leiosFetchHandlerOf PeerEnv{peEbs} = MkLeiosFetchRequestHandler $ \case
       case sequence asked of
         Nothing -> retry
         Just bytess -> pure $ V.fromList (map MkLeiosTx bytess)
-    pure $ MsgLeiosBlockTxs point bitmaps txs
+    pure $ MsgLeiosBlockTxs txs
  where
   awaitEb point = do
     ebs <- readTVar peEbs

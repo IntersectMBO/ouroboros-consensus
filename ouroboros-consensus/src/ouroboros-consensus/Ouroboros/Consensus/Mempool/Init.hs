@@ -12,6 +12,7 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Identity (runIdentity)
+import LeiosDemoTypes (protVerParity)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -20,7 +21,7 @@ import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock, leiosCurrentProtVer)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.Block (Point)
@@ -121,11 +122,17 @@ mkMempool mpEnv =
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
     , getCapacity = isCapacity <$> readSVarSTM istate
-    , getLeiosTxIndex = isLeiosTxIndex <$> readSVarSTM istate
+    , getLeiosTxIndex = do
+        st <- readSVarSTM istate
+        pure
+          ( isLeiosTxIndex st
+          , protVerParity $ leiosCurrentProtVer lcfg $ isLedgerState st
+          )
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
  where
   MempoolEnv
     { mpEnvStateVar = istate
+    , mpEnvLedgerCfg = lcfg
     } = mpEnv

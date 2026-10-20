@@ -65,6 +65,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
+import Cardano.Ledger.BaseTypes (ProtVer)
 import Cardano.Prelude (withExceptT)
 import Control.Monad.Error.Class (MonadError, throwError)
 import Control.Monad.Except
@@ -870,6 +871,17 @@ class ResolveLeiosBlock blk where
   assumeValidatedClosureTx _ _ _ _ =
     error "assumeValidatedClosureTx: not Leios-enabled for this block type"
 
+  -- | The parity of the protocol version txs are validated under in this
+  -- state; a cached validation under the other parity no longer holds.
+  leiosCurrentProtVer :: LedgerConfig blk -> TickedLedgerState blk mk -> ProtVer
+  leiosCurrentProtVer _ _ =
+    error "leiosCurrentProtVer: not Leios-enabled for this block type"
+
+  -- | The parity of the protocol version a mempool tx was validated under.
+  leiosValidatedTxProtVer :: Validated (GenTx blk) -> ProtVer
+  leiosValidatedTxProtVer _ =
+    error "leiosValidatedTxProtVer: not Leios-enabled for this block type"
+
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
   -- to load before 'applyLeiosClosure' can run. Leios-enabled instances
   -- should override with their 'LedgerSupportsMempool.getTransactionKeySets'.
@@ -981,6 +993,13 @@ class ResolveLeiosBlock blk where
   protocolStateLeiosAnnouncement ::
     ChainDepState (BlockProtocol blk) -> Maybe AnnouncementFields
   protocolStateLeiosAnnouncement _ = Nothing
+
+  -- | 'protocolStateLeiosAnnouncement' of the chain-dep state ticked to the
+  -- next header's slot: the announcement that header may certify. Ticking may
+  -- rule out certifying an announcement, eg one made in the previous epoch.
+  tickedProtocolStateLeiosAnnouncement ::
+    Ticked (ChainDepState (BlockProtocol blk)) -> Maybe AnnouncementFields
+  tickedProtocolStateLeiosAnnouncement _ = Nothing
 
   -- | For a CertRB, the hash of the ranking block that announced the EB this CertRB
   -- certifies. 'Nothing' for non-Leios eras.

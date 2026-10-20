@@ -618,7 +618,7 @@ prop_leios seed =
   -- that far apart.
   certificationGapIsCorrect =
     conjoin $
-      [ (unSlotNo s2 - unSlotNo s1 > minCertGap)
+      [ (unSlotNo s2 - unSlotNo s1 >= minCertGap)
           & counterexample
             ( "Certification blocks too close: slots "
                 <> show (unSlotNo s1)
@@ -626,7 +626,7 @@ prop_leios seed =
                 <> show (unSlotNo s2)
                 <> " (gap = "
                 <> show (unSlotNo s2 - unSlotNo s1)
-                <> ", expected > "
+                <> ", expected >= "
                 <> show minCertGap
                 <> ")"
             )

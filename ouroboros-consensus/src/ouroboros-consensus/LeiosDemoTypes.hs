@@ -31,7 +31,6 @@ import Cardano.Binary
   , Encoding
   , enforceSize
   , serialize'
-  , toCBOR
   , toStrictByteString
   )
 import qualified Cardano.Binary as CBOR
@@ -59,16 +58,22 @@ import Cardano.Crypto.Leios
   , resolveLeiosSeat
   , verifyLeiosCert
   )
-import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
-import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
+import Cardano.Ledger.Binary (DecoderError, decodeFullAnnotator, getVersion64)
+import qualified Cardano.Ledger.Binary as Ledger
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
-import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
+import Cardano.Ledger.Core (PParams, Tx, TxLevel (TopTx), eraProtVerLow)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Dijkstra.PParams
   ( DijkstraEraPParams
   , ppLeiosAnnouncementPeriodLengthL
   , ppLeiosDiffusionPeriodLengthL
   , ppLeiosVotePeriodLengthL
+  )
+import Cardano.Ledger.Dijkstra.Tx
+  ( Tx (MkDijkstraTx)
+  , decodeDijkstraTopTxInBlock
+  , toCBORForBlockInclusion
   )
 import Cardano.Ledger.Hashes (extractHash, unsafeMakeSafeHash)
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
@@ -88,6 +93,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
@@ -113,7 +119,7 @@ import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word16, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
@@ -1210,19 +1216,45 @@ newtype LeiosTx = MkLeiosTx {cbor :: ByteString}
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
 
--- | Uses cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
+-- | Uses cbor-in-cbor (@#6.24@) to allow for not needing to decode into a 'Tx era'.
 encodeLeiosTx :: LeiosTx -> Encoding
 encodeLeiosTx MkLeiosTx{cbor} =
-  CBOR.encodeBytes cbor
+  CBOR.encodeNestedCborBytes (BSL.fromStrict cbor)
 
--- | Relies on cbor-in-cbor to allow for not needing to decode into a 'Tx era'.
+-- | Relies on cbor-in-cbor (@#6.24@) to allow for not needing to decode into a 'Tx era'.
 decodeLeiosTx :: Decoder s LeiosTx
 decodeLeiosTx =
-  MkLeiosTx <$> CBOR.decodeBytes
+  MkLeiosTx <$> CBOR.decodeNestedCborBytes
 
 hashLeiosTx :: LeiosTx -> TxHash
 hashLeiosTx =
   MkTxHash . Hash.hashToPackedBytes . Hash.hashWith @HASH cbor
+
+-- | A Dijkstra tx as a Leios endorser block carries it: the block-body
+-- encoding, whose @is_valid@ flag the mempool encoding drops.
+serializeTxForLeios :: Tx TopTx DijkstraEra -> ByteString
+serializeTxForLeios = Ledger.serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
+
+-- | Decode a Dijkstra tx as part of a Leios endorser block.
+deserializeTxForLeios :: ByteString -> Either DecoderError (Tx TopTx DijkstraEra)
+deserializeTxForLeios =
+  decodeFullAnnotator
+    (eraProtVerLow @DijkstraEra)
+    "Leios Tx"
+    (fmap MkDijkstraTx <$> decodeDijkstraTopTxInBlock)
+    . BSL.fromStrict
+
+-- | The protocol version a tx was validated under, modulo 2. A tx stays
+-- cached for less than an epoch, so it sees at most one version change, and the
+-- parity tells whether its validation still holds.
+data ProtVerParity = EvenProtVer | OddProtVer
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+protVerParity :: ProtVer -> ProtVerParity
+protVerParity pv
+  | even (getVersion64 (pvMajor pv)) = EvenProtVer
+  | otherwise = OddProtVer
 
 -- * Endorser Block
 
@@ -1232,13 +1264,14 @@ data ForgedLeiosEb = ForgedLeiosEb
   { point :: !LeiosPoint
   , body :: !LeiosEb
   , txClosure :: ![(TxHash, ByteString)]
+  , txsProtVerParity :: !ProtVerParity
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx TopTx era) -> ForgedLeiosEb
-forgeLeiosEb slot txs =
-  ForgedLeiosEb{point, body, txClosure}
+forgeLeiosEb :: SlotNo -> ProtVerParity -> NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
+forgeLeiosEb slot txsProtVerParity txs =
+  ForgedLeiosEb{point, body, txClosure, txsProtVerParity}
  where
   point = MkLeiosPoint slot (hashLeiosEb body)
 
@@ -1253,15 +1286,10 @@ forgeLeiosEb slot txs =
       & map (\(hash, _, bytes) -> (hash, bytes))
       & toList
 
-  hashTx =
-    MkTxHash . Hash.hashToPackedBytes . Hash.hashWithSerialiser @HASH toCBOR
-
   serializedTxs =
-    [ (hashTx tx, byteSize, bytes)
+    [ (hashLeiosTx (MkLeiosTx bytes), byteSize, bytes)
     | tx <- toList txs
-    , -- FIXME: This is using EncCBOR which is 'toCBORForMempoolSubmission', but
-    -- we should be using 'toCBORForBlockInclusion'
-    let bytes = serialize' tx
+    , let bytes = serializeTxForLeios tx
     , let byteSize = fromIntegral $ BS.length bytes
     ]
 
@@ -1557,14 +1585,11 @@ messageLeiosFetchToObject = \case
       , "numTxs" .= Aeson.Number (fromIntegral $ sum $ map (Bits.popCount . snd) bitmaps)
       , "bitmaps" .= map prettyBitmap bitmaps
       ]
-  MsgLeiosBlockTxs (MkLeiosPoint ebSlot ebHash) bitmaps txs ->
+  MsgLeiosBlockTxs txs ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
       , "numTxs" .= Aeson.Number (fromIntegral (length txs))
       , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
-      , "ebSlot" .= ebSlot
-      , "ebHash" .= prettyEbHash ebHash
-      , "bitmaps" .= map prettyBitmap bitmaps
       ]
   LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"

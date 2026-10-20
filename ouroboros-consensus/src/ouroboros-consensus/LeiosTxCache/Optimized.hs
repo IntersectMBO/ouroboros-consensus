@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# OPTIONS_GHC -O2 #-}
 
@@ -13,8 +14,8 @@
 -- maintenance and eviction cascade mirror "LeiosTxCache.Reference" exactly — this
 -- is the mutable re-implementation validated against the pure one.
 --
--- Only @a = v = ()@ is supported (the node's instantiation), since the value is
--- a bare 'Word64'.
+-- Only @a = ()@ and @v = 'ProtVerParity'@ are supported (the node's
+-- instantiation), since the value is a bare 'Word64'.
 module LeiosTxCache.Optimized
   ( newHashTableLeiosTxCache
   ) where
@@ -36,6 +37,7 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash
   , FetchArrivalBytes
+  , ProtVerParity (..)
   , RbHash
   , TxHash (..)
   , TxLocation (..)
@@ -83,9 +85,9 @@ newHashTableLeiosTxCache ::
   Int ->
   Word64 ->
   Word64 ->
-  m (LeiosTxCache m () () b)
+  m (LeiosTxCache m () ProtVerParity b)
 {-# SPECIALIZE newHashTableLeiosTxCache ::
-  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () () b)
+  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () ProtVerParity b)
   #-}
 newHashTableLeiosTxCache nshift k0 k1 = do
   ht <- HT.new nshift k0 k1
@@ -146,11 +148,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               _ -> Nothing
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar stateVar $ \st -> do
-            fab <- k mempty (\fab txh sz () -> setTag ht tagAlreadyInserted fab txh sz)
+            fab <- k mempty (\fab txh sz () -> setTag ht TxAlreadyInserted fab txh sz)
             pure (st, fab)
       , withLockedInsertAppliedTx = \k ->
           MVar.modifyMVar_ stateVar $ \st -> do
-            () <- k () (\() txh () -> setTag_ ht tagAlreadyValidated txh)
+            () <- k () (\() txh parity -> setTag_ ht (TxAlreadyValidated parity) txh)
             pure st
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
@@ -353,10 +355,28 @@ decRefCount (MkRefCount n)
   Tx map operations, over the hash table
 -------------------------------------------------------------------------------}
 
-tagNotYetInserted, tagAlreadyInserted, tagAlreadyValidated :: Word64
-tagNotYetInserted = 0
-tagAlreadyInserted = 1
-tagAlreadyValidated = 2
+-- | A tx's state, the low two bits of its packed value.
+data TxTag
+  = -- | Referenced by a held body, but not held.
+    TxNotYetInserted
+  | TxAlreadyInserted
+  | TxAlreadyValidated !ProtVerParity
+  deriving Eq
+
+encodeTxTag :: TxTag -> Word64
+encodeTxTag = \case
+  TxNotYetInserted -> 0
+  TxAlreadyInserted -> 1
+  TxAlreadyValidated EvenProtVer -> 2
+  TxAlreadyValidated OddProtVer -> 3
+
+-- | Total: every two-bit value is a tag.
+decodeTxTag :: Word64 -> TxTag
+decodeTxTag w = case w .&. 3 of
+  0 -> TxNotYetInserted
+  1 -> TxAlreadyInserted
+  2 -> TxAlreadyValidated EvenProtVer
+  _ -> TxAlreadyValidated OddProtVer
 
 -- The packed value is @(TxState, Maybe TxLocation)@ flattened into a 'Word64':
 --
@@ -372,14 +392,14 @@ tagAlreadyValidated = 2
 -- 'TxState' write preserves it via 'withLoc', and entry deletion drops it.
 
 -- | @(refcount << 2) | tag@ — the low ('TxState') half only, location cleared.
-mkVal :: Word64 -> Word64 -> Word64
-mkVal rc tag = ((rc .&. 0x3FFFFFFF) `unsafeShiftL` 2) .|. tag
+mkVal :: Word64 -> TxTag -> Word64
+mkVal rc tag = ((rc .&. 0x3FFFFFFF) `unsafeShiftL` 2) .|. encodeTxTag tag
 
 valRefcount :: Word64 -> Word64
 valRefcount w = (w .&. 0xFFFFFFFF) `unsafeShiftR` 2
 
-valTag :: Word64 -> Word64
-valTag w = w .&. 3
+valTag :: Word64 -> TxTag
+valTag = decodeTxTag
 
 -- | Carry an existing value's location onto a rebuilt low word.
 withLoc :: Word64 -> Word64 -> Word64
@@ -417,7 +437,7 @@ bumpTx ht txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
   case mv of
-    Nothing -> HT.insert ht key (mkVal 1 tagNotYetInserted)
+    Nothing -> HT.insert ht key (mkVal 1 TxNotYetInserted)
     Just w -> HT.insert ht key (withLoc w (mkVal (valRefcount w + 1) (valTag w)))
   pure mv
 
@@ -425,10 +445,10 @@ bumpTx ht txh = do
 -- deltas for the insert-body summary.
 priorClass :: Maybe Word64 -> (Int, Int, Int)
 priorClass Nothing = (0, 0, 0)
-priorClass (Just w)
-  | valTag w == tagAlreadyValidated = (1, 1, 1)
-  | valTag w == tagAlreadyInserted = (1, 1, 0)
-  | otherwise = (1, 0, 0)
+priorClass (Just w) = case valTag w of
+  TxAlreadyValidated _ -> (1, 1, 1)
+  TxAlreadyInserted -> (1, 1, 0)
+  TxNotYetInserted -> (1, 0, 0)
 
 -- | An evicted body no longer refers to this tx: decrement, deleting (and
 -- reporting) it at zero.
@@ -444,8 +464,8 @@ decTx ht txh = do
       | otherwise -> HT.insert ht key (withLoc w (mkVal (valRefcount w - 1) (valTag w))) >> pure False
 
 -- | Set a present tx's state tag, preserving its refcount; no-op if absent.
-setTag_ :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> TxHash -> m ()
-{-# SPECIALIZE setTag_ :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
+setTag_ :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxTag -> TxHash -> m ()
+{-# SPECIALIZE setTag_ :: HT.MutableHashTable (PrimState IO) -> TxTag -> TxHash -> IO () #-}
 setTag_ ht tag txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
@@ -457,14 +477,14 @@ setTag_ ht tag txh = do
 setTag ::
   PrimMonad m =>
   HT.MutableHashTable (PrimState m) ->
-  Word64 ->
+  TxTag ->
   FetchArrivalBytes ->
   TxHash ->
   BytesSize ->
   m FetchArrivalBytes
 {-# SPECIALIZE setTag ::
   HT.MutableHashTable (PrimState IO) ->
-  Word64 ->
+  TxTag ->
   FetchArrivalBytes ->
   TxHash ->
   BytesSize ->
@@ -477,21 +497,23 @@ setTag ht tag fab txh sz = do
     Nothing -> pure $! fab <> bucketTxArrival TxWasUntracked sz
     Just w -> do
       HT.insert ht key (withLoc w (mkVal (valRefcount w) tag))
-      let !cls = if valTag w == tagNotYetInserted then TxWasNotYetInserted else TxWasAlreadyHeld
+      let !cls = if valTag w == TxNotYetInserted then TxWasNotYetInserted else TxWasAlreadyHeld
       pure $! fab <> bucketTxArrival cls sz
 
-lookupOne :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe (Either () ()))
+lookupOne ::
+  PrimMonad m =>
+  HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe (Either () ProtVerParity))
 {-# SPECIALIZE lookupOne ::
-  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe (Either () ()))
+  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe (Either () ProtVerParity))
   #-}
 lookupOne ht txh = do
   mv <- HT.lookup ht (toKey txh)
   pure $ case mv of
     Nothing -> Nothing
-    Just w
-      | valTag w == tagAlreadyInserted -> Just (Left ())
-      | valTag w == tagAlreadyValidated -> Just (Right ())
-      | otherwise -> Nothing -- NotYetInserted: referenced but not held
+    Just w -> case valTag w of
+      TxAlreadyInserted -> Just (Left ())
+      TxAlreadyValidated parity -> Just (Right parity)
+      TxNotYetInserted -> Nothing -- referenced but not held
 
 -- | The 32-byte hash as the table's four-word 'HT.Key' (big-endian words).
 toKey :: TxHash -> HT.Key

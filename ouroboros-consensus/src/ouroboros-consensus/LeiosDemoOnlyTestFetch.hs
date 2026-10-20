@@ -50,7 +50,6 @@ import Control.DeepSeq (NFData (..))
 import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Primitive (PrimMonad, PrimState)
-import Data.Bits (popCount)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
@@ -167,8 +166,6 @@ instance Protocol (LeiosFetch point eb tx) where
       TxBitmaps ->
       Message (LeiosFetch point eb tx) StIdle (StBusy StBlockTxs)
     MsgLeiosBlockTxs ::
-      !point ->
-      TxBitmaps ->
       !(V.Vector tx) ->
       Message (LeiosFetch point eb tx) (StBusy StBlockTxs) StIdle
     MsgDone ::
@@ -240,8 +237,8 @@ byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   st@SingDone -> notActiveState st
  where
   -- The decoder must not reject a message the logic was right to send, so each
-  -- state allows for what its message writes around the payload: the reference
-  -- list's header, and, on @MsgLeiosBlockTxs@, the echoed request.
+  -- state allows for what its message writes around the payload: the list
+  -- headers.
   withMargin :: Word32 -> Word
   withMargin = fromIntegral . addSafetyMargin . fromIntegral
 
@@ -319,11 +316,9 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
         <> CBOR.encodeWord 3
         <> encodeP p
         <> encodeBitmaps bitmaps
-    MsgLeiosBlockTxs p bitmaps txs ->
-      CBOR.encodeListLen 4
+    MsgLeiosBlockTxs txs ->
+      CBOR.encodeListLen 2
         <> CBOR.encodeWord 4
-        <> encodeP p
-        <> encodeBitmaps bitmaps
         <> CBOR.encodeListLen (fromIntegral $ V.length txs)
         <> foldMap encodeTx txs
 
@@ -366,25 +361,23 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
         p <- decodeP
         bitmaps <- decodeBitmaps maxTxs
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
-      (SingBlockTxs, 4, 4) -> do
-        p <- decodeP
-        bitmaps <- decodeBitmaps maxTxs
-        n <- CBOR.decodeListLen
-        -- The count comes from the peer. Reject a wrong count before we
-        -- decode any tx.
-        when (n > maxTxs) $
-          fail $
-            "MsgLeiosBlockTxs: tx count " <> show n <> " exceeds " <> show maxTxs
-        let requested = sum $ map (popCount . snd) bitmaps
-        when (n /= requested) $
-          fail $
-            "MsgLeiosBlockTxs: tx count "
-              <> show n
-              <> " does not match the "
-              <> show requested
-              <> " txs in the bitmaps"
-        txs <- V.generateM n $ \_i -> decodeTx
-        return $ SomeMessage $ MsgLeiosBlockTxs p bitmaps txs
+      (SingBlockTxs, 2, 4) -> do
+        -- The count comes from the peer. Reject a too large one before we
+        -- decode any tx; whether it matches the request is the client's call.
+        txs <-
+          CBOR.decodeListLenOrIndef >>= \case
+            Just n -> do
+              when (n > maxTxs) $ fail $ tooMany n
+              V.generateM n $ \_i -> decodeTx
+            Nothing ->
+              let go !k acc =
+                    CBOR.decodeBreakOr >>= \case
+                      True -> pure $ V.fromList (reverse acc)
+                      False
+                        | k >= maxTxs -> fail $ tooMany (k + 1)
+                        | otherwise -> decodeTx >>= \tx -> go (k + 1) (tx : acc)
+               in go (0 :: Int) []
+        return $ SomeMessage $ MsgLeiosBlockTxs txs
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _, _) ->
@@ -393,6 +386,9 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
         fail $ printf "codecLeiosFetch (%s) unexpected key (%d, %d)" (show stok) key len
       (SingBlockTxs, _, _) ->
         fail $ printf "codecLeiosFetch (%s) unexpected key (%d, %d)" (show stok) key len
+
+  tooMany :: Int -> String
+  tooMany n = "MsgLeiosBlockTxs: tx count " <> show n <> " exceeds " <> show maxTxs
 
 codecLeiosFetchId ::
   forall (point :: Type) (eb :: Type) (tx :: Type) m.
