@@ -37,6 +37,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeOver
+  , withNodeOverDBs
   , withNodeUnderTest
   ) where
 
@@ -388,12 +389,19 @@ withNodeCommittee committee range body = do
 withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeOver leiosDB body = do
   nodeDBs <- emptyNodeDBs
+  withNodeOverDBs nodeDBs leiosDB body
+
+-- | 'withNode' over the given databases, which a test can fill before the node
+-- starts, or reuse to restart it.
+withNodeOverDBs ::
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverDBs =
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
     nullTracers
-    nodeDBs
-    leiosDB
-    body
 
 -- | The configuration of a node whose ledger view has this committee and quorum
 -- stake threshold and forecasts this many slots past its immutable tip.

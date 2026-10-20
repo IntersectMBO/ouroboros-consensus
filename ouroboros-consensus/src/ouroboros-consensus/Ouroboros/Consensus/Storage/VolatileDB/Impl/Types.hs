@@ -99,6 +99,11 @@ data TraceEvent blk
   | Truncate (ParseError blk) FsPath BlockOffset
   | InvalidFileNames [FsPath]
   | DBClosed
+  | -- | How many blocks containing a Leios certificate
+    -- 'forgetLeiosCertsAtStartUpExcept' just forgot.
+    ForgotLeiosCertBlocks Int
+  | -- | A forgotten block was added again, so it is known once more.
+    ReadmittedForgottenBlock (HeaderHash blk)
   deriving (Eq, Generic, Show)
 
 {------------------------------------------------------------------------------

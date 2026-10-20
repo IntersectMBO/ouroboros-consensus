@@ -1215,6 +1215,10 @@ mkChainSelEnv CDB{..} blockCache weights curChain tentativeHeaderPermission puni
 -- arriving, the LoE fragment moving, or a Peras certificate boosting a block.
 -- So only the chain selection that a block's arrival triggers may set the
 -- tentative header.
+--
+-- Forgetting the certifying blocks that are off the initial selection
+-- ('forgetLeiosCertsAtStartUpExcept') already keeps such blocks out of reach,
+-- so this is a second line of defense.
 data TentativeHeaderPermission
   = MaySetTentativeHeader
   | MayNotSetTentativeHeader
