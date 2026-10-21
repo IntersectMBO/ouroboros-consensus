@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , HasTxId
   , LedgerSupportsMempool
-  , TxEbMeasureMetrics (..)
+  , TxEbMeasureByteSize (..)
   , TxMeasurePhase1Metrics (..)
   , TxMeasurePhase2Metrics (..)
   , txForgetValidated
@@ -1297,9 +1297,9 @@ jsonTxMeasure m =
     , "refScriptsSizeBytes" .= unByteSize32 (txMeasureMetricRefScriptsSizeBytes m)
     ]
 
-jsonTxEbMeasure :: TxEbMeasureMetrics msr => msr -> Aeson.Object
+jsonTxEbMeasure :: TxEbMeasureByteSize msr => msr -> Aeson.Object
 jsonTxEbMeasure m =
-  "txReferencesSize" .= unByteSize32 (txEbMeasureMetricReferencesSize m)
+  "txReferencesSize" .= unByteSize32 (txEbMeasureByteSize m)
 
 jsonEb :: LeiosEb -> Aeson.Object
 jsonEb eb =

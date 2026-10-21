@@ -35,7 +35,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasure (..)
   , TxMeasurePhase1Metrics (..)
   , TxMeasurePhase2Metrics (..)
-  , TxEbMeasureMetrics (..)
+  , TxEbMeasureByteSize (..)
   , TrivialTxMeasurePhase2 (..)
   , Validated
   , WhetherToIntervene (..)
@@ -388,7 +388,7 @@ class
   , NoThunks (TxEbMeasure blk)
   , Eq (TxEbMeasure blk)
   , Show (TxEbMeasure blk)
-  , TxEbMeasureMetrics (TxEbMeasure blk)
+  , TxEbMeasureByteSize (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
@@ -583,18 +583,18 @@ class TxMeasurePhase2Metrics msr where
 instance TxMeasurePhase2Metrics () where
   txMeasureMetricRefScriptsSizeBytes () = mempty
 
-class TxEbMeasureMetrics msr where
+class TxEbMeasureByteSize msr where
   -- | The size of the transaction references that an endorser-block measure
   -- counts, without the CBOR framing. A reference is the hash and the size of
   -- one transaction, as 'Ouroboros.Consensus.Leios.Types.encodeLeiosEb'
   -- writes it. Zero when the measure has no reference size.
-  txEbMeasureMetricReferencesSize :: msr -> ByteSize32
+  txEbMeasureByteSize :: msr -> ByteSize32
 
-instance TxEbMeasureMetrics (TxMeasure blk) where
-  txEbMeasureMetricReferencesSize _ = ByteSize32 0
+instance TxEbMeasureByteSize (TxMeasure blk) where
+  txEbMeasureByteSize _ = ByteSize32 0
 
-instance TxEbMeasureMetrics (IgnoringOverflow ByteSize32) where
-  txEbMeasureMetricReferencesSize _ = ByteSize32 0
+instance TxEbMeasureByteSize (IgnoringOverflow ByteSize32) where
+  txEbMeasureByteSize _ = ByteSize32 0
 
 instance TxMeasurePhase1Metrics ByteSize32 where
   txMeasureMetricTxSizeBytes = id
