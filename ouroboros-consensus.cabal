@@ -259,6 +259,7 @@ library
     Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
+    Ouroboros.Consensus.Peras.Protocol
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Void
@@ -466,6 +467,7 @@ library tracing
   other-modules:
     Ouroboros.Consensus.Tracing.BlockReplayProgress
     Ouroboros.Consensus.Tracing.ChainDB
+    Ouroboros.Consensus.Tracing.Committee
     Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.ConvertTxId
@@ -477,6 +479,7 @@ library tracing
     Ouroboros.Consensus.Tracing.KESInfo
     Ouroboros.Consensus.Tracing.LeiosDB
     Ouroboros.Consensus.Tracing.LeiosFetch
+    Ouroboros.Consensus.Tracing.Peras
 
   build-depends:
     aeson,

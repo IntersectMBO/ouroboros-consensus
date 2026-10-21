@@ -30,6 +30,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
     -- * Leios
   , SingleEraBlockAndLeiosProtocol
 
+    -- * Peras
+  , SingleEraBlockAndPerasProtocol
+
     -- * Type family instances
   , Ticked (..)
   ) where
@@ -67,6 +70,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
 import Ouroboros.Consensus.Leios.Protocol
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView, PerasProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
@@ -135,28 +139,6 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
-
-instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkChainDepState xs) where
-  getEpochNonce =
-    hcollapse
-      . hcmap proxySingle getEpochNonce'
-      . State.tip
-   where
-    getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
-    getEpochNonce' (WrapChainDepState st) =
-      K (getEpochNonce st)
-
-instance CanHardFork xs => ChainDepStateSupportsPeras (Ticked (HardForkChainDepState xs)) where
-  getEpochNonce =
-    hcollapse
-      . hcmap proxySingle getEpochNonce'
-      . State.tip
-      . tickedHardForkChainDepStatePerEra
-   where
-    getEpochNonce' ::
-      forall blk. SingleEraBlock blk => (Ticked :.: WrapChainDepState) blk -> K Nonce blk
-    getEpochNonce' (Comp (WrapTickedChainDepState st)) =
-      K (getEpochNonce st)
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
@@ -543,3 +525,49 @@ validateAnnouncementEra slot cfg (Pair view (Comp chainDepState)) =
     (unwrapValidateView view)
     slot
     (unwrapTickedChainDepState chainDepState)
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkChainDepState xs) where
+  getEpochNonce =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+   where
+    getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
+    getEpochNonce' (WrapChainDepState st) =
+      K (getEpochNonce st)
+
+instance CanHardFork xs => ChainDepStateSupportsPeras (Ticked (HardForkChainDepState xs)) where
+  getEpochNonce =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+      . tickedHardForkChainDepStatePerEra
+   where
+    getEpochNonce' ::
+      forall blk. SingleEraBlock blk => (Ticked :.: WrapChainDepState) blk -> K Nonce blk
+    getEpochNonce' (Comp (WrapTickedChainDepState st)) =
+      K (getEpochNonce st)
+
+-- | Just the conjunction of 'SingleEraBlock' and 'PerasProtocol' of the block's
+-- protocol, as one class, so that 'All' and the SOP combinators can require
+-- both.
+class (SingleEraBlock blk, PerasProtocol (BlockProtocol blk)) => SingleEraBlockAndPerasProtocol blk
+
+instance (SingleEraBlock blk, PerasProtocol (BlockProtocol blk)) => SingleEraBlockAndPerasProtocol blk
+
+instance (CanHardFork xs, All SingleEraBlockAndPerasProtocol xs) => PerasProtocol (HardForkProtocol xs) where
+  getPerasLedgerView _proxy view =
+    hcollapse $
+      hcmap (Proxy @SingleEraBlockAndPerasProtocol) getOne $
+        State.tip (hardForkLedgerViewPerEra view)
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlockAndPerasProtocol blk =>
+      WrapLedgerView blk ->
+      K (Maybe PerasLedgerView) blk
+    getOne (WrapLedgerView v) = K $ getPerasLedgerView (Proxy @(BlockProtocol blk)) v

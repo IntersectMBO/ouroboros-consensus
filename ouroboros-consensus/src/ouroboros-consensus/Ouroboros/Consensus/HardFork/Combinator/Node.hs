@@ -25,7 +25,10 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
-import Ouroboros.Consensus.HardFork.Combinator.Protocol (SingleEraBlockAndLeiosProtocol)
+import Ouroboros.Consensus.HardFork.Combinator.Protocol
+  ( SingleEraBlockAndLeiosProtocol
+  , SingleEraBlockAndPerasProtocol
+  )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -71,5 +74,6 @@ instance
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
   , All SingleEraBlockAndLeiosProtocol xs
+  , All SingleEraBlockAndPerasProtocol xs
   ) =>
   RunNode (HardForkBlock xs)

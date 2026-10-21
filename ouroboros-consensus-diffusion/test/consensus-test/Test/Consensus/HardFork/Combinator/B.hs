@@ -90,6 +90,10 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   , MockPerasVotingCommitteeScheme
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Protocol
+  ( PerasProtocol (..)
+  , defaultGetPerasLedgerView
+  )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -123,6 +127,9 @@ instance LeiosProtocol ProtocolB where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
+
+instance PerasProtocol ProtocolB where
+  getPerasLedgerView = defaultGetPerasLedgerView
 
 instance ConsensusProtocol ProtocolB where
   type ChainDepState ProtocolB = ()
