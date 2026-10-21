@@ -417,13 +417,16 @@ data TraceForgeEvent blk
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
     TraceForgedBlock SlotNo (Point blk) blk MempoolSize (MempoolMeasure blk)
-  | -- | We forged an endorser block. The ranking block with the recorded hash
-    -- announces it.
-    --
-    -- We record the current slot number, the hash of the ranking block that
-    -- announces the endorser block, the endorser block, and the total mempool
-    -- measure of the transactions selected for it.
-    TraceForgedEndorserBlock SlotNo (HeaderHash blk) LeiosEb (MempoolMeasure blk)
+  | -- | We forged an endorser block.
+    TraceForgedEndorserBlock
+      -- | The current slot.
+      SlotNo
+      -- | The hash of the ranking block that announces the endorser block.
+      (HeaderHash blk)
+      -- | The endorser block.
+      LeiosEb
+      -- | The total mempool measure of the transactions selected for it.
+      (MempoolMeasure blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
