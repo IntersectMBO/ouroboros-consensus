@@ -796,7 +796,7 @@ mkLeiosAnnouncement issuer ann =
   MkLeiosAnnouncement
     { announcementElectee = issuer
     , announcementEbHash =
-        Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
+        extractHash $ ebReferencesAnnouncementHash ann
     , announcementEbSize = ebReferencesAnnouncementSize ann
     }
 

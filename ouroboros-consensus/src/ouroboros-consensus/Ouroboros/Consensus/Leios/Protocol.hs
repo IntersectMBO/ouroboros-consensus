@@ -30,7 +30,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
-import Ouroboros.Consensus.Leios.Types (BytesSize, EbHash, decodeEbHash, encodeEbHash)
+import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked (Ticked)
 
@@ -39,7 +39,7 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   { announcementElectee :: !(KeyHash BlockIssuer)
   -- ^ the hash of the elected pool's cold verification key; with the header's
   -- slot, this identifies the election
-  , announcementEbHash :: !EbHash
+  , announcementEbHash :: !EndorserBlockHash
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size
   --
@@ -53,12 +53,12 @@ data LeiosAnnouncement = MkLeiosAnnouncement
 
 encodeLeiosAnnouncement :: LeiosAnnouncement -> CBOR.Encoding
 encodeLeiosAnnouncement (MkLeiosAnnouncement electee ebHash ebSize) =
-  CBOR.encodeListLen 3 <> toCBOR electee <> encodeEbHash ebHash <> CBOR.encodeWord32 ebSize
+  CBOR.encodeListLen 3 <> toCBOR electee <> toCBOR ebHash <> CBOR.encodeWord32 ebSize
 
 decodeLeiosAnnouncement :: CBOR.Decoder s LeiosAnnouncement
 decodeLeiosAnnouncement =
   decodeRecordNamed (T.pack "LeiosAnnouncement") (const 3) $
-    MkLeiosAnnouncement <$> fromCBOR <*> decodeEbHash <*> CBOR.decodeWord32
+    MkLeiosAnnouncement <$> fromCBOR <*> fromCBOR <*> CBOR.decodeWord32
 
 -- | The Leios parameters a ledger view carries.
 --

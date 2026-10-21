@@ -37,11 +37,11 @@ import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
-  , LeiosEb
+  , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
   , TxOffset
-  , leiosEbTxs
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -72,7 +72,7 @@ data WriteJob
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
-      !LeiosEb
+      !EndorserBlock
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | WriteTxs
@@ -88,14 +88,14 @@ data WriteJob
   | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
     PinEb
       -- | the EBs to pin
-      ![EbHash]
+      ![EndorserBlockHash]
       -- | where the worker puts the result
       !(WriteResult ())
   | -- | The volatile half of a copy: the EB is in the immutable partition
     -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
     MarkCopied
       -- | the EBs now in the immutable partition
-      ![EbHash]
+      ![EndorserBlockHash]
       -- | where the worker puts the result
       !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
@@ -175,7 +175,7 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
+  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"

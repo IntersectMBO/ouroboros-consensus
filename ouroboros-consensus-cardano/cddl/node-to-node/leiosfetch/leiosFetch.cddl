@@ -25,7 +25,8 @@ point = [slot, eb_hash]
 slot = uint .size 8
 eb_hash = bytes .size 32
 
-; the hash and size of each transaction the endorser block names
+; the hash and size of each transaction the endorser block names, as the
+; ledger's dijkstra.eb_references
 endorser_block = { + tx_hash => tx_size }
 tx_hash = bytes .size 32
 tx_size = uint .size 4

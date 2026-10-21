@@ -60,7 +60,7 @@ import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
+  ( EndorserBlockHash
   , LeiosPoint (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
@@ -112,7 +112,7 @@ copyEbToImmutable ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   CopierConn ->
-  EbHash ->
+  EndorserBlockHash ->
   IO Bool
 copyEbToImmutable tracer statsVar conn ebHash =
   appendToImmutable >>= \case
@@ -143,7 +143,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       -- Still check if it is, as a defensive programming measure, as it's very cheap.
       (bodyCount, closureCount) <-
         useStmt ccCompleteness $ do
-          dbBindBlob ccCompleteness 1 (ebHashBytes ebHash)
+          dbBindHash ccCompleteness 1 ebHash
           -- step the first time, expecting a single result row
           dbStepSafe ccCompleteness >>= \case
             DB.Done ->
@@ -171,16 +171,16 @@ copyEbToImmutable tracer statsVar conn ebHash =
           --
           -- copy the EB
           useStmt ccInsertEb $ do
-            dbBindBlob ccInsertEb 1 (ebHashBytes ebHash)
+            dbBindHash ccInsertEb 1 ebHash
             dbStep1Safe ccInsertEb
           -- copy the eb-to-transactions mapping
           useStmt ccInsertEbTxs $ do
-            dbBindBlob ccInsertEbTxs 1 (ebHashBytes ebHash)
+            dbBindHash ccInsertEbTxs 1 ebHash
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the tx bytes
           useStmt ccInsertEbTxBytes $ do
-            dbBindBlob ccInsertEbTxBytes 1 (ebHashBytes ebHash)
+            dbBindHash ccInsertEbTxBytes 1 ebHash
             dbStep1Safe ccInsertEbTxBytes
           pure (Just nTxs)
 
@@ -222,7 +222,7 @@ startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
               dbStepSafe nextPinnedStmt >>= \case
                 DB.Done -> pure (reverse acc)
                 DB.Row -> do
-                  h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+                  h <- dbColumnHash nextPinnedStmt 0
                   rows (h : acc)
          in rows []
 

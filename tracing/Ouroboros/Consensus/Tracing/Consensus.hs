@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Tracing.Consensus
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
-import Cardano.Ledger.Hashes (extractHash)
 import Cardano.Logging
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Slot (WithOrigin (..))
@@ -65,9 +64,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb (..)
-  , encodeLeiosEbSize
-  , hashLeiosEb
+  ( EndorserBlock
+  , encodeEndorserBlockSize
+  , endorserBlockHash
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Mempool
   ( MempoolRejectionDetails (..)
@@ -1301,12 +1301,12 @@ jsonTxEbMeasure :: TxEbMeasureByteSize msr => msr -> Aeson.Object
 jsonTxEbMeasure m =
   "txReferencesSize" .= unByteSize32 (txEbMeasureByteSize m)
 
-jsonEb :: LeiosEb -> Aeson.Object
+jsonEb :: EndorserBlock -> Aeson.Object
 jsonEb eb =
   mconcat
-    [ "hash" .= String (Crypto.hashToTextAsHex $ extractHash $ hashLeiosEb eb)
-    , "references" .= length (leiosEbTxs eb)
-    , "size" .= encodeLeiosEbSize eb
+    [ "hash" .= String (Crypto.hashToTextAsHex $ endorserBlockHash eb)
+    , "references" .= length (endorserBlockReferences eb)
+    , "size" .= encodeEndorserBlockSize eb
     ]
 
 instance LogFormatting MempoolSize where
@@ -1659,7 +1659,7 @@ instance
     "Forged endorser block in slot "
       <> showT (unSlotNo slotNo)
       <> ": "
-      <> Crypto.hashToTextAsHex (extractHash $ hashLeiosEb eb)
+      <> Crypto.hashToTextAsHex (endorserBlockHash eb)
       <> " on top of "
       <> renderHeaderHash (Proxy @blk) rbHash
   forHuman (TraceDidntAdoptBlock slotNo _) =

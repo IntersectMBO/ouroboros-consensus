@@ -33,8 +33,8 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash
-  , LeiosEb
+  , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint
   , TxHash
   , TxOffset
@@ -76,16 +76,16 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
+  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m [(TxHash, BytesSize)]
   -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
   -- not complete.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+      EndorserBlockHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   -- ^ Tx bytes for a batch of offsets into one EB.
-  , testScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
+  , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every announced EB point.
   --
   -- Not used in production, only used in tests to observe point
@@ -108,7 +108,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
-  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
+  , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m CompletedEbs)
   -- ^ Persist an EB body. Returns any EBs whose closure this completed.
   --
   -- The returned EB is only used for tracing and too broad: it can actually only

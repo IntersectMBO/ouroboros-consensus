@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   , sqlInsertTxs
   ) where
 
+import Cardano.Crypto.Hash (hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM, forM_, when)
 import Control.Tracer (Tracer)
@@ -19,13 +20,11 @@ import Data.Int (Int64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
-  , LeiosEb
+  , EndorserBlock
   , LeiosPoint (..)
-  , TxHash (..)
   , TxOffset
-  , encodeLeiosEbSize
-  , leiosEbBodyItems
+  , encodeEndorserBlockSize
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( CompletedEbs
@@ -45,7 +44,7 @@ sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize = do
   inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-    dbBindBlob stmt 2 (ebHashBytes (pointEbHash point))
+    dbBindHash stmt 2 (pointEbHash point)
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
     DB.changes db
@@ -60,16 +59,16 @@ sqlInsertEbBody ::
   Conn ->
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
-  LeiosEb ->
+  EndorserBlock ->
   IO CompletedEbs
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
-    forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
-      dbBindBlob stInsertEbTxsRow 1 (ebHashBytes (pointEbHash point))
+    forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do
+      dbBindHash stInsertEbTxsRow 1 (pointEbHash point)
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
-      dbBindBlob stInsertEbTxsRow 3 (let MkTxHash bytes = txHash in bytes)
+      dbBindHash stInsertEbTxsRow 3 txHash
       dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
       dbStepInsertOrTrace
         tracer
@@ -80,7 +79,7 @@ sqlInsertEbBody tracer conn notify point eb = do
     -- in this transaction, so a fill can never see the rows without the count
     -- or the other way round.
     useStmt stPreallocEbTxBytes $ do
-      dbBindBlob stPreallocEbTxBytes 1 (ebHashBytes (pointEbHash point))
+      dbBindHash stPreallocEbTxBytes 1 (pointEbHash point)
       dbStep1 stPreallocEbTxBytes
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
@@ -90,15 +89,15 @@ sqlInsertEbBody tracer conn notify point eb = do
     -- written for this EB hash, including those written while this row's
     -- count was NULL.
     missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 (ebHashBytes (pointEbHash point))
-      dbBindBlob stInitMissingCount 2 (ebHashBytes (pointEbHash point))
+      dbBindHash stInitMissingCount 1 (pointEbHash point)
+      dbBindHash stInitMissingCount 2 (pointEbHash point)
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo (pointSlotNo point))
       readReturningInt64 stInitMissingCount
     if missingCount == 0
       then do
         useStmt stMarkPointNotified $ do
           dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-          dbBindBlob stMarkPointNotified 2 (ebHashBytes (pointEbHash point))
+          dbBindHash stMarkPointNotified 2 (pointEbHash point)
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []
@@ -106,8 +105,8 @@ sqlInsertEbBody tracer conn notify point eb = do
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
   pure completedNow
  where
-  items = leiosEbBodyItems eb
-  ebBytesSize = encodeLeiosEbSize eb
+  items = zip [0 :: Int ..] (endorserBlockReferences eb)
+  ebBytesSize = encodeEndorserBlockSize eb
   Conn{connVolStmts} = conn
   VolStmts
     { stInsertEbTxsRow
@@ -178,7 +177,7 @@ sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
   forM_ completed $ \p -> notify (AcquiredEbTxs p)
   pure completed
  where
-  ebHash = ebHashBytes (pointEbHash point)
+  ebHash = hashToBytes (pointEbHash point)
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
     { stFillEbTxBytes

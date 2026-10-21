@@ -7,6 +7,8 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   ( useStmt
   , dbBindBlob
+  , dbBindHash
+  , dbColumnHash
   , dbBindUtf8
   , dbBindInt64
   , dbExec
@@ -37,6 +39,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   , throwDbException
   ) where
 
+import Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes, hashToBytes)
 import Control.Exception (SomeException, throwIO)
 import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow (bracket, catch, finally, generalBracket)
@@ -68,6 +71,16 @@ useStmt stmt action =
 
 dbBindBlob :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
 dbBindBlob q p v = withDieStmt q $ DB.bindBlob q p v
+
+dbBindHash :: HasCallStack => DB.Statement -> DB.ParamIndex -> Hash h a -> IO ()
+dbBindHash q p = dbBindBlob q p . hashToBytes
+
+-- | Read a column the node wrote with 'dbBindHash'.
+dbColumnHash :: (HasCallStack, HashAlgorithm h) => DB.Statement -> DB.ColumnIndex -> IO (Hash h a)
+dbColumnHash q c =
+  hashFromBytes <$> DB.columnBlob q c >>= \case
+    Nothing -> throwLeiosDbException "a hash column of the wrong size"
+    Just h -> pure h
 
 -- | Bind as TEXT. Needed for JSON1 payloads: 'json_each' interprets BLOB
 -- arguments as JSONB (SQLite ≥ 3.45), our payload is ASCII JSON.

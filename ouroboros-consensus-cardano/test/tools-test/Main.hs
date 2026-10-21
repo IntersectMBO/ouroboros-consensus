@@ -1,6 +1,7 @@
 module Main (main) where
 
 import qualified Cardano.Configuration.CliArgs as CLI
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.BaseTypes (StrictMaybe (SJust))
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
@@ -13,7 +14,7 @@ import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Data.String (fromString)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbReader (testScanEbPoints)
   , LeiosDbWriter (writeEbPoint)
@@ -204,7 +205,7 @@ blockCountTest logStep = do
       expected
       (resultForged result)
 
-  mkEbHash c = MkEbHash (fromString (replicate 32 c))
+  mkEbHash c = UnsafeHash (fromString (replicate 32 c))
 
 tests :: TestTree
 tests =

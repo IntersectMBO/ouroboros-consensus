@@ -62,7 +62,6 @@ import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
-import Ouroboros.Consensus.Leios.Types (EbHash (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
@@ -380,7 +379,7 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
                 dbWithWriteTransactionRaw volDb $
                   forM_ ebHashes $ \ebHash ->
                     useStmt pinStmt $ do
-                      dbBindBlob pinStmt 1 (ebHashBytes ebHash)
+                      dbBindHash pinStmt 1 ebHash
                       dbStep1Safe pinStmt
               pure Continue
             MarkCopied ebHashes resultVar -> do
@@ -391,7 +390,7 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
                 dbWithWriteTransactionRaw volDb $
                   forM_ ebHashes $ \ebHash ->
                     useStmt markCopiedStmt $ do
-                      dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
+                      dbBindHash markCopiedStmt 1 ebHash
                       dbStep1Safe markCopiedStmt
               pure Continue
             GcMark slot resultVar -> do

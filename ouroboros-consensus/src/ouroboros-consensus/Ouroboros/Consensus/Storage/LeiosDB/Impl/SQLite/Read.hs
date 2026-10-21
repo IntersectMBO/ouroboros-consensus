@@ -14,22 +14,23 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , sqlLookupEbClosure
   ) where
 
+import Cardano.Crypto.Hash (hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Data.ByteString (ByteString)
 import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
+  , EndorserBlockHash
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxHash
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 
-sqlScanEbPoints :: Conn -> IO [(SlotNo, EbHash)]
+sqlScanEbPoints :: Conn -> IO [(SlotNo, EndorserBlockHash)]
 sqlScanEbPoints conn =
   dbWithTransaction db $ useStmt stmt $ loop []
  where
@@ -39,7 +40,7 @@ sqlScanEbPoints conn =
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        hash <- MkEbHash <$> DB.columnBlob stmt 1
+        hash <- dbColumnHash stmt 1
         loop ((slot, hash) : acc)
 
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
@@ -60,16 +61,16 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
   -- insert). Presence in the immutable partition is proof of completeness:
   -- copies are atomic and only complete EBs are copied. Without this probe, a
   -- cert-RB parked across a restart would stay parked forever.
-  let volCompleteSet = Set.fromList [ebHashBytes (pointEbHash p) | p <- volComplete]
-      unknown = [p | p <- recent, ebHashBytes (pointEbHash p) `Set.notMember` volCompleteSet]
+  let volCompleteSet = Set.fromList [hashToBytes (pointEbHash p) | p <- volComplete]
+      unknown = [p | p <- recent, hashToBytes (pointEbHash p) `Set.notMember` volCompleteSet]
   if null unknown
     then pure volComplete
     else do
-      present <- immFilterPresent conn [ebHashBytes (pointEbHash p) | p <- unknown]
+      present <- immFilterPresent conn [hashToBytes (pointEbHash p) | p <- unknown]
       let presentSet = Set.fromList present
       pure $
         volComplete
-          <> [p | p <- unknown, ebHashBytes (pointEbHash p) `Set.member` presentSet]
+          <> [p | p <- unknown, hashToBytes (pointEbHash p) `Set.member` presentSet]
  where
   slot = fromIntegral $ unSlotNo sinceSlot
   Conn{conVolDb = db, connVolStmts = VolStmts{stScanCompleteEbsSince = stmt}} = conn
@@ -80,7 +81,7 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         ebSlot <- SlotNo . fromIntegral <$> DB.columnInt64 pointsStmt 0
-        hash <- MkEbHash <$> DB.columnBlob pointsStmt 1
+        hash <- dbColumnHash pointsStmt 1
         accPointWith pointsStmt (MkLeiosPoint ebSlot hash : acc)
 
 -- | Which of the given EB hashes the immutable partition holds.
@@ -98,11 +99,11 @@ immFilterPresent conn hashes =
  where
   Conn{connImmStmts = ImmStmts{immStFilterPresent = stmt}} = conn
 
-sqlLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
+sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO [(TxHash, BytesSize)]
 sqlLookupEbBody conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
-      dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+      dbBindHash stmt 1 ebHash
       bodyLoop stmt []
   -- Bodies insert atomically, so the empty list is a complete miss: the EB
   -- may have been copied to the immutable partition and evicted.
@@ -111,10 +112,10 @@ sqlLookupEbBody conn ebHash = do
   Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbBody = stmt}} = conn
 
 -- | Immutable-partition fallback of 'sqlLookupEbBody'.
-immLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
+immLookupEbBody :: Conn -> EndorserBlockHash -> IO [(TxHash, BytesSize)]
 immLookupEbBody conn ebHash =
   useStmt stmt $ do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+    dbBindHash stmt 1 ebHash
     bodyLoop stmt []
  where
   Conn{connImmStmts = ImmStmts{immStLookupEbBody = stmt}} = conn
@@ -124,7 +125,7 @@ bodyLoop stmt acc =
   dbStep stmt >>= \case
     DB.Done -> pure (reverse acc)
     DB.Row -> do
-      txHash <- MkTxHash <$> DB.columnBlob stmt 0
+      txHash <- dbColumnHash stmt 0
       size <- fromIntegral <$> DB.columnInt64 stmt 1
       bodyLoop stmt ((txHash, size) : acc)
 
@@ -136,13 +137,13 @@ bodyLoop stmt acc =
 -- Works on strictly read-only connections.
 sqlBatchRetrieveTxs ::
   Conn ->
-  EbHash ->
+  EndorserBlockHash ->
   [Int] ->
   IO [(Int, TxHash, Maybe ByteString)]
 sqlBatchRetrieveTxs conn ebHash offsets = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
-      dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+      dbBindHash stmt 1 ebHash
       dbBindUtf8 stmt 2 (jsonIntArray offsets)
       retrieveLoop stmt []
   -- Zero rows means the EB's body is absent from the volatile partition
@@ -161,10 +162,10 @@ sqlBatchRetrieveTxs conn ebHash offsets = do
 -- | Immutable-partition fallback of 'sqlBatchRetrieveTxs'. Closures land
 -- there whole, so the joined tx bytes are never NULL.
 immBatchRetrieveTxs ::
-  Conn -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
+  Conn -> EndorserBlockHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
 immBatchRetrieveTxs conn ebHash offsets =
   useStmt stmt $ do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+    dbBindHash stmt 1 ebHash
     dbBindUtf8 stmt 2 (jsonIntArray offsets)
     retrieveLoop stmt []
  where
@@ -179,17 +180,17 @@ retrieveLoop stmt acc =
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
-      txHash <- MkTxHash <$> DB.columnBlob stmt 1
+      txHash <- dbColumnHash stmt 1
       -- Column 2 is NULL if the tx's bytes have not arrived yet
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
       retrieveLoop stmt ((offset, txHash, mbTxBytes) : acc)
 
-sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupEbClosure :: Conn -> EndorserBlockHash -> IO (Maybe [(TxHash, ByteString)])
 sqlLookupEbClosure conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
-      dbBindBlob stmt 1 (ebHashBytes ebHash)
+      dbBindHash stmt 1 ebHash
       -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
       closureLoop stmt []
   -- 'Nothing' covers both no-body and any-tx-missing, which includes a copied
@@ -203,10 +204,10 @@ sqlLookupEbClosure conn ebHash = do
 
 -- | Immutable-partition fallback of 'sqlLookupEbClosure'. Closures land there
 -- atomically and whole, so any rows are all the rows.
-immLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+immLookupEbClosure :: Conn -> EndorserBlockHash -> IO (Maybe [(TxHash, ByteString)])
 immLookupEbClosure conn ebHash =
   useStmt stmt $ do
-    dbBindBlob stmt 1 (ebHashBytes ebHash)
+    dbBindHash stmt 1 ebHash
     closureLoop stmt []
  where
   Conn{connImmStmts = ImmStmts{immStLookupEbClosure = stmt}} = conn
@@ -219,7 +220,7 @@ closureLoop stmt acc =
       -- No rows means the EB body hasn't been downloaded yet
       if null acc then pure Nothing else pure $ Just (reverse acc)
     DB.Row -> do
-      txHash <- MkTxHash <$> DB.columnBlob stmt 0
+      txHash <- dbColumnHash stmt 0
       txBytes :: ByteString <- DB.columnBlob stmt 1
       if txBytes == mempty
         then return Nothing
