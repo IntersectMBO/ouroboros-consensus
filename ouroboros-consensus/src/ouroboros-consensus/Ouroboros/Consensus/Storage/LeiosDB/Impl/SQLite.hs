@@ -356,7 +356,7 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
                   Just _ -> pure ()
                 serve 0 sweep'
 
-          runJob :: WriteJob -> IO Next
+          runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
             Shutdown resultVar -> do
               -- Only stop serving: the brackets in 'withWriterConns' close the
@@ -471,7 +471,7 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
     pure x
 
 -- | What the writer does after serving a job.
-data Next
+data WhetherContinueServing
   = -- | Stop serving.
     Stop
   | -- | Keep serving.
