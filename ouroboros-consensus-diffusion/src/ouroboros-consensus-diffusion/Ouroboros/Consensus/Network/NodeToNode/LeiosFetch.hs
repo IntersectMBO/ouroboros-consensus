@@ -19,9 +19,10 @@ import qualified Data.ByteString as BS
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb (..)
+  ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
@@ -61,7 +62,7 @@ import Ouroboros.Network.Mux
 leiosFetchClient ::
   MonadSTM m =>
   ControlMessageSTM m ->
-  LeiosFetchClientPeer LeiosPoint LeiosEb LeiosTx m ()
+  LeiosFetchClientPeer LeiosPoint EndorserBlock LeiosTx m ()
 leiosFetchClient controlMessageSTM =
   leiosFetchClientPeerIdle $
     controlMessageSTM >>= \case
@@ -75,7 +76,7 @@ leiosFetchServer ::
   MonadCatch m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
-  LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
+  LeiosFetchServerPeer LeiosPoint EndorserBlock LeiosTx m ()
 leiosFetchServer tracer reader =
   leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
     MsgLeiosBlockRequest point ->
@@ -94,7 +95,7 @@ serveEb ::
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
-  m LeiosEb
+  m EndorserBlock
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
@@ -105,7 +106,7 @@ serveEb tracer reader point = do
     refs -> do
       let n = length refs
       traceWith tracer $ TraceLeiosFetchServerBlockServed point n
-      pure $ MkLeiosEb $ V.fromListN n refs
+      pure $ mkEndorserBlock refs
 
 serveTxs ::
   MonadThrow m =>

@@ -12,6 +12,7 @@
 -- the node relays to it.
 module Test.Consensus.Leios.Relay (tests) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -32,8 +33,8 @@ import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
 import qualified Data.Foldable as Foldable
 import Data.Maybe (fromMaybe)
@@ -50,7 +51,7 @@ import Ouroboros.Consensus.Leios.AnnounceState
   )
 import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog, nextNotifyLog, notifyLogStart)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
-import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint, LeiosVote)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
@@ -356,20 +357,20 @@ announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
 
 -- | Announces an endorser block in slot 1.
 someAnnouncingBlock :: LeiosTestBlock
-someAnnouncingBlock = setAnnouncement (MkEbHash (BS.replicate 32 1)) 1000 (firstLeiosBlock 0)
+someAnnouncingBlock = setAnnouncement (UnsafeHash (SBS.replicate 32 1)) 1000 (firstLeiosBlock 0)
 
 -- | Another announcement in the election of 'someAnnouncingBlock'.
 equivocation :: LeiosTestBlock
-equivocation = setAnnouncement (MkEbHash (BS.replicate 32 2)) 1000 (forkLeiosBlock (firstLeiosBlock 0))
+equivocation = setAnnouncement (UnsafeHash (SBS.replicate 32 2)) 1000 (forkLeiosBlock (firstLeiosBlock 0))
 
 -- | A third announcement in the election of 'someAnnouncingBlock'.
 thirdAnnouncement :: LeiosTestBlock
 thirdAnnouncement =
   setAnnouncement
-    (MkEbHash (BS.replicate 32 3))
+    (UnsafeHash (SBS.replicate 32 3))
     1000
     (forkLeiosBlock (forkLeiosBlock (firstLeiosBlock 0)))
 
 -- | Announces an endorser block in slot 349.
 lateAnnouncingBlock :: LeiosTestBlock
-lateAnnouncingBlock = setAnnouncement (MkEbHash (BS.replicate 32 4)) 1000 (setSlot 349 (firstLeiosBlock 1))
+lateAnnouncingBlock = setAnnouncement (UnsafeHash (SBS.replicate 32 4)) 1000 (setSlot 349 (firstLeiosBlock 1))

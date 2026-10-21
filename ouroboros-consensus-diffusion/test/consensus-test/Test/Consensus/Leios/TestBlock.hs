@@ -125,7 +125,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Protocol
-import Ouroboros.Consensus.Leios.Types (BytesSize, EbHash, decodeEbHash, encodeEbHash)
+import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
 import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -188,7 +188,7 @@ data instance Header LeiosTestBlock = LeiosTestHeader
   , lthSlot :: !SlotNo
   , lthIssuer :: !Word64
   -- ^ Stands in for the block issuer, so that the election is a real identity.
-  , lthAnnouncement :: !(Maybe (EbHash, BytesSize))
+  , lthAnnouncement :: !(Maybe (EndorserBlockHash, BytesSize))
   , lthValidity :: !Validity
   -- ^ Whether the protocol accepts this header; see 'setInvalid'.
   , lthCounter :: !CounterVsImmTip
@@ -297,7 +297,7 @@ onHeader :: (Header LeiosTestBlock -> Header LeiosTestBlock) -> LeiosTestBlock -
 onHeader f = LeiosTestBlock . f . ltbHeader
 
 -- | Announce the endorser block with this hash, claiming this size.
-setAnnouncement :: EbHash -> BytesSize -> LeiosTestBlock -> LeiosTestBlock
+setAnnouncement :: EndorserBlockHash -> BytesSize -> LeiosTestBlock -> LeiosTestBlock
 setAnnouncement ebHash size = onHeader $ \hdr -> hdr{lthAnnouncement = Just (ebHash, size)}
 
 -- | Move this block to another slot.
@@ -684,14 +684,14 @@ instance Serialise (Header LeiosTestBlock) where
     lthLeiosCert <- decode
     pure LeiosTestHeader{..}
 
-encodeAnnouncement :: (EbHash, BytesSize) -> Encoding
+encodeAnnouncement :: (EndorserBlockHash, BytesSize) -> Encoding
 encodeAnnouncement (ebHash, size) =
-  CBOR.encodeListLen 2 <> encodeEbHash ebHash <> encode size
+  CBOR.encodeListLen 2 <> toCBOR ebHash <> encode size
 
-decodeAnnouncement :: Decoder s (EbHash, BytesSize)
+decodeAnnouncement :: Decoder s (EndorserBlockHash, BytesSize)
 decodeAnnouncement = do
   enforceSize (fromString "Announcement") 2
-  (,) <$> decodeEbHash <*> decode
+  (,) <$> fromCBOR <*> decode
 
 instance HasBinaryBlockInfo LeiosTestBlock where
   getBinaryBlockInfo blk =

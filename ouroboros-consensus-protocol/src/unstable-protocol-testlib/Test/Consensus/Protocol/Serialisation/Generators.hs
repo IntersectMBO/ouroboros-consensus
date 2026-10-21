@@ -6,6 +6,7 @@
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
 import Cardano.Protocol.Praos.BlockHeader
@@ -23,10 +24,9 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
 import qualified Data.Strict.Either as Strict
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
-import Ouroboros.Consensus.Leios.Types (EbHash (..))
 import Ouroboros.Consensus.Protocol.PolyPraos (WhyNotCertifiable (..))
 import Ouroboros.Consensus.Protocol.Praos
   ( PolyPraosState (PraosState)
@@ -80,7 +80,7 @@ instance Arbitrary LeiosAnnouncement where
   arbitrary =
     MkLeiosAnnouncement
       <$> arbitrary
-      <*> (MkEbHash . BS.pack <$> vectorOf 32 arbitrary)
+      <*> (UnsafeHash . SBS.pack <$> vectorOf 32 arbitrary)
       <*> arbitrary
 
 instance

@@ -5,12 +5,13 @@
 -- | How the node's LeiosFetch server's events are logged.
 module Ouroboros.Consensus.Tracing.LeiosFetch () where
 
+import Cardano.Crypto.Hash (hashToStringAsHex)
 import Cardano.Logging
 import Control.Exception (displayException)
 import Data.Aeson (Value (String), (.=))
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyEbHash, prettyLeiosPoint)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
 
@@ -46,7 +47,7 @@ instance LogFormatting TraceLeiosFetchServerEvent where
       mconcat ["kind" .= String "OpenReaderDbFailure", "exception" .= err]
    where
     pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
-      mconcat ["slot" .= slot, "ebHash" .= String (Text.pack (prettyEbHash ebHash))]
+      mconcat ["slot" .= slot, "ebHash" .= String (Text.pack (hashToStringAsHex ebHash))]
 
   forHuman = \case
     TraceLeiosFetchServerBlockRequested point ->

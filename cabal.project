@@ -43,12 +43,13 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- master after https://github.com/IntersectMBO/cardano-ledger/pull/6148
+-- FIXME: SRP onto RP/branch
+-- https://github.com/IntersectMBO/cardano-ledger/pull/6219
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  --sha256: sha256-j8R0hhHvCqkRLXcN5ZS6UnyfrdPl1+Rgzt8efgirK7A=
-  tag: 19c6c8fd7dd22eb20dc65cf2e6edc45362991618
+  --sha256: sha256-O6xhR7z+oeuwvKSf7Di7kyeEgtD4AnDnaeKQPNdyfZA=
+  tag: 2c8703a347baf5e468d1ed841d9f2a9e6ddd13ae
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api

@@ -586,7 +586,7 @@ instance TxMeasurePhase2Metrics () where
 class TxEbMeasureByteSize msr where
   -- | The bytes that the transaction references take in an endorser block,
   -- without the CBOR framing. A reference is the hash and the size of one
-  -- transaction, as 'Ouroboros.Consensus.Leios.Types.encodeLeiosEb' writes it.
+  -- transaction, as 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes it.
   -- The Leios measure @DijkstraEbMeasure@ counts these bytes.
   txEbMeasureByteSize :: msr -> ByteSize32
 

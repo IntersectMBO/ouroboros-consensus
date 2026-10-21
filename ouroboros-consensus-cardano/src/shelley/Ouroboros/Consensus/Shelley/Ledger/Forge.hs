@@ -18,6 +18,7 @@ import qualified Cardano.Ledger.Core as SL
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
@@ -32,10 +33,10 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb
-  , encodeLeiosEbSize
-  , hashLeiosEb
-  , leiosEbFromTxBytes
+  ( EndorserBlock
+  , encodeEndorserBlockSize
+  , endorserBlockFromTxBytes
+  , endorserBlockHash
   )
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -98,18 +99,18 @@ forgeShelleyBlock
     -- Only a protocol with Leios has a value in 'WhenLeios', so the other
     -- protocols build no endorser block. CIP-0164 does not allow an empty
     -- endorser block.
-    forgedEb :: WhenLeios proto (Maybe LeiosEb)
+    forgedEb :: WhenLeios proto (Maybe EndorserBlock)
     forgedEb =
       pureLeiosOnly @proto $
-        leiosEbFromTxBytes . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
+        endorserBlockFromTxBytes . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
 
     -- TODO Forging does not yet certify endorser blocks.
     leiosFields = (,) False . maybeToStrictMaybe . fmap announce <$> forgedEb
 
     announce eb =
       EbReferencesAnnouncement
-        { ebReferencesAnnouncementHash = hashLeiosEb eb
-        , ebReferencesAnnouncementSize = encodeLeiosEbSize eb
+        { ebReferencesAnnouncementHash = unsafeMakeSafeHash (endorserBlockHash eb)
+        , ebReferencesAnnouncementSize = encodeEndorserBlockSize eb
         }
 
     body =

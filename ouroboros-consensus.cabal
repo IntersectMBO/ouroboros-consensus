@@ -405,6 +405,7 @@ library
     cardano-diffusion:api,
     cardano-ledger-binary ^>=1.10,
     cardano-ledger-core ^>=1.23,
+    cardano-ledger-dijkstra ^>=0.5,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,
@@ -1025,6 +1026,7 @@ test-suite leios-storage-test
   build-depends:
     base,
     bytestring,
+    cardano-crypto-class,
     cardano-slotting,
     containers,
     contra-tracer,
@@ -1041,7 +1043,6 @@ test-suite leios-storage-test
     text,
     time,
     unstable-consensus-testlib,
-    vector,
 
 benchmark mempool-bench
   import: common-bench
@@ -1158,6 +1159,7 @@ benchmark LeiosDB-bench
     async,
     base,
     bytestring,
+    cardano-crypto-class,
     cardano-slotting,
     containers,
     contra-tracer,
@@ -1166,7 +1168,6 @@ benchmark LeiosDB-bench
     resource-registry,
     temporary,
     time,
-    vector,
 
 benchmark LeiosDB-gc-bench
   import: common-bench
@@ -1178,6 +1179,7 @@ benchmark LeiosDB-gc-bench
     async,
     base,
     bytestring,
+    cardano-crypto-class,
     cardano-slotting,
     contra-tracer,
     direct-sqlite,
@@ -1189,7 +1191,6 @@ benchmark LeiosDB-gc-bench
     temporary,
     text,
     time,
-    vector,
 
 benchmark txid-eq-ord-instances-bench
   import: common-bench
@@ -1894,6 +1895,7 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-binary,
     cardano-crypto-class,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
@@ -1924,7 +1926,6 @@ test-suite shelley-test
     tasty-quickcheck,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
-    vector,
 
 library unstable-cardano-testlib
   import: common-lib

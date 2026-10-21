@@ -4,27 +4,28 @@
 -- | The node's LeiosFetch codec against the CDDL.
 module Test.Consensus.Cardano.LeiosFetch (tests) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString, toStrict)
+import qualified Data.ByteString.Short as SBS
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Vector.Strict as V
-import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..))
+import Network.TypedProtocol.Codec (AnnotatedCodec, AnyMessage (..), CodecF (..))
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
-  , LeiosEb (..)
+  ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , TxHash (..)
-  , decodeLeiosEb
+  , decodeEndorserBlock
   , decodeLeiosPoint
   , decodeLeiosTx
-  , encodeLeiosEb
+  , encodeEndorserBlock
   , encodeLeiosPoint
   , encodeLeiosTx
-  , maxTxsPerEb
+  , maxTxsPerEndorserBlock
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Test.Tasty
@@ -50,14 +51,15 @@ prop_nodeCodecMatchesCDDL =
           (T.pack "leiosFetchMessage")
       pure $ either (`counterexample` False) (const $ property True) result
  where
-  nodeCodec :: Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx) DeserialiseFailure IO ByteString
+  nodeCodec ::
+    AnnotatedCodec (LeiosFetch LeiosPoint EndorserBlock LeiosTx) DeserialiseFailure IO ByteString
   nodeCodec =
     codecLeiosFetch
-      maxTxsPerEb
+      maxTxsPerEndorserBlock
       encodeLeiosPoint
       decodeLeiosPoint
-      encodeLeiosEb
-      decodeLeiosEb
+      encodeEndorserBlock
+      decodeEndorserBlock
       encodeLeiosTx
       decodeLeiosTx
 
@@ -70,7 +72,7 @@ prop_nodeCodecMatchesCDDL =
       , AnyMessage . MsgLeiosBlockTxs . V.fromList <$> listOf genTx
       ]
 
-  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> (MkEbHash <$> genHash)
+  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> genHash
 
   -- strictly ascending indices, each with a non-zero bitmap, as the decoder
   -- requires
@@ -78,8 +80,8 @@ prop_nodeCodecMatchesCDDL =
     indices <- Set.toAscList . Set.fromList <$> arbitrary
     traverse (\i -> (,) i . getPositive <$> arbitrary) indices
 
-  genEb = MkLeiosEb . V.fromList <$> listOf1 ((,) <$> (MkTxHash <$> genHash) <*> arbitrary)
+  genEb = mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 
   genTx = MkLeiosTx . BS.pack <$> arbitrary
 
-  genHash = BS.pack <$> vectorOf 32 arbitrary
+  genHash = UnsafeHash . SBS.pack <$> vectorOf 32 arbitrary

@@ -77,6 +77,7 @@
 -- @
 module Main (main) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
@@ -87,22 +88,23 @@ import Control.ResourceRegistry (withRegistry)
 import Control.Tracer (Tracer (..), emit)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Short as SBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List as List (foldl', group, intercalate, isSuffixOf, nub, sort)
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
-import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import qualified Database.SQLite3 as SQL
 import Options.Applicative hiding (action)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
-  , LeiosEb (..)
+  , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
-  , TxHash (..)
-  , encodeLeiosEbSize
+  , TxHash
+  , encodeEndorserBlockSize
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
@@ -395,11 +397,12 @@ populateDb opts db =
   withWriter db $ \writer ->
     forM [0 .. populationEbs - 1] $ \ebIdx -> do
       let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
-          MkEbHash hashBytes = genEbHash ebIdx
-          point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
+          ebHash = genEbHash ebIdx
+          hashBytes = hashToBytes ebHash
+          point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
-      pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
+      pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
       bodyWritten <- writeEbBody writer point eb
       txsWritten <- writeTxs writer point txs
       awaitAll [pointWritten, void bodyWritten, void txsWritten]
@@ -407,9 +410,9 @@ populateDb opts db =
 
 -- * Deterministic data generation (as in leios-db-bench)
 
--- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
-genEbHash :: Int -> EbHash
-genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+-- | 'EndorserBlockHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
+genEbHash :: Int -> EndorserBlockHash
+genEbHash i = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
@@ -424,30 +427,31 @@ ebTxHashesFor opts ebIdx =
   nShared = floor (effDup opts * fromIntegral (optTxsPerEb opts) :: Double)
   poolSize = max 1 (4 * optTxsPerEb opts)
 
--- | 'LeiosEb' over 'ebTxHashesFor' with 'optTxBytes' per transaction.
-genEb :: Opts -> Int -> LeiosEb
+-- | 'EndorserBlock' over 'ebTxHashesFor' with 'optTxBytes' per transaction.
+genEb :: Opts -> Int -> EndorserBlock
 genEb opts ebIdx =
-  MkLeiosEb $
-    V.fromList
-      [ (h, fromIntegral (optTxBytes opts) :: BytesSize)
-      | h <- ebTxHashesFor opts ebIdx
-      ]
+  mkEndorserBlock $
+    [ (h, fromIntegral (optTxBytes opts) :: BytesSize)
+    | h <- ebTxHashesFor opts ebIdx
+    ]
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Shared-pool 'TxHash': \"sharedTx:<poolIdx>\" padded to 32 bytes with zeros.
 genSharedTxHash :: Int -> TxHash
-genSharedTxHash j = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genSharedTxHash j = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
-genTx opts (MkTxHash h) = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+ where
+  h = hashToBytes txHash
 
 -- * Measurement phases
 
@@ -494,7 +498,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           snd
             <$> timed
               ( do
-                  pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
+                  pointWritten <- writeEbPoint w point (encodeEndorserBlockSize eb)
                   bodyWritten <- writeEbBody w point eb
                   txsWritten <- writeTxs w point txs
                   -- Awaiting all three times them to durability.
@@ -535,7 +539,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
             timed $
               leiosDbPromoteToImmutable
                 db
-                [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
+                [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain
@@ -802,7 +806,7 @@ renderSummary opts results =
   ebGeometry = case optDbPath opts of
     Just _ -> []
     Nothing ->
-      [ "  EB body               = " <> showKb (fromIntegral (encodeLeiosEbSize (genEb opts 0)))
+      [ "  EB body               = " <> showKb (fromIntegral (encodeEndorserBlockSize (genEb opts 0)))
       , "  EB closure            = " <> showKb (optTxsPerEb opts * optTxBytes opts)
       , "  txs per EB            = " <> show (optTxsPerEb opts)
       , "  tx size               = " <> show (optTxBytes opts) <> " B"

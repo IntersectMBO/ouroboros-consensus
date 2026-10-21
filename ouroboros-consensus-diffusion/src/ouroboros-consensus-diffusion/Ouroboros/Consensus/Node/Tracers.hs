@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Types (LeiosEb)
+import Ouroboros.Consensus.Leios.Types (EndorserBlock)
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -424,7 +424,7 @@ data TraceForgeEvent blk
       -- | The hash of the ranking block that announces the endorser block.
       (HeaderHash blk)
       -- | The endorser block.
-      LeiosEb
+      EndorserBlock
       -- | The total mempool measure of the transactions selected for it.
       (MempoolMeasure blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
