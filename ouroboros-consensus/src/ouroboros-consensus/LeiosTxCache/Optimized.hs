@@ -22,7 +22,6 @@ module LeiosTxCache.Optimized
 
 import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32))
 import Cardano.Slotting.Slot (SlotNo (..))
-import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Bits (unsafeShiftL, unsafeShiftR, (.&.), (.|.))
 import qualified Data.Foldable as F
@@ -57,6 +56,7 @@ import LeiosTxCache.API
   )
 import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Ouroboros.Consensus.Util.IOLike (IOLike)
+import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
 
 -- | The small, map-resident state (the tx map is the hash table, not here).
 data HtState b = HtState
@@ -91,7 +91,7 @@ newHashTableLeiosTxCache ::
   #-}
 newHashTableLeiosTxCache nshift k0 k1 = do
   ht <- HT.new nshift k0 k1
-  stateVar <- MVar.newMVar emptyHtState
+  stateVar <- MVar.uncheckedNewMVar emptyHtState
   pure
     LeiosTxCache
       { insertAnnouncement = \slot rbh ebh ->
