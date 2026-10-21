@@ -963,8 +963,9 @@ ebTxBytesRows path ebHash =
   withSqlFile path $ \sql ->
     SQL.withStatement
       sql
-      (T.pack ("SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = " <> sqlBlob ebHash)) $ \stmt ->
-      SQL.step stmt >> fromIntegral <$> SQL.columnInt64 stmt 0
+      (T.pack ("SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = " <> sqlBlob ebHash))
+      $ \stmt ->
+        SQL.step stmt >> fromIntegral <$> SQL.columnInt64 stmt 0
 
 -- | A pinned EB whose tx closure never arrives cannot be copied, so the
 -- copier keeps retrying it for as long as the database is open. 'close' must
