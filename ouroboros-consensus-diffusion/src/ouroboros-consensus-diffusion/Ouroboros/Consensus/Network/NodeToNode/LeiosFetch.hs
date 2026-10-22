@@ -14,14 +14,17 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
+import Codec.CBOR.Read (deserialiseFromBytes)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( LeiosEb (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , decodeLeiosEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
@@ -41,6 +44,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
   , MonadCatch (..)
@@ -98,14 +102,16 @@ serveEb ::
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
-  -- The one body's tx references, in order. A stored body is never empty, so
-  -- no references means the node does not hold the body.
   lookupEbBody reader (pointEbHash point) >>= \case
-    [] -> throwIO $ ExnLeiosUnknownBlockRequested point
-    refs -> do
-      let n = length refs
-      traceWith tracer $ TraceLeiosFetchServerBlockServed point n
-      pure $ MkLeiosEb $ V.fromListN n refs
+    Nothing -> throwIO $ ExnLeiosUnknownBlockRequested point
+    Just bytes -> do
+      -- TODO Serve the stored bytes as they are, instead of decoding them only
+      -- for the codec to encode them again.
+      eb <- case deserialiseFromBytes decodeLeiosEb (BSL.fromStrict bytes) of
+        Right (_, eb) -> pure eb
+        Left err -> throwLeiosDbException ("stored endorser block body does not decode: " <> show err)
+      traceWith tracer $ TraceLeiosFetchServerBlockServed point (V.length (leiosEbTxs eb))
+      pure eb
 
 serveTxs ::
   MonadThrow m =>
@@ -117,18 +123,19 @@ serveTxs ::
 serveTxs tracer reader point bitmaps = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  -- One row for each requested offset that the endorser block has, with its
-  -- bytes if the node holds them.
+  -- One row for each requested offset that the endorser block has. A tx the
+  -- node does not hold yet reads as zeroes: what the node offered, it holds.
   rows <- batchRetrieveTxs reader (pointEbHash point) offsets
-  case traverse (\(_offset, _txHash, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
-    Just txs | length txs == length offsets -> do
-      let n = length txs
+  if length rows == length offsets
+    then do
+      let txs = [MkLeiosTx bytes | (_offset, bytes) <- rows]
+          n = length txs
       traceWith tracer $
         TraceLeiosFetchServerTxsServed point n (sum [BS.length (leiosTxBytes tx) | tx <- txs])
       pure $ V.fromListN n txs
-    _ -> do
-      let held = IntSet.fromList [offset | (offset, _txHash, Just _bytes) <- rows]
-      throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` held) offsets)
+    else do
+      let declared = IntSet.fromList [offset | (offset, _bytes) <- rows]
+      throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` declared) offsets)
  where
   offsets = bitmapOffsets bitmaps
 

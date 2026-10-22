@@ -12,14 +12,12 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
   ) where
 
 -- | Schema of the volatile partition (@leios.vol.db@): 'sql_schema_imm' with
--- the columns and objects that track completeness and GC.
+-- the columns and objects that track GC.
 sql_schema_vol :: String
 sql_schema_vol =
   unlines
     ( ebsTable
-        [ -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
-          "  missingTxCount INTEGER,"
-        , -- 0 = volatile, 1 = certified/pinned awaiting copy,
+        [ -- 0 = volatile, 1 = certified/pinned awaiting copy,
           -- 2 = copied to the immutable partition (evictable),
           -- 3 = marked for GC, awaiting the sweeper
           "  status INTEGER NOT NULL DEFAULT 0,"
@@ -49,7 +47,7 @@ sql_schema_gc =
 -- over ATTACH.
 --
 -- Left out, since EBs land here complete and are never collected:
--- @ebs.missingTxCount@, @ebs.status@ and the GC indexes.
+-- @ebs.status@ and the GC indexes.
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 
@@ -69,35 +67,26 @@ ebsTable extraColumns =
     <> extraColumns
     <> [ "  PRIMARY KEY (ebSlot, ebHashBytes)"
        , ");"
-       , -- Lookups by hash alone, e.g. 'sql_imm_filter_present'.
+       , -- Lookups by hash alone, e.g. 'sql_pin_eb'.
          "CREATE INDEX IF NOT EXISTS idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
        ]
 
 -- | The tables that are identical in both partitions.
 --
--- Tx bytes are owned by the referencing EB: 'ebTxBytes' shares the
--- @(ebHashBytes, txOffset)@ key with 'ebTxs', so writing and evicting an EB's
--- closure touches one contiguous key range, and a tx shared by two EBs is
--- stored twice, deliberately. A row is allocated as a @zeroblob@ of the
--- declared size when the body arrives and filled in place when the tx does
--- (@filled = 1@). It never changes size, so SQLite overwrites it in place,
--- without moving rows between B-tree pages.
+-- An EB's body is stored as received, in its wire encoding, to serve it as
+-- is, next to 'txBounds': where each of its txs is in the closure
+-- ('Read.encodeTxBounds'). The closure is one row, its txs' bytes
+-- concatenated. The first tx write allocates it with zeroes, and every write
+-- fills its txs in place.
 sharedTables :: [String]
 sharedTables =
-  [ "CREATE TABLE IF NOT EXISTS ebTxs ("
-  , "  ebHashBytes BLOB NOT NULL,"
-  , "  txOffset INTEGER NOT NULL,"
-  , "  txHashBytes BLOB NOT NULL,"
-  , "  txBytesSize INTEGER NOT NULL,"
-  , "  PRIMARY KEY (ebHashBytes, txOffset)"
+  [ "CREATE TABLE IF NOT EXISTS ebBodies ("
+  , "  ebHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , "  txBounds BLOB NOT NULL,"
+  , "  body BLOB NOT NULL"
   , ");"
-  , "CREATE TABLE IF NOT EXISTS ebTxBytes ("
-  , "  ebHashBytes BLOB NOT NULL,"
-  , "  txOffset INTEGER NOT NULL,"
-  , "  filled INTEGER NOT NULL DEFAULT 0,"
-  , -- The blob is the rightmost column, so probing @filled@ never touches
-    -- overflow pages.
-    "  txBytes BLOB NOT NULL,"
-  , "  PRIMARY KEY (ebHashBytes, txOffset)"
+  , "CREATE TABLE IF NOT EXISTS ebClosures ("
+  , "  ebHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , "  txs BLOB NOT NULL"
   , ");"
   ]

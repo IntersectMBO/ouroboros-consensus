@@ -66,7 +66,6 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
-  , throwLeiosDbException
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -121,7 +120,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       traceWith tracer $
         TraceLeiosDbCopyError
           (show ebHash)
-          "pinned EB has no complete closure in the volatile partition"
+          "pinned EB has no closure in the volatile partition"
       pure False
     Just _copiedTxs -> do
       -- successfully copied, bump the stats
@@ -130,59 +129,38 @@ copyEbToImmutable tracer statsVar conn ebHash =
       pure True
  where
   CopierConn{ccDb, ccStmts} = conn
-  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
+  CopierStmts{ccHasClosure, ccInsertEb, ccInsertEbBody, ccInsertEbClosures} = ccStmts
 
   -- Attempt to do the actual copying.
   --
-  -- Returns the number of copied body rows, or Nothing if
-  -- the volatile partition does not hold the full closure.
+  -- Returns the number of copied rows, or Nothing if the volatile
+  -- partition holds no closure.
   appendToImmutable :: IO (Maybe Int)
   appendToImmutable =
     dbWithTransaction ccDb $ do
-      -- the cert-RB is on our chain, hence the EB must be complete by this point.
-      -- Still check if it is, as a defensive programming measure, as it's very cheap.
-      (bodyCount, closureCount) <-
-        useStmt ccCompleteness $ do
-          dbBindBlob ccCompleteness 1 (ebHashBytes ebHash)
-          -- step the first time, expecting a single result row
-          dbStepSafe ccCompleteness >>= \case
-            DB.Done ->
-              -- no row: critical error, fail fast and loud.
-              -- this should not happen.
-              throwLeiosDbException "sql_copy_completeness: expected a row"
-            DB.Row -> do
-              n <- DB.columnInt64 ccCompleteness 0
-              m <- DB.columnInt64 ccCompleteness 1
-              -- step again, expecting no more row
-              dbStepSafe ccCompleteness >>= \case
-                DB.Done ->
-                  -- we have our result
-                  pure (n, m)
-                DB.Row ->
-                  -- another row: critical error, fail fast and loud.
-                  -- this should not happen.
-                  throwLeiosDbException "sql_copy_completeness: expected exactly one row"
-      if bodyCount == 0 || bodyCount /= closureCount
+      -- the cert-RB is on our chain, hence the fetch logic completed the EB.
+      -- Still check that it has a closure at all, as it's very cheap.
+      hasClosure <-
+        useStmt ccHasClosure $ do
+          dbBindBlob ccHasClosure 1 (ebHashBytes ebHash)
+          (== DB.Row) <$> dbStepSafe ccHasClosure
+      if not hasClosure
         then
-          -- the EB is incomplete, don't copy
+          -- the EB has no closure, don't copy
           pure Nothing
         else do
-          -- the EB is complete: body is non-empty and bodyCounty matches closureCount
-          --
           -- copy the EB
           useStmt ccInsertEb $ do
             dbBindBlob ccInsertEb 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEb
-          -- copy the eb-to-transactions mapping
-          useStmt ccInsertEbTxs $ do
-            dbBindBlob ccInsertEbTxs 1 (ebHashBytes ebHash)
-            dbStep1Safe ccInsertEbTxs
-          nTxs <- DB.changes ccDb
-          -- copy the tx bytes
-          useStmt ccInsertEbTxBytes $ do
-            dbBindBlob ccInsertEbTxBytes 1 (ebHashBytes ebHash)
-            dbStep1Safe ccInsertEbTxBytes
-          pure (Just nTxs)
+          -- copy its body and closure
+          useStmt ccInsertEbBody $ do
+            dbBindBlob ccInsertEbBody 1 (ebHashBytes ebHash)
+            dbStep1Safe ccInsertEbBody
+          useStmt ccInsertEbClosures $ do
+            dbBindBlob ccInsertEbClosures 1 (ebHashBytes ebHash)
+            dbStep1Safe ccInsertEbClosures
+          Just <$> DB.changes ccDb
 
 -- | The copier: the only writer into the immutable partition.
 --
@@ -319,12 +297,12 @@ data SweeperConn = SweeperConn
   }
 
 -- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
--- EBs, with their body and tx bytes -- three range deletes on the EBs' hashes.
+-- EBs, with their bodies and closures -- three deletes on the EBs' hashes.
 -- Returns the number of evicted 'ebs' rows. Runs on the writer.
 sweepEbBatch :: SweeperConn -> Int64 -> IO Int
 sweepEbBatch conn batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
+      SweeperStmts{swPickMarked, swEvictEbBodies, swEvictEbClosures, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
@@ -337,8 +315,8 @@ sweepEbBatch conn batchSize = do
       then pure 0
       else do
         let evictableEbsJson = jsonHexArray evictableEbs
-        execJson swEvictEbTxBytes evictableEbsJson
-        execJson swEvictEbTxs evictableEbsJson
+        execJson swEvictEbClosures evictableEbsJson
+        execJson swEvictEbBodies evictableEbsJson
         -- last, so 'DB.changes' counts the evicted 'ebs' rows
         execJson swEvictEbs evictableEbsJson
         DB.changes swDb

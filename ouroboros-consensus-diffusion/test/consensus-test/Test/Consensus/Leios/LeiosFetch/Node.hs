@@ -68,11 +68,11 @@ tests =
     , testCase "the node disconnects a client that requests an endorser block it does not hold" $
         runSimFinishing (nodeAnswers (requestBlock unknownPoint))
           >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownBlockRequested unknownPoint))))
-    , testCase "the node disconnects a client that requests transactions it does not hold" $
-        -- The first is held, the second is not, and the third is past the end
-        -- of the endorser block.
+    , testCase "the node disconnects a client that requests transactions the endorser block does not have" $
+        -- The first is held, the second is not but is in the endorser block,
+        -- and the third is past its end.
         runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100])))
-          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100]))))
+          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [100]))))
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $

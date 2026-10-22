@@ -16,25 +16,20 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   , sql_schema_vol
   , sql_schema_imm
   , sql_insert_eb
-  , sql_insert_ebBody
-  , sql_prealloc_ebTxBytes
-  , sql_fill_ebTxBytes
+  , sql_insert_eb_body
+  , sql_insert_eb_closure
   ) where
 
 import Cardano.Prelude (forM_, when)
 import Control.Concurrent.Class.MonadSTM.Strict
-  ( StrictTChan
-  , StrictTVar
+  ( StrictTVar
   , check
-  , dupTChan
   , isEmptyTBQueue
-  , newBroadcastTChan
   , newTBQueueIO
   , newTVarIO
   , putTMVar
   , readTVarIO
   , tryReadTBQueue
-  , writeTChan
   , writeTVar
   )
 import Control.Exception
@@ -67,7 +62,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -140,7 +134,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   -- create .db files
   initialiseLeiosDbFiles volLeiosDbPath immLeiosDbPath
-  notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
@@ -157,7 +150,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       registry
       tracer
       statsVar
-      notificationChan
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
@@ -176,7 +168,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       { closeLeiosDbHandle = close samplerThread copierThread writeQueue
       , openReader = implOpenReader statsVar
       , openWriter = implOpenWriter writeQueue
-      , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
       , leiosDbSampleStats = readTVarIO statsVar
@@ -212,7 +203,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       LeiosDbReader
         { closeReader = closeConn conn
         , testScanEbPoints = sqlScanEbPoints conn
-        , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
         , lookupEbClosure = sqlLookupEbClosure conn
@@ -295,19 +285,16 @@ startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
-  StrictTChan IO LeiosEbNotification ->
   Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar gcBatchSize volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  let notify = atomically . writeTChan notificationChan
-
-      worker :: WriterConns -> IO ()
+  let worker :: WriterConns -> IO ()
       worker
         WriterConns
           { wcVolDb = volDb
@@ -367,9 +354,9 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
             WriteEbPoint point size resultVar ->
               publish resultVar (sqlInsertEbPoint conn point size) >> pure Continue
             WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure Continue
+              publish resultVar (sqlInsertEbBody conn point eb) >> pure Continue
             WriteTxs point txs resultVar ->
-              publish resultVar (sqlInsertTxs tracer conn notify point txs) >> pure Continue
+              publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
             PinEb ebHashes resultVar -> do
