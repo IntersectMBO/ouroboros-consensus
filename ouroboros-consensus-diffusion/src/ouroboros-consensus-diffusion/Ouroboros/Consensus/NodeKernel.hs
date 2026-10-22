@@ -19,6 +19,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , storeForgedEb
   , toConsensusMode
   ) where
 

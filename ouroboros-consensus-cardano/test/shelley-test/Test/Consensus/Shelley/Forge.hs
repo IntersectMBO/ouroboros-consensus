@@ -13,7 +13,7 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Core (bodyTxL, eraProtVerLow, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
-import Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Hashes (HASH, extractHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
+  , EbHash (..)
   , LeiosEb (..)
   , TxHash (..)
   , encodeLeiosEb
@@ -47,6 +48,7 @@ import Ouroboros.Consensus.Leios.Types
   , forgedEbTxs
   , hashLeiosEb
   )
+import Ouroboros.Consensus.NodeKernel (storeForgedEb)
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
   , PraosIsLeader (..)
@@ -77,6 +79,12 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node.Common (ShelleyLeaderCredentials (..))
 import Ouroboros.Consensus.Shelley.Node.Praos (praos2SharedBlockForging)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (..)
+  , newLeiosDBInMemory
+  , withReader
+  , withWriter
+  )
 import Test.Consensus.Shelley.Examples (examplesDijkstra, testShelleyGenesis)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -90,6 +98,7 @@ tests =
     "Forge"
     [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
     , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
+    , testProperty "storeForgedEb stores the endorser block that the header announces" prop_storesEb
     ]
 
 prop_announcesEb :: Property
@@ -97,7 +106,7 @@ prop_announcesEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
     forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
       let ebTxs = take numEbTxs distinctTxs
-      ForgeBlockResult blk forgedEb <- forgeWith coreNode ebTxs
+      (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
       pure $ case forgedEb of
         Nothing -> counterexample "no endorser block" False
         Just forged ->
@@ -123,8 +132,35 @@ prop_announcesEb =
 prop_noEb :: Property
 prop_noEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
-    ForgeBlockResult blk forgedEb <- forgeWith coreNode []
+    (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
+
+-- | 'storeForgedEb' writes the point, the body and the transactions of the
+-- forged endorser block. The test reads them back at the slot and the hash
+-- that the header announces.
+prop_storesEb :: Property
+prop_storesEb =
+  forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
+    forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
+      let ebTxs = take numEbTxs distinctTxs
+      (cfg, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
+      db <- newLeiosDBInMemory
+      withWriter db $ \writer ->
+        mapM_ (storeForgedEb cfg writer (getHeader blk)) forgedEb
+      case announcement blk of
+        SNothing -> pure $ counterexample "the block announces no endorser block" False
+        SJust ann -> do
+          let ebHash = MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
+          (points, closure) <-
+            withReader db $ \reader ->
+              (,) <$> testScanEbPoints reader <*> lookupEbClosure reader ebHash
+          pure $
+            conjoin
+              [ counterexample "the point is not the slot and the hash that the header announces" $
+                  points === [(blockSlot blk, ebHash)]
+              , counterexample "the stored transactions are not the forged ones" $
+                  closure === Just [(fst (reference tx), txBytes tx) | tx <- ebTxs]
+              ]
 
 -- | A number of endorser-block transactions. 'encodeLeiosEbSize' writes a
 -- longer map header from 24 and from 256 references.
@@ -136,12 +172,13 @@ genNumEbTxs =
     ]
 
 -- | Forge the block after the example ledger state, with the given endorser
--- block transactions and no ranking block transactions.
+-- block transactions and no ranking block transactions. Also return the
+-- config of the forge.
 forgeWith ::
   CoreNode StandardCrypto ->
   [GenTx StandardDijkstraBlock] ->
-  IO (ForgeBlockResult StandardDijkstraBlock)
-forgeWith coreNode ebTxs = do
+  IO (TopLevelConfig StandardDijkstraBlock, ForgeBlockResult StandardDijkstraBlock)
+forgeWith coreNode ebTxs = fmap ((,) topLevelConfig) $ do
   hotKey <-
     instantiatePraosCredentials
       (SL.maxKESEvo globals)
