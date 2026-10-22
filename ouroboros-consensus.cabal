@@ -1921,7 +1921,7 @@ test-suite shelley-test
     measures,
     mempack,
     microlens,
-    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
+    ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     QuickCheck,
     sop-core,
     strict-sop-core,
