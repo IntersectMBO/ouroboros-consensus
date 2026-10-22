@@ -184,6 +184,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   , newSharedTxStateVar
   , newTxSubmissionCountersVar
   , txCountersThreadV2
+  , txTierRotationThreadV2
   )
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
   ( emptySharedTxState
@@ -338,6 +339,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Seeds the LeiosFetch decision loop's PRNG (see 'Leios.leiosFetchPrng'),
   -- which shuffles job assignment to peers. An independent split of the node
   -- generator, like 'keepAliveRng' / 'peerSharingRng'.
+  , txTierRng :: StdGen
+  -- ^ Seeds the inbound tx-submission registry: the coin that draws which
+  -- inbound peers are polled for txids at full speed, and the peers' jitter.
+  -- An independent split of the node generator, like 'leiosFetchRng'.
   , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
@@ -369,6 +374,7 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
+    , txTierRng
     , leiosDB
     , leiosMinOfferLead
     , blockFetchSize
@@ -501,7 +507,7 @@ initNodeKernel
           blockFetchConfiguration
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
-    peerTxRegistry <- newPeerTxRegistry
+    peerTxRegistry <- newPeerTxRegistry txTierRng
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     void $
@@ -512,6 +518,12 @@ initNodeKernel
           (txLogicTracer tracers)
           txCountersVar
           sharedTxStateVar
+          peerTxRegistry
+
+    void $
+      forkLinkedThread registry "NodeKernel.txTierRotationThreadV2" $
+        txTierRotationThreadV2
+          (txDecisionPolicy miniProtocolParameters)
           peerTxRegistry
 
     -- Leios fetch-logic state ('leiosOutstanding', 'leiosReady',

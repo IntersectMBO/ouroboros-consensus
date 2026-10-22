@@ -993,7 +993,7 @@ mkNodeKernelArgs
     do
       let (kaRng, rng') = splitGen rng
           (psRng, rng'') = splitGen rng'
-          (lfRng, _) = splitGen rng''
+          (lfRng, ttRng) = splitGen rng''
       return
         NodeKernelArgs
           { tracers
@@ -1028,6 +1028,7 @@ mkNodeKernelArgs
           , leiosDB
           , leiosTxCache
           , leiosFetchRng = lfRng
+          , txTierRng = ttRng
           , leiosMinOfferLead = Leios.defaultLeiosMinOfferLead
           }
 
