@@ -5,8 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | One real node, the node under test (NUT), and a mocked environment around
--- it. The @nut@ prefix of names here abbreviates it.
+-- | One real node, the node under test, and a mocked environment around it.
 --
 -- The node is built by the node's own 'initNodeKernel' over a ChainDB on a
 -- mocked filesystem, so the code under test is the node's, not a
@@ -149,18 +148,18 @@ type Blk = LeiosTestBlock
 
 -- | What a test can vary about the node.
 data NodeUnderTestConfig = NodeUnderTestConfig
-  { nutcSecurityParam :: SecurityParam
-  , nutcLedgerConfig :: LeiosTestLedgerConfig
-  , nutcRandomness :: StdGen
+  { nodeConfigSecurityParam :: SecurityParam
+  , nodeConfigLedger :: LeiosTestLedgerConfig
+  , nodeConfigRandomness :: StdGen
   -- ^ The root of all the test's randomness; see 'Seeds'.
   }
 
 defaultNodeUnderTestConfig :: SecurityParam -> LeiosTestLedgerConfig -> NodeUnderTestConfig
-defaultNodeUnderTestConfig nutcSecurityParam nutcLedgerConfig =
+defaultNodeUnderTestConfig nodeConfigSecurityParam nodeConfigLedger =
   NodeUnderTestConfig
-    { nutcSecurityParam
-    , nutcLedgerConfig
-    , nutcRandomness = mkStdGen 0
+    { nodeConfigSecurityParam
+    , nodeConfigLedger
+    , nodeConfigRandomness = mkStdGen 0
     }
 
 -- | All the randomness of a Leios node-vs-environment test.
@@ -182,8 +181,8 @@ data Seeds a = Seeds
 splitSeeds :: StdGen -> Seeds StdGen
 splitSeeds = evalState (mapM (\() -> state splitGen) (Seeds () () () () () ()))
 
-nodeSeeds :: NodeUnderTestConfig -> Seeds StdGen
-nodeSeeds = splitSeeds . nutcRandomness
+configSeeds :: NodeUnderTestConfig -> Seeds StdGen
+configSeeds = splitSeeds . nodeConfigRandomness
 
 -- | The peer address these tests use: a peer is just a number.
 newtype PeerAddr = PeerAddr Int
@@ -193,33 +192,33 @@ newtype PeerAddr = PeerAddr Int
 -- | A running node, and the handles a test needs on it for its gray-box
 -- predicates.
 data NodeUnderTest m = NodeUnderTest
-  { nutChainDB :: ChainDB m Blk
-  , nutTopLevelConfig :: TopLevelConfig Blk
-  , nutKernel :: NodeKernel m PeerAddr (ConnectionId ()) Blk
-  , nutApps :: BlockNodeToNodeVersion Blk -> NodeApps m
-  , nutVersions :: NodeVersions m
-  , nutSeeds :: Seeds StdGen
+  { nodeChainDB :: ChainDB m Blk
+  , nodeTopLevelConfig :: TopLevelConfig Blk
+  , nodeKernel :: NodeKernel m PeerAddr (ConnectionId ()) Blk
+  , nodeApps :: BlockNodeToNodeVersion Blk -> NodeApps m
+  , nodeVersions :: NodeVersions m
+  , nodeSeeds :: Seeds StdGen
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
 addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
-addBlocks nut = addBlocksAfter nut Origin
+addBlocks node = addBlocksAfter node Origin
 
 -- | Add a chain to the node's ChainDB, oldest first, given the slot of its
 -- first block's predecessor
 --
 -- A 'LeiosTestBlock''s ledger view is the same at every slot.
 addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin SlotNo -> [Blk] -> m ()
-addBlocksAfter nut predecessorSlot blks =
+addBlocksAfter node predecessorSlot blks =
   sequence_ $
     zipWith
       ( \predSlot ->
-          ChainDB.addBlock_ (nutChainDB nut) noPunishment predSlot leiosView
+          ChainDB.addBlock_ (nodeChainDB node) noPunishment predSlot leiosView
       )
       (predecessorSlot : map (NotOrigin . blockSlot) blks)
       blks
  where
-  leiosView = SJust (ltlcLeios (configLedger (nutTopLevelConfig nut)))
+  leiosView = SJust (ltlcLeios (configLedger (nodeTopLevelConfig node)))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =
@@ -269,7 +268,7 @@ withNodeUnderTest ::
 withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
-  let seeds = nodeSeeds cfg
+  let seeds = configSeeds cfg
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -280,7 +279,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
           <$> openChainDB
             dbRegistry
             (topLevelConfigOf cfg)
-            (leiosTestInitExtLedger (nutcLedgerConfig cfg))
+            (leiosTestInitExtLedger (nodeConfigLedger cfg))
             (mountedIn (nodeDBsImm nodeDBs))
             (mountedIn (nodeDBsVol nodeDBs))
             (seedSnapshotDelay seeds)
@@ -345,18 +344,18 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 (const decodePeerAddr)
         body
           NodeUnderTest
-            { nutChainDB = chainDB
-            , nutTopLevelConfig = topLevelConfigOf cfg
-            , nutKernel = kernel
-            , nutApps = apps
-            , nutVersions =
+            { nodeChainDB = chainDB
+            , nodeTopLevelConfig = topLevelConfigOf cfg
+            , nodeKernel = kernel
+            , nodeApps = apps
+            , nodeVersions =
                 mkNodeToNodeInitiatorResponderVersions
                   (featureFlags kernelArgs)
                   (miniProtocolParameters kernelArgs)
                   nodeVersionData
                   (supportedNodeToNodeVersions (Proxy @Blk))
                   apps
-            , nutSeeds = seeds
+            , nodeSeeds = seeds
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
@@ -428,7 +427,7 @@ forecastingOnly committee quorumStakeThreshold range =
   k = SecurityParam $ knownNonZeroBounded @10
 
 -- | The largest endorser block, and total size of the transactions it
--- references, that the NUT's ledger admits.
+-- references, that the node's ledger admits.
 maxEbBodySize :: BytesSize
 maxEbBodySize = 5000
 
@@ -467,8 +466,8 @@ mkBlockchainTime cfg registry chainDB =
       }
 
 topLevelConfigOf :: NodeUnderTestConfig -> TopLevelConfig Blk
-topLevelConfigOf NodeUnderTestConfig{nutcSecurityParam, nutcLedgerConfig} =
-  singleNodeLeiosTestConfig nutcLedgerConfig nutcSecurityParam
+topLevelConfigOf NodeUnderTestConfig{nodeConfigSecurityParam, nodeConfigLedger} =
+  singleNodeLeiosTestConfig nodeConfigLedger nodeConfigSecurityParam
 
 -- | A node's database directory, mounting each database in its own
 -- subdirectory as 'stdMkChainDbHasFS' does, but on a mock file system.
