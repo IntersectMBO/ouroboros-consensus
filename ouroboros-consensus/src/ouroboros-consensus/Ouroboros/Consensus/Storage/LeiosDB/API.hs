@@ -107,7 +107,7 @@ data LeiosDbReader m = LeiosDbReader
 --
 -- Asynchronous interface where each operation returns upon submission. The
 -- returned 'Promise' can be used to 'await' the write being performed. Any
--- exceptions are thrown through 'await'.
+-- exceptions are thrown through 'await'. A write can also throw at submission.
 data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
