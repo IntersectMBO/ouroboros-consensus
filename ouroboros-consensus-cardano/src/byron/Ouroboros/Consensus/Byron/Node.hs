@@ -144,7 +144,7 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = return . forgeByronBlock
+    , forgeBlock = \args -> return (ForgeBlockResult (forgeByronBlock args) Nothing)
     , finalize = pure ()
     }
  where

@@ -23,7 +23,9 @@ module Ouroboros.Consensus.Tracing.Consensus
   , impliesMempoolTimeoutSoft
   ) where
 
+import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
+import Cardano.Ledger.Hashes (extractHash)
 import Cardano.Logging
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Slot (WithOrigin (..))
@@ -55,18 +57,25 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , HasTxId
   , LedgerSupportsMempool
+  , TxEbMeasureByteSize (..)
   , TxMeasurePhase1Metrics (..)
   , TxMeasurePhase2Metrics (..)
   , txForgetValidated
   , txId
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Types
+  ( LeiosEb (..)
+  , encodeLeiosEbSize
+  , hashLeiosEb
+  )
 import Ouroboros.Consensus.Mempool
   ( MempoolRejectionDetails (..)
   , MempoolSize (..)
   , TraceEventMempool (..)
   , jsonMempoolRejectionDetails
   )
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure (mmTxEbMeasure))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( TraceBlockFetchServerEvent (..)
   )
@@ -1288,6 +1297,18 @@ jsonTxMeasure m =
     , "refScriptsSizeBytes" .= unByteSize32 (txMeasureMetricRefScriptsSizeBytes m)
     ]
 
+jsonTxEbMeasure :: TxEbMeasureByteSize msr => msr -> Aeson.Object
+jsonTxEbMeasure m =
+  "txReferencesSize" .= unByteSize32 (txEbMeasureByteSize m)
+
+jsonEb :: LeiosEb -> Aeson.Object
+jsonEb eb =
+  mconcat
+    [ "hash" .= String (Crypto.hashToTextAsHex $ extractHash $ hashLeiosEb eb)
+    , "references" .= length (leiosEbTxs eb)
+    , "size" .= encodeLeiosEbSize eb
+    ]
+
 instance LogFormatting MempoolSize where
   forMachine _dtal MempoolSize{msNumTxs, msNumBytes} =
     mconcat
@@ -1511,6 +1532,15 @@ instance
                 $ blockPrevHash blk
             )
       ]
+  forMachine _dtal (TraceForgedEndorserBlock slotNo rbHash eb ebMeasure) =
+    mconcat
+      [ "kind" .= String "TraceForgedEndorserBlock"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "rankingBlock" .= String (renderHeaderHash (Proxy @blk) rbHash)
+      , "endorserBlock" .= jsonEb eb
+      , "measure" .= jsonTxMeasure ebMeasure
+      ]
+      <> jsonTxEbMeasure (mmTxEbMeasure ebMeasure)
   forMachine _dtal (TraceDidntAdoptBlock slotNo _) =
     mconcat
       [ "kind" .= String "TraceDidntAdoptBlock"
@@ -1625,6 +1655,13 @@ instance
       <> showT (unSlotNo mpSlot)
   forHuman (TraceForgedBlock slotNo _ _ _ _) =
     "Forged block in slot " <> showT (unSlotNo slotNo)
+  forHuman (TraceForgedEndorserBlock slotNo rbHash eb _) =
+    "Forged endorser block in slot "
+      <> showT (unSlotNo slotNo)
+      <> ": "
+      <> Crypto.hashToTextAsHex (extractHash $ hashLeiosEb eb)
+      <> " on top of "
+      <> renderHeaderHash (Proxy @blk) rbHash
   forHuman (TraceDidntAdoptBlock slotNo _) =
     "Didn't adopt forged block in slot " <> showT (unSlotNo slotNo)
   forHuman (TraceForgedInvalidBlock slotNo _ reason) =
@@ -1687,6 +1724,7 @@ instance
     [ IntM "forgedSlotLast" (fromIntegral $ unSlotNo slot)
     , CounterM "Forge.forged" Nothing
     ]
+  asMetrics TraceForgedEndorserBlock{} = []
   asMetrics (TraceDidntAdoptBlock _slot _) =
     [CounterM "Forge.didnt-adopt" Nothing]
   asMetrics (TraceForgedInvalidBlock _slot _ _) =
@@ -1727,6 +1765,8 @@ instance MetaTrace (TraceForgeEvent blk) where
     Namespace [] ["ForgingMempoolSnapshot"]
   namespaceFor TraceForgedBlock{} =
     Namespace [] ["ForgedBlock"]
+  namespaceFor TraceForgedEndorserBlock{} =
+    Namespace [] ["ForgedEndorserBlock"]
   namespaceFor TraceDidntAdoptBlock{} =
     Namespace [] ["DidntAdoptBlock"]
   namespaceFor TraceForgedInvalidBlock{} =
@@ -1751,6 +1791,7 @@ instance MetaTrace (TraceForgeEvent blk) where
   severityFor (Namespace _ ["ForgeTickedLedgerState"]) _ = Just Debug
   severityFor (Namespace _ ["ForgingMempoolSnapshot"]) _ = Just Debug
   severityFor (Namespace _ ["ForgedBlock"]) _ = Just Info
+  severityFor (Namespace _ ["ForgedEndorserBlock"]) _ = Just Info
   severityFor (Namespace _ ["DidntAdoptBlock"]) _ = Just Error
   severityFor (Namespace _ ["ForgedInvalidBlock"]) _ = Just Error
   severityFor (Namespace _ ["AdoptedBlock"]) _ = Just Info
@@ -1947,6 +1988,20 @@ instance MetaTrace (TraceForgeEvent blk) where
         , "\n"
         , "  * ForgedInvalidBlock (hopefully never, this would indicate a bug)"
         ]
+  documentFor (Namespace _ ["ForgedEndorserBlock"]) =
+    Just $
+      mconcat
+        [ "We forged an endorser block. The ranking block with the hash"
+        , "  rankingBlock announces it."
+        , "\n"
+        , "  We record the current slot number, the hash of the ranking block, the"
+        , "  hash of the endorser block, the number of transactions that it"
+        , "  references, its size in bytes, and the selected transactions' measure"
+        , "  (transaction bytes, execution units, and reference-script bytes)."
+        , "  txReferencesSize is the size of the transaction references without the"
+        , "  CBOR framing, and size includes the framing. txReferencesSize is zero"
+        , "  when the measure has no reference size."
+        ]
   documentFor (Namespace _ ["DidntAdoptBlock"]) =
     Just $
       mconcat
@@ -1990,6 +2045,7 @@ instance MetaTrace (TraceForgeEvent blk) where
     , Namespace [] ["ForgeTickedLedgerState"]
     , Namespace [] ["ForgingMempoolSnapshot"]
     , Namespace [] ["ForgedBlock"]
+    , Namespace [] ["ForgedEndorserBlock"]
     , Namespace [] ["DidntAdoptBlock"]
     , Namespace [] ["ForgedInvalidBlock"]
     , Namespace [] ["AdoptedBlock"]

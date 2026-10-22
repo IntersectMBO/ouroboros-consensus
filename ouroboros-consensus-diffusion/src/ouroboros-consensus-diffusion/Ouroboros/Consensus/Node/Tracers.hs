@@ -30,6 +30,7 @@ import Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Types (LeiosEb)
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -416,6 +417,16 @@ data TraceForgeEvent blk
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
     TraceForgedBlock SlotNo (Point blk) blk MempoolSize (MempoolMeasure blk)
+  | -- | We forged an endorser block.
+    TraceForgedEndorserBlock
+      -- | The current slot.
+      SlotNo
+      -- | The hash of the ranking block that announces the endorser block.
+      (HeaderHash blk)
+      -- | The endorser block.
+      LeiosEb
+      -- | The total mempool measure of the transactions selected for it.
+      (MempoolMeasure blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,

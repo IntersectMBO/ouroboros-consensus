@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , mkShelleyTx
   , mkShelleyValidatedTx
   , perTxOverhead
+  , txByteSizeWithOverhead
 
     -- * Exported for tests
   , AlonzoMeasure (..)
@@ -203,6 +204,10 @@ fixedBlockBodyOverhead = 1024
 -- | See 'fixedBlockBodyOverhead'.
 perTxOverhead :: Num a => a
 perTxOverhead = 4
+
+-- | The byte size that the mempool measures for a transaction.
+txByteSizeWithOverhead :: L.EraTx era => Tx TopTx era -> Word32
+txByteSizeWithOverhead tx = tx ^. sizeTxF + perTxOverhead
 
 instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
@@ -431,7 +436,7 @@ txInBlockSize ::
 txInBlockSize st (ShelleyTx _txid tx') =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
-    Just $ IgnoringOverflow $ ByteSize32 $ txsz + perTxOverhead
+    Just $ IgnoringOverflow $ ByteSize32 $ txByteSizeWithOverhead tx'
  where
   txsz = tx' ^. sizeTxF
 
@@ -814,13 +819,16 @@ data DijkstraEbMeasure = DijkstraEbMeasure
   , txReferencesSize :: !(IgnoringOverflow ByteSize32)
   -- ^ Size of transaction references _excluding_ any framing overhead: of one
   -- transaction's reference, or summed over whatever is measured (an endorser
-  -- block, a run of mempool transactions).
+  -- block, a sequence of mempool transactions).
   }
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
   deriving
     Measure
     via (InstantiatedAt Generic DijkstraEbMeasure)
+
+instance TxEbMeasureByteSize DijkstraEbMeasure where
+  txEbMeasureByteSize = unIgnoringOverflow . txReferencesSize
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes

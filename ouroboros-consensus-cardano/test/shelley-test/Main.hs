@@ -2,6 +2,7 @@ module Main (main) where
 
 import qualified Test.Consensus.Shelley.Coherence (tests)
 import qualified Test.Consensus.Shelley.EndorserBlock (tests)
+import qualified Test.Consensus.Shelley.Forge (tests)
 import qualified Test.Consensus.Shelley.Golden (tests)
 import qualified Test.Consensus.Shelley.Integrity (tests)
 import qualified Test.Consensus.Shelley.LedgerTables (tests)
@@ -23,6 +24,7 @@ tests =
     "shelley"
     [ Test.Consensus.Shelley.Coherence.tests
     , Test.Consensus.Shelley.EndorserBlock.tests
+    , Test.Consensus.Shelley.Forge.tests
     , Test.Consensus.Shelley.Golden.tests
     , Test.Consensus.Shelley.Integrity.tests
     , Test.Consensus.Shelley.LedgerTables.tests
