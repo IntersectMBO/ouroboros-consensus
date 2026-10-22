@@ -41,8 +41,8 @@ tests =
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
 bodiesAfterGc :: IOSim s ([(TxHash, BytesSize)], [(TxHash, BytesSize)])
-bodiesAfterGc = withNode $ \nut -> do
-  let leiosDb = getLeiosDB (nutKernel nut)
+bodiesAfterGc = withNode $ \node -> do
+  let leiosDb = getLeiosDB (nodeKernel node)
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
       await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
@@ -57,7 +57,7 @@ bodiesAfterGc = withNode $ \nut -> do
             ]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
-  mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) chain
+  mapM_ (ChainDB.addBlock_ (nodeChainDB node) noPunishment) chain
   -- Long enough for the copy to the ImmutableDB and for the delayed GC.
   threadDelay 100
   withReader leiosDb $ \reader ->

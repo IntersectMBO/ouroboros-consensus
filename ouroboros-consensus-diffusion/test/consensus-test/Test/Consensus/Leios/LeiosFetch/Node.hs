@@ -101,23 +101,23 @@ type EnvClient s =
 -- | Run the node's server, with 'heldEb' in its LeiosDB, against a peer that
 -- runs this client.
 nodeServerAgainst :: EnvClient s -> IOSim s ServerOutcome
-nodeServerAgainst client = withNode $ \nut -> do
-  holdHeldEb nut
+nodeServerAgainst client = withNode $ \node -> do
+  holdHeldEb node
   let envPeer =
         EnvPeer
           { epLeiosNotifyServer = \_chan -> atomically retry
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer nut
-          , epLeiosFetchClient = Just $ runEnvClient nut client
+          , epLeiosFetchServer = refusingLeiosFetchServer node
+          , epLeiosFetchClient = Just $ runEnvClient node client
           }
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+  withNodeVsEnvConnection node (PeerAddr 1) envPeer $ \conn -> do
     server <- nodeLeiosFetchServer conn
     atomically server >>= \case
       Right () -> pure ServerEnded
       Left e -> pure $ ServerFailed (show e)
 
 runEnvClient :: NodeUnderTest (IOSim s) -> EnvClient s -> Channel (IOSim s) ByteString -> IOSim s ()
-runEnvClient nut client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan client
+runEnvClient node client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan client
 
 doneClient :: EnvClient s
 doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
@@ -187,7 +187,7 @@ heldTx = MkLeiosTx . heldTxBytes
 
 -- | Write 'heldEb' and all its transactions but the last.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
-holdHeldEb nut = withWriter (getLeiosDB (nutKernel nut)) $ \writer -> do
+holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
   await =<< writeEbPoint writer heldPoint (encodeEndorserBlockSize heldEb)
   _ <- await =<< writeEbBody writer heldPoint heldEb
   _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
@@ -200,17 +200,17 @@ holdHeldEb nut = withWriter (getLeiosDB (nutKernel nut)) $ \writer -> do
 -- | Whether the node's initiator bundle, and its initiator-and-responder bundle,
 -- include LeiosFetch among their hot mini-protocols for this version.
 nodeRunsLeiosFetch :: NodeToNodeVersion -> IOSim s (Bool, Bool)
-nodeRunsLeiosFetch ntnVersion = withNode $ \nut ->
+nodeRunsLeiosFetch ntnVersion = withNode $ \node ->
   pure
     ( runsLeiosFetch $
-        NTN.initiator mempty defaultMiniProtocolParameters ntnVersion versionData (nutApps nut ())
+        NTN.initiator mempty defaultMiniProtocolParameters ntnVersion versionData (nodeApps node ())
     , runsLeiosFetch $
         NTN.initiatorAndResponder
           mempty
           defaultMiniProtocolParameters
           ntnVersion
           versionData
-          (nutApps nut ())
+          (nodeApps node ())
     )
  where
   versionData = nodeVersionData ntnVersion
