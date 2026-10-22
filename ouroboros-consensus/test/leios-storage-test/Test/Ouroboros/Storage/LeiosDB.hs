@@ -92,7 +92,7 @@ tests =
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
          , -- InMemory only: on SQLite a failed write also stops the writer, which
            -- is linked to the thread that opened the database.
-           testCase "InMemory: writing a body for an unwritten point fails, as on SQLite" $
+           testCase "InMemory: writing a body for an unwritten point fails, without an await" $
              withFreshDb InMemory test_ebBodyWithoutPointFails
          , -- InMemory only: the SQLite implementation sweeps in the background.
            testGroup
@@ -717,10 +717,11 @@ test_multipleSlotsSameHash db = do
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
 -- | A body can only be written for a point already written, by 'writeEbPoint'
--- on the announcement path.
+-- on the announcement path. The write fails at submission, so a caller that
+-- does not 'await' its 'Promise' also sees the failure.
 test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
 test_ebBodyWithoutPointFails db = withRW db $ \con -> do
-  result <- tryDb $ rwInsertEbBody con (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
+  result <- tryDb $ void $ writeEbBody (rwWriter con) (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
   case result of
     Left _ -> pure ()
     Right _ -> assertFailure "writeEbBody succeeded for a point that was never written"
