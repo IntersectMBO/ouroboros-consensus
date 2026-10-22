@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Block.SupportsPeras (PerasCert)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types (EndorserBlock)
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 
@@ -289,7 +289,7 @@ data ForgeBlockArgs blk = ForgeBlockArgs
 data ForgeBlockResult blk = ForgeBlockResult
   { rankingBlock :: !blk
   -- ^ The forged block.
-  , endorserBlock :: !(Maybe EndorserBlock)
+  , endorserBlock :: !(Maybe ForgedLeiosEb)
   -- ^ The endorser block that 'rankingBlock' announces. 'forgeBlock' builds
   -- it from 'fbEbTxs'. A @blk@ that does not support Leios returns 'Nothing'.
   }
