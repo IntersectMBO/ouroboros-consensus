@@ -159,7 +159,7 @@ withNodeVsEnvConnection ::
   EnvPeer (IOSim s) ->
   (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeVsEnvConnection nut addr envPeer body = do
+withNodeVsEnvConnection node addr envPeer body = do
   nodeToPeer <- Strict.newTBQueueIO bearerQueueCapacity
   peerToNode <- Strict.newTBQueueIO bearerQueueCapacity
   let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerToNode, writeQueue = nodeToPeer}
@@ -168,7 +168,7 @@ withNodeVsEnvConnection nut addr envPeer body = do
       peerConnId = ConnectionId{localAddress = addr, remoteAddress = nodeAddr}
   (bundle, version) <-
     concurrently
-      (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nutVersions nut))
+      (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nodeVersions node))
       (runHandshakeServer peerBearer peerConnId handshakeArguments peerVersions)
       >>= \case
         (Right (HandshakeNegotiationResult bundle version _), Right HandshakeNegotiationResult{}) ->
@@ -179,12 +179,12 @@ withNodeVsEnvConnection nut addr envPeer body = do
     publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
     newPeerSharingAPI
       publicPeerSelectionStateVar
-      (seedEnvPeerSharing (nutSeeds nut))
+      (seedEnvPeerSharing (nodeSeeds node))
       ps_POLICY_PEER_SHARE_STICKY_TIME
       ps_POLICY_PEER_SHARE_MAX_PEERS
   let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
       infos = mkMiniProtocolInfos (\_ _ -> Nothing) bundle
-      codecs = envCodecs nut version
+      codecs = envCodecs node version
   nodeMux <- Mx.new Mx.nullTracers infos
   peerMux <- Mx.new Mx.nullTracers infos
   withAsync (Mx.run nodeMux nodeBearer) $ \_ ->
@@ -358,23 +358,23 @@ type NodeCodecs s =
     ByteString
 
 envCodecs :: NodeUnderTest (IOSim s) -> NodeToNodeVersion -> NodeCodecs s
-envCodecs nut =
+envCodecs node =
   NTN.defaultCodecs
-    (configCodec (nutTopLevelConfig nut))
+    (configCodec (nodeTopLevelConfig node))
     ()
     (const encodePeerAddr)
     (const decodePeerAddr)
 
 envLeiosNotifyCodec :: NodeUnderTest (IOSim s) -> LeiosNotifyCodec s
-envLeiosNotifyCodec nut = NTN.cLeiosNotifyCodec (envCodecs nut maxBound)
+envLeiosNotifyCodec node = NTN.cLeiosNotifyCodec (envCodecs node maxBound)
 
 envLeiosFetchCodec :: NodeUnderTest (IOSim s) -> LeiosFetchCodec s
-envLeiosFetchCodec nut = NTN.cLeiosFetchCodec (envCodecs nut maxBound)
+envLeiosFetchCodec node = NTN.cLeiosFetchCodec (envCodecs node maxBound)
 
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
-refusingLeiosFetchServer nut chan =
-  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer refuse)
+refusingLeiosFetchServer node chan =
+  fst <$> runPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer refuse)
  where
   refuse = MkLeiosFetchRequestHandler $ \_request ->
     throwIO $ userError "the environment's LeiosFetch server serves nothing"

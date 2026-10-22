@@ -32,10 +32,10 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb
+  ( ForgedLeiosEb (..)
   , encodeLeiosEbSize
+  , forgeLeiosEb
   , hashLeiosEb
-  , leiosEbFromTxBytes
   )
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -98,13 +98,13 @@ forgeShelleyBlock
     -- Only a protocol with Leios has a value in 'WhenLeios', so the other
     -- protocols build no endorser block. CIP-0164 does not allow an empty
     -- endorser block.
-    forgedEb :: WhenLeios proto (Maybe LeiosEb)
+    forgedEb :: WhenLeios proto (Maybe ForgedLeiosEb)
     forgedEb =
       pureLeiosOnly @proto $
-        leiosEbFromTxBytes . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
+        forgeLeiosEb . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
 
     -- TODO Forging does not yet certify endorser blocks.
-    leiosFields = (,) False . maybeToStrictMaybe . fmap announce <$> forgedEb
+    leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
 
     announce eb =
       EbReferencesAnnouncement

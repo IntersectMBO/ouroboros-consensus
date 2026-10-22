@@ -65,7 +65,9 @@ import Ouroboros.Consensus.Util.IOLike
 data NotifyEntry blk
   = -- | An announcement, with its election slot's wall-clock onset.
     NotifyAnnouncement !RelativeTime !(AnnouncingHeader blk)
-  -- TODO: add offers and votes
+  -- TODO: add offers and votes. 'storeForgedEb' does not wait for the writes,
+  -- so offer a self-forged EB only after the LeiosDB sends 'AcquiredEb', and
+  -- its txs only after 'AcquiredEbTxs'.
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (NotifyEntry blk)

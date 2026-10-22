@@ -1511,6 +1511,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Environment
+    Test.Consensus.Leios.Forge
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Node
@@ -1915,7 +1916,7 @@ test-suite shelley-test
     measures,
     mempack,
     microlens,
-    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
+    ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     QuickCheck,
     sop-core,
     strict-sop-core,

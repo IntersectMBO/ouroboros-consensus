@@ -207,6 +207,7 @@ writerQueueDepth :: Natural
 writerQueueDepth = numUpstreamPeers + forge + maintenance + slack
  where
   numUpstreamPeers = 20
-  forge = 1
+  -- the point, the body and the txs of a forged endorser block
+  forge = 3
   maintenance = 4
   slack = 2

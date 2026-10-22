@@ -22,7 +22,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus, configLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (encodeLeiosEbSize)
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb (..), encodeLeiosEbSize)
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
@@ -151,4 +151,4 @@ praos2SharedBlockForging hotKey slotToPeriod credentials =
    where
     Praos2HasLeios leiosLedgerView =
       plvLeios $ protocolLedgerView (configLedger fbConfig) fbCurrentTickedLedgerState
-    fits eb = encodeLeiosEbSize eb <= llvMaxEbBodySize leiosLedgerView
+    fits eb = encodeLeiosEbSize (forgedEbBody eb) <= llvMaxEbBodySize leiosLedgerView

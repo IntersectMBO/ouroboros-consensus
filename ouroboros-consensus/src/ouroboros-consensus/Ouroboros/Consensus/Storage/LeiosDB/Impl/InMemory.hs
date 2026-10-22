@@ -208,8 +208,7 @@ openInMemoryReader stateVar =
 
 -- | No worker and no queue: the state is a 'StrictTVar', so each write runs
 -- at submission and its 'Promise' comes back already resolved. A failure is
--- captured rather than thrown here, so it surfaces at 'await' exactly like
--- the SQLite backend's.
+-- thrown at submission, so a caller that does not await sees it.
 openInMemoryWriter ::
   forall m.
   IOLike m =>
@@ -233,8 +232,8 @@ openInMemoryWriter stateVar notificationChan =
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
   resolved job action = do
     result <- try action
-    pure $ Promise $ case result of
-      Right x -> pure x
+    case result of
+      Right x -> pure $ Promise $ pure x
       Left cause ->
         throwIO $
           LeiosDbWriteException
