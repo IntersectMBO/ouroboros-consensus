@@ -47,7 +47,10 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , LeiosEb (..)
   , TxOffset
-  , leiosEbFromTxBytes
+  , ForgedLeiosEb
+  , forgedEbBody
+  , forgedEbTxs
+  , forgeLeiosEb
   , hashLeiosEb
   , leiosEbBodyItems
   , encodeLeiosEb
@@ -282,17 +285,29 @@ instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 -- | The position of a transaction in its EB's body.
 type TxOffset = Int
 
+-- | An endorser block that this node forged, with the bytes of its
+-- transactions. Only 'forgeLeiosEb' builds it, so that the bytes always match
+-- the references.
+data ForgedLeiosEb = ForgedLeiosEb
+  { forgedEbBody :: !LeiosEb
+  , forgedEbTxs :: ![ByteString]
+  -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
+  -- same order.
+  }
+  deriving stock (Show, Eq)
+
 -- | The endorser block that references the given transactions, in the given
 -- order. The reference to a transaction holds the Blake2b-256 hash and the
 -- length of its bytes.
-leiosEbFromTxBytes :: NonEmpty ByteString -> LeiosEb
-leiosEbFromTxBytes =
-  MkLeiosEb . V.fromList . map reference . toList
+forgeLeiosEb :: NonEmpty ByteString -> ForgedLeiosEb
+forgeLeiosEb txBytes =
+  ForgedLeiosEb
+    { forgedEbBody =
+        MkLeiosEb $ V.fromList [(txHash, fromIntegral $ BS.length bytes) | (txHash, bytes) <- txs]
+    , forgedEbTxs = toList txBytes
+    }
  where
-  reference bytes =
-    ( MkTxHash $ Hash.hashToBytes $ Hash.hashWith @HASH id bytes
-    , fromIntegral $ BS.length bytes
-    )
+  txs = [(MkTxHash $ Hash.hashToBytes $ Hash.hashWith @HASH id bytes, bytes) | bytes <- toList txBytes]
 
 -- | The hash that a ranking block header announces for an endorser block: the
 -- Blake2b-256 hash of the 'encodeLeiosEb' bytes.

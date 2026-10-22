@@ -20,6 +20,7 @@ import Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero, unNonZero)
 import Data.ByteString.Short (fromShort)
 import Data.Function (on)
 import Data.Functor.Identity (Identity (..))
+import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors
@@ -32,7 +33,6 @@ import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
-import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
@@ -55,10 +55,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb (..)
-  , TxHash (..)
-  )
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb, forgeLeiosEb)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -115,7 +112,7 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
   case forged of
     Z (I blkA) -> blkA_body blkA @?= [txA 1, txA 2]
     S _ -> assertFailure "the block is not from era A"
-  forgedEb @?= Just (ebListing [txA 3])
+  forgedEb @?= Just (ebListing (txA 3 :| []))
  where
   hardForkForging :: BlockForging Identity TestBlock
   hardForkForging =
@@ -137,14 +134,12 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
           pure
             ForgeBlockResult
               { rankingBlock = blkA{blkA_body = map forgetValidatedGenTxA (fbTxs argsA)}
-              , endorserBlock = Just $ ebListing $ map forgetValidatedGenTxA (fbEbTxs argsA)
+              , endorserBlock = ebListing <$> nonEmpty (map forgetValidatedGenTxA (fbEbTxs argsA))
               }
       }
 
-  ebListing :: [GenTx BlockA] -> LeiosEb
-  ebListing txs =
-    MkLeiosEb $
-      V.fromList [(MkTxHash (fromShort (toRawTxIdHash (txId tx))), 0) | tx <- txs]
+  ebListing :: NonEmpty (GenTx BlockA) -> ForgedLeiosEb
+  ebListing = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB

@@ -43,6 +43,8 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash (..)
   , encodeLeiosEb
   , encodeLeiosEbSize
+  , forgedEbBody
+  , forgedEbTxs
   , hashLeiosEb
   )
 import Ouroboros.Consensus.Protocol.Praos
@@ -98,22 +100,25 @@ prop_announcesEb =
       ForgeBlockResult blk forgedEb <- forgeWith coreNode ebTxs
       pure $ case forgedEb of
         Nothing -> counterexample "no endorser block" False
-        Just eb ->
-          conjoin
-            [ counterexample "the endorser block does not reference the transactions in order" $
-                toList (leiosEbTxs eb) === map reference ebTxs
-            , counterexample "encodeLeiosEbSize differs from the length of encodeLeiosEb" $
-                encodeLeiosEbSize eb
-                  === fromIntegral (BS.length (toStrictByteString (encodeLeiosEb eb)))
-            , announcement blk
-                === SJust
-                  EbReferencesAnnouncement
-                    { ebReferencesAnnouncementHash = hashLeiosEb eb
-                    , ebReferencesAnnouncementSize = encodeLeiosEbSize eb
-                    }
-            , counterexample "the block does not match its header" $
-                blockMatchesHeader (getHeader blk) blk
-            ]
+        Just forged ->
+          let eb = forgedEbBody forged
+           in conjoin
+                [ counterexample "the endorser block does not reference the transactions in order" $
+                    toList (leiosEbTxs eb) === map reference ebTxs
+                , counterexample "forgedEbTxs does not hold the referenced transaction bytes" $
+                    forgedEbTxs forged === map txBytes ebTxs
+                , counterexample "encodeLeiosEbSize differs from the length of encodeLeiosEb" $
+                    encodeLeiosEbSize eb
+                      === fromIntegral (BS.length (toStrictByteString (encodeLeiosEb eb)))
+                , announcement blk
+                    === SJust
+                      EbReferencesAnnouncement
+                        { ebReferencesAnnouncementHash = hashLeiosEb eb
+                        , ebReferencesAnnouncementSize = encodeLeiosEbSize eb
+                        }
+                , counterexample "the block does not match its header" $
+                    blockMatchesHeader (getHeader blk) blk
+                ]
 
 prop_noEb :: Property
 prop_noEb =
@@ -241,12 +246,14 @@ distinctTxs =
 -- | The reference that an endorser block holds for a transaction: the
 -- Blake2b-256 hash and the length of the transaction bytes.
 reference :: GenTx StandardDijkstraBlock -> (TxHash, BytesSize)
-reference (ShelleyTx _ tx) =
-  ( MkTxHash (Hash.hashToBytes (Hash.hashWith @HASH id bytes))
-  , fromIntegral (BS.length bytes)
+reference tx =
+  ( MkTxHash (Hash.hashToBytes (Hash.hashWith @HASH id (txBytes tx)))
+  , fromIntegral (BS.length (txBytes tx))
   )
- where
-  bytes = serialize' (eraProtVerLow @DijkstraEra) tx
+
+-- | The bytes of a transaction that an endorser block references.
+txBytes :: GenTx StandardDijkstraBlock -> BS.ByteString
+txBytes (ShelleyTx _ tx) = serialize' (eraProtVerLow @DijkstraEra) tx
 
 exampleDijkstraBlock :: StandardDijkstraBlock
 exampleDijkstraBlock = example Examples.exampleBlock

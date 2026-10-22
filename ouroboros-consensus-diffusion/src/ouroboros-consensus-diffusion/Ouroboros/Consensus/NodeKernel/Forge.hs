@@ -33,7 +33,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
-import Ouroboros.Consensus.Leios.Types (LeiosEb)
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb (..))
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.Node.Run
@@ -71,7 +71,7 @@ forge ::
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
   -- block and the endorser block that it announces.
-  (Header blk -> LeiosEb -> m ()) ->
+  (Header blk -> ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
 forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
@@ -165,7 +165,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
       TraceForgedEndorserBlock
         currentSlot
         (blockHash (Block.rankingBlock forgeRes))
-        eb
+        (forgedEbBody eb)
         (endorserBlockMeasure selectedTxs)
 
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) (Block.rankingBlock forgeRes)
