@@ -43,6 +43,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( TraceChainSyncServerEvent
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
@@ -82,6 +83,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
+  , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
   , leiosDbTracer :: f TraceLeiosDb
   , txInboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
@@ -129,6 +131,7 @@ instance
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
       , leiosFetchServerTracer = f leiosFetchServerTracer
+      , leiosNotifyClientTracer = f leiosNotifyClientTracer
       , leiosDbTracer = f leiosDbTracer
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
@@ -176,6 +179,7 @@ nullTracers =
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
     , leiosFetchServerTracer = nullTracer
+    , leiosNotifyClientTracer = nullTracer
     , leiosDbTracer = nullTracer
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
@@ -233,6 +237,7 @@ showTracers tr =
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
     , leiosFetchServerTracer = show >$< tr
+    , leiosNotifyClientTracer = show >$< tr
     , leiosDbTracer = show >$< tr
     , txInboundTracer = show >$< tr
     , txOutboundTracer = show >$< tr

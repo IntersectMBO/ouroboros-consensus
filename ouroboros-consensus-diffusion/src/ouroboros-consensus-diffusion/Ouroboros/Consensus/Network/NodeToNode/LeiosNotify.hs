@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | The node's LeiosNotify client and server, and what the node-to-node
 -- wiring needs to run them.
@@ -15,7 +16,11 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
+import Control.Monad ((>=>))
 import Control.Monad.Except (Except, runExcept, runExceptT)
+import Control.Tracer (Tracer, traceWith)
+import Data.Foldable (for_)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Void (Void)
@@ -28,13 +33,14 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, pruneAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( NotifyEntry (..)
+  ( Notification (..)
   , NotifyLog
   , nextNotifyLog
   , notifyLogStart
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
-import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote (..))
+import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), VoteState, addVote)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
@@ -45,6 +51,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Ouroboros.Consensus.Network.LeiosNotify
   ( leiosNotifyMiniProtocolNum
@@ -72,9 +79,11 @@ leiosNotifyClient ::
   , ConvertRawHash blk
   , HasHardForkHistory blk
   ) =>
+  Tracer m TraceLeiosNotifyClientEvent ->
   TopLevelConfig blk ->
   ChainDB m blk ->
   AnnounceState m blk ->
+  VoteState m blk ->
   BlockchainTime m ->
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
@@ -83,9 +92,11 @@ leiosNotifyClient ::
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
 leiosNotifyClient
+  tracer
   cfg
   chainDB
   announceState
+  voteState
   btime
   systemTime
   chainSyncFutureCheck
@@ -124,27 +135,45 @@ leiosNotifyClient
           MsgLeiosBlockOffer point claimed ->
             atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
-              checkAndUpdate $ checkLeiosBlockOffer cfg immLedger point claimed
+              checkAndUpdate_ $ checkLeiosBlockOffer cfg immLedger point claimed
           MsgLeiosBlockTxsOffer point ->
-            atomically $ checkAndUpdate $ checkLeiosClosureOffer point
+            atomically $ checkAndUpdate_ $ checkLeiosClosureOffer point
           MsgLeiosVotes votes -> do
             now <- systemTimeCurrent systemTime
-            atomically $ do
+            accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
+            for_ accepted $
+              -- Traced only when added, not per duplicate arrival.
+              addVote voteState systemTime >=> \case
+                Added vote ->
+                  traceWith tracer (TraceLeiosNotifyClientVoteAdded vote)
+                VoteInvalid vote ->
+                  throwIO $ ExnLeiosInvalidVote (voteAnnouncingRbHash vote) (voteSeatId vote)
+                Expired -> pure ()
+                AlreadyKnown -> pure ()
+                NotAnnounced -> pure ()
           MsgCanceled -> pure ()
       )
    where
     checkAndUpdate ::
       Exception e =>
+      (LeiosNotifyPeerState blk -> Except e (LeiosNotifyPeerState blk, a)) ->
+      STM m a
+    checkAndUpdate judge = do
+      result <- stateTVar stateVar $ \st -> case runExcept (judge st) of
+        Left e -> (Left e, st)
+        Right (st', a) -> (Right a, st')
+      either throwSTM pure result
+
+    checkAndUpdate_ ::
+      Exception e =>
       (LeiosNotifyPeerState blk -> Except e (LeiosNotifyPeerState blk)) ->
       STM m ()
-    checkAndUpdate judge = do
-      st <- readTVar stateVar
-      either throwSTM (writeTVar stateVar) $ runExcept (judge st)
+    checkAndUpdate_ judge = checkAndUpdate (fmap (,()) . judge)
 
 -- | The node's LeiosNotify server, which relays the node's 'NotifyLog' to one
--- downstream peer, from the log's oldest entry on.
+-- downstream peer, from the log's oldest notification on.
 leiosNotifyServer ::
   IOLike m =>
   NotifyLog m blk ->
@@ -165,11 +194,14 @@ leiosNotifyServer notifyLog = do
         pure NotExcessiveRequests
 
   serveNext requests cursorVar = do
-    (entry, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
+    (n, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
     writeTVar cursorVar cursor
     modifyTVar requests (subtract 1)
-    pure $ case entry of
-      NotifyAnnouncement _onset anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
+    pure $ case n of
+      NotifyAnnouncement anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
+      -- One vote per message: the client pipelines its requests, so several
+      -- messages cost about what several votes in one would.
+      NotifyVote v -> MsgLeiosVotes (v :| [])
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.

@@ -32,10 +32,12 @@ module Test.Consensus.Leios.NodeUnderTest
   , defaultNodeUnderTestConfig
   , maxEbBodySize
   , withNode
+  , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeUnderTest
   ) where
 
+import Cardano.Crypto.Leios (LeiosCommittee)
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.Diffusion.Configuration
@@ -335,7 +337,12 @@ withNode = withNodeForecastingOnly 100000
 
 -- | A node whose ledger view forecasts this many slots past its immutable tip.
 withNodeForecastingOnly :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecastingOnly range body = do
+withNodeForecastingOnly = withNodeCommittee emptyLeiosCommittee
+
+-- | 'withNodeForecastingOnly', with this committee in the node's ledger view.
+withNodeCommittee ::
+  LeiosCommittee -> SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
   withNodeUnderTest cfg nodeDBs body
  where
@@ -349,7 +356,7 @@ withNodeForecastingOnly range body = do
         , ltlcForecastRange = range
         , ltlcLeios =
             MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
+              { llvCommittee = committee
               , llvQuorumStakeThreshold = maxBound
               , llvAnnouncementPeriod = Milliseconds32 1000
               , llvVotePeriod = Milliseconds32 4000

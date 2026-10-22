@@ -389,6 +389,7 @@ mkHandlers
     , getGsmState
     , getBlockchainTime
     , getLeiosAnnounceState
+    , getLeiosVoteState
     , getLeiosNotifyLog
     }
   txSubmissionLogicVersion =
@@ -497,11 +498,13 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM _peer ->
+      , hLeiosNotifyClient = \_version controlMessageSTM peer ->
           leiosNotifyClient
+            (contramap (TraceLabelPeer peer) (Node.leiosNotifyClientTracer tracers))
             getTopLevelConfig
             getChainDB
             getLeiosAnnounceState
+            getLeiosVoteState
             getBlockchainTime
             systemTime
             chainSyncFutureCheck
