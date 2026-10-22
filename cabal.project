@@ -43,12 +43,12 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- master after https://github.com/IntersectMBO/cardano-ledger/pull/6148
+-- peras/testnet
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  --sha256: sha256-e1e3GwjKaFVtWxcJPfGlCKb1WJ8WV30qc//1eCki7BU=
-  tag: 6654c3e5e348aaa735d428fba0973dd17703d9d3
+  --sha256: sha256-I4FdhiCVqiHwpyjbHrCl5GstwETyIMzJVL+w00Hub1A=
+  tag: a929b9e7f8f52d571cccf11f8aad735ca26aca1e
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api

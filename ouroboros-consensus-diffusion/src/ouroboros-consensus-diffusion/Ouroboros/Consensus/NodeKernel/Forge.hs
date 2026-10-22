@@ -67,9 +67,10 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  (ChainDB m blk -> SlotNo -> m (Maybe (PerasCert blk))) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging includePerasCert currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -114,6 +115,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
+        mbPerasCert <- lift $ includePerasCert chainDB currentSlot
+
         (txs, payloadSz, snapSize) <-
           getTransactionsToForge
             cfg
@@ -121,13 +124,13 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
             currentSlot
             tickedLedgerState
             forker
-            Nothing -- NOTE: no Peras cert to include for now
+            mbPerasCert
         let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
                 , Block.fbCurrentBlockNo = bcBlockNo
                 , Block.fbCurrentSlotNo = currentSlot
-                , Block.fbPerasCert = Nothing -- No PerasCert for now
+                , Block.fbPerasCert = mbPerasCert
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
                 , Block.fbTxs = txs
                 , Block.fbIsLeader = proof

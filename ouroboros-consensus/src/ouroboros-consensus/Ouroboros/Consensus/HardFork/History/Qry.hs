@@ -409,8 +409,7 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
           -- directly.
           guardEnd $ \end ->
             relSlot < countSlots (boundSlot end) (boundSlot eraStart)
-          Just $
-            NoPerasEnabled
+          Just NoPerasEnabled
         PerasEnabled (PerasRoundLength roundLength) ->
           Just $
             PerasEnabled $
@@ -691,7 +690,7 @@ slotToPerasRoundNo absSlot = runPerasEnabledT $ do
   roundLength <-
     PerasEnabledT $
       qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo)
-  pure $
+  pure
     ( absPerasRoundNo
     , getSlotInPerasRound slotInPerasRound
     , unPerasRoundLength roundLength - getSlotInPerasRound slotInPerasRound
@@ -705,7 +704,7 @@ slotToPerasRoundNo' absSlot = runPerasEnabledT $ do
   absPerasRoundNo <-
     PerasEnabledT $
       qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled (relPerasRoundNo, slotInPerasRound))))
-  pure $
+  pure
     ( absPerasRoundNo
     , getSlotInPerasRound slotInPerasRound
     )
