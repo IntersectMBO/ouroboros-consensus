@@ -9,8 +9,8 @@
 --
 -- The node is built by the node's own 'initNodeKernel' over a ChainDB on a
 -- mocked filesystem, so the code under test is the node's, not a
--- reimplementation of it. Its block is 'LeiosTestBlock'. It does not forge,
--- since the test gives it no block forging.
+-- reimplementation of it. Its block is 'LeiosTestBlock'. It forges only if the
+-- test calls 'setBlockForging'.
 --
 -- The node's node-to-node applications and the versions it offers them at are
 -- built by the node's own 'mkNodeToNodeApps' and
