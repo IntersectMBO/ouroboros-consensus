@@ -60,6 +60,7 @@ import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
@@ -110,6 +111,7 @@ withDB ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -127,6 +129,7 @@ openDB ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -143,6 +146,7 @@ openDBInternal ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -284,6 +288,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
+            , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env

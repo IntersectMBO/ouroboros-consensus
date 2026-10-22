@@ -37,6 +37,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
@@ -181,6 +182,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
           mcdbInitLedger = testInitExtLedger
           mcdbRegistry = registry
       mcdbNodeDBs <- emptyNodeDBs
+      mcdbLeiosDb <- newLeiosDBInMemory
       let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
       pure $ ChainDB.updateTracer cdbTracer cdbArgs
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-

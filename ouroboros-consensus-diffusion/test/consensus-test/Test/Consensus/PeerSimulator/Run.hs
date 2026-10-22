@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -54,6 +55,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
@@ -567,6 +569,7 @@ nodeLifecycle ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -586,6 +589,7 @@ nodeLifecycle ::
   m (NodeLifecycle blk m)
 nodeLifecycle protocolArgs schedulerConfig genesisTest lrTracer lrRegistry lrPeerSim = do
   lrCdb <- emptyNodeDBs
+  lrLeiosDb <- newLeiosDBInMemory
   lrLoEVar <- mkLoEVar schedulerConfig
   let
     protocolInfo = mkProtocolInfo k gtForecastRange gtGenesisWindow protocolArgs
@@ -600,6 +604,7 @@ nodeLifecycle protocolArgs schedulerConfig genesisTest lrTracer lrRegistry lrPee
         , lrChunkInfo = getChunkInfoFromTopLevelConfig topLevelConfig
         , lrPeerSim
         , lrCdb
+        , lrLeiosDb
         , lrLoEVar
         }
   pure
@@ -627,6 +632,7 @@ runPointSchedule ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk

@@ -116,7 +116,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -748,6 +748,7 @@ runThreadNetwork
       -- \^ ledger updates tracer
       Tracer m (ChainDB.TracePipeliningEvent blk) ->
       NodeDBs (StrictTMVar m MockFS) ->
+      LeiosDbHandle m ->
       CoreNodeId ->
       ChainDbArgs Identity m blk
     mkArgs
@@ -760,6 +761,7 @@ runThreadNetwork
       updatesTracer
       pipeliningTracer
       nodeDBs
+      leiosDB
       _coreNodeId =
         let args =
               fromMinimalChainDbArgs
@@ -769,6 +771,7 @@ runThreadNetwork
                   , mcdbInitLedger = initLedger
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
+                  , mcdbLeiosDb = leiosDB
                   }
             tr = instrumentationTracer <> nullDebugTracer
          in args
@@ -867,6 +870,7 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
+      leiosDB <- newLeiosDBInMemory
       let chainDbArgs =
             mkArgs
               registry
@@ -878,6 +882,7 @@ runThreadNetwork
               updatesTracer
               pipeliningTracer
               nodeInfoDBs
+              leiosDB
               coreNodeId
       chainDB <-
         snd
@@ -1041,7 +1046,6 @@ runThreadNetwork
           (gsmRng, rng'') = splitGen rng'
           (psRng, chainSyncRng) = splitGen rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-      leiosDB <- newLeiosDBInMemory
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
