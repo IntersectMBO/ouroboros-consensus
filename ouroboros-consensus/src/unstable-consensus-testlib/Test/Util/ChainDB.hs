@@ -58,7 +58,7 @@ data NodeDBs db = NodeDBs
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
   , nodeDBsGsm :: db
-  , nodeDBsPerasImmutableCert :: db
+  , nodeDBsPerasImmCert :: db
   }
   deriving (Functor, Foldable, Traversable)
 
@@ -82,8 +82,9 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   , mcdbRegistry :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
-  -- ^ File systems underlying the immutable, volatile and ledger databases.
-  -- Would be useful to default this to StrictTMVar's containing empty MockFS's.
+  -- ^ File systems underlying the immutable, volatile and ledger databases
+  -- for blocks and the immutable database for Peras certificates. Would be
+  -- useful to default this to StrictTMVar's containing empty MockFS's.
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -145,7 +146,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasImmutableCertDbArgs =
         PerasImmutableCertDbArgs
           { picdbaCodecConfig = configCodec mcdbTopLevelConfig
-          , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmutableCert mcdbNodeDBs)
+          , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmCert mcdbNodeDBs)
           , picdbaTracer = nullTracer
           , picdbaIntegrityCheckPolicy = CheckOnRead
           }

@@ -419,6 +419,9 @@ data Internal m blk = Internal
   --
   -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
   -- returned. This can be used for a garbage collection on the VolatileDB.
+  , intGetPerasImmutableCertsAfter ::
+      PerasRoundNo -> Word64 -> m [ValidatedPerasCert blk]
+  -- ^ Query the open historical certificate database in tests.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()
@@ -1146,8 +1149,8 @@ data TraceAddPerasCertEvent blk
     -- popped from the queue.
     PoppedPerasCertFromQueue PerasRoundNo (Point blk)
   | -- | The Peras certificate from the given round boosting the given block was
-    -- too old, ie its slot was older than the current immutable slot (the third
-    -- argument).
+    -- too old: its target is before the immutable tip, or is another point at
+    -- the immutable tip's slot. The third argument is the immutable tip.
     IgnorePerasCertTooOld PerasRoundNo (Point blk) (Anchor blk)
   | -- | The Peras certificate from the given round boosts a block on the
     -- current selection.

@@ -489,11 +489,16 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
   let immTip = AF.castAnchor $ AF.anchor curChain
 
   certResult <- withEarlyExitId $ do
-    -- Ignore the certificate if it boosts a block that is so old that it can't
-    -- influence our selection.
-    when (pointSlot boostedBlock < AF.anchorToSlotNo immTip) $ do
-      lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
-      idExitEarly PerasCertIgnoredTooOld
+    -- Ignore the certificate if its target cannot occur on any selectable
+    -- chain: it is before the immutable tip, or it is a different point at the
+    -- immutable tip's slot. A certificate for the immutable tip itself remains
+    -- admissible.
+    when
+      ( boostedBlock /= AF.anchorToPoint immTip
+          && pointSlot boostedBlock <= AF.anchorToSlotNo immTip
+      ) $ do
+        lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
+        idExitEarly PerasCertIgnoredTooOld
 
     -- Add the certificate to the PerasCertDB.
     certRes <- lift $ lift $ join $ atomically $ PerasCertDB.addCert cdbPerasCertDB cert
