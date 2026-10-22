@@ -183,8 +183,8 @@ relayPeers end ups downs = do
   pure $ splitAt (length ups) outcomes
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
-  outcomes = runSimOrThrow $ withNode $ \nut ->
-    forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
+  outcomes = runSimOrThrow $ withNode $ \node ->
+    forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer node end (PeerAddr i) spec
 
 -- | 'relay' for 20 seconds to one downstream peer connecting at the given time.
 relayToOne :: DiffTime -> [[(DiffTime, Notification)]] -> IO PeerOutcome
@@ -194,20 +194,20 @@ relayToOne at ups =
     _ -> error "relayToOne: one downstream peer"
 
 runPeer :: NodeUnderTest (IOSim s) -> DiffTime -> PeerAddr -> PeerSpec -> IOSim s PeerOutcome
-runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
+runPeer node end addr PeerSpec{psConnectAt, psSends} = do
   threadDelay psConnectAt
   queue <- newTQueueIO
   received <- newTVarIO []
-  let c = envLeiosNotifyCodec nut
+  let c = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
           { epLeiosNotifyServer = runFeedingServer c (readTQueue queue)
           , epLeiosNotifyClient = Just $ runRecordingClient c received
-          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withAsync (feedAt queue psSends) $ \_feeder ->
-    withNodeVsEnvConnection nut addr envPeer $ \_conn -> do
+    withNodeVsEnvConnection node addr envPeer $ \_conn -> do
       Time now <- getMonotonicTime
       threadDelay (end - now)
       PeerOutcome . reverse <$> readTVarIO received
