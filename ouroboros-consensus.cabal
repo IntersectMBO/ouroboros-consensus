@@ -1998,6 +1998,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.TxId
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
+    Test.ThreadNet.Leios
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
@@ -2021,10 +2022,12 @@ test-suite cardano-test
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-protocol,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,
     contra-tracer,
+    deepseq,
     directory,
     filepath,
     fs-api,
@@ -2033,7 +2036,7 @@ test-suite cardano-test
     microlens,
     mtl,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
-    ouroboros-network:{api, protocols, protocols-tests-lib},
+    ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-simple,
     process-extras,
     QuickCheck,
