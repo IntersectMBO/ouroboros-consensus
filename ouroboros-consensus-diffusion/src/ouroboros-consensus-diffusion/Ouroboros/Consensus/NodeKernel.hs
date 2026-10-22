@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -67,6 +68,13 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Types
+  ( ForgedLeiosEb
+  , LeiosPoint (..)
+  , forgedEbBody
+  , forgedEbTxs
+  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -104,7 +112,11 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle
+  , LeiosDbWriter (..)
+  , openWriter
+  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -487,6 +499,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
+  , leiosDB :: LeiosDbHandle m
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
   , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
@@ -511,6 +524,7 @@ initInternalState
   NodeKernelArgs
     { tracers
     , chainDB
+    , leiosDB
     , registry
     , cfg
     , blockFetchSize
@@ -582,9 +596,9 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
+    allocateForging
+    finalizeForging
+    ( \(bf, leiosDbWriter) -> knownSlotWatcher btime $
         \currentSlot ->
           withEarlyExit_ $
             forge
@@ -594,17 +608,50 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (\_ _ -> pure ())
+              (storeForgedEb cfg leiosDbWriter)
               currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
 
-  blockForgingMLabel = do
+  allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    pure bf
+    leiosDbWriter <- openWriter leiosDB
+    pure (bf, leiosDbWriter)
+
+  -- 'finalize' erases the KES key, so it runs first: 'closeWriter' waits for
+  -- the LeiosDB write queue.
+  finalizeForging (bf, leiosDbWriter) =
+    finalize bf `finally` closeWriter leiosDbWriter
+
+-- | Write an endorser block that this node forged to the LeiosDB.
+--
+-- The forge does not await the writes. On SQLite, it blocks while the write
+-- queue is full. If a write fails, the node stops. Peers can get the header
+-- before the endorser block is stored.
+storeForgedEb ::
+  forall m blk.
+  (IOLike m, RunNode blk) =>
+  TopLevelConfig blk ->
+  LeiosDbWriter m ->
+  Header blk ->
+  ForgedLeiosEb ->
+  m ()
+storeForgedEb cfg writer hdr forgedEb = do
+  _ <- writeEbPoint writer point (announcementEbSize announcement)
+  _ <- writeEbBody writer point (forgedEbBody forgedEb)
+  void $ writeTxs writer point (zip [0 ..] (forgedEbTxs forgedEb))
+ where
+  announcement =
+    case getLeiosAnnouncement (Proxy @(BlockProtocol blk)) (validateView (configBlock cfg) hdr) of
+      Just ann -> ann
+      Nothing -> error "storeForgedEb: the header does not announce the endorser block"
+
+  -- Peers key the endorser block by the slot of the header that announces
+  -- it, as 'mkAnnouncingHeader' does.
+  point = MkLeiosPoint (blockSlot hdr) (announcementEbHash announcement)
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
