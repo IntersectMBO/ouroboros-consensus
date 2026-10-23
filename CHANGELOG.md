@@ -6,6 +6,20 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.2.0.0'></a>
+## 5.2.0.0 -- 2026-10-23
+
+### Breaking
+
+- Bump `ouroboros-network` to `^>=2.0` and `network-mux` to `^>=1.0`.
+
+### Patch
+
+- Regenerate the Shelley and Cardano serialisation golden files.
+  `cardano-ledger-binary-1.10.1.0` now encodes IPv4 relay addresses in network
+  byte order, which changes the bytes, hashes and signatures of the example
+  blocks and headers.
+
 <a id='changelog-5.1.0.2'></a>
 ## 5.1.0.2 -- 2026-10-15
 
