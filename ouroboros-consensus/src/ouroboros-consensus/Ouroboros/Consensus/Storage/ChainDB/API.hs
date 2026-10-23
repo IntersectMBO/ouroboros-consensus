@@ -29,8 +29,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , AddPerasVoteResult (..)
   , addPerasCertSync
   , addPerasVoteSync
-  , WithBoostedBlockStatus (..)
-  , forgetBoostedBlockStatus
 
     -- * Peras stateful handles
   , PerasVotingViewError (..)
@@ -129,8 +127,6 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertTicketNo
-  , WithBoostedBlockStatus (..)
-  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
@@ -456,7 +452,7 @@ data ChainDB m blk = ChainDB
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
   , getLatestPerasCertSeen ::
-      STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+      STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
   -- ^ Get the latest Peras certificate that has been seen by this node.
   , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
   -- ^ Get the round number of the latest Peras certificate on the currently

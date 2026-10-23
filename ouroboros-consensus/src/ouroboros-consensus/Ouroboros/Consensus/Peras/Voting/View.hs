@@ -28,7 +28,6 @@ module Ouroboros.Consensus.Peras.Voting.View
   , perasChainAtCandidateBlock
   , LatestCertSeenView (..)
   , PerasVotingView (..)
-  , WithBoostedBlockStatus (..)
   , mkPerasVotingView
   )
 where
@@ -45,6 +44,7 @@ import Ouroboros.Consensus.Block.Abstract
   , Point
   , SlotNo (..)
   , castPoint
+  , pointSlot
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
@@ -64,10 +64,6 @@ import qualified Ouroboros.Consensus.HardFork.History.Summary as HF
 import Ouroboros.Consensus.Peras.Params
   ( PerasBlockMinSlots (..)
   , PerasParams (..)
-  )
-import Ouroboros.Consensus.Storage.PerasCertDB.API
-  ( WithBoostedBlockStatus (..)
-  , forgetBoostedBlockStatus
   )
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -222,7 +218,7 @@ mkPerasVotingView ::
   -- | Current Peras round number
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
-  WithOrigin (WithBoostedBlockStatus cert) ->
+  WithOrigin cert ->
   -- | 'PerasRoundNo' of the most recent certificate included in some block in
   -- our preferred chain
   WithOrigin PerasRoundNo ->
@@ -247,11 +243,10 @@ mkPerasVotingView
         , candidateBlock = candidateBlock
         }
    where
-    mkLatestCertSeenView certWithProvenance = do
-      let lcsCert = forgetBoostedBlockStatus certWithProvenance
+    mkLatestCertSeenView lcsCert = do
       lcsArrivalSlot <- perasCertArrivalSlot lcsCert
       lcsRoundStartSlot <- perasRoundStart (getPerasCertRound lcsCert)
-      let lcsCandidateBlockExtendsCert = candidateBlockExtendsCert certWithProvenance
+      let lcsCandidateBlockExtendsCert = candidateBlockExtendsCert lcsCert
       pure $
         LatestCertSeenView
           { lcsCert
@@ -262,34 +257,18 @@ mkPerasVotingView
 
     -- Does the candidate block extend the one boosted by a certificate?
     --
-    -- This can be trivially tested by checking whether the certificate is
-    -- within the bounds of the volatile chain prefix leading to the candidate
-    -- block. Conversely, the case of a certificate pointing to a block that's
-    -- too new to be voted for is also covered by this logic, as it won't be
-    -- part of the 'chainAtCandidateBlock' fragment.
-    --
-    -- NOTE: the case of an extremely old certificate boosting a block beyond
-    -- the volatile suffix is covered by also providing the status of the
-    -- boosted block w.r.t. the volatile suffix.
-    candidateBlockExtendsCert (CertBoostingBlockNoLongerInVolatileDB _) =
-      -- This case is vacuously true: the boosted block is from a slot that has
-      -- already been garbage collected from the volatile suffix, which implies
-      -- that it extends any volatile suffix.
-      True
-    candidateBlockExtendsCert (CertBoostingBlockInVolatileDB cert) =
-      -- FIXME: there is a bug in this code path: the call to
-      -- 'withinFragmentBounds' always returns 'False'. We need to understand if
-      -- this is because 'withinFragmentBounds' is being called on an immutable
-      -- block and that's not being properly reflected on the
-      -- 'WithBoostedBlockStatus' of 'cert', or if something fishy is going on
-      -- between 'chainAtCandidateBlock' and 'withinFragmentBounds'.
-      const True $
-        -- The block boosted by the latest certificate seen is still in the
-        -- VolatileDB, so we can check whether it is within the bounds of the
-        -- anchored fragment leading to the candidate block.
-        AF.withinFragmentBounds
-          (castPoint (getPerasCertPoint cert))
-          chainAtCandidateBlock
+    -- NOTE: a boosted block older than the immutable tip is assumed to be on
+    -- our chain. This is not necessarily the case (it could belong to a fork
+    -- that was never adopted), but checking it would require looking into the
+    -- ImmutableDB. Fortunately, VR-1B only matters for blocks in the volatile suffix:
+    -- a certificate boosting a block beyond the immutable tip is too old to
+    -- satisfy VR-1A (assuming reasonable protocol and network parameters),
+    -- so that approximation is safe.
+    candidateBlockExtendsCert cert =
+      AF.withinFragmentBounds boostedBlock chainAtCandidateBlock
+        || pointSlot boostedBlock < AF.anchorToSlotNo (AF.anchor chainAtCandidateBlock)
+     where
+      boostedBlock = castPoint (getPerasCertPoint cert)
 
     candidateBlock =
       AF.anchorToPoint
