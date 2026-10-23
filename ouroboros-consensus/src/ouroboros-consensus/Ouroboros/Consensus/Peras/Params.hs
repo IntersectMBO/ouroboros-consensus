@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Peras.Params
   , PerasCertArrivalThreshold (..)
   , PerasRoundLength (..)
   , PerasWeight (..)
+  , maxRollbackWeight
   , PerasQuorumWeightThreshold (..)
   , PerasQuorumWeightThresholdSafetyMargin (..)
 
@@ -67,6 +68,8 @@ import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
+import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
+import Cardano.Ledger.BaseTypes.NonZero (NonZero(..))
 
 -- * Protocol parameters
 
@@ -125,6 +128,10 @@ newtype PerasWeight
 
 deriving via Sum Word64 instance Semigroup PerasWeight
 deriving via Sum Word64 instance Monoid PerasWeight
+
+-- | The maximum amount of weight we can roll back.
+maxRollbackWeight :: SecurityParam -> PerasWeight
+maxRollbackWeight = PerasWeight . unNonZero . maxRollbacks
 
 -- | Total vote weight needed to forge a Peras certificate.
 newtype PerasQuorumWeightThreshold
