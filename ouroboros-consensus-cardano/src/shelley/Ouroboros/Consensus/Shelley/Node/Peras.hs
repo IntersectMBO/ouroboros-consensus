@@ -2,7 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -22,6 +25,7 @@ import Cardano.Binary (Decoder, Encoding, FromCBOR (..), ToCBOR (..), serialize)
 import Cardano.Ledger.Api
 import qualified Cardano.Ledger.Binary as CBOR
 import qualified Cardano.Ledger.Dijkstra.BlockBody as SL
+import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (when)
@@ -36,6 +40,7 @@ import Data.MemPack.Buffer
   ( byteArrayFromShortByteString
   , byteArrayToShortByteString
   )
+import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block.SupportsPeras
@@ -51,8 +56,10 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , defaultVerifyPerasCert
   , defaultVerifyPerasVote
   )
+import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraPerasCert)
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
+import Ouroboros.Consensus.Ledger.Abstract (LedgerConfig)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , HasSizeForBlockBodyInclusion (..)
@@ -69,21 +76,31 @@ import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
   ( unsafePerasBLSPrivateKeyFromEnv
   )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
-import Ouroboros.Consensus.Peras.Params (dijkstraPerasMaxCertSize)
+import Ouroboros.Consensus.Peras.Params
+  ( PerasParams
+  , dijkstraPerasMaxCertSize
+  , mkPerasParams
+  )
+import Ouroboros.Consensus.Peras.Protocol (PerasProtocol (..))
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepStateSupportsPeras
   , ConsensusProtocol (..)
   )
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( LedgerPerasCertError
   , ShelleyBlock (..)
   , ShelleyPerasCertCompatibleWithLedger (..)
   )
-import Ouroboros.Consensus.Shelley.Ledger.Ledger ()
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( LedgerState (..)
+  , Ticked (..)
+  , shelleyLedgerGenesis
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (AlonzoMeasure (..))
-import Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
   StateSupportsPerasEpochContext
@@ -102,6 +119,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: ShelleyEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "ShelleyEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "ShelleyEra does not support Peras"
 
 instance
   ( Typeable proto
@@ -116,6 +135,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: AllegraEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "AllegraEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "AllegraEra does not support Peras"
 
 instance
   ( Typeable proto
@@ -130,6 +151,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: MaryEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "MaryEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "MaryEra does not support Peras"
 
 instance
   ( Typeable proto
@@ -144,6 +167,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: AlonzoEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "AlonzoEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "AlonzoEra does not support Peras"
 
 instance
   ( Typeable proto
@@ -158,6 +183,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BabbageEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "BabbageEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "BabbageEra does not support Peras"
 
 instance
   ( Typeable proto
@@ -172,20 +199,51 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: ConwayEra does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "ConwayEra does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "ConwayEra does not support Peras"
 
 instance
-  ( Typeable proto
-  , ChainDepStateSupportsPeras (ChainDepState proto)
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState proto))
+  ( Typeable (Praos2 c)
+  , LeiosCrypto c
+  , Dijkstra.DijkstraEraForecast DijkstraEra
+  , SL.EraForecast DijkstraEra
   ) =>
-  StateSupportsPerasEpochContext (ShelleyBlock proto DijkstraEra)
+  StateSupportsPerasEpochContext (ShelleyBlock (Praos2 c) DijkstraEra)
   where
   type
-    MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto DijkstraEra) =
+    MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock (Praos2 c) DijkstraEra) =
       EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith V1.mkPerasVotingCommitteeInput
+  mkBoundedPerasEpochContext =
+    mkBoundedPerasEpochContextWith V1.mkPerasVotingCommitteeInput
+  mkPerasParamsFromLedger cfg ShelleyLedgerState{shelleyLedgerState} =
+    mkPerasParamsFromNewEpochState cfg shelleyLedgerState
+  mkPerasParamsFromTickedLedger cfg TickedShelleyLedgerState{tickedShelleyLedgerState} =
+    mkPerasParamsFromNewEpochState cfg tickedShelleyLedgerState
+
+-- | Common implementation of 'mkPerasParamsFromLedger' and
+-- 'mkPerasParamsFromTickedLedger' for DijkstraEra.
+mkPerasParamsFromNewEpochState ::
+  forall c.
+  LeiosCrypto c =>
+  LedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra) ->
+  SL.NewEpochState DijkstraEra ->
+  Either String (PerasParams (ShelleyBlock (Praos2 c) DijkstraEra))
+mkPerasParamsFromNewEpochState cfg nes =
+  case ( getPerasLedgerView (Proxy @(Praos2 c)) $
+           Praos.forecastToPolyPraosLedgerView $
+             SL.currentForecast nes
+       ) of
+    Nothing ->
+      Left
+        "Dijkstra protocol ledger view does not contain Peras parameters"
+    Just perasLedgerView ->
+      Right $
+        mkPerasParams
+          (SecurityParam (SL.sgSecurityParam (shelleyLedgerGenesis cfg)))
+          (SL.sgActiveSlotCoeff (shelleyLedgerGenesis cfg))
+          perasLedgerView
 
 {-------------------------------------------------------------------------------
   HasSizeForBlockBodyInclusion

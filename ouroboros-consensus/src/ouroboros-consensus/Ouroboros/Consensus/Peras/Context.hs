@@ -63,6 +63,8 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Cardano.Ledger.BaseTypes (Nonce)
+import Cardano.Ledger.State (PoolDistr)
 import Cardano.Prelude (maybeToEither)
 import Control.Exception (Exception)
 import Control.Monad.Class.MonadSTM (STM)
@@ -101,7 +103,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
-import Ouroboros.Consensus.Committee.Types (PoolId)
+import Ouroboros.Consensus.Committee.Types (PoolId, TargetCommitteeSize)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.History.Qry
   ( EpochToPerasRoundInfo (..)
@@ -123,12 +125,14 @@ import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
+  , PerasParams
   , perasEnabledToMaybe
+  , perasTargetCommitteeSize
   , pattern NoPerasEnabled
   , pattern PerasEnabled
   )
 import Ouroboros.Consensus.Protocol.Abstract
-  ( ChainDepStateSupportsPeras
+  ( ChainDepStateSupportsPeras (..)
   , ConsensusProtocol (..)
   )
 import Ouroboros.Consensus.Storage.Serialisation
@@ -603,14 +607,27 @@ class
     , ChainDepStateSupportsPeras chainDepState
     ) =>
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
+    PerasParams blk ->
     ledgerState EmptyMK ->
     chainDepState ->
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
 
+  -- | Derive parameters from an unticked concrete ledger state.
+  mkPerasParamsFromLedger ::
+    LedgerConfig blk ->
+    LedgerState blk EmptyMK ->
+    Either String (PerasParams blk)
+
+  -- | Derive parameters from a ticked concrete ledger state.
+  mkPerasParamsFromTickedLedger ::
+    LedgerConfig blk ->
+    Ticked LedgerState blk EmptyMK ->
+    Either String (PerasParams blk)
+
 -- | Helper to build a 'BoundedPerasEpochContext' using a function that produces
--- a 'PerasVotingCommitteeInput' from a ledger and chain-dep state.
+-- a 'PerasVotingCommitteeInput' from the specific values it needs.
 --
 -- NOTE: this is useful to define instances for 'StateSupportsPerasEpochContext'
 -- where 'mkBoundedPerasEpochContext' is instantiated to either:
@@ -625,16 +642,15 @@ mkBoundedPerasEpochContextWith ::
   , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
   , IsPerasError (PerasError blk) blk
   ) =>
-  ( ( LedgerStateSupportsPeras ledgerState
-    , ChainDepStateSupportsPeras chainDepState
-    ) =>
-    ledgerState EmptyMK ->
-    chainDepState ->
+  ( PoolDistr ->
+    Nonce ->
+    TargetCommitteeSize ->
     Either
       (PerasError blk)
       (PerasVotingCommitteeInput blk)
   ) ->
   MaybeEraIndexedEpochToPerasRoundInfo blk ->
+  PerasParams blk ->
   ledgerState EmptyMK ->
   chainDepState ->
   Either
@@ -643,15 +659,17 @@ mkBoundedPerasEpochContextWith ::
 mkBoundedPerasEpochContextWith
   mkPerasVotingCommitteeInput
   epochToRoundInfo
+  params
   ledgerState
   headerState = do
     committeeInput <-
-      mkPerasVotingCommitteeInput ledgerState headerState
+      mkPerasVotingCommitteeInput
+        (getPoolDistr ledgerState)
+        (getEpochNonce headerState)
+        (perasTargetCommitteeSize params)
     committee <-
       bimap injectVotingCommitteeError id $
         Committee.mkVotingCommittee committeeInput
-    let params =
-          getPerasParams Proxy ledgerState
     pure
       BoundedPerasEpochContext
         { startPerasRoundNo =
@@ -705,6 +723,8 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
         Right eraIndexedEpochToPerasRoundInfo ->
           embedBoundedEpochContext
             newPerasEpochContextResolver
+            mkPerasParamsFromLedger
+            ledgerConfig
             ledgerState
             headerState
             eraIndexedEpochToPerasRoundInfo
@@ -760,6 +780,8 @@ tickPerasEpochContextResolver
         -- incrementally (the current context becomes the previous one).
         embedBoundedEpochContext
           (advancePerasEpochContextResolver perasEpochContextResolver)
+          mkPerasParamsFromTickedLedger
+          ledgerConfig
           tickedLedger
           tickedHeader
           eraIndexedEpochToPerasRoundInfo
@@ -777,6 +799,8 @@ tickPerasEpochContextResolver
         -- See: https://github.com/tweag/cardano-peras/issues/260
         embedBoundedEpochContext
           newPerasEpochContextResolver
+          mkPerasParamsFromTickedLedger
+          ledgerConfig
           tickedLedger
           tickedHeader
           eraIndexedEpochToPerasRoundInfo
@@ -804,31 +828,44 @@ embedBoundedEpochContext ::
   ( PerasEnabled (BoundedPerasEpochContext blk) ->
     PerasEpochContextResolver blk
   ) ->
+  -- | How to derive the 'PerasParams' from the ledger state.
+  ( LedgerConfig blk ->
+    ledgerState EmptyMK ->
+    Either String (PerasParams blk)
+  ) ->
+  LedgerConfig blk ->
   ledgerState EmptyMK ->
   chainDepState ->
   EraIndexed (HardForkIndices blk) (PerasEnabled EpochToPerasRoundInfo) ->
   PerasEpochContextResolver blk
 embedBoundedEpochContext
-  embed
+  embedF
+  paramsF
+  ledgerConfig
   ledgerState
   chainDepState
   eraIndexedEpochToRoundInfo =
     case collapseEraIndexed eraIndexedEpochToRoundInfo of
       PerasEnabled eiEpochToPerasRoundInfo ->
-        case ( mkBoundedPerasEpochContext
-                 ( toMaybeEraIndexedEpochToPerasRoundInfo
-                     (Proxy @blk)
-                     eiEpochToPerasRoundInfo
-                 )
-                 ledgerState
-                 chainDepState
-             ) of
+        case paramsF ledgerConfig ledgerState of
           Left err ->
-            PerasEpochContextResolverError (show err)
-          Right boundedContext ->
-            embed (PerasEnabled boundedContext)
+            PerasEpochContextResolverError err
+          Right params ->
+            case ( mkBoundedPerasEpochContext
+                     ( toMaybeEraIndexedEpochToPerasRoundInfo
+                         (Proxy @blk)
+                         eiEpochToPerasRoundInfo
+                     )
+                     params
+                     ledgerState
+                     chainDepState
+                 ) of
+              Left err ->
+                PerasEpochContextResolverError (show err)
+              Right boundedContext ->
+                embedF (PerasEnabled boundedContext)
       NoPerasEnabled ->
-        embed NoPerasEnabled
+        embedF NoPerasEnabled
    where
     -- Swap the positions of the 'EraIndexed' and 'PerasEnabled' wrappers, so we
     -- can directly pattern-match on the 'PerasEnabled' information.

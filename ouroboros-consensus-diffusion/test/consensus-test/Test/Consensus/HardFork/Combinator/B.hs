@@ -314,6 +314,8 @@ instance StateSupportsPerasEpochContext BlockB where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
+  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
 
 instance BlockSupportsPeras BlockB where
   type PerasCrypto BlockB = MockPerasCrypto BlockB

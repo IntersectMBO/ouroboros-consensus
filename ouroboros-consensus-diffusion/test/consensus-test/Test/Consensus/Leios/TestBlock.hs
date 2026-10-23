@@ -579,6 +579,8 @@ instance StateSupportsPerasEpochContext LeiosTestBlock where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
+  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
 
 -- | A mock, as for 'Test.Util.TestBlock.TestBlock'.
 instance BlockSupportsPeras LeiosTestBlock where
