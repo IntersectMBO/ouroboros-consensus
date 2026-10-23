@@ -44,7 +44,7 @@ import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
-import Control.Tracer (nullTracer)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Either (isRight)
@@ -89,6 +89,7 @@ import Ouroboros.Consensus.Leios.Types
   , milliseconds32ToNominalDiffTime
   , toRankingBlockHash
   )
+import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
@@ -121,6 +122,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , leiosNotifyPipelineDepth
   , runLookaheadFixedSenderPeerWithLimits
   )
+import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
@@ -319,6 +321,8 @@ data VotingPeers = VotingPeers
   -- ^ Peers that send only valid votes.
   , invalidPeer :: Maybe [(DiffTime, Notification)]
   -- ^ A peer that sends only invalid votes.
+  , nodeVerifying :: DiffTime
+  -- ^ How long the node takes to verify a vote.
   }
 
 genVotingPeers :: Gen VotingPeers
@@ -327,6 +331,7 @@ genVotingPeers = do
   VotingPeers
     <$> replicateM n (genUpstream [0 .. seatNoKey - 1] vote)
     <*> oneof [pure Nothing, Just <$> genUpstream [0 .. seatOutside] invalidVote]
+    <*> (realToFrac <$> choose (0, 1 :: Double))
  where
   genUpstream seats signed = do
     blks <- elements [[someAnnouncingBlock], [equivocation], [someAnnouncingBlock, equivocation]]
@@ -337,7 +342,7 @@ genVotingPeers = do
   genVote blks signed seat = do
     blk <- elements blks
     -- From as early as the clock skew lets the node's client accept.
-    at <- realToFrac <$> choose (2.1 :: Double, 8.9)
+    at <- realToFrac <$> choose (2.1 :: Double, 8.99)
     pure (at, signed blk seat)
   -- A seat without a key cannot sign validly, and others sign with a wrong key.
   invalidVote blk seat
@@ -352,6 +357,7 @@ showVotingPeers peers =
   unlines $
     map showPeer (honestPeers peers)
       <> ["invalid: " <> showPeer p | p <- maybeToList (invalidPeer peers)]
+      <> ["verifying: " <> show (nodeVerifying peers)]
  where
   showPeer = unwords . map showSend
   showSend (at, n) = show at <> ":" <> showNotification n
@@ -375,7 +381,7 @@ prop_relay peers =
          ]
  where
   ups = allPeers peers
-  (upOutcomes, down) = case runRelay 20 (map (PeerSpec 0) ups) [0] of
+  (upOutcomes, down) = case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0] of
     (ups', [down']) -> (ups', down')
     _ -> error "prop_relay: one downstream peer"
   (honestOutcomes, invalidOutcomes) = splitAt (length (honestPeers peers)) upOutcomes
@@ -528,11 +534,12 @@ relayPeers end ups downs = do
     violations -> assertFailure $ "peer " <> show i <> ":\n" <> unlines violations
   pure (ups', downs')
  where
-  (ups', downs') = runRelay end ups downs
+  (ups', downs') = runRelay (VerifyingTime 0) end ups downs
 
--- | 'relayPeers', without failing for what the node relays.
-runRelay :: DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
-runRelay end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode $ \nut ->
+-- | 'relayPeers', with a node that takes this long to verify each vote, and
+-- without failing for what the node relays.
+runRelay :: VerifyingTime -> DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
+runRelay verifying end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode verifying $ \nut ->
   forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
@@ -620,11 +627,20 @@ runRecordingClient c received chan =
 sizeLimits :: ProtocolSizeLimits (LeiosNotify point announcement vote) BSL.ByteString
 sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
 
+-- | How long the node takes to verify a vote, beyond what verifying takes in the
+-- simulation, which is no time at all.
+newtype VerifyingTime = VerifyingTime DiffTime
+
 -- | A node of the committee 'committee', with the periods of 'leiosLedgerView'.
-withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode body = do
+withNode :: VerifyingTime -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNode (VerifyingTime verifying) body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) nodeDBs body
+  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) tracers nodeDBs body
+ where
+  tracers =
+    nullTracers
+      { leiosVoteStateTracer = mkTracer $ \(TraceLeiosVoteVerified _) -> threadDelay verifying
+      }
 
 k :: SecurityParam
 k = SecurityParam $ knownNonZeroBounded @10

@@ -409,7 +409,7 @@ initNodeKernel
 
     leiosNotifyLog <- newNotifyLog
     leiosAnnounceState <- newAnnounceState leiosNotifyLog
-    leiosVoteState <- newVoteState leiosAnnounceState leiosNotifyLog
+    leiosVoteState <- newVoteState (leiosVoteStateTracer tracers) leiosAnnounceState leiosNotifyLog
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
