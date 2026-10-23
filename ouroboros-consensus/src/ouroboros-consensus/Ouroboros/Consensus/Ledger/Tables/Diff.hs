@@ -36,6 +36,9 @@ module Ouroboros.Consensus.Ledger.Tables.Diff
   , numInserts
   , size
 
+    -- ** Split
+  , deletedAndCreated
+
     -- * Applying diffs
   , applyDiff
   , applyDiffForKeys
@@ -157,6 +160,16 @@ numDeletes (Diff m) = getSum $ foldMap' f m
  where
   f (Insert _) = 0
   f Delete = 1
+
+deletedAndCreated :: Ord k => Diff k v -> (Set k, Map k v)
+deletedAndCreated (Diff d) =
+  Map.foldlWithKey'
+    ( \(deleted, created) k delta -> case delta of
+        Delete -> (Set.insert k deleted, created)
+        Insert v -> (deleted, Map.insert k v created)
+    )
+    (Set.empty, Map.empty)
+    d
 
 {------------------------------------------------------------------------------
   Applying diffs
