@@ -69,6 +69,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block (Tip (..))
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
+import Ouroboros.Network.ConnectionManager.Types (DataFlow (..), Provenance (..))
 import Ouroboros.Network.Context
   ( ExpandedInitiatorContext (..)
   , ResponderContext (..)
@@ -183,7 +184,7 @@ withNodeVsEnvConnection nut addr envPeer body = do
       ps_POLICY_PEER_SHARE_STICKY_TIME
       ps_POLICY_PEER_SHARE_MAX_PEERS
   let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
-      infos = mkMiniProtocolInfos (\_ _ -> Nothing) bundle
+      infos = mkMiniProtocolInfos (\_ _ -> Nothing) Outbound Duplex bundle
       codecs = envCodecs nut version
   nodeMux <- Mx.new Mx.nullTracers infos
   peerMux <- Mx.new Mx.nullTracers infos
