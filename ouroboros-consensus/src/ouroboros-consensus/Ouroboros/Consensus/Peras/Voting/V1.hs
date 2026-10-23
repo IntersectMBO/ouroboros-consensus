@@ -12,29 +12,28 @@ module Ouroboros.Consensus.Peras.Voting.V1
   , extractPerasStakeDistrAndPublicKeys
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce)
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
 import Data.Bifunctor (Bifunctor (..))
-import Data.Data (Proxy (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Base (Any)
-import Ouroboros.Consensus.Block.SupportsPeras (PerasCrypto, PerasParams (..))
+import Ouroboros.Consensus.Block.SupportsPeras (PerasCrypto)
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
-import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId (..))
+import Ouroboros.Consensus.Committee.Types
+  ( LedgerStake (..)
+  , PoolId (..)
+  , TargetCommitteeSize
+  )
 import Ouroboros.Consensus.Committee.WFA
   ( mkExtWFAStakeDistr
   , wFATiebreakerWithEpochNonce
   )
 import Ouroboros.Consensus.Committee.WFALS (VotingCommitteeInput (..), WFALS)
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
-import Ouroboros.Consensus.Ledger.SupportsPeras
-  ( LedgerStateSupportsPeras (..)
-  )
 import Ouroboros.Consensus.Peras.Crypto.BLS (PerasBLSCrypto, PerasPublicKey (..))
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras (..))
 
 type PerasVotingCommitteeScheme = WFALS
 
@@ -66,25 +65,20 @@ extractPerasStakeDistrAndPublicKeys =
           )
 
 mkPerasVotingCommitteeInput ::
-  forall blk ledgerState chainDepState.
-  ( PerasCrypto blk ~ PerasBLSCrypto
-  , LedgerStateSupportsPeras ledgerState
-  , ChainDepStateSupportsPeras chainDepState
-  ) =>
-  ledgerState EmptyMK ->
-  chainDepState ->
+  forall blk.
+  PerasCrypto blk ~ PerasBLSCrypto =>
+  PoolDistr ->
+  Nonce ->
+  TargetCommitteeSize ->
   Either (V1.PerasError blk) (VotingCommitteeInput (PerasCrypto blk) WFALS)
-mkPerasVotingCommitteeInput ledgerState headerState = do
-  let epochNonce = getEpochNonce headerState
-      poolDistr = getPoolDistr ledgerState
-      stakeDistrWithPublicKeys = extractPerasStakeDistrAndPublicKeys poolDistr
+mkPerasVotingCommitteeInput poolDistr epochNonce targetCommitteeSize = do
   extWFAStakeDistr <-
     bimap V1.PerasVotingWFAError id $
       mkExtWFAStakeDistr
         (wFATiebreakerWithEpochNonce epochNonce)
-        stakeDistrWithPublicKeys
+        (extractPerasStakeDistrAndPublicKeys poolDistr)
   pure $
     WFALSVotingCommitteeInput
       epochNonce
-      (perasTargetCommitteeSize (getPerasParams (Proxy @blk) ledgerState))
+      targetCommitteeSize
       extWFAStakeDistr

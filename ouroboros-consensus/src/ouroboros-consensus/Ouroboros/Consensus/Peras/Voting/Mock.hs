@@ -5,6 +5,7 @@ module Ouroboros.Consensus.Peras.Voting.Mock
   ( mkMockPerasVotingCommitteeInput
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce)
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
 import Cardano.Prelude (maybeToEither)
 import Data.Bifunctor (Bifunctor (..))
@@ -12,9 +13,11 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
-import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId (..))
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
+import Ouroboros.Consensus.Committee.Types
+  ( LedgerStake (..)
+  , PoolId (..)
+  , TargetCommitteeSize
+  )
 import Ouroboros.Consensus.Peras.Crypto.Mock
   ( MockPerasCrypto
   , MockPerasVotingCommitteeScheme
@@ -23,16 +26,15 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError (..))
 
 mkMockPerasVotingCommitteeInput ::
-  forall blk ledgerState chainDepState.
-  ( PerasCrypto blk ~ MockPerasCrypto blk
-  , LedgerStateSupportsPeras ledgerState
-  ) =>
-  ledgerState EmptyMK ->
-  chainDepState ->
+  forall blk.
+  PerasCrypto blk ~ MockPerasCrypto blk =>
+  PoolDistr ->
+  Nonce ->
+  TargetCommitteeSize ->
   Either
     (MockPerasError blk)
     (VotingCommitteeInput (PerasCrypto blk) (MockPerasVotingCommitteeScheme blk))
-mkMockPerasVotingCommitteeInput ledgerState _chainDepState = do
+mkMockPerasVotingCommitteeInput poolDistr _epochNonce _targetCommitteeSize = do
   MockPerasVotingCommitteeInput
     <$> maybeToEither InputStakeDistrIsEmpty stakeDistr
  where
@@ -41,5 +43,4 @@ mkMockPerasVotingCommitteeInput ledgerState _chainDepState = do
       . fmap (bimap PoolId (LedgerStake . individualPoolStake))
       . Map.toList
       . unPoolDistr
-      . getPoolDistr
-      $ ledgerState
+      $ poolDistr

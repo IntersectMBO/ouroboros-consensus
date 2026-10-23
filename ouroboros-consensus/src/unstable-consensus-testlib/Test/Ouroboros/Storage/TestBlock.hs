@@ -771,6 +771,8 @@ instance StateSupportsPerasEpochContext TestBlock where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
+  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance BlockSupportsPeras TestBlock where

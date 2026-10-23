@@ -592,3 +592,5 @@ instance StateSupportsPerasEpochContext ByronBlock where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: ByronBlock does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "ByronBlock does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "ByronBlock does not support Peras"

@@ -1241,6 +1241,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DualBlock does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "DualBlock does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "DualBlock does not support Peras"
 
 instance
   ( StandardHash m
