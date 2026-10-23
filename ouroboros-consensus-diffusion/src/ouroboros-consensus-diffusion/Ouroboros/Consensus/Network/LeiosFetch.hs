@@ -31,7 +31,7 @@ leiosFetchPipelineDepth = 150
 -- @IngressQueueOverRun@).
 --
 -- TODO Make it the constitution's guardrail on @maxEndorserBlockTxsSize@, as for
--- 'Ouroboros.Consensus.Leios.Types.maxLeiosEbBytesSize'.
+-- 'Ouroboros.Consensus.Leios.Types.maxEndorserBlockBytesSize'.
 --
 -- TODO The ledger's example Dijkstra genesis, which this repository's tools and
 -- test genesis copy, sets @maxEndorserBlockTxsSize@ to 12 MiB rather than

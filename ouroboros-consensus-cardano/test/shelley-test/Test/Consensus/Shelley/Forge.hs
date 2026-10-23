@@ -13,7 +13,7 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Core (bodyTxL, eraProtVerLow, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
-import Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Hashes (HASH, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
@@ -27,7 +27,6 @@ import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Codec.CBOR.Write (toStrictByteString)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
-import Data.Foldable (toList)
 import Data.Maybe (isJust)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
@@ -39,11 +38,11 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , LeiosEb (..)
-  , TxHash (..)
-  , encodeLeiosEb
-  , encodeLeiosEbSize
-  , hashLeiosEb
+  , TxHash
+  , encodeEndorserBlock
+  , encodeEndorserBlockSize
+  , endorserBlockHash
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
@@ -101,15 +100,15 @@ prop_announcesEb =
         Just eb ->
           conjoin
             [ counterexample "the endorser block does not reference the transactions in order" $
-                toList (leiosEbTxs eb) === map reference ebTxs
-            , counterexample "encodeLeiosEbSize differs from the length of encodeLeiosEb" $
-                encodeLeiosEbSize eb
-                  === fromIntegral (BS.length (toStrictByteString (encodeLeiosEb eb)))
+                endorserBlockReferences eb === map reference ebTxs
+            , counterexample "encodeEndorserBlockSize differs from the length of encodeEndorserBlock" $
+                encodeEndorserBlockSize eb
+                  === fromIntegral (BS.length (toStrictByteString (encodeEndorserBlock eb)))
             , announcement blk
                 === SJust
                   EbReferencesAnnouncement
-                    { ebReferencesAnnouncementHash = hashLeiosEb eb
-                    , ebReferencesAnnouncementSize = encodeLeiosEbSize eb
+                    { ebReferencesAnnouncementHash = unsafeMakeSafeHash (endorserBlockHash eb)
+                    , ebReferencesAnnouncementSize = encodeEndorserBlockSize eb
                     }
             , counterexample "the block does not match its header" $
                 blockMatchesHeader (getHeader blk) blk
@@ -121,7 +120,7 @@ prop_noEb =
     ForgeBlockResult blk forgedEb <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
 
--- | A number of endorser-block transactions. 'encodeLeiosEbSize' writes a
+-- | A number of endorser-block transactions. 'encodeEndorserBlockSize' writes a
 -- longer map header from 24 and from 256 references.
 genNumEbTxs :: Gen Int
 genNumEbTxs =
@@ -242,7 +241,7 @@ distinctTxs =
 -- Blake2b-256 hash and the length of the transaction bytes.
 reference :: GenTx StandardDijkstraBlock -> (TxHash, BytesSize)
 reference (ShelleyTx _ tx) =
-  ( MkTxHash (Hash.hashToBytes (Hash.hashWith @HASH id bytes))
+  ( Hash.castHash (Hash.hashWith @HASH id bytes)
   , fromIntegral (BS.length bytes)
   )
  where

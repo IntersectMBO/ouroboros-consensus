@@ -1814,6 +1814,13 @@ instance LogFormatting (Dijkstra.DijkstraPoolPredFailure era) where
         , "blsKey" .= blsKey
         , "error" .= String "The BLS key's proof of possession is invalid"
         ]
+    Dijkstra.BlsKeyAlreadyRegistered poolId blsKey ->
+      mconcat
+        [ "kind" .= String "BlsKeyAlreadyRegistered"
+        , "poolId" .= String (textShow poolId)
+        , "blsKey" .= blsKey
+        , "error" .= String "Another pool already registered this BLS key"
+        ]
 
 instance
   ( AnyEraScript ledgerera

@@ -10,8 +10,10 @@ module Test.Consensus.Leios.LeiosNotify.Codec
   , tests
   ) where
 
+import Cardano.Binary (ToCBOR (..))
 import Cardano.Binary.FixedSizeCodec (encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -20,6 +22,7 @@ import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
 import Data.Either (isLeft)
 import qualified Data.List.NonEmpty as NE
 import Data.Word (Word16)
@@ -30,14 +33,11 @@ import Network.TypedProtocol.Codec
   )
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , LeiosVote (..)
-  , RbHash (..)
+  , RankingBlockHash (..)
   , decodeLeiosPoint
   , decodeLeiosVote
-  , encodeEbHash
-  , encodeRbHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Test.Consensus.Leios.LeiosNotify.Protocol (P, codec)
@@ -71,13 +71,13 @@ tests =
              , testCase "rejects empty indefinite votes" $
                  runSimOrThrow (decodeVotes (definite [votesKey, indefinite []])) @?= Nothing
              , testCase "an indefinite point" $
-                 let p = MkLeiosPoint (SlotNo 3) (MkEbHash (BS.replicate 32 7))
+                 let p = MkLeiosPoint (SlotNo 3) (UnsafeHash (SBS.replicate 32 7))
                   in decodeWith
                        decodeLeiosPoint
-                       (indefinite [CBOR.encodeWord64 3, encodeEbHash (MkEbHash (BS.replicate 32 7))])
+                       (indefinite [CBOR.encodeWord64 3, toCBOR (pointEbHash p)])
                        @?= Just p
              , testCase "an indefinite vote" $
-                 let v = signedVote (MkRbHash (BS.replicate 32 1)) 0
+                 let v = signedVote (MkRankingBlockHash (UnsafeHash (SBS.replicate 32 1))) 0
                   in decodeWith decodeLeiosVote (indefiniteVote v) @?= Just v
              ]
          ]
@@ -106,7 +106,7 @@ decodeWith dec enc =
 indefiniteVote :: LeiosVote -> CBOR.Encoding
 indefiniteVote (MkLeiosVote rbHash seat signature) =
   indefinite
-    [encodeRbHash rbHash, CBOR.encodeWord16 (leiosSeatIndex seat), encodeFixedSized signature]
+    [toCBOR rbHash, CBOR.encodeWord16 (leiosSeatIndex seat), encodeFixedSized signature]
 
 votesKey :: CBOR.Encoding
 votesKey = CBOR.encodeWord 7
@@ -116,7 +116,10 @@ twoVotes = map CBOR.encodeInt [1, 2]
 
 -- | A vote from this seat for this announcing block. The node's LeiosNotify
 -- client does not check a vote's signature, so any key will do.
-signedVote :: RbHash -> Word16 -> LeiosVote
+signedVote :: RankingBlockHash -> Word16 -> LeiosVote
 signedVote rbHash seat =
   MkLeiosVote rbHash (LeiosSeatId seat) $
-    signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
+    signDSIGN
+      leiosSignContext
+      rbHash
+      (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
