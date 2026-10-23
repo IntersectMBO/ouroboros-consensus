@@ -75,6 +75,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasRoundLength
   , dijkstraPerasRoundLength
   , pattern NoPerasEnabled
+  , pattern PerasEnabled
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
@@ -256,7 +257,7 @@ instance ShelleyBasedEra DijkstraEra where
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
+  getShelleyEraPerasRoundLength _ = PerasEnabled dijkstraPerasRoundLength
 
 applyAlonzoBasedTx ::
   forall era.
