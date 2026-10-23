@@ -410,7 +410,7 @@ instance
                         (Proxy @(HardForkBlock xs))
                         epochToPerasRoundInfo
                     )
-                    (castPerasParams params)
+                    (castPerasParams params) -- See note below about 'PerasParams'.
                     poolDistr
                     nonce
             )
