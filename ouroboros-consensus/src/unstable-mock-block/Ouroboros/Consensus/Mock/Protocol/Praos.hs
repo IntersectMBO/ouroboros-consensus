@@ -588,10 +588,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               }
        in PraosChainDepState $ bi : praosHistory cds
 
-instance ChainDepStateSupportsPeras (PraosChainDepState c)
-
-instance ChainDepStateSupportsPeras (Ticked (PraosChainDepState c))
-
 -- (Standard) Praos uses the standard chain selection rule, so no need to
 -- override (though see note regarding clock skew).
 
