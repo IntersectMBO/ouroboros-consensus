@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Peras.Params
 
     -- * For testing and debugging purposes only
   , defaultPerasParams
+  , perasBootstrapRound
   )
 where
 
@@ -79,7 +80,7 @@ import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
-import Ouroboros.Consensus.Peras.Types (PerasCertSize (..))
+import Ouroboros.Consensus.Peras.Types (PerasCertSize (..), PerasRoundNo)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
@@ -186,6 +187,10 @@ data PerasParams blk = PerasParams
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
   }
   deriving (Show, Eq, Generic, NoThunks)
+
+-- TODO: 'perasBootstrapRound' should be part of the 'PerasParams' record.
+perasBootstrapRound :: PerasParams blk -> Maybe PerasRoundNo
+perasBootstrapRound = undefined
 
 instance Typeable blk => FromCBOR (PerasParams blk) where
   fromCBOR = do
