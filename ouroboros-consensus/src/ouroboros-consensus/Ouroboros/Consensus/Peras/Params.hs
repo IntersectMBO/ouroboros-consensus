@@ -10,6 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Peras protocol parameters
 module Ouroboros.Consensus.Peras.Params
@@ -28,7 +29,7 @@ module Ouroboros.Consensus.Peras.Params
     -- * Protocol parameters bundle
   , PerasParams (..)
   , castPerasParams
-  , defaultPerasParams
+  , mkPerasParams
 
     -- * Era-dependent default values
   , dijkstraPerasRoundLength
@@ -44,6 +45,9 @@ module Ouroboros.Consensus.Peras.Params
 
     -- * Convenience re-exports
   , Committee.TargetCommitteeSize (..)
+
+    -- * For testing and debugging purposes only
+  , defaultPerasParams
   )
 where
 
@@ -53,16 +57,27 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import Cardano.Ledger.BaseTypes.NonZero (NonZero (..))
+import Cardano.Ledger.BaseTypes
+  ( ActiveSlotCoeff
+  , BoundedRational (..)
+  , activeSlotVal
+  , mkActiveSlotCoeff
+  )
+import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), unsafeNonZero)
+import Cardano.Slotting.Slot (SlotInterval (..))
 import Control.Monad (ap, liftM)
 import Control.Monad.Trans.Class
 import Data.Coerce (coerce)
+import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Ratio ((%))
 import Data.Semigroup (Sum (..))
 import Data.Typeable (Typeable)
-import Data.Word (Word64)
+import Data.Word (Word16, Word32, Word64)
 import GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
 import Ouroboros.Consensus.Peras.Types (PerasCertSize (..))
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
@@ -200,50 +215,116 @@ instance Typeable blk => ToCBOR (PerasParams blk) where
 castPerasParams :: forall blk' blk. PerasParams blk -> PerasParams blk'
 castPerasParams = coerce
 
+-- | Construct 'PerasParams' from the security parameter, active slot
+-- coefficient, and protocol parameters in a 'PerasLedgerView'.
+--
+-- NOTE: see Section 2.1 of the Peras design document for more details on how
+-- these parameters are derived:
+--
+-- https://tweag.github.io/cardano-peras/peras-design.pdf
+mkPerasParams ::
+  SecurityParam ->
+  ActiveSlotCoeff ->
+  PerasLedgerView ->
+  PerasParams blk
+mkPerasParams securityParam activeSlotCoeff plv =
+  PerasParams
+    { perasIgnoranceRounds =
+        PerasIgnoranceRounds
+          ignoranceRounds
+    , perasCooldownRounds =
+        PerasCooldownRounds
+          cooldownRounds
+    , perasBlockMinSlots =
+        PerasBlockMinSlots
+          blockMinSlots
+    , perasCertMaxRounds =
+        PerasCertMaxRounds
+          certMaxRounds
+    , perasCertArrivalThreshold =
+        PerasCertArrivalThreshold
+          certArrivalThreshold
+    , perasWeight =
+        PerasWeight
+          weight
+    , perasQuorumWeightThreshold =
+        PerasQuorumWeightThreshold
+          quorumWeightThreshold
+    , perasQuorumWeightThresholdSafetyMargin =
+        PerasQuorumWeightThresholdSafetyMargin
+          quorumWeightThresholdSafetyMargin
+    , perasTargetCommitteeSize =
+        Committee.TargetCommitteeSize
+          targetCommitteeSize
+    }
+ where
+  k :: Word64
+  k = unNonZero (maxRollbacks securityParam)
+
+  -- Chain quality window size (k/f)
+  tCQ :: Rational
+  tCQ = toRational k / unboundRational (activeSlotVal activeSlotCoeff)
+
+  -- Chain growth window size (3k/f)
+  tCP :: Rational
+  tCP = 3 * (toRational k / unboundRational (activeSlotVal activeSlotCoeff))
+
+  -- Length of a Peras round
+  roundLength :: Rational
+  roundLength = toRational (unPerasRoundLength dijkstraPerasRoundLength)
+
+  -- Cert boost weight
+  weight :: Word64
+  weight = fromIntegral @Word16 @Word64 (plvCertBoost plv)
+
+  -- Healing time (in slots)
+  tHeal :: Rational
+  tHeal =
+    unboundRational (plvHealingFactor plv)
+      * (toRational (plvCertBoost plv))
+      / unboundRational (activeSlotVal activeSlotCoeff)
+
+  ignoranceRounds :: Word64
+  ignoranceRounds = certMaxRounds
+
+  cooldownRounds :: Word64
+  cooldownRounds = ceiling ((tHeal + tCQ + tCP) / roundLength) + 1
+
+  blockMinSlots :: Word64
+  blockMinSlots = fromIntegral @Word32 @Word64 (unSlotInterval (plvMinCandidateBlockAge plv))
+
+  certMaxRounds :: Word64
+  certMaxRounds = ceiling ((tHeal + tCQ) / roundLength)
+
+  certArrivalThreshold :: Word64
+  certArrivalThreshold = ceiling (roundLength / 3)
+
+  quorumWeightThreshold :: Rational
+  quorumWeightThreshold = 3 % 4
+
+  quorumWeightThresholdSafetyMargin :: Rational
+  quorumWeightThresholdSafetyMargin = unboundRational (plvQuorumThresholdSafetyMargin plv)
+
+  targetCommitteeSize :: Word64
+  targetCommitteeSize = fromIntegral @Word16 @Word64 (plvTargetCommitteeSize plv)
+
 -- | Instantiate default Peras protocol parameters.
 --
--- NOTE: in the future this will depend on a concrete 'BlockConfig'.
+-- NOTE: this is only useful for testing and debugging purposes. In production,
+-- these are derived from the Peras protocol parameters stored in the ledger.
 defaultPerasParams :: PerasParams blk
 defaultPerasParams =
-  -- Many of these parameters are provided with sensible default values for now,
-  -- waiting for a final decision (in a future stage of the project) on the
-  -- exact values to use. See https://github.com/tweag/cardano-peras/issues/97.
-  --
-  -- We set tentatively T_heal to 2B/asc = 600 slots, as the CIP suggests a
-  -- bigO(B/asc) for that value so that sufficiently many blocks are produced to
-  -- overcome an adversarially boosted block.
-  --
-  -- We also set tentatively perasCertArrivalThreshold (= X in the formal spec)
-  -- to 30 slots (it must be strictly smaller than perasRoundLength)
-  -- See https://github.com/tweag/cardano-peras/issues/88 and
-  -- https://github.com/tweag/cardano-peras/issues/99 for more information on
-  -- this parameter.
-  --
-  -- We also have T_cp = 129_600 and T_cq = 43_200 as per the design document
-  PerasParams
-    { -- ceil(T_heal + T_cq) / perasRoundLength) as per the design document
-      perasIgnoranceRounds =
-        PerasIgnoranceRounds 487
-    , -- ceil(T_heal + T_cq + T_cp) / perasRoundLength) + 1 as per the design document
-      perasCooldownRounds =
-        PerasCooldownRounds 1928
-    , -- must be between 30 and 900 as per the design document
-      perasBlockMinSlots =
-        PerasBlockMinSlots 90
-    , -- equal to perasIgnoranceRounds as per the design document
-      perasCertMaxRounds =
-        PerasCertMaxRounds 487
-    , perasCertArrivalThreshold =
-        PerasCertArrivalThreshold 30
-    , perasWeight =
-        PerasWeight 15
-    , perasQuorumWeightThreshold =
-        PerasQuorumWeightThreshold (3 / 4)
-    , perasQuorumWeightThresholdSafetyMargin =
-        PerasQuorumWeightThresholdSafetyMargin (2 / 100)
-    , perasTargetCommitteeSize =
-        Committee.TargetCommitteeSize 800
-    }
+  mkPerasParams
+    (SecurityParam (unsafeNonZero 2160))
+    (mkActiveSlotCoeff (fromMaybe (error "impossible") (boundRational (1 % 20))))
+    MkPerasLedgerView
+      { plvMinCandidateBlockAge = SlotInterval 30
+      , plvHealingFactor = fromMaybe (error "impossible") (boundRational 1)
+      , plvCertBoost = 15
+      , plvTargetCommitteeSize = 900
+      , plvBootstrapRound = SNothing
+      , plvQuorumThresholdSafetyMargin = fromMaybe (error "impossible") (boundRational (2 % 100))
+      }
 
 -- * Era-dependent default values
 
