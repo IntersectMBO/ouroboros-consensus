@@ -14,6 +14,7 @@
 -- is new and valid, and only then relays it.
 module Ouroboros.Consensus.Leios.VoteState
   ( VoteState
+  , HookOnlyForTesting (..)
   , newVoteState
   , AddVoteResult (..)
   , addVote
@@ -38,6 +39,7 @@ import Cardano.Crypto.Leios
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Monad (forever, unless)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, registerDelay)
+import Control.Tracer (Tracer, traceWith)
 import Data.Either (isRight)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -87,17 +89,25 @@ data VoteState m blk = MkVoteState
   -- ^ Which announcements the node relays, as it relays only votes for those.
   , relayLog :: !(NotifyLog m blk)
   -- ^ Where the node relays the votes it adds.
+  , hookOnlyForTesting :: !(Tracer m HookOnlyForTesting)
   }
+
+-- | Where a test can intervene in 'addVote', eg to let time pass. The node
+-- passes 'Control.Tracer.nullTracer'.
+data HookOnlyForTesting
+  = -- | 'addVote' verified a vote, and has yet to record it.
+    VoteVerifiedHookOnlyForTesting
 
 newVoteState ::
   (IOLike m, NoThunks (Header blk)) =>
-  AnnounceState m blk -> NotifyLog m blk -> m (VoteState m blk)
-newVoteState announceState' notifyLog =
+  Tracer m HookOnlyForTesting -> AnnounceState m blk -> NotifyLog m blk -> m (VoteState m blk)
+newVoteState hook announceState' notifyLog =
   MkVoteState
     <$> newTVarIO Map.empty
     <*> newTVarIO Map.empty
     <*> pure announceState'
     <*> pure notifyLog
+    <*> pure hook
 
 -- | What 'addVote' did with a vote.
 data AddVoteResult
@@ -141,6 +151,7 @@ addVote st systemTime accepted = do
         | not announced -> pure NotAnnounced
         | not (validVote voteCommittee acceptedVote) -> pure (VoteInvalid acceptedVote)
         | otherwise -> do
+            traceWith (hookOnlyForTesting st) VoteVerifiedHookOnlyForTesting
             -- NOTE: We do not check the window again. Verifying takes about a
             -- millisecond, and peers allow a grace after the window.
             now <- systemTimeCurrent systemTime
