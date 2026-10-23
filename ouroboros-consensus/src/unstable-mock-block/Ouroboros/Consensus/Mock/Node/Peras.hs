@@ -46,6 +46,8 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: SimpleBlock does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "SimpleBlock does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "SimpleBlock does not support Peras"
 
 instance
   ( SimpleCrypto c
