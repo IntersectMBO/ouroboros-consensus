@@ -188,18 +188,6 @@ data HeaderState blk = HeaderState
   }
   deriving Generic
 
-instance
-  ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk)) =>
-  ChainDepStateSupportsPeras (HeaderState blk)
-  where
-  getEpochNonce = getEpochNonce . headerStateChainDep
-
-instance
-  ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk))) =>
-  ChainDepStateSupportsPeras (Ticked (HeaderState blk))
-  where
-  getEpochNonce = getEpochNonce . tickedHeaderStateChainDep
-
 castHeaderState ::
   ( Coercible
       (ChainDepState (BlockProtocol blk))

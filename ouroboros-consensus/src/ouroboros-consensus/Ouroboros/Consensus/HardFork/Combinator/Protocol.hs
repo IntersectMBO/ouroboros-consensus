@@ -37,7 +37,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , Ticked (..)
   ) where
 
-import Cardano.Ledger.BaseTypes (Nonce)
 import Control.Monad.Except
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
@@ -534,32 +533,6 @@ validateAnnouncementEra slot cfg (Pair view (Comp chainDepState)) =
     (unwrapValidateView view)
     slot
     (unwrapTickedChainDepState chainDepState)
-
-{-------------------------------------------------------------------------------
-  Peras
--------------------------------------------------------------------------------}
-
-instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkChainDepState xs) where
-  getEpochNonce =
-    hcollapse
-      . hcmap proxySingle getEpochNonce'
-      . State.tip
-   where
-    getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
-    getEpochNonce' (WrapChainDepState st) =
-      K (getEpochNonce st)
-
-instance CanHardFork xs => ChainDepStateSupportsPeras (Ticked (HardForkChainDepState xs)) where
-  getEpochNonce =
-    hcollapse
-      . hcmap proxySingle getEpochNonce'
-      . State.tip
-      . tickedHardForkChainDepStatePerEra
-   where
-    getEpochNonce' ::
-      forall blk. SingleEraBlock blk => (Ticked :.: WrapChainDepState) blk -> K Nonce blk
-    getEpochNonce' (Comp (WrapTickedChainDepState st)) =
-      K (getEpochNonce st)
 
 -- | Just the conjunction of 'SingleEraBlock' and 'PerasProtocol' of the block's
 -- protocol, as one class, so that 'All' and the SOP combinators can require
