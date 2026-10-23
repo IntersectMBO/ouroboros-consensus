@@ -41,6 +41,7 @@ module Test.Consensus.HardFork.Combinator.A
   ) where
 
 import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
 import qualified Codec.CBOR.Decoding as CBOR
@@ -84,7 +85,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Protocol
@@ -101,6 +101,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   , mkBoundedPerasEpochContextWith
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -343,10 +344,6 @@ instance LedgerSupportsProtocol BlockA where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerStateSupportsPeras (LedgerState BlockA)
-
-instance LedgerStateSupportsPeras (Ticked LedgerState BlockA)
-
 -- NOTE: BlockA is only ever used wrapped in the hard fork combinator (which
 -- implements 'hardForkSummary' directly and never delegates to the underlying
 -- era), so this method is never actually called.
@@ -358,6 +355,10 @@ instance StateSupportsPerasEpochContext BlockA where
   type MaybeEraIndexedEpochToPerasRoundInfo BlockA = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
   mkPerasParamsFromLedger _ _ = Right defaultPerasParams
   mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams

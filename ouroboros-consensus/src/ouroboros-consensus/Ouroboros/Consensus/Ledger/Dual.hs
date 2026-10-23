@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Ledger.Dual
   ) where
 
 import Cardano.Binary (FromCBOR, ToCBOR, enforceSize)
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise
@@ -91,11 +92,12 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras, ConsensusProtocol (..))
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
+  )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -1224,22 +1226,20 @@ instance
   Peras
 -------------------------------------------------------------------------------}
 
-instance LedgerStateSupportsPeras (LedgerState (DualBlock m a))
-
-instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a))
-
 instance
   ( Bridge m a
   , Typeable m
   , Typeable a
-  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol m))
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
   ) =>
   StateSupportsPerasEpochContext (DualBlock m a)
   where
   type MaybeEraIndexedEpochToPerasRoundInfo (DualBlock m a) = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DualBlock does not support Peras"
   mkPerasParamsFromLedger _ _ = Left "DualBlock does not support Peras"
   mkPerasParamsFromTickedLedger _ _ = Left "DualBlock does not support Peras"

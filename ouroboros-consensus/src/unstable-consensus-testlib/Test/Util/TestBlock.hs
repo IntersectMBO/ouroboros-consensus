@@ -92,7 +92,7 @@ module Test.Util.TestBlock
 
 import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce), knownNonZeroBounded, unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), serialise)
@@ -146,7 +146,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TrivialTxMeasurePhase2 (..)
   , TxLimits (..)
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -155,6 +154,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   , mkBoundedPerasEpochContextWith
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -722,8 +722,41 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
 {-------------------------------------------------------------------------------
-  BlockSupportsPeras
+  Peras
 -------------------------------------------------------------------------------}
+
+instance HasHardForkHistory (TestBlockWith ptype) where
+  type HardForkIndices (TestBlockWith ptype) = '[TestBlockWith ptype]
+  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
+
+-- Dummy instance, only needed for Peras Support
+instance TxLimits TestBlock where
+  type TxMeasurePhase1 TestBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 TestBlock = TrivialTxMeasurePhase2
+  type TxEbMeasure TestBlock = IgnoringOverflow ByteSize32
+  txWireSize _ = 0
+  txMeasurePhase1 _ _ _ = pure Measure.zero
+  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _ _ = Measure.zero
+  txEbMeasure _ _ = Measure.zero
+  ebCapacityTxMeasure _ _ = Measure.zero
+  mempoolEbReservation _ _ = Measure.zero
+
+-- NOTE: this instance partially supports Peras, but it's not currently wired
+-- to the ledger in the same way a production block would, e.g., stake
+-- distibution and on-chain parameters are defined using mocked up values that
+-- are sufficiently well defined for our current testing purposes.
+instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
+  type MaybeEraIndexedEpochToPerasRoundInfo (TestBlockWith ptype) = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
+  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance
@@ -797,26 +830,6 @@ instance ImmutableEraParams (TestBlockWith ptype) where
   immutableEraParams = tblcHardForkParams . topLevelConfigLedger
 
 {-------------------------------------------------------------------------------
-  Peras
--------------------------------------------------------------------------------}
-
-instance LedgerStateSupportsPeras (LedgerState (TestBlockWith ptype))
-
-instance LedgerStateSupportsPeras (Ticked LedgerState (TestBlockWith ptype))
-
-instance HasHardForkHistory (TestBlockWith ptype) where
-  type HardForkIndices (TestBlockWith ptype) = '[TestBlockWith ptype]
-  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
-
-instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
-  type MaybeEraIndexedEpochToPerasRoundInfo (TestBlockWith ptype) = EpochToPerasRoundInfo
-  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
-  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
-  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
-  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
-
-{-------------------------------------------------------------------------------
   Test blocks without payload
 -------------------------------------------------------------------------------}
 
@@ -852,19 +865,6 @@ deriving instance Show (BlockQuery TestBlock fp result)
 
 instance ShowQuery (BlockQuery TestBlock fp) where
   showResult QueryLedgerTip = show
-
--- Dummy instance, only needed for Peras Support
-instance TxLimits TestBlock where
-  type TxMeasurePhase1 TestBlock = IgnoringOverflow ByteSize32
-  type TxMeasurePhase2 TestBlock = TrivialTxMeasurePhase2
-  type TxEbMeasure TestBlock = IgnoringOverflow ByteSize32
-  txWireSize _ = 0
-  txMeasurePhase1 _ _ _ = pure Measure.zero
-  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
-  blockCapacityTxMeasure _ _ = Measure.zero
-  txEbMeasure _ _ = Measure.zero
-  ebCapacityTxMeasure _ _ = Measure.zero
-  mempoolEbReservation _ _ = Measure.zero
 
 testInitLedger :: LedgerState TestBlock ValuesMK
 testInitLedger = testInitLedgerWithState EmptyPLDS

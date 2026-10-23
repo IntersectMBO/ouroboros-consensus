@@ -64,7 +64,7 @@ module Test.Consensus.Leios.TestBlock
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
+import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..), Nonce (NeutralNonce))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
   , EncCBOR (..)
@@ -121,7 +121,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
   ( LedgerSupportsPeerSelection (..)
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Protocol
@@ -137,6 +136,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   , mkBoundedPerasEpochContextWith
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -570,14 +570,14 @@ instance LedgerSupportsProtocol LeiosTestBlock where
   ledgerViewForecastAt cfg st =
     constantForecastInRange (Just (ltlcForecastRange cfg)) (ltlcLeios cfg) (getTipSlot st)
 
-instance LedgerStateSupportsPeras (LedgerState LeiosTestBlock)
-
-instance LedgerStateSupportsPeras (Ticked LedgerState LeiosTestBlock)
-
 instance StateSupportsPerasEpochContext LeiosTestBlock where
   type MaybeEraIndexedEpochToPerasRoundInfo LeiosTestBlock = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
   mkPerasParamsFromLedger _ _ = Right defaultPerasParams
   mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
