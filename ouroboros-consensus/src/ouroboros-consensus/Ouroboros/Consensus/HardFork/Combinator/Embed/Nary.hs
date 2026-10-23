@@ -52,7 +52,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState (..)
-  , initPerasEpochContextResolver
+  , initPerasEpochContextResolverFromUntickedState
   )
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
@@ -350,7 +350,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   targetEraPerasState =
     PerasState
       { perasEpochContextResolver =
-          initPerasEpochContextResolver
+          initPerasEpochContextResolverFromUntickedState
             (configLedger cfg)
             (forgetLedgerTables targetEraLedgerState)
             targetEraHeaderState

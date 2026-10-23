@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Ledger.Extended
   , encodeExtLedgerState
 
     -- * Peras epoch context resolver helpers
-  , initPerasEpochContextResolver
+  , initPerasEpochContextResolverFromUntickedState
   , tickAndResolveRoundNo
 
     -- * Type family instances
@@ -86,7 +86,7 @@ import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextNotFoundForRound (..)
   , PerasEpochContextResolver (..)
   , StateSupportsPerasEpochContext (..)
-  , initPerasEpochContextResolver
+  , initPerasEpochContextResolverFromUntickedState
   , tickPerasEpochContextResolver
   , unsafeResolveRoundNo
   )

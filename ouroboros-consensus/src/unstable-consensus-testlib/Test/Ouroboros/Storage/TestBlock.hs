@@ -65,7 +65,7 @@ module Test.Ouroboros.Storage.TestBlock
 
 import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce), unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -119,7 +119,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TrivialTxMeasurePhase2 (..)
   , TxLimits (..)
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -128,6 +127,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   , mkBoundedPerasEpochContextWith
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -135,9 +135,7 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   , MockPerasVotingCommitteeScheme
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
-import Ouroboros.Consensus.Peras.Vote.Mock
-  ( MockPerasVote (..)
-  )
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -758,19 +756,25 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerStateSupportsPeras (LedgerState TestBlock)
-
-instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock)
-
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
 
+-- NOTE: this instance partially supports Peras, but it's not currently wired
+-- to the ledger in the same way a production block would, e.g., stake
+-- distibution and on-chain parameters are defined using mocked up values that
+-- are sufficiently well defined for our current testing purposes.
 instance StateSupportsPerasEpochContext TestBlock where
   type MaybeEraIndexedEpochToPerasRoundInfo TestBlock = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  mkPerasParamsFromLedger _ _ = Right defaultPerasParams
+  mkPerasParamsFromTickedLedger _ _ = Right defaultPerasParams
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance BlockSupportsPeras TestBlock where
