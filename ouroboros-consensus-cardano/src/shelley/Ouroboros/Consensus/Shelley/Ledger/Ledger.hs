@@ -121,7 +121,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
@@ -849,15 +848,3 @@ decodeShelleyLedgerState = do
 
 instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   upgradeTables _ _ = id
-
-{-------------------------------------------------------------------------------
-  LedgerSupportsPeras
--------------------------------------------------------------------------------}
-
-instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era)) where
-  getPoolDistr =
-    view SL.nesStakePoolDistrG . shelleyLedgerState
-
-instance LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era)) where
-  getPoolDistr =
-    view SL.nesStakePoolDistrG . tickedShelleyLedgerState
