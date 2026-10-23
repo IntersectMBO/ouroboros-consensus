@@ -358,7 +358,25 @@ instance
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   toMaybeEraIndexedEpochToPerasRoundInfo _ = id
 
-  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
+  mkPerasParamsFromLedger cfg (HardForkLedgerState st) =
+    derivePerasParamsFromLedger
+      (State.epochInfoLedger cfg st)
+      (getPerEraLedgerConfig $ hardForkLedgerConfigPerEra cfg)
+      (State.tip st)
+
+  mkPerasParamsFromTickedLedger
+    cfg
+    TickedHardForkLedgerState{..} =
+      derivePerasParamsFromTickedLedger
+        ( State.epochInfoPrecomputedTransitionInfo
+            (hardForkLedgerConfigShape cfg)
+            tickedHardForkLedgerStateTransition
+            tickedHardForkLedgerStatePerEra
+        )
+        (getPerEraLedgerConfig $ hardForkLedgerConfigPerEra cfg)
+        (State.tip tickedHardForkLedgerStatePerEra)
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo params ledgerState headerState =
     bimap
       (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
       injectHFCBoundedPerasEpochContext
@@ -372,11 +390,64 @@ instance
                         (Proxy @(HardForkBlock xs))
                         epochToPerasRoundInfo
                     )
+                    (castPerasParams params)
                     ledgerState
                     headerState
             )
           $ eraIndexedToNS epochToPerasRoundInfo
       )
+
+-- | Derive 'PerasParams' from a 'LedgerState' of a 'HardForkBlock'.
+--
+-- NOTE: theoretically, `PerasParams blk` should/could be data family, where the
+-- instance for the HardFork block would be an `NS WrapPerasParams xs`. So far,
+-- 'PerasParams' haven't changed across eras, so there's currently no absolute
+-- need for this.
+derivePerasParamsFromLedger ::
+  forall xs.
+  CanHardFork xs =>
+  EpochInfo (Except PastHorizonException) ->
+  NP WrapPartialLedgerConfig xs ->
+  NS (Flip LedgerState EmptyMK) xs ->
+  Either String (PerasParams (HardForkBlock xs))
+derivePerasParamsFromLedger ei = go
+ where
+  go ::
+    All SingleEraBlock xs' =>
+    NP WrapPartialLedgerConfig xs' ->
+    NS (Flip LedgerState EmptyMK) xs' ->
+    Either String (PerasParams (HardForkBlock xs))
+  go (cfg :* _) (Z (Flip st)) =
+    castPerasParams @(HardForkBlock xs) -- See note above.
+      <$> mkPerasParamsFromLedger (completeLedgerConfig' ei cfg) st
+  go (_ :* cfgs) (S st) = go cfgs st
+  go Nil ns = case ns of {}
+
+-- | Derive 'PerasParams' from a 'TickedLedgerState' of a 'HardForkBlock'.
+--
+-- NOTE: theoretically, `PerasParams blk` should/could be data family, where the
+-- instance for the HardFork block would be an `NS WrapPerasParams xs`. So far,
+-- 'PerasParams' haven't changed across eras, so there's currently no absolute
+-- need for this.
+derivePerasParamsFromTickedLedger ::
+  forall xs.
+  CanHardFork xs =>
+  EpochInfo (Except PastHorizonException) ->
+  NP WrapPartialLedgerConfig xs ->
+  NS (FlipTickedLedgerState EmptyMK) xs ->
+  Either String (PerasParams (HardForkBlock xs))
+derivePerasParamsFromTickedLedger ei = go
+ where
+  go ::
+    All SingleEraBlock xs' =>
+    NP WrapPartialLedgerConfig xs' ->
+    NS (FlipTickedLedgerState EmptyMK) xs' ->
+    Either String (PerasParams (HardForkBlock xs))
+  go (cfg :* _) (Z (FlipTickedLedgerState st)) =
+    castPerasParams @(HardForkBlock xs) -- See note above.
+      <$> mkPerasParamsFromTickedLedger (completeLedgerConfig' ei cfg) st
+  go (_ :* cfgs) (S st) = go cfgs st
+  go Nil ns = case ns of {}
 
 {-------------------------------------------------------------------------------
   HeaderValidation
