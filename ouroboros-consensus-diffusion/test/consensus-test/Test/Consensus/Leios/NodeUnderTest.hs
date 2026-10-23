@@ -106,7 +106,7 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( BlockNodeToNodeVersion
   , supportedNodeToNodeVersions
   )
-import Ouroboros.Consensus.Node.Tracers (nullTracers)
+import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
@@ -235,10 +235,11 @@ type NodeVersions m =
 -- subdirectory. The ledger and GSM file systems go unused.
 withNodeUnderTest ::
   NodeUnderTestConfig ->
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg nodeDBs body = do
+withNodeUnderTest cfg tracers nodeDBs body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = nodeSeeds cfg
@@ -275,7 +276,7 @@ withNodeUnderTest cfg nodeDBs body = do
               (seedKeepAliveAndPeerSharing seeds)
               (topLevelConfigOf cfg)
               mempty
-              nullTracers
+              tracers
               btime
               nodeSystemTime
               InFutureCheck.defaultClockSkew
@@ -345,7 +346,7 @@ withNodeCommittee ::
   LeiosCommittee -> SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
+  withNodeUnderTest cfg nullTracers nodeDBs body
  where
   k = SecurityParam $ knownNonZeroBounded @10
   cfg =
