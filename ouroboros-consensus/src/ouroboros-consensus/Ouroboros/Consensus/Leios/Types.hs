@@ -84,7 +84,6 @@ import Cardano.Crypto.Hash
   , castHash
   , hashFromBytesShort
   , hashSize
-  , hashToBytes
   , hashToStringAsHex
   , hashWith
   )
@@ -120,6 +119,7 @@ import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
+import Codec.CBOR.Write (toStrictByteString)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
@@ -159,9 +159,10 @@ newtype RankingBlockHash = MkRankingBlockHash
   deriving stock (Eq, Ord, Generic)
   deriving newtype (Show, NoThunks, ToCBOR, FromCBOR)
 
--- | Used by Leios voting, which signs the hash's bytes.
+-- | Used by Leios voting, which signs the CBOR encoding of the hash, as the
+-- Leios prototype does.
 instance SignableRepresentation RankingBlockHash where
-  getSignableRepresentation = hashToBytes . unRankingBlockHash
+  getSignableRepresentation = toStrictByteString . toCBOR
 
 -- | Convert a ranking block's 'HeaderHash'. It must be the same length as a
 -- 'RankingBlockHash', ie 32 bytes.
