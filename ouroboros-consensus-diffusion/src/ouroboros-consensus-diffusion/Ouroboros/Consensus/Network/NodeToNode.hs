@@ -1390,6 +1390,7 @@ mkApps ::
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
+  , Hashable addrNTN
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
