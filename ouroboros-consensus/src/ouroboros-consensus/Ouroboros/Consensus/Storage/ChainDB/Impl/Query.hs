@@ -81,7 +81,6 @@ import Ouroboros.Consensus.Peras.Context
   )
 import Ouroboros.Consensus.Peras.Voting.View
   ( PerasVotingView
-  , WithBoostedBlockStatus
   , mkPerasVotingView
   , perasChainAtCandidateBlock
   , runPerasQry
@@ -104,7 +103,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
-  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
@@ -374,7 +372,7 @@ getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 
 getLatestPerasCertSeen ::
   ChainDbEnv m blk ->
-  STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+  STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
 getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
 
 getPerasCertsAfter ::
@@ -489,7 +487,7 @@ getPerasCertInclusionView roundNo env =
                 mkPerasCertInclusionView
                   (pecParams epochContext)
                   roundNo
-                  (forgetBoostedBlockStatus latestCertSeen)
+                  latestCertSeen
                   latestCertOnChainRoundNo
                   certsInChainDB
 
