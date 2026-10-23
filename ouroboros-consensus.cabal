@@ -388,6 +388,7 @@ library
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
+    Ouroboros.Consensus.Util.TimeBoundedLoop
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
@@ -840,6 +841,7 @@ test-suite consensus-test
     Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
+    Test.Consensus.Util.TimeBoundedLoop
     Test.Consensus.Util.Versioned
 
   build-depends:
