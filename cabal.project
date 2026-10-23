@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-09-30T08:47:51Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-10-05T13:20:29Z
+  , cardano-haskell-packages 2026-10-22T08:15:23Z
 
 packages: .
 
@@ -78,3 +78,9 @@ allow-newer:
     , cardano-config:cardano-ledger-core
     , cardano-config:cardano-ledger-dijkstra
     , cardano-config:cardano-ledger-shelley
+    -- TODO Remove once those packages are released in CHaP. Currently, they can't be released until
+    -- `cardano-api` has also been released with a new bound of network (`^>=2.0`) which can't be done
+    -- right now because `cardano-api` depends on `ouroboros-consensus`.
+    , cardano-config:ouroboros-network
+    , kes-agent:ouroboros-network
+    , kes-agent:network-mux
