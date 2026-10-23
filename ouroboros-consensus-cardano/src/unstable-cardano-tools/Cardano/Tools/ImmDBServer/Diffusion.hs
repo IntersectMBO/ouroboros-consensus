@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.ConnectionManager.Types (DataFlow (Unidirectional))
 import Ouroboros.Network.IOManager (withIOManager)
 import Ouroboros.Network.Mux
 import Ouroboros.Network.PeerSelection.PeerSharing.Codec
@@ -72,6 +73,7 @@ serve sockAddr application = withIOManager \iocp ->
       , haTimeLimits = Handshake.timeLimitsHandshake
       }
     (SomeResponderApplication <$> application)
+    (const Unidirectional)
     (\_ serverAsync -> wait serverAsync)
 
 run ::
