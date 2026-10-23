@@ -62,7 +62,7 @@ data PerasCertDbState blk = PerasCertDbState
   -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
   -- otherwise).
   , pcdsLatestCertSeen ::
-      !(StrictMaybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+      !(StrictMaybe (WithArrivalTime (ValidatedPerasCert blk)))
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
   }
@@ -208,11 +208,11 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
             pcdsLatestCertSeen' =
               case pcdsLatestCertSeen pcds of
                 SNothing ->
-                  SJust (CertBoostingBlockInVolatileDB cert)
+                  SJust cert
                 SJust prev
                   | getPerasCertRound cert
-                      > getPerasCertRound (forgetBoostedBlockStatus prev) ->
-                      SJust (CertBoostingBlockInVolatileDB cert)
+                      > getPerasCertRound prev ->
+                      SJust cert
                   | otherwise ->
                       SJust prev
         writeTVar pcdbState $
@@ -268,7 +268,7 @@ implGetCertsAfter PerasCertDbEnv{pcdbState} ticketNo = do
 implGetLatestCertSeen ::
   IOLike m =>
   PerasCertDbEnv m blk ->
-  STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+  STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
 implGetLatestCertSeen PerasCertDbEnv{pcdbState} = do
   PerasCertDbState{pcdsLatestCertSeen} <-
     forgetFingerprint <$> readTVar pcdbState
@@ -301,20 +301,9 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
-          pcdsLatestCertSeen' =
-            updateIfBoostingGarbageCollectedBlock <$> pcdsLatestCertSeen
-
-          -- Update the latest certificate seen status when its corresponding
-          -- boosted block gets garbage collected.
-          updateIfBoostingGarbageCollectedBlock cert
-            | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))
-                < NotOrigin slotNo =
-                CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
-            | otherwise =
-                cert
        in PerasCertDbState
             { pcdsCertIds = pcdsCertIds'
             , pcdsCertsByTicket = pcdsCertsByTicket'
             , pcdsLastTicketNo = pcdsLastTicketNo
-            , pcdsLatestCertSeen = pcdsLatestCertSeen'
+            , pcdsLatestCertSeen = pcdsLatestCertSeen
             }
