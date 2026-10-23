@@ -1776,13 +1776,6 @@ instance LogFormatting (Dijkstra.DijkstraPoolPredFailure era) where
           , "intendedRetirementEpoch" .= String (textShow intendedRetireEpoch)
           , "maxEpochForRetirement" .= String (textShow maxRetireEpoch)
           ]
-    Dijkstra.StakePoolCostTooLowPOOL Mismatch{mismatchSupplied = certCost, mismatchExpected = protCost} ->
-      mconcat
-        [ "kind" .= String "StakePoolCostTooLowPOOL"
-        , "certificateCost" .= String (textShow certCost)
-        , "protocolParCost" .= String (textShow protCost)
-        , "error" .= String "The stake pool cost is too low"
-        ]
     Dijkstra.WrongNetworkPOOL
       Mismatch{mismatchSupplied = networkId, mismatchExpected = listedNetworkId}
       poolId ->
