@@ -31,6 +31,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
@@ -85,14 +86,19 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
+  , ByteSize32 (..)
   , LedgerSupportsMempool (..)
+  , TxLimits (..)
+  , TxMeasure (..)
+  , TxMeasurePhase1Metrics (..)
+  , TxMeasurePhase2Metrics (..)
   , WhetherToIntervene (Intervene)
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , leiosCommitteeOfTip
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -110,9 +116,11 @@ import Ouroboros.Consensus.Storage.LeiosDB
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
+  , MonadMonotonicTime (..)
   , STM
   , atomically
   , bracket
+  , diffTime
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
@@ -361,14 +369,28 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
 
           -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
+          start <- lift getMonotonicTime
           lift (validateEbClosure lcfg reader txCache readTables point ls) >>= \case
             EbClosureUnreadable err ->
               throwE $ ClosureUnavailable err
             EbClosureInvalid err ->
               -- TODO: Text in error
               throwE . EbTxsInvalid . Text.pack $ show err
-            EbClosureValid reapplied applied ->
-              lift $ traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
+            EbClosureValid reapplied applied appliedMeasure -> lift $ do
+              duration <- realToFrac . (`diffTime` start) <$> getMonotonicTime
+              traceWith
+                tracer
+                TraceLeiosEbValidated
+                  { ebPoint = point
+                  , reapplied
+                  , applied
+                  , duration
+                  , appliedBytes = unByteSize32 $ txMeasureMetricTxSizeBytes appliedMeasure
+                  , appliedSteps = txMeasureMetricExUnitsSteps appliedMeasure
+                  , appliedMem = txMeasureMetricExUnitsMemory appliedMeasure
+                  , appliedRefScriptBytes =
+                      unByteSize32 $ txMeasureMetricRefScriptsSizeBytes appliedMeasure
+                  }
 
           now <- lift $ systemTimeCurrent systemTime
           when (now > deadline) $
@@ -430,8 +452,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
 data EbClosureVerdict blk
   = -- | Every tx applied, and the txs validated here have been recorded in the
     -- tx-cache. Carries how many were reapplied versus validated in full — the
-    -- cache's hit rate.
-    EbClosureValid !Int !Int
+    -- cache's hit rate — and the summed measure of those validated in full.
+    EbClosureValid !Int !Int !(TxMeasure blk)
   | -- | A tx did not apply, so this EB must not be certified. Any valid prefix
     -- of txs is recorded as valid in the tx-cache.
     EbClosureInvalid !(ApplyTxErr blk)
@@ -483,7 +505,7 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
           parity = protVerParity $ leiosCurrentProtVer lcfg st0
       -- Determine which txs we can just reapply (the cache hits)
       decided <- withLookupTx txCache $ \look -> mapM (decide parity look) closure
-      goValidate parity st0 decided 0 0 []
+      goValidate parity st0 decided 0 0 Measure.zero []
  where
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
@@ -500,10 +522,10 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
 
   -- Apply or reapply txs, accumulating the ones we newly validated so the cache
   -- is written once for the whole closure rather than once per tx.
-  goValidate parity _ [] !reapplied !applied newly = do
+  goValidate parity _ [] !reapplied !applied !appliedMeasure newly = do
     recordValidated parity newly
-    pure $ EbClosureValid reapplied applied
-  goValidate parity !st ((txh, decision) : rest) !reapplied !applied newly =
+    pure $ EbClosureValid reapplied applied appliedMeasure
+  goValidate parity !st ((txh, decision) : rest) !reapplied !applied !appliedMeasure newly =
     case decision of
       Right tx ->
         -- Already validated once, so only the state-dependent checks re-run. A
@@ -512,7 +534,7 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
         let vtx = assumeValidatedClosureTx lcfg slot st tx
          in case runExcept $ reapplyTx lcfg slot vtx st of
               Left err -> abandon parity newly err
-              Right st' -> goValidate parity st' rest (reapplied + 1) applied newly
+              Right st' -> goValidate parity st' rest (reapplied + 1) applied appliedMeasure newly
       Left tx ->
         -- 'Intervene', despite the mempool's framing of it as a courtesy to
         -- local clients. What it actually selects is whether the era's applyTx
@@ -529,7 +551,22 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
         case runExcept $ applyTx lcfg Intervene slot tx st of
           Left err -> abandon parity newly err
           Right (st', _vtx) ->
-            goValidate parity (applyDiffs st st') rest reapplied (applied + 1) (txh : newly)
+            goValidate
+              parity
+              (applyDiffs st st')
+              rest
+              reapplied
+              (applied + 1)
+              (appliedMeasure `Measure.plus` measureTx st tx)
+              (txh : newly)
+
+  -- Only for the trace, so a tx the measure rejects counts as zero; 'applyTx'
+  -- has already judged it valid.
+  measureTx st tx =
+    either (const Measure.zero) id . runExcept $
+      TxMeasure
+        <$> txMeasurePhase1 lcfg (forgetLedgerTables st) tx
+        <*> txMeasurePhase2 lcfg st tx
 
   -- A closure that fails part-way still validated everything before the failure,
   -- against a real ledger state, so those tags are kept: the work holds
