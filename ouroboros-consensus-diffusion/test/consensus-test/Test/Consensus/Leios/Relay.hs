@@ -50,7 +50,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Either (isRight)
 import Data.Foldable (for_, toList)
 import qualified Data.Foldable as Foldable
-import Data.List (isInfixOf, sortOn)
+import Data.List (isInfixOf, mapAccumL, sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, maybeToList)
@@ -158,8 +158,10 @@ import Test.QuickCheck
   , choose
   , conjoin
   , counterexample
+  , cover
   , elements
   , forAllShow
+  , frequency
   , oneof
   , property
   , sublistOf
@@ -289,7 +291,7 @@ tests =
         (_, downs) <- relay 100 [votedFor0] [0, 90]
         map votes downs @?= [[voteOf someAnnouncingBlock 0], []]
     , testProperty
-        "the node relays exactly the first valid vote of each seat, and only what a peer accepts"
+        "the node relays the first valid vote of each seat it has by its deadline, and only what a peer accepts"
         $ forAllShow genVotingPeers showVotingPeers prop_relay
     ]
  where
@@ -341,8 +343,11 @@ genVotingPeers = do
     pure $ map announce blks <> sortOn fst vs
   genVote blks signed seat = do
     blk <- elements blks
-    -- From as early as the clock skew lets the node's client accept.
-    at <- realToFrac <$> choose (2.1 :: Double, 8.99)
+    -- From as early as the clock skew lets the node's client accept, until
+    -- the deadline, often within the verifying time of it.
+    at <-
+      realToFrac
+        <$> frequency [(3, choose (2.1 :: Double, 8.99)), (1, choose (8, 8.99))]
     pure (at, signed blk seat)
   -- A seat without a key cannot sign validly, and others sign with a wrong key.
   invalidVote blk seat
@@ -364,21 +369,30 @@ showVotingPeers peers =
 
 prop_relay :: VotingPeers -> Property
 prop_relay peers =
-  conjoin $
-    [ counterexample "an honest peer was disconnected" $ poNodeClientEnded up === Nothing
-    | up <- honestOutcomes
-    ]
-      <> [ counterexample ("the invalid peer was disconnected: " <> show ended) $
-             maybe True ("ExnLeiosInvalidVote" `isInfixOf`) ended
-         | up <- invalidOutcomes
-         , let ended = poNodeClientEnded up
-         ]
-      <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
-         | (i, o) <- zip [1 :: Int ..] outcomes
-         ]
-      <> [ counterexample "relayed votes" $
-             Set.fromList [electionSeat v | v <- votes down] === firstValid
-         ]
+  cover 10 (verifiedBy earliestFinish /= allValid) "a vote misses its deadline" $
+    conjoin $
+      [ counterexample "an honest peer was disconnected" $ poNodeClientEnded up === Nothing
+      | up <- honestOutcomes
+      ]
+        <> [ counterexample ("the invalid peer was disconnected: " <> show ended) $
+               maybe True ("ExnLeiosInvalidVote" `isInfixOf`) ended
+           | up <- invalidOutcomes
+           , let ended = poNodeClientEnded up
+           ]
+        <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
+           | (i, o) <- zip [1 :: Int ..] outcomes
+           ]
+        <> [ counterexample ("relayed after its deadline, at " <> show at <> ": " <> show (electionSeat v)) False
+           | o <- outcomes
+           , (at, NotifyVotes vs) <- poReceived o
+           , v <- toList vs
+           , at > Time (deadlineOf (fst (electionSeat v)))
+           ]
+        <> [ counterexample ("not relayed, though verified by its deadline: " <> show missed) $
+               Set.null missed
+           , counterexample ("relayed, though verified only after its deadline: " <> show extra) $
+               Set.null extra
+           ]
  where
   ups = allPeers peers
   (upOutcomes, down) = case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0] of
@@ -387,15 +401,30 @@ prop_relay peers =
   (honestOutcomes, invalidOutcomes) = splitAt (length (honestPeers peers)) upOutcomes
   outcomes = upOutcomes <> [down]
 
-  -- Every election and seat of which some peer sent a valid vote.
-  firstValid =
+  relayed = Set.fromList [electionSeat v | v <- votes down]
+  allValid = verifiedBy (map (\(_, v) -> (0, v)))
+  missed = Set.difference (verifiedBy latestFinish) relayed
+  extra = Set.difference relayed (verifiedBy earliestFinish)
+
+  -- Every election and seat of which the node verified some peer's valid vote
+  -- by its deadline, if each verification finished as given. Its client of a
+  -- peer verifies one vote after the other, so a vote waits for the ones the
+  -- peer sent before it.
+  verifiedBy finish =
     Set.fromList
       [ electionSeat v
       | sends <- ups
-      , (_, NotifyVotes vs) <- sends
-      , v <- toList vs
+      , (done, v) <- finish [(at, v) | (at, NotifyVotes vs) <- sends, v <- toList vs]
       , validVote v
+      , done <= deadlineOf (fst (electionSeat v))
       ]
+
+  -- At the latest, the node verifies every vote, each taking the whole
+  -- verifying time.
+  latestFinish = snd . mapAccumL (\done (at, v) -> let done' = max done at + verifying in (done', (done', v))) 0
+  -- At the earliest, a vote the node relays was verified as soon as it arrived.
+  earliestFinish = map (\(at, v) -> (at + verifying, v))
+  verifying = nodeVerifying peers
 
   electionSeat v = (announcedSlot Map.! voteAnnouncingRbHash v, leiosSeatIndex (voteSeatId v))
 
@@ -409,6 +438,14 @@ prop_relay peers =
 {-------------------------------------------------------------------------------
   Checking what a peer receives
 -------------------------------------------------------------------------------}
+
+-- | The deadline of the votes of an election slot.
+deadlineOf :: SlotNo -> DiffTime
+deadlineOf slot = realToFrac deadline
+ where
+  RelativeTime deadline =
+    -- One-second slots, the first starting when the run begins.
+    relayUntil (leiosVoteRelayWindow leiosLedgerView (RelativeTime (fromIntegral (unSlotNo slot))))
 
 -- | Why an honest peer's client would disconnect the node for this stream, if
 -- it would: an announcement must be neither a repeat nor the third of its
@@ -639,7 +676,9 @@ withNode (VerifyingTime verifying) body = do
  where
   tracers =
     nullTracers
-      { leiosVoteStateTracer = mkTracer $ \(TraceLeiosVoteVerified _) -> threadDelay verifying
+      { leiosVoteStateTracer = mkTracer $ \case
+          TraceLeiosVoteVerified _ -> threadDelay verifying
+          TraceLeiosVoteArrivedTooLate _ -> pure ()
       }
 
 k :: SecurityParam

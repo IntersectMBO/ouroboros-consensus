@@ -12,6 +12,14 @@
 -- and a downstream peer holds the node to the same, and to having relayed the
 -- announcement a vote is for. So the node decides once, here, whether a vote
 -- is new and valid, and only then relays it.
+--
+-- A vote is relayed only to be aggregated into a certificate, which the
+-- earliest block that can carry it needs in the first slot at or after the
+-- vote's deadline, the end of its diffusion period ('relayUntil'). The node
+-- neither keeps nor relays a vote it has only after its deadline. Such a vote
+-- could still complete a certificate for a later block, but a quorum that late
+-- is no evidence that the endorser block's data diffused in time, so the node
+-- deliberately gives up that throughput rather than endanger safety.
 module Ouroboros.Consensus.Leios.VoteState
   ( VoteState
   , newVoteState
@@ -19,12 +27,14 @@ module Ouroboros.Consensus.Leios.VoteState
   , AddVoteResult (..)
   , addVote
   , voteRelay
+  , votePruner
 
     -- * The votes kept
-  , Votes
-  , ElectionVotes (..)
+  , Votes (..)
+  , SlotVotes (..)
   , readVotes
   , recordVote
+  , pruneVotes
   , seenVote
   ) where
 
@@ -37,7 +47,7 @@ import Cardano.Crypto.Leios
   , resolveLeiosSeat
   )
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import Control.Monad (forever, unless)
+import Control.Monad (forever, unless, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, registerDelay)
 import Control.Tracer (Tracer, traceWith)
 import Data.Either (isRight)
@@ -49,7 +59,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, Header, SlotNo)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( RelativeTime
+  ( RelativeTime (..)
   , SystemTime (..)
   , diffRelTime
   )
@@ -67,6 +77,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
+  , MonadDelay (threadDelay)
   , STM
   , StrictTVar
   , atomically
@@ -97,7 +108,7 @@ newVoteState ::
   Tracer m TraceLeiosVoteState -> AnnounceState m blk -> NotifyLog m blk -> m (VoteState m blk)
 newVoteState tracer' announceState' notifyLog =
   MkVoteState
-    <$> newTVarIO Map.empty
+    <$> newTVarIO (MkVotes (RelativeTime 0) Map.empty)
     <*> newTVarIO Map.empty
     <*> pure announceState'
     <*> pure notifyLog
@@ -107,65 +118,74 @@ newVoteState tracer' announceState' notifyLog =
 data TraceLeiosVoteState
   = -- | The node verified the signature of a vote, and has yet to add it.
     TraceLeiosVoteVerified !LeiosVote
+  | -- | The node had a vote only after its deadline, so it neither keeps nor
+    -- relays it. Many of these mean the diffusion period is too short for the
+    -- network, or that the node verifies votes too slowly.
+    TraceLeiosVoteArrivedTooLate !LeiosVote
   deriving Show
 
 -- | What 'addVote' did with a vote.
 data AddVoteResult
-  = -- | Its window had closed, so it was not worth verifying.
-    Expired
+  = -- | The node had it only after its deadline.
+    ArrivedTooLate
   | -- | We already saw a vote of its seat in its election.
     AlreadyKnown
   | -- | We did not relay the announcement it is for.
     NotAnnounced
   | -- | Its seat has no key in the committee, or its signature does not verify
     -- under it.
-    VoteInvalid !LeiosVote
+    VoteInvalid
   | -- | The node keeps the vote and relays it, once its window opens if it has
     -- not yet; see 'voteRelay'.
-    Added !LeiosVote
+    Added
   deriving stock (Eq, Show)
 
 -- | Add a vote, if it is the first valid vote of its seat in its election, for
--- an announcement the node relays, and its window has not closed.
+-- an announcement the node relays, and the node has it by its deadline.
 --
 -- The signature is verified between two transactions, so that a retry does
--- not repeat a BLS verification.
+-- not repeat a BLS verification. As verifying takes time, the second checks
+-- the deadline again.
 addVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   VoteState m blk -> SystemTime m -> AcceptedVote -> m AddVoteResult
 addVote st systemTime accepted = do
   received <- systemTimeCurrent systemTime
-  -- A vote no longer worth relaying is not worth verifying either.
-  if received > relayUntil voteRelayWindow
-    then pure Expired
-    else do
-      seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
-      -- NOTE: The client only checked that its peer announced it, but the
-      -- node does not relay a third announcement of an election, nor one of a
-      -- stale OCIN, so it must not relay their votes either.
-      announced <-
-        atomically $
-          hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
-      if
-        | seen -> pure AlreadyKnown
-        | not announced -> pure NotAnnounced
-        | not (validVote voteCommittee acceptedVote) -> pure (VoteInvalid acceptedVote)
-        | otherwise -> do
-            traceWith (tracer st) (TraceLeiosVoteVerified acceptedVote)
-            -- NOTE: We do not check the window again. Verifying takes about a
-            -- millisecond, and peers allow a grace after the window.
-            now <- systemTimeCurrent systemTime
-            atomically $ do
+  seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
+  -- NOTE: The client only checked that its peer announced it, but the node
+  -- does not relay a third announcement of an election, nor one of a stale
+  -- OCIN, so it must not relay their votes either.
+  announced <-
+    atomically $
+      hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
+  result <-
+    if
+      | seen -> pure AlreadyKnown
+      | received > relayUntil voteRelayWindow -> pure ArrivedTooLate
+      | not announced -> pure NotAnnounced
+      | not (validVote voteCommittee acceptedVote) -> pure VoteInvalid
+      | otherwise -> do
+          traceWith (tracer st) (TraceLeiosVoteVerified acceptedVote)
+          now <- systemTimeCurrent systemTime
+          atomically $ do
+            MkVotes{votesPrunedAt} <- readVotes st
+            seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
+            if
               -- Another peer may have delivered the same vote meanwhile.
-              seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
-              if seenMeanwhile
-                then pure AlreadyKnown
-                else do
-                  recordVote st now accepted
+              | seenMeanwhile -> pure AlreadyKnown
+              -- The pruner may have forgotten its election slot already, and
+              -- with it whether the node relayed the vote, if 'now' is stale.
+              | now > relayUntil voteRelayWindow || relayUntil voteRelayWindow < votesPrunedAt ->
+                  pure ArrivedTooLate
+              | otherwise -> do
+                  recordVote st accepted
                   if now < relayFrom voteRelayWindow
                     then holdVote st (relayFrom voteRelayWindow) entry
                     else relay entry
-                  pure (Added acceptedVote)
+                  pure Added
+  when (result == ArrivedTooLate) $
+    traceWith (tracer st) (TraceLeiosVoteArrivedTooLate acceptedVote)
+  pure result
  where
   MkAcceptedVote
     { acceptedVote
@@ -220,13 +240,20 @@ validVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature}
 -------------------------------------------------------------------------------}
 
 -- | The first valid vote of each seat, per election slot, for every election
--- slot whose votes are still worth relaying.
-type Votes = Map SlotNo ElectionVotes
+-- slot whose deadline had not passed when the votes were last pruned.
+data Votes = MkVotes
+  { votesPrunedAt :: !RelativeTime
+  -- ^ When the votes were last pruned. The node may have forgotten whether it
+  -- has a vote whose deadline is before this.
+  , votesBySlot :: !(Map SlotNo SlotVotes)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
--- | The votes of one election slot, and until when they are worth relaying.
-data ElectionVotes = MkElectionVotes
-  { electionRelayUntil :: !RelativeTime
-  , electionVotes :: !(Map LeiosSeatId LeiosVote)
+-- | The votes of one election slot, and their deadline.
+data SlotVotes = MkSlotVotes
+  { slotRelayUntil :: !RelativeTime
+  , slotVotes :: !(Map LeiosSeatId LeiosVote)
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -240,23 +267,41 @@ readVotes st = readTVar (votes st)
 seenVote ::
   IOLike m =>
   VoteState m blk -> SlotNo -> LeiosSeatId -> STM m Bool
-seenVote st slot seat = maybe False (Map.member seat . electionVotes) . Map.lookup slot <$> readVotes st
+seenVote st slot seat =
+  maybe False (Map.member seat . slotVotes) . Map.lookup slot . votesBySlot <$> readVotes st
 
--- | Keep a vote the node has not 'seenVote', and forget every election slot
--- whose votes are no longer worth relaying at the given time.
---
--- Forgetting them is safe, as 'addVote' finds any later copy of their votes
--- 'Expired' before it asks whether the node has seen it.
+-- | Keep a vote the node has not 'seenVote'.
 recordVote ::
   IOLike m =>
-  VoteState m blk -> RelativeTime -> AcceptedVote -> STM m ()
-recordVote st now MkAcceptedVote{acceptedVote, voteElectionSlot, voteRelayWindow} =
-  modifyTVar (votes st) $
-    Map.filter ((now <=) . electionRelayUntil) . Map.insertWith keepFirst voteElectionSlot election
+  VoteState m blk -> AcceptedVote -> STM m ()
+recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteRelayWindow} =
+  modifyTVar (votes st) $ \vs ->
+    vs{votesBySlot = Map.insertWith keepFirst voteElectionSlot slotVotes' (votesBySlot vs)}
  where
-  election =
-    MkElectionVotes
+  slotVotes' =
+    MkSlotVotes
       (relayUntil voteRelayWindow)
       (Map.singleton (voteSeatId acceptedVote) acceptedVote)
 
-  keepFirst new old = old{electionVotes = Map.union (electionVotes old) (electionVotes new)}
+  keepFirst new old = old{slotVotes = Map.union (slotVotes old) (slotVotes new)}
+
+-- | Forget the votes of every election slot whose deadline has passed at the
+-- given time.
+--
+-- 'addVote' then finds any later copy of their votes 'ArrivedTooLate', before
+-- it asks whether the node has seen it.
+pruneVotes ::
+  IOLike m =>
+  VoteState m blk -> RelativeTime -> STM m ()
+pruneVotes st now =
+  modifyTVar (votes st) $ \MkVotes{votesPrunedAt, votesBySlot} ->
+    MkVotes
+      (max now votesPrunedAt)
+      (Map.filter ((now <=) . slotRelayUntil) votesBySlot)
+
+-- | Prune the votes every second; see 'pruneVotes'.
+votePruner :: IOLike m => VoteState m blk -> SystemTime m -> m Void
+votePruner st systemTime = forever $ do
+  now <- systemTimeCurrent systemTime
+  atomically $ pruneVotes st now
+  threadDelay 1

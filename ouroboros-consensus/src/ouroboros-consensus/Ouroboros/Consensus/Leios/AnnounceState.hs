@@ -100,7 +100,8 @@ onValidAnnouncement st valid = do
 -- | Whether the node accepted the announcement of this announcing block, in an
 -- election of the given slot, so that it can relay votes for it.
 --
--- One it accepted but did not relay was too old to relay, and so are its votes.
+-- It accepts but does not relay one too old to relay, but then the votes for
+-- it are past their deadline too, so the node relays none of them either.
 hasAnnouncement ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   AnnounceState m blk ->

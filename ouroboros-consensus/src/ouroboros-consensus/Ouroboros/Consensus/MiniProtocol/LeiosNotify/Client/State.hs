@@ -385,14 +385,15 @@ data AcceptedVote = MkAcceptedVote
   -- ^ See 'leiosVoteRelayWindow'.
   }
 
--- | When a vote is worth relaying, as a downstream peer judges it.
+-- | When a vote is worth relaying.
 data VoteRelayWindow = MkVoteRelayWindow
   { relayFrom :: !RelativeTime
   -- ^ Before this, a downstream peer whose clock is behind ours could reject
   -- the vote.
   , relayUntil :: !RelativeTime
-  -- ^ After this, a downstream peer could reject the vote, or have no use for
-  -- it.
+  -- ^ The vote's deadline: the earliest block that can certify its
+  -- announcement is in the first slot at or after it, and the node uses no
+  -- vote it has only after it.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -405,7 +406,6 @@ leiosVoteRelayWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llv
   MkVoteRelayWindow
     (addRelTime (3 * lHdr) onset)
     -- NOTE: This cap never applies on mainnet, as L_diff is under 20 s.
-    -- 'VoteState' relies on this, as it may relay a vote slightly late.
     (addRelTime (min (3 * lHdr + lVote + lDiff) maxAnnouncementAgeSend) onset)
  where
   lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
@@ -416,8 +416,8 @@ leiosVoteRelayWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llv
 -- 'ExnLeiosNotifyInvalidVotes'.
 --
 -- This does not check a vote's seat or signature. The node's 'VoteState' will,
--- once per vote, so a badly signed copy of a vote the node already has costs it
--- only the bytes; see 'ExnLeiosInvalidVote'.
+-- once per vote, bar copies that arrive at once, so a badly signed copy of a
+-- vote the node already has costs it only the bytes; see 'ExnLeiosInvalidVote'.
 checkLeiosVotes ::
   forall blk.
   ( LedgerSupportsProtocol blk
@@ -482,8 +482,10 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
     rbHash = voteAnnouncingRbHash vote
     seat = voteSeatId vote
 
--- | How much later than the end of its diffusion period a vote may arrive:
--- enough for transmission, clock skew, and votes queued behind other traffic.
+-- | How much later than its deadline a vote may arrive without the node
+-- disconnecting the peer: enough for transmission, clock skew, and votes queued
+-- behind other traffic. Such a vote is too late to use, and the node's
+-- 'VoteState' traces it.
 --
 -- TODO magic number; measure buffer bloat on a loaded network.
 voteLateGrace :: NominalDiffTime
