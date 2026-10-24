@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Leios.Protocol
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (Milliseconds32, UnitInterval)
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
@@ -99,6 +100,10 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- | Whether the block whose header has this view contains a Leios
   -- certificate, which certifies the endorser block its predecessor announced.
   getContainsLeiosCert :: proxy p -> ValidateView p -> Bool
+
+  -- | The BLS keys to vote with, of the node's credentials to lead.
+  leiosBLSKeys :: proxy p -> CanBeLeader p -> [LeiosSigningKey]
+  leiosBLSKeys _ _ = []
 
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to

@@ -17,6 +17,7 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Control.Exception (assert)
+import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus, configLedger)
@@ -31,9 +32,14 @@ import Ouroboros.Consensus.Protocol.Praos
   , PraosParams (..)
   , praosCheckCanForge
   )
-import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader, WhenLeios)
+import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios)
 import Ouroboros.Consensus.Protocol.Praos.Views (PolyPraosLedgerView (..))
-import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), LeiosOnly (..), Praos2)
+import Ouroboros.Consensus.Protocol.Praos2
+  ( ConsensusConfig (..)
+  , LeiosOnly (..)
+  , Praos2
+  , Praos2CanBeLeader (..)
+  )
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
   , ShelleyCompatible
@@ -82,14 +88,13 @@ praosSharedBlockForging ::
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock (Praos c) era)
-praosSharedBlockForging = basePraosSharedBlockForging praosParams
+praosSharedBlockForging = basePraosSharedBlockForging praosParams shelleyLeaderCredentialsCanBeLeader
 
 -- | 'praosSharedBlockForging' for every Praos.
 basePraosSharedBlockForging ::
   forall m proto c era.
   ( ShelleyCompatible proto era
   , ProtoCrypto proto ~ c
-  , CanBeLeader proto ~ PraosCanBeLeader c
   , CannotForgeError proto ~ PraosCannotForge c
   , Applicative (WhenLeios proto)
   , Foldable (WhenLeios proto)
@@ -97,18 +102,18 @@ basePraosSharedBlockForging ::
   ) =>
   -- | The Praos parameters within this protocol's configuration
   (ConsensusConfig proto -> PraosParams) ->
+  -- | This protocol's credentials to lead
+  (ShelleyLeaderCredentials c -> CanBeLeader proto) ->
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock proto era)
 basePraosSharedBlockForging
   getPraosParams
+  getCanBeLeader
   hotKey
   slotToPeriod
-  ShelleyLeaderCredentials
-    { shelleyLeaderCredentialsCanBeLeader = canBeLeader
-    , shelleyLeaderCredentialsLabel = label
-    } =
+  credentials@ShelleyLeaderCredentials{shelleyLeaderCredentialsLabel = label} =
     BlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader = canBeLeader
@@ -122,6 +127,8 @@ basePraosSharedBlockForging
       , forgeBlock = forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
       }
+   where
+    canBeLeader = getCanBeLeader credentials
 
 -- | As 'praosSharedBlockForging', for 'Praos2'.
 praos2SharedBlockForging ::
@@ -139,7 +146,18 @@ praos2SharedBlockForging hotKey slotToPeriod credentials =
  where
   blockForging :: BlockForging m (ShelleyBlock (Praos2 c) era)
   blockForging =
-    basePraosSharedBlockForging (praosParams . leiosPraosConfig) hotKey slotToPeriod credentials
+    basePraosSharedBlockForging
+      (praosParams . leiosPraosConfig)
+      praos2CanBeLeader
+      hotKey
+      slotToPeriod
+      credentials
+
+  praos2CanBeLeader credentials' =
+    Praos2CanBeLeader
+      { praos2CanBeLeaderPraos = shelleyLeaderCredentialsCanBeLeader credentials'
+      , praos2CanBeLeaderBLSKey = maybeToStrictMaybe (shelleyLeaderCredentialsBLSKey credentials')
+      }
 
   checkEbSize ForgeBlockArgs{fbConfig, fbCurrentTickedLedgerState} forged@ForgeBlockResult{endorserBlock} =
     -- If a ledger change makes the 'serialize'' bytes of a transaction longer
