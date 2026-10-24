@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Protocol.Praos2
   , LeiosCrypto
   , LeiosOnly (..)
   , Praos2
+  , Praos2CanBeLeader (..)
   )
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -254,7 +255,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
     (Praos2HasLeios (containsCert, mbAnn)) =
       mkHeaderPolyPraos
         hk
-        cbl
+        (praos2CanBeLeaderPraos cbl)
         il
         slotNo
         blockNo

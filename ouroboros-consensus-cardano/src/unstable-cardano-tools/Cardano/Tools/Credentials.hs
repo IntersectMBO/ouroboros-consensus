@@ -164,6 +164,7 @@ mkShelleyCredentials coldVerKey vrfSignKey credentialsSource =
           , praosCanBeLeaderSignKeyVRF = vrfSignKey
           , praosCanBeLeaderCredentialsSource = credentialsSource
           }
+    , shelleyLeaderCredentialsBLSKey = Nothing
     , -- Consensus uses this to name the era these credentials forge in.
       shelleyLeaderCredentialsLabel = "Shelley"
     }

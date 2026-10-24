@@ -34,6 +34,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , Ticked (..)
   ) where
 
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (Nonce)
 import Control.Monad.Except
 import Data.Functor.Product
@@ -459,6 +460,17 @@ instance CanHardFork xs => LeiosProtocol (HardForkProtocol xs) where
       WrapValidateView blk ->
       K Bool blk
     getOne (WrapValidateView v) = K $ getContainsLeiosCert (Proxy @(BlockProtocol blk)) v
+  leiosBLSKeys _proxy (SomeErasCanBeLeader canBeLeader) =
+    concat . hcollapse $
+      hcmap proxySingle getOne (OptNP.toNP canBeLeader)
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlock blk =>
+      (Maybe :.: WrapCanBeLeader) blk ->
+      K [LeiosSigningKey] blk
+    getOne (Comp mCanBeLeader) =
+      K $ foldMap (leiosBLSKeys (Proxy @(BlockProtocol blk)) . unwrapCanBeLeader) mCanBeLeader
   validateLeiosAnnouncement = validateAnnouncement
   getLeiosLedgerView _proxy view =
     hcollapse $
