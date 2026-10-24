@@ -71,7 +71,7 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         announceState <- newAnnounceState notifyLog
         st <- newVoteState nullTracer announceState notifyLog
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
-          pruneVotes st at
+          _expired <- pruneVotes st at
           seen <- seenVote st slot (voteSeatId vote)
           if seen || at > relayUntilOf slot
             then pure Nothing
@@ -97,6 +97,7 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
       { acceptedVote = vote
       , voteElectionSlot = slot
       , voteCommittee = emptyLeiosCommittee
+      , voteQuorum = 1
       , voteRelayWindow = MkVoteRelayWindow (slotStart slot) (relayUntilOf slot)
       }
 

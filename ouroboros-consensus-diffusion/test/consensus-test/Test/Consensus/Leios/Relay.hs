@@ -17,15 +17,18 @@ module Test.Consensus.Leios.Relay (tests) where
 import Cardano.Crypto.DSIGN.Class (signDSIGN, verifyDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios
-  ( LeiosCommittee
+  ( LeiosCert
+  , LeiosCommittee
   , LeiosSeat (..)
   , LeiosSeatId (..)
   , LeiosSigningKey
+  , Weight
   , leiosCommitteeSize
   , leiosSignContext
   , resolveLeiosSeat
+  , verifyLeiosCert
   )
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), boundRational, knownNonZeroBounded)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( STM
   , StrictTQueue
@@ -52,6 +55,7 @@ import Data.Foldable (for_, toList)
 import qualified Data.Foldable as Foldable
 import Data.List (isInfixOf, mapAccumL, sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, maybeToList)
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -89,7 +93,7 @@ import Ouroboros.Consensus.Leios.Types
   , milliseconds32ToNominalDiffTime
   , toRankingBlockHash
   )
-import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState (..))
+import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState (..), getCertificate)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
@@ -123,6 +127,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
@@ -137,7 +142,7 @@ import Test.Consensus.Leios.Environment
   )
 import Test.Consensus.Leios.NodeUnderTest
   ( Blk
-  , NodeUnderTest
+  , NodeUnderTest (..)
   , PeerAddr (..)
   , defaultNodeUnderTestConfig
   , withNodeUnderTest
@@ -285,7 +290,7 @@ tests =
         (_, downs) <- relay 100 [votedFor0] [0, 90]
         map votes downs @?= [[voteOf someAnnouncingBlock 0], []]
     , testProperty
-        "the node relays the first valid vote of each seat it has by its deadline, and only what a peer accepts"
+        "the node relays the first valid vote of each seat it has by its deadline, only what a peer accepts, and certifies what reaches quorum"
         $ forAllShow genVotingPeers showVotingPeers prop_relay
     ]
  where
@@ -364,38 +369,52 @@ showVotingPeers peers =
 prop_relay :: VotingPeers -> Property
 prop_relay peers =
   cover 10 (verifiedBy earliestFinish /= allValid) "a vote misses its deadline" $
-    conjoin $
-      [ counterexample "an honest peer was disconnected" $ poNodeClientEnded up === Nothing
-      | up <- honestOutcomes
-      ]
-        <> [ counterexample ("the invalid peer was disconnected: " <> show ended) $
-               maybe True ("ExnLeiosInvalidVote" `isInfixOf`) ended
-           | up <- invalidOutcomes
-           , let ended = poNodeClientEnded up
-           ]
-        <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
-           | (i, o) <- zip [1 :: Int ..] outcomes
-           ]
-        <> [ counterexample ("relayed after its deadline, at " <> show at <> ": " <> show (electionSeat v)) False
-           | o <- outcomes
-           , (at, NotifyVotes vs) <- poReceived o
-           , v <- toList vs
-           , at > Time (deadlineOf (fst (electionSeat v)))
-           ]
-        <> [ counterexample ("not relayed, though verified by its deadline: " <> show missed) $
-               Set.null missed
-           , counterexample ("relayed, though verified only after its deadline: " <> show extra) $
-               Set.null extra
-           ]
+    cover 10 (not (Set.null quorate)) "an announcement is certified" $
+      conjoin $
+        [ counterexample "an honest peer was disconnected" $ poNodeClientEnded up === Nothing
+        | up <- honestOutcomes
+        ]
+          <> [ counterexample ("the invalid peer was disconnected: " <> show ended) $
+                 maybe True ("ExnLeiosInvalidVote" `isInfixOf`) ended
+             | up <- invalidOutcomes
+             , let ended = poNodeClientEnded up
+             ]
+          <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
+             | (i, o) <- zip [1 :: Int ..] outcomes
+             ]
+          <> [ counterexample ("relayed after its deadline, at " <> show at <> ": " <> show (electionSeat v)) False
+             | o <- outcomes
+             , (at, NotifyVotes vs) <- poReceived o
+             , v <- toList vs
+             , at > Time (deadlineOf (fst (electionSeat v)))
+             ]
+          <> [ counterexample ("not relayed, though verified by its deadline: " <> show missed) $
+                 Set.null missed
+             , counterexample ("relayed, though verified only after its deadline: " <> show extra) $
+                 Set.null extra
+             , counterexample "certified announcements, against those whose relayed votes reach quorum" $
+                 Map.keysSet certified === quorate
+             ]
+          <> [ counterexample ("a certificate that does not verify: " <> show err) False
+             | (rbHash, cert) <- Map.toList certified
+             , Left err <- [verifyLeiosCert committee quorum rbHash cert]
+             ]
  where
   ups = allPeers peers
-  (upOutcomes, down) = case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0] of
-    (ups', [down']) -> (ups', down')
-    _ -> error "prop_relay: one downstream peer"
+  (upOutcomes, down, certified) =
+    case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0] of
+      (ups', [down'], certified') -> (ups', down', certified')
+      _ -> error "prop_relay: one downstream peer"
   (honestOutcomes, invalidOutcomes) = splitAt (length (honestPeers peers)) upOutcomes
   outcomes = upOutcomes <> [down]
 
   relayed = Set.fromList [electionSeat v | v <- votes down]
+
+  -- Every announcement whose relayed votes reach quorum.
+  quorate =
+    Map.keysSet . Map.filter (quorum <=) $
+      Map.fromListWith (+) [(voteAnnouncingRbHash v, seatWeightOf v) | v <- votes down]
+  seatWeightOf v = maybe 0 seatWeight (resolveLeiosSeat committee (voteSeatId v))
   allValid = verifiedBy (map (\(_, v) -> (0, v)))
   missed = Set.difference (verifiedBy latestFinish) relayed
   extra = Set.difference relayed (verifiedBy earliestFinish)
@@ -574,15 +593,29 @@ relayPeers end ups downs = do
     violations -> assertFailure $ "peer " <> show i <> ":\n" <> unlines violations
   pure (ups', downs')
  where
-  (ups', downs') = runRelay (VerifyingTime 0) end ups downs
+  (ups', downs', _) = runRelay (VerifyingTime 0) end ups downs
 
 -- | 'relayPeers', with a node that takes this long to verify each vote, and
--- without failing for what the node relays.
-runRelay :: VerifyingTime -> DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
-runRelay verifying end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode verifying $ \nut ->
-  forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
+-- without failing for what the node relays. Also the certificates the node
+-- has in the end, of the announcements the peers sent.
+runRelay ::
+  VerifyingTime ->
+  DiffTime ->
+  [PeerSpec] ->
+  [DiffTime] ->
+  ([PeerOutcome], [PeerOutcome], Map RankingBlockHash LeiosCert)
+runRelay verifying end ups downs = runSimOrThrow $ withNode verifying $ \nut -> do
+  outcomes <- forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
+  certified <-
+    atomically $
+      fmap (Map.mapMaybe id) $
+        sequence $
+          Map.fromSet (getCertificate (getLeiosVoteState (nutKernel nut))) announced
+  let (ups', downs') = splitAt (length ups) outcomes
+  pure (ups', downs', certified)
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
+  announced = Set.fromList [rbHashOf hdr | spec <- ups, (_, NotifyAnnouncement hdr) <- psSends spec]
 
 -- | 'relay' for 20 seconds, past every vote's diffusion period, to one downstream peer
 -- connecting at the given time.
@@ -681,7 +714,7 @@ withNode (VerifyingTime verifying) body = do
     nullTracers
       { leiosVoteStateTracer = mkTracer $ \case
           TraceLeiosVoteVerified _ -> threadDelay verifying
-          TraceLeiosVoteArrivedTooLate _ -> pure ()
+          _ -> pure ()
       }
 
 k :: SecurityParam
@@ -761,13 +794,17 @@ leiosLedgerView :: LeiosLedgerView
 leiosLedgerView =
   MkLeiosLedgerView
     { llvCommittee = committee
-    , llvQuorumStakeThreshold = maxBound
+    , llvQuorumStakeThreshold = fromMaybe (error "leiosLedgerView: a quorum") (boundRational quorum)
     , llvAnnouncementPeriod = Milliseconds32 1000
     , llvVotePeriod = Milliseconds32 4000
     , llvDiffusionPeriod = Milliseconds32 1000
     , llvMaxEbBodySize = 5000
     , llvMaxEbTxsSize = 5000
     }
+
+-- | The votes of all three seats with keys certify an announcement.
+quorum :: Weight
+quorum = 3 % 5
 
 -- | Three seats with keys, then one without a key and one whose key's proof of
 -- possession does not verify.

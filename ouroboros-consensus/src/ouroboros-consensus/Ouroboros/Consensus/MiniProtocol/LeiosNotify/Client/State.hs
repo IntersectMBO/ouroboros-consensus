@@ -29,7 +29,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   , pruneLeiosNotifyPeerState
   ) where
 
-import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId)
+import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId, Weight)
+import Cardano.Ledger.BaseTypes (unboundRational)
 import Control.Monad (foldM, when)
 import Control.Monad.Except (Except, ExceptT, liftEither, throwError, withExcept, withExceptT)
 import Control.Monad.Trans (lift)
@@ -383,6 +384,9 @@ data AcceptedVote = MkAcceptedVote
   , voteElectionSlot :: !SlotNo
   , voteCommittee :: !LeiosCommittee
   -- ^ The committee of the election slot's ledger view.
+  , voteQuorum :: !Weight
+  -- ^ The weight of the votes that certify an announcement in the election
+  -- slot.
   , voteRelayWindow :: !VoteRelayWindow
   -- ^ See 'leiosVoteRelayWindow'.
   }
@@ -461,7 +465,13 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
           slot
     -- Without Leios at this slot, the protocol announces nothing there, so no
     -- vote in it can have an announcement.
-    leiosView@MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod, llvCommittee} <-
+    leiosView@MkLeiosLedgerView
+      { llvAnnouncementPeriod
+      , llvVotePeriod
+      , llvDiffusionPeriod
+      , llvCommittee
+      , llvQuorumStakeThreshold
+      } <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
     let lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
@@ -477,6 +487,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
           vote
           slot
           llvCommittee
+          (unboundRational llvQuorumStakeThreshold)
           (leiosVoteRelayWindow leiosView onset)
           : accepted
       )
