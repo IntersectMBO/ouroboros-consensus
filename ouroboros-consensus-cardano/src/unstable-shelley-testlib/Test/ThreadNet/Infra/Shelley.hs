@@ -48,6 +48,7 @@ import Cardano.Crypto.KES
   , unsoundPureDeriveVerKeyKES
   , unsoundPureGenKeyKES
   )
+import Cardano.Crypto.Leios (LeiosDSIGN, LeiosSigningKey)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import Cardano.Crypto.VRF
@@ -175,6 +176,8 @@ data CoreNode c = CoreNode
   , cnVRF :: !(SignKeyVRF (VRF c))
   , cnKES :: !(UnsoundPureSignKeyKES (KES c))
   , cnOCert :: !(SL.OCert c)
+  , cnBLS :: !LeiosSigningKey
+  -- ^ The BLS key to vote in Leios with.
   }
 
 data CoreNodeKeyInfo c = CoreNodeKeyInfo
@@ -217,6 +220,7 @@ genCoreNode startKESPeriod = do
   stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
   vrfKey <- genKeyVRF <$> genSeed (seedSizeVRF (Proxy @(VRF c)))
   kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES (Proxy @(KES c)))
+  blsKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LeiosDSIGN))
   let kesPub = unsoundPureDeriveVerKeyKES kesKey
       sigma =
         LK.signedDSIGN
@@ -237,6 +241,7 @@ genCoreNode startKESPeriod = do
       , cnVRF = vrfKey
       , cnKES = kesKey
       , cnOCert = ocert
+      , cnBLS = blsKey
       }
  where
   certificateIssueNumber = 0
@@ -248,7 +253,7 @@ genCoreNode startKESPeriod = do
   genSeed = fmap mkSeedFromBytes . genBytes
 
 mkLeaderCredentials :: CoreNode c -> ShelleyLeaderCredentials c
-mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
+mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert, cnBLS} =
   ShelleyLeaderCredentials
     { shelleyLeaderCredentialsCanBeLeader =
         PraosCanBeLeader
@@ -256,6 +261,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
           }
+    , shelleyLeaderCredentialsBLSKey = Just cnBLS
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }
 

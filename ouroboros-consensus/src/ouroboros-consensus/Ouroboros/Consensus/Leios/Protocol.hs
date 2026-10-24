@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Leios.Protocol
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (Milliseconds32, UnitInterval)
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
@@ -120,6 +121,10 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- announcement. Ticking the state can still rule it out, at an epoch
   -- boundary for example.
   getCertifiableLeiosAnnouncement :: proxy p -> ChainDepState p -> Maybe LeiosAnnouncement
+
+  -- | The BLS keys to vote with, of the node's credentials to lead.
+  leiosBLSKeys :: proxy p -> CanBeLeader p -> [LeiosSigningKey]
+  leiosBLSKeys _ _ = []
 
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to
