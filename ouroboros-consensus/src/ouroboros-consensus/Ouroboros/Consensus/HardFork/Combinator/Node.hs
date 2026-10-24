@@ -21,6 +21,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
+import Ouroboros.Consensus.HardFork.Combinator.Mempool ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
@@ -30,6 +31,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol
   , SingleEraBlockAndPerasProtocol
   )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -75,5 +77,6 @@ instance
   , SerialiseHFC xs
   , All SingleEraBlockAndLeiosProtocol xs
   , All SingleEraBlockAndPerasProtocol xs
+  , All LedgerSupportsEndorserBlocks xs
   ) =>
   RunNode (HardForkBlock xs)

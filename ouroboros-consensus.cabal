@@ -190,6 +190,7 @@ library
     Ouroboros.Consensus.Ledger.Peras
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
+    Ouroboros.Consensus.Ledger.SupportsEndorserBlocks
     Ouroboros.Consensus.Ledger.SupportsMempool
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsPeras

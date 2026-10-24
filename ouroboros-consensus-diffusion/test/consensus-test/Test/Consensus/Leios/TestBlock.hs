@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -49,6 +50,7 @@ module Test.Consensus.Leios.TestBlock
 
     -- * Ledger
   , LedgerState (..)
+  , invalidEbTx
   , LeiosTestBlockError (..)
   , LeiosTestLedgerConfig (..)
   , leiosTestInitExtLedger
@@ -83,6 +85,7 @@ import Control.Monad (guard, replicateM, replicateM_)
 import Control.Monad.Except (Except, throwError)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
@@ -117,6 +120,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
   ( LedgerSupportsPeerSelection (..)
@@ -808,6 +812,17 @@ instance HasTxId (GenTx LeiosTestBlock) where
 
 instance ConvertRawTxId (GenTx LeiosTestBlock) where
   toRawTxIdHash = SBS.toShort . BL.toStrict . serialise
+
+-- | Every endorsed transaction is valid, bar 'invalidEbTx'.
+instance LedgerSupportsEndorserBlocks LeiosTestBlock where
+  decodeEbTx _st bytes
+    | bytes == invalidEbTx = Left "invalid endorsed transaction"
+    | otherwise = Right LeiosTestGenTx
+  applyEbTxs _cfg _slot _txs _st = pure ()
+
+-- | The bytes of the one endorsed transaction that is invalid.
+invalidEbTx :: BS.ByteString
+invalidEbTx = "invalid"
 
 instance LedgerSupportsMempool LeiosTestBlock where
   applyTx _cfg _wti _slot _tx _st = throwError LeiosTestTxRejected

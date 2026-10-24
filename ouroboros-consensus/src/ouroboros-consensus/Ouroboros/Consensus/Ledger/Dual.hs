@@ -89,6 +89,7 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
@@ -651,6 +652,8 @@ instance
   ShowProxy (GenTx (DualBlock m a))
 
 type instance ApplyTxErr (DualBlock m a) = DualGenTxErr m a
+
+instance Bridge m a => LedgerSupportsEndorserBlocks (DualBlock m a)
 
 instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
   applyTx
