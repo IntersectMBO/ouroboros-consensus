@@ -69,6 +69,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogPruner
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Types (EndorserBlockHash, LeiosPoint (..))
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Leios.Voting (LeiosVoterEnv (..), runLeiosVoter)
 import Ouroboros.Consensus.Mempool
@@ -108,7 +109,12 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosEbNotification (..)
+  , withReader
+  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -424,7 +430,8 @@ initNodeKernel
           MkLeiosVoterEnv
             { voterConfig = cfg
             , voterChainDB = chainDB
-            , voterLeiosDB = leiosDB
+            , voterClosure = \ebHash ->
+                withReader leiosDB $ \reader -> fmap (map snd) <$> lookupEbClosure reader ebHash
             , voterAnnounceState = leiosAnnounceState
             , voterVoteState = leiosVoteState
             , voterSystemTime = systemTime
@@ -432,7 +439,11 @@ initNodeKernel
             }
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st leiosVoterEnv (LazySTM.takeTMVar blockForgingVar)
+        blockForgingController
+          st
+          leiosVoterEnv
+          (acquiredClosures <$> subscribeEbNotifications leiosDB)
+          (LazySTM.takeTMVar blockForgingVar)
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -476,15 +487,16 @@ initNodeKernel
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       LeiosVoterEnv m blk ->
+      m (STM m EndorserBlockHash) ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st leiosVoterEnv getBlockForging = go []
+    blockForgingController st leiosVoterEnv subscribeClosures getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st leiosVoterEnv) blockForging
+        blockForging' <- traverse (forkBlockForging st leiosVoterEnv subscribeClosures) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -601,9 +613,11 @@ forkBlockForging ::
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
   LeiosVoterEnv m blk ->
+  -- | Subscribe to the endorser blocks whose closure the node acquires
+  m (STM m EndorserBlockHash) ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} leiosVoterEnv (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} leiosVoterEnv subscribeClosures (MkBlockForging blockForgingM) =
   forkLinkedThread registry label $ do
     (key, bf) <- allocate registry (const blockForgingMLabel) finalize
     withWatcher label (forging bf) (voting bf) `finally` release key
@@ -625,7 +639,7 @@ forkBlockForging IS{..} leiosVoterEnv (MkBlockForging blockForgingM) =
     case leiosBLSKeys (Proxy @(BlockProtocol blk)) (canBeLeader bf) of
       -- Nothing to vote with.
       [] -> forever $ threadDelay 86400
-      keys -> runLeiosVoter leiosVoterEnv keys
+      keys -> runLeiosVoter leiosVoterEnv keys =<< subscribeClosures
 
   label :: String
   label = "NodeKernel.blockForging"
@@ -634,6 +648,15 @@ forkBlockForging IS{..} leiosVoterEnv (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
+
+-- | The next endorser block whose closure the LeiosDB acquired, of a
+-- subscription to it.
+acquiredClosures ::
+  MonadSTM m => StrictSTM.StrictTChan m LeiosEbNotification -> STM m EndorserBlockHash
+acquiredClosures notifications =
+  StrictSTM.readTChan notifications >>= \case
+    AcquiredEbTxs point -> pure (pointEbHash point)
+    AcquiredEb{} -> acquiredClosures notifications
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

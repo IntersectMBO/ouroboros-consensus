@@ -22,7 +22,7 @@ import Control.Tracer (mkTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
-import Ouroboros.Consensus.Block (SlotNo, blockSlot)
+import Ouroboros.Consensus.Block (blockSlot)
 import Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
   , ForgeStateUpdateInfo (..)
@@ -99,7 +99,7 @@ tests =
                   { ups = [[announce someAnnouncingBlock, announceAt 2.2 nextAnnouncingBlock]]
                   , adopts = [(1.5, someAnnouncingBlock), (2.5, nextAnnouncingBlock)]
                   , closures = [(2, someAnnouncingBlock, validTxs), (3, nextAnnouncingBlock, validTxs)]
-                  , validating = \slot -> if slot == 1 then 10 else 0
+                  , validating = \ebHash -> if ebHash == ebHashOf someAnnouncingBlock then 10 else 0
                   }
         votes down @?= [voteOf nextAnnouncingBlock 0]
         -- The window of the election of slot 2 opens 5 s in.
@@ -147,9 +147,8 @@ data Voting = Voting
   , ups :: [[(DiffTime, Notification)]]
   , adopts :: [(DiffTime, LeiosTestBlock)]
   , closures :: [(DiffTime, LeiosTestBlock, [BS.ByteString])]
-  , validating :: SlotNo -> DiffTime
-  -- ^ Beyond what validating takes in the simulation, by the slot of the
-  -- endorser block.
+  , validating :: EndorserBlockHash -> DiffTime
+  -- ^ Beyond what validating takes in the simulation.
   }
 
 -- | The node holds seat 0, an upstream peer announces 'someAnnouncingBlock',
@@ -181,8 +180,7 @@ runVoting Voting{keys, ups, adopts, closures, validating} = runSimOrThrow $ do
         nullTracers
           { leiosVotingTracer = mkTracer $ \ev -> do
               case ev of
-                TraceLeiosEbValidated MkLeiosPoint{pointSlotNo} ->
-                  threadDelay (validating pointSlotNo)
+                TraceLeiosEbValidated ebHash -> threadDelay (validating ebHash)
                 _ -> pure ()
               atomically $ modifyTVar traced (ev :)
           }

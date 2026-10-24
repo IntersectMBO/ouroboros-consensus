@@ -32,11 +32,11 @@ import Cardano.Crypto.Leios
   , leiosSignContext
   )
 import Cardano.Ledger.BaseTypes (unboundRational)
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (forever, void)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry (forkLinkedThread, withRegistry)
 import Control.Tracer (Tracer, traceWith)
+import Data.ByteString (ByteString)
 import Data.Foldable (for_)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -46,11 +46,13 @@ import Data.Void (Void)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , ConvertRawHash
+  , SlotNo
   , blockSlot
   , headerPoint
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( SystemTime (..)
+  ( RelativeTime
+  , SystemTime (..)
   , addRelTime
   , diffRelTime
   )
@@ -58,8 +60,12 @@ import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Ledger.Abstract (ComputeLedgerEvents (OmitLedgerEvents), applyChainTick)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Abstract
+  ( ComputeLedgerEvents (OmitLedgerEvents)
+  , EmptyMK
+  , applyChainTick
+  )
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
@@ -70,7 +76,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol (..)
   )
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint (..)
+  ( EndorserBlockHash
   , LeiosVote (..)
   , RankingBlockHash
   , milliseconds32ToNominalDiffTime
@@ -89,16 +95,11 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ReadOnlyForker (..))
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
-  , LeiosDbReader (..)
-  , LeiosEbNotification (..)
-  , withReader
-  )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadAsync (race)
   , MonadDelay (threadDelay)
+  , STM
   , atomically
   , bracket
   , retry
@@ -111,7 +112,8 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (SpecificPoint))
 data LeiosVoterEnv m blk = MkLeiosVoterEnv
   { voterConfig :: TopLevelConfig blk
   , voterChainDB :: ChainDB m blk
-  , voterLeiosDB :: LeiosDbHandle m
+  , voterClosure :: EndorserBlockHash -> m (Maybe [ByteString])
+  -- ^ The transactions of an endorser block's closure, if the node has all.
   , voterAnnounceState :: AnnounceState m blk
   , voterVoteState :: VoteState m blk
   , voterSystemTime :: SystemTime m
@@ -121,10 +123,10 @@ data LeiosVoterEnv m blk = MkLeiosVoterEnv
 -- | What the voter traces.
 data TraceLeiosVoting
   = -- | The node applied the closure of an endorser block, and may vote for it.
-    TraceLeiosEbValidated !LeiosPoint
+    TraceLeiosEbValidated !EndorserBlockHash
   | -- | The node voted for the endorser block of an announcement.
     TraceLeiosVoted !LeiosVote
-  | TraceLeiosNotVoted !LeiosPoint !NotVotedReason
+  | TraceLeiosNotVoted !EndorserBlockHash !NotVotedReason
   deriving Show
 
 -- | Why the node did not vote for an endorser block.
@@ -148,7 +150,8 @@ data NotVotedReason
     VoteNotAdded !AddVoteResult
   deriving (Eq, Show)
 
--- | Vote for each endorser block whose closure the node acquires.
+-- | Vote for each endorser block the given action yields, once the node has
+-- its closure.
 runLeiosVoter ::
   forall m blk.
   ( IOLike m
@@ -160,18 +163,17 @@ runLeiosVoter ::
   ) =>
   LeiosVoterEnv m blk ->
   [LeiosSigningKey] ->
+  -- | The next endorser block whose closure the node acquired
+  STM m EndorserBlockHash ->
   m Void
-runLeiosVoter env keys = do
-  acquired <- subscribeEbNotifications (voterLeiosDB env)
+runLeiosVoter env keys acquired =
   withRegistry $ \registry ->
-    forever $
-      atomically (readTChan acquired) >>= \case
-        AcquiredEb{} -> pure ()
-        AcquiredEbTxs point ->
-          void . forkLinkedThread registry "Leios.voteFor" $
-            voteFor env keys point >>= \case
-              Left reason -> traceWith (voterTracer env) (TraceLeiosNotVoted point reason)
-              Right votes -> for_ votes $ traceWith (voterTracer env) . TraceLeiosVoted
+    forever $ do
+      ebHash <- atomically acquired
+      void . forkLinkedThread registry "Leios.voteFor" $
+        voteFor env keys ebHash >>= \case
+          Left reason -> traceWith (voterTracer env) (TraceLeiosNotVoted ebHash reason)
+          Right votes -> for_ votes $ traceWith (voterTracer env) . TraceLeiosVoted
 
 -- | Vote for an endorser block with every key that holds a seat in its
 -- election.
@@ -186,77 +188,100 @@ voteFor ::
   ) =>
   LeiosVoterEnv m blk ->
   [LeiosSigningKey] ->
-  LeiosPoint ->
+  EndorserBlockHash ->
   m (Either NotVotedReason [LeiosVote])
-voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = do
+voteFor env keys ebHash = do
   immLedger <- atomically $ ChainDB.getImmutableLedger voterChainDB
-  case electionAt immLedger of
+  acquired <- systemTimeCurrent voterSystemTime
+  -- The block that announced it is in the current slot at the latest, so its
+  -- window to vote closes when that of the current slot does at the latest.
+  case slotAt immLedger acquired >>= electionAt immLedger of
     Nothing -> pure (Left NoLeiosLedgerView)
-    Just (view@MkLeiosLedgerView{llvCommittee, llvQuorumStakeThreshold}, onset)
-      | null seats -> pure (Left NotOnCommittee)
-      | otherwise -> do
-          acquired <- systemTimeCurrent voterSystemTime
-          if acquired > votingEnds
-            then pure (Left TooLate)
-            else
-              -- Wait for the selection to adopt the announcing block, if it has
-              -- not yet.
-              race (waitUntil votingEnds) (atomically tipAnnouncing) >>= \case
-                Left () -> pure (Left TipDoesNotAnnounce)
-                Right announcing ->
-                  validate announcing >>= \case
-                    Left reason -> pure (Left reason)
-                    Right () -> do
-                      traceWith voterTracer (TraceLeiosEbValidated point)
-                      waitUntil (relayFrom window)
-                      cast announcing
-     where
-      seats = [(key, seat) | key <- keys, Just seat <- [getLeiosSeatId (deriveVerKeyDSIGN key) llvCommittee]]
-
-      window = leiosVoteRelayWindow view onset
-
-      -- The voting period ends L_vote after the window opens.
-      votingEnds = addRelTime (milliseconds32ToNominalDiffTime (llvVotePeriod view)) (relayFrom window)
-
-      cast announcing = do
-        now <- systemTimeCurrent voterSystemTime
-        (stillAnnounces, equivocated) <-
-          atomically $
-            (,) <$> (Just announcing ==) <$> tipAnnouncing' <*> isEquivocated voterAnnounceState announcing
-        if
-          | now > votingEnds -> pure (Left TooLate)
-          | not stillAnnounces -> pure (Left TipDoesNotAnnounce)
-          | equivocated -> pure (Left Equivocated)
-          | otherwise -> do
-              results <- for seats $ \(key, seat) -> do
-                let vote = signVote key seat (announcingRbHash announcing)
-                result <- addVote voterVoteState voterSystemTime (accepted vote)
-                pure (vote, result)
-              pure $ case [vote | (vote, Added) <- results] of
-                [] | (_, result) : _ <- results -> Left (VoteNotAdded result)
-                votes -> Right votes
-
-      accepted vote =
-        MkAcceptedVote
-          { acceptedVote = vote
-          , voteElectionSlot = slot
-          , voteCommittee = llvCommittee
-          , voteQuorum = unboundRational llvQuorumStakeThreshold
-          , voteRelayWindow = window
-          }
+    Just latest ->
+      -- Wait for the selection to adopt the announcing block, if it has not yet.
+      race (waitUntil (votingEnds latest)) (atomically tipAnnouncing) >>= \case
+        Left () -> pure (Left TipDoesNotAnnounce)
+        Right announcing -> voteIn immLedger announcing
  where
   MkLeiosVoterEnv
     { voterConfig
     , voterChainDB
-    , voterLeiosDB
+    , voterClosure
     , voterAnnounceState
     , voterVoteState
     , voterSystemTime
     , voterTracer
     } = env
 
-  -- The election's ledger view and when its slot began.
-  electionAt immLedger = do
+  voteIn immLedger announcing =
+    case electionAt immLedger slot of
+      Nothing -> pure (Left NoLeiosLedgerView)
+      Just election -> voteInElection announcing slot election
+   where
+    slot = blockSlot (ancHeader announcing)
+
+  voteInElection announcing slot election@(view, onset) = do
+    now <- systemTimeCurrent voterSystemTime
+    if
+      | null seats -> pure (Left NotOnCommittee)
+      | now > votingEnds election -> pure (Left TooLate)
+      | otherwise ->
+          validate announcing >>= \case
+            Left reason -> pure (Left reason)
+            Right () -> do
+              traceWith voterTracer (TraceLeiosEbValidated ebHash)
+              waitUntil (relayFrom window)
+              cast
+   where
+    MkLeiosLedgerView{llvCommittee, llvQuorumStakeThreshold} = view
+
+    seats = [(key, seat) | key <- keys, Just seat <- [getLeiosSeatId (deriveVerKeyDSIGN key) llvCommittee]]
+
+    window = leiosVoteRelayWindow view onset
+
+    cast = do
+      now <- systemTimeCurrent voterSystemTime
+      (stillAnnounces, equivocated) <-
+        atomically $
+          (,) <$> (Just announcing ==) <$> tipAnnouncing' <*> isEquivocated voterAnnounceState announcing
+      if
+        | now > votingEnds election -> pure (Left TooLate)
+        | not stillAnnounces -> pure (Left TipDoesNotAnnounce)
+        | equivocated -> pure (Left Equivocated)
+        | otherwise -> do
+            results <- for seats $ \(key, seat) -> do
+              let vote = signVote key seat (announcingRbHash announcing)
+              result <- addVote voterVoteState voterSystemTime (accepted vote)
+              pure (vote, result)
+            pure $ case [vote | (vote, Added) <- results] of
+              [] | (_, result) : _ <- results -> Left (VoteNotAdded result)
+              votes -> Right votes
+
+    accepted vote =
+      MkAcceptedVote
+        { acceptedVote = vote
+        , voteElectionSlot = slot
+        , voteCommittee = llvCommittee
+        , voteQuorum = unboundRational llvQuorumStakeThreshold
+        , voteRelayWindow = window
+        }
+
+  -- The slot at the given time.
+  slotAt immLedger at =
+    either (const Nothing) (\(slot, _, _) -> Just slot) $
+      HardFork.runQuery
+        (HardFork.wallclockToSlot at)
+        (hardForkSummary (configLedger voterConfig) (ledgerState immLedger))
+
+  -- The voting period ends L_vote after the window to vote opens.
+  votingEnds (view, onset) =
+    addRelTime
+      (milliseconds32ToNominalDiffTime (llvVotePeriod view))
+      (relayFrom (leiosVoteRelayWindow view onset))
+
+  -- The ledger view of the election in a slot, and when the slot began.
+  electionAt :: ExtLedgerState blk EmptyMK -> SlotNo -> Maybe (LeiosLedgerView, RelativeTime)
+  electionAt immLedger slot = do
     view <-
       either (const Nothing) Just . runExcept $
         forecastFor (ledgerViewForecastAt (configLedger voterConfig) (ledgerState immLedger)) slot
@@ -275,15 +300,14 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = do
     chain <- ChainDB.getCurrentChain voterChainDB
     pure $ case AF.head chain of
       Right tip
-        | blockSlot tip == slot
-        , Just announcing <- mkAnnouncingHeader voterConfig tip
-        , announcementEbHash (ancAnnouncement announcing) == pointEbHash point ->
+        | Just announcing <- mkAnnouncingHeader voterConfig tip
+        , announcementEbHash (ancAnnouncement announcing) == ebHash ->
             Just announcing
       _ -> Nothing
 
   -- Apply the closure to the ledger state of the announcing block.
   validate announcing =
-    withReader voterLeiosDB (\reader -> lookupEbClosure reader (pointEbHash point)) >>= \case
+    voterClosure ebHash >>= \case
       Nothing -> pure (Left ClosureUnavailable)
       Just closure ->
         bracket
@@ -295,8 +319,9 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = do
             Right forker -> do
               extLedger <- atomically $ roforkerGetLedgerState forker
               let lcfg = configLedger voterConfig
+                  slot = blockSlot (ancHeader announcing)
                   ticked = applyChainTick OmitLedgerEvents lcfg slot (ledgerState extLedger)
-              case traverse (decodeEbTx ticked . snd) closure of
+              case traverse (decodeEbTx ticked) closure of
                 Left err -> pure (Left (EbInvalid err))
                 Right txs -> do
                   let keySets = foldMap getTransactionKeySets txs
