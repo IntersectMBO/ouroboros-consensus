@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -67,7 +68,9 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
+import Ouroboros.Consensus.Leios.Voting (LeiosVoterEnv (..), runLeiosVoter)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -391,10 +394,6 @@ initNodeKernel
               (cschcMap varChainSyncHandles)
               varLoEFragment
 
-    void $
-      forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
-
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
     void $
@@ -420,6 +419,20 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
+
+    let leiosVoterEnv =
+          MkLeiosVoterEnv
+            { voterConfig = cfg
+            , voterChainDB = chainDB
+            , voterLeiosDB = leiosDB
+            , voterAnnounceState = leiosAnnounceState
+            , voterVoteState = leiosVoteState
+            , voterSystemTime = systemTime
+            , voterTracer = leiosVotingTracer tracers
+            }
+    void $
+      forkLinkedThread registry "NodeKernel.blockForging" $
+        blockForgingController st leiosVoterEnv (LazySTM.takeTMVar blockForgingVar)
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -462,15 +475,16 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
+      LeiosVoterEnv m blk ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st getBlockForging = go []
+    blockForgingController st leiosVoterEnv getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st) blockForging
+        blockForging' <- traverse (forkBlockForging st leiosVoterEnv) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -581,32 +595,38 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
+-- | Forge with a set of credentials, and vote with its BLS keys, if any.
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
+  LeiosVoterEnv m blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} (MkBlockForging blockForgingM) =
-  forkLinkedWatcherAllocate
-    registry
-    label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
-        \currentSlot ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              cfg
-              chainDB
-              mempool
-              bf
-              (\_ _ -> pure ())
-              currentSlot
-    )
+forkBlockForging IS{..} leiosVoterEnv (MkBlockForging blockForgingM) =
+  forkLinkedThread registry label $ do
+    (key, bf) <- allocate registry (const blockForgingMLabel) finalize
+    withWatcher label (forging bf) (voting bf) `finally` release key
  where
+  forging bf = knownSlotWatcher btime $
+    \currentSlot ->
+      withEarlyExit_ $
+        forge
+          (forgeTracer tracers)
+          (forgeStateInfoTracer tracers)
+          cfg
+          chainDB
+          mempool
+          bf
+          (\_ _ -> pure ())
+          currentSlot
+
+  voting bf =
+    case leiosBLSKeys (Proxy @(BlockProtocol blk)) (canBeLeader bf) of
+      -- Nothing to vote with.
+      [] -> forever $ threadDelay 86400
+      keys -> runLeiosVoter leiosVoterEnv keys
+
   label :: String
   label = "NodeKernel.blockForging"
 

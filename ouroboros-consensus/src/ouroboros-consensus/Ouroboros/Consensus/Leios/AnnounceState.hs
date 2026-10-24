@@ -12,6 +12,7 @@
 module Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , hasAnnouncement
+  , isEquivocated
   , newAnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
@@ -110,6 +111,18 @@ hasAnnouncement ::
   STM m Bool
 hasAnnouncement st slot rbHash =
   any ((== rbHash) . announcingRbHash) . Announcements.inSlot slot <$> readTVar (announced st)
+
+-- | Whether the node accepted another announcement of the same election.
+isEquivocated ::
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
+  AnnounceState m blk ->
+  AnnouncingHeader blk ->
+  STM m Bool
+isEquivocated st anc =
+  any
+    (\other -> ancElectionId other == ancElectionId anc && announcingRbHash other /= announcingRbHash anc)
+    . Announcements.inSlot (electionSlot (ancElectionId anc))
+    <$> readTVar (announced st)
 
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::

@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Types (EndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState)
+import Ouroboros.Consensus.Leios.Voting (TraceLeiosVoting)
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -88,6 +89,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
   , leiosDbTracer :: f TraceLeiosDb
   , leiosVoteStateTracer :: f TraceLeiosVoteState
+  , leiosVotingTracer :: f TraceLeiosVoting
   , txInboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
   , txOutboundTracer ::
@@ -137,6 +139,7 @@ instance
       , leiosNotifyClientTracer = f leiosNotifyClientTracer
       , leiosDbTracer = f leiosDbTracer
       , leiosVoteStateTracer = f leiosVoteStateTracer
+      , leiosVotingTracer = f leiosVotingTracer
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
@@ -186,6 +189,7 @@ nullTracers =
     , leiosNotifyClientTracer = nullTracer
     , leiosDbTracer = nullTracer
     , leiosVoteStateTracer = nullTracer
+    , leiosVotingTracer = nullTracer
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
@@ -245,6 +249,7 @@ showTracers tr =
     , leiosNotifyClientTracer = show >$< tr
     , leiosDbTracer = show >$< tr
     , leiosVoteStateTracer = show >$< tr
+    , leiosVotingTracer = show >$< tr
     , txInboundTracer = show >$< tr
     , txOutboundTracer = show >$< tr
     , localTxSubmissionServerTracer = show >$< tr

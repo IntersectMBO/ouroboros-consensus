@@ -66,6 +66,7 @@ module Test.Consensus.Leios.TestBlock
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
@@ -347,15 +348,16 @@ data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
 instance ConsensusProtocol LeiosTestProtocol where
   type ChainDepState LeiosTestProtocol = ()
   type IsLeader LeiosTestProtocol = ()
-  type CanBeLeader LeiosTestProtocol = ()
+  type CanBeLeader LeiosTestProtocol = [LeiosSigningKey]
   type LedgerView LeiosTestProtocol = LeiosLedgerView
   type ValidationErr LeiosTestProtocol = LeiosTestInvalidHeader
   type ValidateView LeiosTestProtocol = Header LeiosTestBlock
 
   protocolSecurityParam = ltpcSecurityParam
 
-  -- Every node leads in every slot; the test itself decides what gets minted.
-  checkIsLeader _ _ _ _ = Just ()
+  -- No node leads; the test itself decides what gets minted. A node's
+  -- credentials are only its BLS keys, to vote.
+  checkIsLeader _ _ _ _ = Nothing
 
   tickChainDepState _ _ _ () = TickedTrivial
   updateChainDepState _ hdr _ _ = checkValidity hdr
@@ -373,6 +375,7 @@ instance LeiosProtocol LeiosTestProtocol where
   getContainsLeiosCert _proxy hdr = case lthLeiosCert hdr of
     NoLeiosTestCert -> False
     HasLeiosTestCert -> True
+  leiosBLSKeys _proxy = id
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of

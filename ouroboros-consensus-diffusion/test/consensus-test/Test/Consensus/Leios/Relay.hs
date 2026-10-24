@@ -12,7 +12,27 @@
 -- the node relays to it. The node relays a vote only once it has checked it
 -- against the committee, and only after relaying the announcement it is for,
 -- since a peer disconnects a peer that votes for an announcement it never sent.
-module Test.Consensus.Leios.Relay (tests) where
+module Test.Consensus.Leios.Relay
+  ( tests
+
+    -- * For the tests of voting
+  , Notification (..)
+  , PeerOutcome (..)
+  , PeerSpec (..)
+  , announce
+  , announceAt
+  , equivocation
+  , k
+  , ledgerConfig
+  , quorum
+  , rbHashOf
+  , runPeer
+  , seatKeys
+  , someAnnouncingBlock
+  , voteOf
+  , voteTimes
+  , votes
+  ) where
 
 import Cardano.Crypto.DSIGN.Class (signDSIGN, verifyDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
