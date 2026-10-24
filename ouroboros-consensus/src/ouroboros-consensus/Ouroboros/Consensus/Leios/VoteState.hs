@@ -26,7 +26,6 @@ module Ouroboros.Consensus.Leios.VoteState
   , TraceLeiosVoteState (..)
   , AddVoteResult (..)
   , addVote
-  , voteRelay
   , votePruner
 
     -- * The votes kept
@@ -46,9 +45,7 @@ import Cardano.Crypto.Leios
   , leiosSignContext
   , resolveLeiosSeat
   )
-import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import Control.Monad (forever, unless, when)
-import Control.Monad.Class.MonadTimer.SI (MonadTimer, registerDelay)
+import Control.Monad (forever, when)
 import Control.Tracer (Tracer, traceWith)
 import Data.Either (isRight)
 import Data.Map.Strict (Map)
@@ -57,11 +54,10 @@ import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, Header, SlotNo)
+import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, SlotNo)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
-  , diffRelTime
   )
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, hasAnnouncement)
 import Ouroboros.Consensus.Leios.NotifyLog
@@ -81,21 +77,15 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , StrictTVar
   , atomically
-  , check
   , modifyTVar
   , newTVarIO
   , readTVar
-  , writeTVar
   )
-import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | The node's votes, and where it learns which announcements it relays and
 -- relays the votes.
 data VoteState m blk = MkVoteState
   { votes :: !(StrictTVar m Votes)
-  , held :: !(StrictTVar m (Map RelativeTime [NotifyEntry blk]))
-  -- ^ The votes accepted before their window opened, by when it opens, the
-  -- latest accepted first; see 'voteRelay'.
   , announceState :: !(AnnounceState m blk)
   -- ^ Which announcements the node relays, as it relays only votes for those.
   , relayLog :: !(NotifyLog m blk)
@@ -104,12 +94,11 @@ data VoteState m blk = MkVoteState
   }
 
 newVoteState ::
-  (IOLike m, NoThunks (Header blk)) =>
+  IOLike m =>
   Tracer m TraceLeiosVoteState -> AnnounceState m blk -> NotifyLog m blk -> m (VoteState m blk)
 newVoteState tracer' announceState' notifyLog =
   MkVoteState
     <$> newTVarIO (MkVotes (RelativeTime 0) Map.empty)
-    <*> newTVarIO Map.empty
     <*> pure announceState'
     <*> pure notifyLog
     <*> pure tracer'
@@ -135,13 +124,14 @@ data AddVoteResult
   | -- | Its seat has no key in the committee, or its signature does not verify
     -- under it.
     VoteInvalid
-  | -- | The node keeps the vote and relays it, once its window opens if it has
-    -- not yet; see 'voteRelay'.
+  | -- | The node keeps the vote and relays it.
     Added
   deriving stock (Eq, Show)
 
 -- | Add a vote, if it is the first valid vote of its seat in its election, for
 -- an announcement the node relays, and the node has it by its deadline.
+--
+-- The vote's window must have opened; see 'awaitVoteRelayWindow'.
 --
 -- The signature is verified between two transactions, so that a retry does
 -- not repeat a BLS verification. As verifying takes time, the second checks
@@ -179,9 +169,8 @@ addVote st systemTime accepted = do
                   pure ArrivedTooLate
               | otherwise -> do
                   recordVote st accepted
-                  if now < relayFrom voteRelayWindow
-                    then holdVote st (relayFrom voteRelayWindow) entry
-                    else relay entry
+                  appendNotifyLog (relayLog st) $
+                    MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
                   pure Added
   when (result == ArrivedTooLate) $
     traceWith (tracer st) (TraceLeiosVoteArrivedTooLate acceptedVote)
@@ -193,38 +182,6 @@ addVote st systemTime accepted = do
     , voteCommittee
     , voteRelayWindow
     } = accepted
-
-  entry = MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
-
-  relay = appendNotifyLog (relayLog st)
-
--- | Relay each held vote once its window opens by our clock, as a downstream
--- peer whose clock is behind ours could reject it earlier.
-voteRelay ::
-  (IOLike m, MonadTimer m) =>
-  VoteState m blk -> SystemTime m -> m Void
-voteRelay st systemTime = forever $ do
-  now <- systemTimeCurrent systemTime
-  next <- atomically $ do
-    (opened, stillHeld) <- Map.spanAntitone (<= now) <$> readTVar (held st)
-    unless (Map.null opened) $ do
-      writeTVar (held st) stillHeld
-      mapM_ (appendNotifyLog (relayLog st)) (concatMap reverse (Map.elems opened))
-    pure (fst <$> Map.lookupMin stillHeld)
-  opens <- case next of
-    Nothing -> pure (pure False)
-    Just at -> LazySTM.readTVar <$> registerDelay (nominalDelay (diffRelTime at now))
-  -- Until then, or until a vote is held whose window opens sooner.
-  atomically $ do
-    isOpen <- opens
-    soonest <- fmap fst . Map.lookupMin <$> readTVar (held st)
-    check (isOpen || maybe False (\at -> maybe True (at <) next) soonest)
-
--- | Hold a vote back until its window opens; see 'voteRelay'.
-holdVote ::
-  IOLike m =>
-  VoteState m blk -> RelativeTime -> NotifyEntry blk -> STM m ()
-holdVote st opens entry = modifyTVar (held st) (Map.insertWith (<>) opens [entry])
 
 -- | Whether the vote's seat has a key in the committee, and the signature
 -- verifies under it.
