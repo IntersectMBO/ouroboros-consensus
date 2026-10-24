@@ -16,6 +16,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   , ExnLeiosNotifyInvalidVotes (..)
   , AcceptedVote (..)
   , checkLeiosVotes
+  , awaitVoteRelayWindow
   , VoteRelayWindow (..)
   , leiosVoteRelayWindow
   , voteLateGrace
@@ -55,7 +56,7 @@ import Ouroboros.Consensus.Block
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime
-  , SystemTime
+  , SystemTime (..)
   , addRelTime
   , diffRelTime
   )
@@ -91,7 +92,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, atomically)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, MonadDelay (threadDelay), atomically)
+import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -481,6 +483,17 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
    where
     rbHash = voteAnnouncingRbHash vote
     seat = voteSeatId vote
+
+-- | Wait for the window of a vote that 'checkLeiosVotes' accepted early, within
+-- the clock skew, as ChainSync does for a header from the near future: a
+-- downstream peer whose clock is behind ours could reject it earlier. That
+-- holds up the peer, but a peer whose clock is ahead sends its announcements
+-- just as early.
+awaitVoteRelayWindow :: IOLike m => SystemTime m -> AcceptedVote -> m ()
+awaitVoteRelayWindow systemTime MkAcceptedVote{voteRelayWindow} = do
+  now <- systemTimeCurrent systemTime
+  when (now < relayFrom voteRelayWindow) $
+    threadDelay (nominalDelay (diffRelTime (relayFrom voteRelayWindow) now))
 
 -- | How much later than its deadline a vote may arrive without the node
 -- disconnecting the peer: enough for transmission, clock skew, and votes queued

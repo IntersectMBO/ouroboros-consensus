@@ -278,12 +278,6 @@ tests =
         down <- relayToOne 0 [[announce someAnnouncingBlock, (2.5, NotifyVotes early)]]
         votes down @?= toList early
         voteTimes down @?= map (const (Time 4)) (toList early)
-    , testCase "an early vote does not hold back an announcement from the same peer" $ do
-        down <-
-          relayToOne
-            0
-            [[announce someAnnouncingBlock, (2.5, vote someAnnouncingBlock 0), announceAt 3 equivocation]]
-        [at | (at, NotifyAnnouncement hdr) <- poReceived down, hdr == ltbHeader equivocation] @?= [Time 3]
     , testCase "a peer that connects during a vote's window receives the vote" $ do
         down <- relayToOne 6 [votedFor0]
         votes down @?= [voteOf someAnnouncingBlock 0]
@@ -421,9 +415,13 @@ prop_relay peers =
 
   -- At the latest, the node verifies every vote, each taking the whole
   -- verifying time.
-  latestFinish = snd . mapAccumL (\done (at, v) -> let done' = max done at + verifying in (done', (done', v))) 0
+  latestFinish =
+    snd
+      . mapAccumL (\done (at, v) -> let done' = max done (start at v) + verifying in (done', (done', v))) 0
   -- At the earliest, a vote the node relays was verified as soon as it arrived.
-  earliestFinish = map (\(at, v) -> (at + verifying, v))
+  earliestFinish = map (\(at, v) -> (start at v + verifying, v))
+  -- The node waits for a vote's window to open.
+  start at v = max at (fst (windowOf (fst (electionSeat v))))
   verifying = nodeVerifying peers
 
   electionSeat v = (announcedSlot Map.! voteAnnouncingRbHash v, leiosSeatIndex (voteSeatId v))
@@ -441,11 +439,16 @@ prop_relay peers =
 
 -- | The deadline of the votes of an election slot.
 deadlineOf :: SlotNo -> DiffTime
-deadlineOf slot = realToFrac deadline
+deadlineOf = snd . windowOf
+
+-- | When the window of the votes of an election slot opens, and their
+-- deadline.
+windowOf :: SlotNo -> (DiffTime, DiffTime)
+windowOf slot = (realToFrac opens, realToFrac deadline)
  where
-  RelativeTime deadline =
+  MkVoteRelayWindow (RelativeTime opens) (RelativeTime deadline) =
     -- One-second slots, the first starting when the run begins.
-    relayUntil (leiosVoteRelayWindow leiosLedgerView (RelativeTime (fromIntegral (unSlotNo slot))))
+    leiosVoteRelayWindow leiosLedgerView (RelativeTime (fromIntegral (unSlotNo slot)))
 
 -- | Why an honest peer's client would disconnect the node for this stream, if
 -- it would: an announcement must be neither a repeat nor the third of its
