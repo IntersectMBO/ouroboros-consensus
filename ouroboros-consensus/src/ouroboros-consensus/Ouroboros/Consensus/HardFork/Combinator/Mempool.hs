@@ -25,6 +25,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Identity
@@ -35,6 +36,7 @@ import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Tele
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -47,6 +49,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -595,6 +598,34 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
       I blk ->
       K [GenTx (HardForkBlock xs)] blk
     aux index = K . map (injectNS' (Proxy @GenTx) index) . extractTxs . unI
+
+{-------------------------------------------------------------------------------
+  Endorser blocks
+-------------------------------------------------------------------------------}
+
+-- | A closure is in the era of the announcing block's ledger state.
+instance
+  ( CanHardFork xs
+  , HasCanonicalTxIn xs
+  , HasHardForkTxOut xs
+  , All LedgerSupportsEndorserBlocks xs
+  ) =>
+  LedgerSupportsEndorserBlocks (HardForkBlock xs)
+  where
+  decodeEbTx ::
+    forall mk.
+    TickedLedgerState (HardForkBlock xs) mk ->
+    ByteString ->
+    Either Text (GenTx (HardForkBlock xs))
+  decodeEbTx (TickedHardForkLedgerState _transition hardForkState) bytes =
+    hcollapse $ hcimap (Proxy @LedgerSupportsEndorserBlocks) decodeIn hardForkState
+   where
+    decodeIn ::
+      LedgerSupportsEndorserBlocks x =>
+      Index xs x ->
+      FlipTickedLedgerState mk x ->
+      K (Either Text (GenTx (HardForkBlock xs))) x
+    decodeIn index (FlipTickedLedgerState st) = K $ injectGenTx index <$> decodeEbTx st bytes
 
 {-------------------------------------------------------------------------------
   Auxiliary

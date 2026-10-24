@@ -77,6 +77,7 @@ import Cardano.Ledger.Binary
   , FromCBOR (..)
   , FullByteString (..)
   , ToCBOR (..)
+  , decodeFullAnnotator
   )
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError))
 import qualified Cardano.Ledger.Conway.PParams as SL
@@ -100,10 +101,13 @@ import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
+import Data.Bifunctor (bimap)
+import qualified Data.ByteString.Lazy as BSL
 import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure, zero)
+import qualified Data.Text as Text
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
@@ -114,6 +118,7 @@ import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Leios.Types as Leios
@@ -229,6 +234,19 @@ instance
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
+
+-- | An endorsed transaction is encoded as in a block of the era.
+instance
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
+  LedgerSupportsEndorserBlocks (ShelleyBlock proto era)
+  where
+  decodeEbTx _tlst bytes =
+    bimap (Text.pack . show) mkShelleyTx $
+      decodeFullAnnotator
+        (L.eraProtVerLow @era)
+        (Text.pack "endorsed transaction")
+        decCBOR
+        (BSL.fromStrict bytes)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
