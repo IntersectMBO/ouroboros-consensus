@@ -60,6 +60,7 @@ import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..))
+import Control.Concurrent.Class.MonadSTM.Strict (dupTChan, newBroadcastTChan, readTChan, writeTChan)
 import Control.DeepSeq (NFData)
 import Control.Monad.IOSim (IOSim)
 import Control.Monad.State.Strict (evalState, state)
@@ -95,7 +96,7 @@ import Ouroboros.Consensus.HeaderValidation (certifiedLeiosAnnouncement)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (BytesSize)
+import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -228,6 +229,8 @@ data NodeUnderTest m = NodeUnderTest
   -- acquires, as the node's LeiosFetch would.
   , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
   -- ^ The peers the node has a connection to.
+  , nodeAcquiredClosure :: LeiosPoint -> STM m ()
+  -- ^ Tell the node it acquired the closure at a point, as LeiosFetch will.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -339,8 +342,10 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+        closures <- atomically newBroadcastTChan
         kernelArgs <-
-          nodeKernelArgsEnforceInvariants
+          (\args -> args{subscribeLeiosClosures = readTChan <$> atomically (dupTChan closures)})
+            . nodeKernelArgsEnforceInvariants
             . (\args -> args{leiosAnnouncementAgeLimits = nodeConfigAnnouncementAgeLimits cfg})
             <$> mkNodeKernelArgs
               kernelRegistry
@@ -415,6 +420,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             , nodeSeeds = seeds
             , nodeLeiosAcquisitions = leiosAcquisitions
             , nodeConnectedPeers = connectedPeers
+            , nodeAcquiredClosure = writeTChan closures
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.

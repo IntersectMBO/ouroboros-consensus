@@ -1069,6 +1069,8 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , -- Nothing tells of acquired closures yet, as in 'mkNodeKernelArgs'.
+                subscribeLeiosClosures = pure retry
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck

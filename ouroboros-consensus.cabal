@@ -215,6 +215,7 @@ library
     Ouroboros.Consensus.Leios.TxCache.Reference
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
+    Ouroboros.Consensus.Leios.Voting
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -1583,6 +1584,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.TxCache.Reference
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
+    Test.Consensus.Leios.Voting
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.NodeKernel
     Test.Consensus.PeerSimulator.BlockFetch
