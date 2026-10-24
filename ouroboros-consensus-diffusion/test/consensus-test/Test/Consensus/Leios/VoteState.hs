@@ -70,7 +70,7 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
         st <- newVoteState nullTracer announceState notifyLog
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
-          pruneVotes st at
+          _expired <- pruneVotes st at
           either (const Nothing) (const (Just (at, slot, voteSeatId vote)))
             <$> recordVote st (accepted slot vote)
         kept' <- atomically (currentVotes st)
@@ -94,6 +94,7 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
       { acceptedVote = vote
       , voteElectionSlot = slot
       , voteCommittee = emptyLeiosCommittee
+      , voteQuorum = 1
       , voteWindow = MkVoteWindow (slotStart slot) (voteUntilOf slot)
       }
 
