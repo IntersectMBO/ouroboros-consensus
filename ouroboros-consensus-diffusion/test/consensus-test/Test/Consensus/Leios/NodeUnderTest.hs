@@ -57,6 +57,7 @@ import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..))
+import Control.Concurrent.Class.MonadSTM.Strict (dupTChan, newBroadcastTChan, readTChan, writeTChan)
 import Control.DeepSeq (NFData)
 import Control.Monad.IOSim (IOSim)
 import Control.Monad.State.Strict (evalState, state)
@@ -87,7 +88,7 @@ import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (BytesSize)
+import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -198,6 +199,8 @@ data NodeUnderTest m = NodeUnderTest
   , nodeApps :: BlockNodeToNodeVersion Blk -> NodeApps m
   , nodeVersions :: NodeVersions m
   , nodeSeeds :: Seeds StdGen
+  , nodeAcquiredClosure :: LeiosPoint -> STM m ()
+  -- ^ Tell the node it acquired the closure at a point, as LeiosFetch will.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -292,8 +295,10 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+        closures <- atomically newBroadcastTChan
         kernelArgs <-
-          nodeKernelArgsEnforceInvariants
+          (\args -> args{subscribeLeiosClosures = readTChan <$> atomically (dupTChan closures)})
+            . nodeKernelArgsEnforceInvariants
             <$> mkNodeKernelArgs
               kernelRegistry
               (mkUnsafeSalt (fst (random (seedBlockFetchSalt seeds))))
@@ -356,6 +361,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   (supportedNodeToNodeVersions (Proxy @Blk))
                   apps
             , nodeSeeds = seeds
+            , nodeAcquiredClosure = writeTChan closures
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.

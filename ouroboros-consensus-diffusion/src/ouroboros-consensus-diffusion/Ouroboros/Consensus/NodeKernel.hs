@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -69,7 +70,10 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , pruneNotifyLog
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
+import Ouroboros.Consensus.Leios.Voting (LeiosVoterEnv (..), runLeiosVoter)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -109,9 +113,11 @@ import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
+  , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , openWriter
   , storeForgedEb
+  , withReader
   )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
@@ -246,6 +252,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , chainDB :: ChainDB m blk
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
+  , subscribeLeiosClosures :: m (STM m LeiosPoint)
+  -- ^ Subscribe to the points whose closure the node acquires from now on,
+  -- each once.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
   , maxClockSkew :: ClockSkew
@@ -288,6 +297,7 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , subscribeLeiosClosures
     , initChainDB
     , blockFetchConfiguration
     , btime
@@ -405,10 +415,6 @@ initNodeKernel
               (cschcMap varChainSyncHandles)
               varLoEFragment
 
-    void $
-      forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
-
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
     void $
@@ -431,6 +437,24 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
+
+    let leiosVoterEnv =
+          MkLeiosVoterEnv
+            { voterConfig = cfg
+            , voterChainDB = chainDB
+            , voterClosure = \point -> withReader leiosDB $ \reader -> lookupEbClosure reader point
+            , voterAnnounceState = leiosAnnounceState
+            , voterVoteState = leiosVoteState
+            , voterSystemTime = systemTime
+            , voterTracer = leiosVotingTracer tracers
+            }
+    void $
+      forkLinkedThread registry "NodeKernel.blockForging" $
+        blockForgingController
+          st
+          leiosVoterEnv
+          subscribeLeiosClosures
+          (LazySTM.takeTMVar blockForgingVar)
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -473,15 +497,17 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
+      LeiosVoterEnv m blk ->
+      m (STM m LeiosPoint) ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st getBlockForging = go []
+    blockForgingController st leiosVoterEnv subscribeClosures getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st) blockForging
+        blockForging' <- traverse (forkBlockForging st leiosVoterEnv subscribeClosures) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -610,32 +636,40 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
+-- | Forge with a set of credentials, and vote with its BLS keys, if any.
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
+  LeiosVoterEnv m blk ->
+  -- | Subscribe to the points whose closure the node acquires
+  m (STM m LeiosPoint) ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} (MkBlockForging blockForgingM) =
-  forkLinkedWatcherAllocate
-    registry
-    label
-    allocateForging
-    finalizeForging
-    ( \(bf, leiosDbWriter) -> knownSlotWatcher btime $
-        \currentSlot ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              cfg
-              chainDB
-              mempool
-              bf
-              (storeForgedEb leiosDbWriter . blockSlot)
-              currentSlot
-    )
+forkBlockForging IS{..} leiosVoterEnv subscribeClosures (MkBlockForging blockForgingM) =
+  forkLinkedThread registry label $ do
+    (key, (bf, leiosDbWriter)) <- allocate registry (const allocateForging) finalizeForging
+    withWatcher label (forging bf leiosDbWriter) (voting bf) `finally` release key
  where
+  forging bf leiosDbWriter = knownSlotWatcher btime $
+    \currentSlot ->
+      withEarlyExit_ $
+        forge
+          (forgeTracer tracers)
+          (forgeStateInfoTracer tracers)
+          cfg
+          chainDB
+          mempool
+          bf
+          (storeForgedEb leiosDbWriter . blockSlot)
+          currentSlot
+
+  voting bf =
+    case leiosBLSKeys (Proxy @(BlockProtocol blk)) (canBeLeader bf) of
+      -- Nothing to vote with.
+      [] -> forever $ threadDelay 86400
+      keys -> runLeiosVoter leiosVoterEnv keys =<< subscribeClosures
+
   label :: String
   label = "NodeKernel.blockForging"
 
