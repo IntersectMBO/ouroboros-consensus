@@ -76,8 +76,9 @@ deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)
 -- | A notification, with until when it is worth relaying.
 data NotifyEntry blk = MkNotifyEntry
   { notifyUntil :: !RelativeTime
-  -- ^ After this, a downstream peer could reject the notification, or have no
-  -- use for it.
+  -- ^ After this, the notification is of no use to a downstream peer: a vote's
+  -- deadline, or when an announcement is too old to relay. Either leaves a
+  -- grace, for transmission and queueing, before the peer would reject it.
   , notification :: !(Notification blk)
   }
   deriving stock Generic

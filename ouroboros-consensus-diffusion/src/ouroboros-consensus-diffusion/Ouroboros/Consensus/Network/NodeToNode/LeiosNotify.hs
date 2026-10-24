@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
@@ -16,7 +17,6 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
-import Control.Monad ((>=>))
 import Control.Monad.Except (Except, runExcept, runExceptT)
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (for_)
@@ -143,14 +143,15 @@ leiosNotifyClient
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
-            for_ accepted $
-              -- Traced only when added, not per duplicate arrival.
-              addVote voteState systemTime >=> \case
-                Added vote ->
-                  traceWith tracer (TraceLeiosNotifyClientVoteAdded vote)
-                VoteInvalid vote ->
-                  throwIO $ ExnLeiosInvalidVote (voteAnnouncingRbHash vote) (voteSeatId vote)
-                Expired -> pure ()
+            for_ accepted $ \vote@MkAcceptedVote{acceptedVote} ->
+              addVote voteState systemTime vote >>= \case
+                -- Traced only when added, not per duplicate arrival.
+                Added ->
+                  traceWith tracer (TraceLeiosNotifyClientVoteAdded acceptedVote)
+                VoteInvalid ->
+                  throwIO $
+                    ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
+                ArrivedTooLate -> pure ()
                 AlreadyKnown -> pure ()
                 NotAnnounced -> pure ()
           MsgCanceled -> pure ()
