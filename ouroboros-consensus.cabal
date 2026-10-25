@@ -1013,6 +1013,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+    Test.Ouroboros.Storage.LedgerDB.V2.LSM
     Test.Ouroboros.Storage.LeiosDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB

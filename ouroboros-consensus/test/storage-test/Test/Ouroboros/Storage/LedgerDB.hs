@@ -9,6 +9,7 @@ import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
 import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicySanityCheck as SnapshotPolicySanityCheck
 import qualified Test.Ouroboros.Storage.LedgerDB.Snapshots as Snapshots
 import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
+import qualified Test.Ouroboros.Storage.LedgerDB.V2.LSM as V2.LSM
 import Test.Tasty (TestTree, testGroup)
 
 tests :: TestTree
@@ -19,4 +20,5 @@ tests =
     , Snapshots.tests
     , SnapshotPolicySanityCheck.tests
     , StateMachine.tests
+    , V2.LSM.tests
     ]
