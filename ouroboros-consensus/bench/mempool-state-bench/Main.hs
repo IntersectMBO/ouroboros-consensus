@@ -86,7 +86,7 @@ import Ouroboros.Consensus.Mempool.API
   , isMempoolTxAdded
   )
 import Ouroboros.Consensus.Mempool.Impl.Common
-  ( LedgerInterface (LedgerInterface, getCurrentLedgerState)
+  ( LedgerInterface (LedgerInterface, applyAnnouncedClosure, getCertifiedParent, getCurrentLedgerState)
   , MempoolLedgerDBView (MempoolLedgerDBView)
   )
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -442,11 +442,14 @@ latencyLedgerInterface ::
   LedgerInterface IO TestBlock
 latencyLedgerInterface cfg ledgerVar =
   LedgerInterface
-    { getCurrentLedgerState = do
+    { getCertifiedParent = \_ -> pure Nothing
+    , applyAnnouncedClosure = \_ _ _ -> pure Nothing
+    , getCurrentLedgerState = do
         st <- readTVar ledgerVar
         pure $
           MempoolLedgerDBView
             (forgetLedgerTables st)
+            Nothing
             ( pure $
                 Right $
                   ReadOnlyForker

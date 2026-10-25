@@ -57,7 +57,6 @@ data LeiosDbHandle m = LeiosDbHandle
   , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
   -- ^ New EBs and EB closures as they are stored, from the moment of
   -- subscription.
-  -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Trigger garbage collection of the LeiosDB.
   --
@@ -78,11 +77,12 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
-  -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
+  , lookupEbBody :: HasCallStack => EbHash -> m (Maybe ByteString)
+  -- ^ The EB "body" as received, in its wire encoding ('encodeLeiosEb'), to
+  -- serve as is.
   , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
-  -- not complete.
+  -- ^ The EB "closure": tx hashes /and/ their bytes, in body order, or
+  -- 'Nothing' if the EB is not complete.
   --
   -- PREREQ: the caller has established that this endorser block is
   -- trustworthy. Two things establish it: a certificate, for ChainSel applying
@@ -91,8 +91,9 @@ data LeiosDbReader m = LeiosDbReader
   -- number of bytes chosen by whoever made the endorser block.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EbHash -> [Int] -> m [(Int, ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, in ascending order: the
+  -- offsets the body declares, each with its bytes, zeroes if not written yet.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
   -- ^ Every announced EB point.
   --
@@ -120,40 +121,40 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- A point novel for a hash whose body is already stored has reached, on
   -- arrival, every milestone that body reached when it landed, so it repeats
-  -- their notifications at this point: 'AcquiredEb' at the stored body's size,
-  -- and 'AcquiredEbTxs' if the closure is already complete. Returns any EBs
-  -- whose closure this completed, which is this one in that last case. A
-  -- closure still being fetched completes at this point too, alongside the
-  -- points already tracking it.
-  --
-  -- TODO drop the size argument. Nothing here needs the size an endorser block
-  -- was announced at --- that is a peer's claim, not something the database
-  -- needs to know --- and the only size it should hold is the one its stored
-  -- body really is, which 'writeEbBody' supplies. Note that a 'LeiosPoint'
-  -- could not key an announced size even in principle: multiple elections (so:
-  -- /no equivocation/) in one slot could announce a different size for the same
-  -- EB. Dropping it leaves a point with no size until its body lands, so the
-  -- SQL schema's @ebBytesSize INTEGER NOT NULL@ has to be relaxed at the same
-  -- time.
+  -- their notifications at this point: 'AcquiredEb', and 'AcquiredEbTxs' if
+  -- the closure is already complete. Returns any EBs whose closure this
+  -- completed, which is this one in that last case.
   , writeEbBody ::
       HasCallStack =>
       LeiosPoint -> LeiosEb -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
   -- ^ Persist an EB body, and fill what it can from local bytes: each
-  --   'LocalFill' pairs an offset in this body with the 'TxLocation' of another
-  --   EB durably holding the same tx (the LeiosTxCache's tx locations), copied
-  --   in the same transaction. Returns the points this completed and the offsets
-  --   that actually filled -- a vanished source fills nothing and the tx stays
-  --   fetchable, decided by the caller from this return.
+  -- 'LocalFill' pairs an offset in this body with the 'TxLocation' of another
+  -- EB durably holding the same tx, copied in the same transaction. Returns
+  -- the points this completed and the offsets that actually filled -- a
+  -- vanished source fills nothing and the tx stays fetchable.
+  --
+  -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies for one EB, keyed by their offset into its body.
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'. Returns the
+  -- points this completed: every point announcing the EB's hash.
   --
-  --   Bytes are owned by the referencing EB (stored per @(ebHash, txOffset)@,
-  --   duplicated when EBs share a tx), so writes are sequential within the EB
-  --   rather than scattered by hash, and eviction is a range delete. Returns
-  --   the points this completed: the given EB's, plus any other point
-  --   announcing the same content hash, merely at a different slot.
+  -- No backend uses the point's slot: the tx bytes belong to the EB body,
+  -- which every point with the same EB hash shares.
+  --
+  -- Each transaction is given by its offset into the EB body and its bytes.
+  --
+  -- ASSUMPTION: the EB body must already be written, otherwise the txs are dropped.
+  --
+  -- ASSUMPTION: each transaction's bytes hash to the tx hash the EB body lists
+  -- at its offset. The implementations do not check this.
+  --
+  -- A transaction may be dropped by the implementation if:
+  -- - is not in the body,
+  -- - or its size is not the declared one.
+  --
+  -- A transaction written again overwrites itself, with the same bytes.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -161,20 +162,15 @@ data LeiosDbWriter m = LeiosDbWriter
 --
 -- 'await' rethrows whatever the write threw, in the awaiting thread, as a
 -- 'LeiosDbException' naming the write and the site that submitted it.
--- Awaiting twice is fine. Not awaiting discards the failure along with the
--- result: collect promises and 'awaitAll' them instead, unless the write's
--- fate genuinely does not matter.
+-- Awaiting twice is fine. Not awaiting does not discard a failure: a failed
+-- write is not survivable and stops the writer either way.
 newtype Promise m a = Promise {await :: m a}
   deriving stock Functor
-
--- | Await every promise, in order.
-awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
-awaitAll = traverse_ await
 
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
 
--- | A cross-EB fill: fill the EB's row at 'TxOffset' from the tx's durable
+-- | A cross-EB fill: fill the EB's tx at 'TxOffset' from the tx's durable
 -- 'TxLocation' in another EB. See 'writeEbBody'.
 type LocalFill = (TxOffset, TxLocation)
 
@@ -189,6 +185,10 @@ data LeiosEbNotification
     AcquiredEbTxs
       -- | the EB's point
       LeiosPoint
+
+-- | Await every promise, in order.
+awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
+awaitAll = traverse_ await
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader

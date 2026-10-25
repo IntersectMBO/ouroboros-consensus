@@ -167,6 +167,7 @@ import Ouroboros.Consensus.Leios.Types as LeiosTypesReexports
   , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
   , encodeRbHash
+  , hashTxBytes
   , leiosEbBodyItems
   , leiosReferencesCapacity
   , mkEbHash
@@ -1227,8 +1228,7 @@ decodeLeiosTx =
   MkLeiosTx <$> CBOR.decodeNestedCborBytes
 
 hashLeiosTx :: LeiosTx -> TxHash
-hashLeiosTx =
-  MkTxHash . Hash.hashToPackedBytes . Hash.hashWith @HASH cbor
+hashLeiosTx = hashTxBytes . cbor
 
 -- | A Dijkstra tx as a Leios endorser block carries it: the block-body
 -- encoding, whose @is_valid@ flag the mempool encoding drops.
@@ -1836,10 +1836,19 @@ jsonLeiosDb = \case
       [ "kind" .= Aeson.String "LeiosDbWriteAbandoned"
       , "job" .= job
       ]
-  TraceLeiosDbWriteJobDone job ->
+  TraceLeiosDbFillsRejected eb wanted unfilled ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbFillsRejected"
+      , "eb" .= eb
+      , "fills" .= wanted
+      , "unfilled" .= unfilled
+      ]
+  TraceLeiosDbWriteJobDone job bytes seconds ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbWriteJobDone"
       , "job" .= job
+      , "bytes" .= bytes
+      , "durationMillis" .= (seconds * 1000)
       ]
   TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
@@ -2165,6 +2174,7 @@ data LeiosKernelNS
   | LKNSDbCopyError
   | LKNSDbWriteAbandoned
   | LKNSDbWriteJobDone
+  | LKNSDbFillsRejected
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
   | LKNSFetchDecision
@@ -2198,6 +2208,7 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
   TraceLeiosDb TraceLeiosDbWriteAbandoned{} -> LKNSDbWriteAbandoned
   TraceLeiosDb TraceLeiosDbWriteJobDone{} -> LKNSDbWriteJobDone
+  TraceLeiosDb TraceLeiosDbFillsRejected{} -> LKNSDbFillsRejected
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
   TraceLeiosAnnouncementAccepted{} -> LKNSAnnouncementAccepted
@@ -2295,6 +2306,11 @@ leiosKernelNSInfo = \case
       LSWarning
       [("leiosDbWritesAbandoned", "LeiosDb: writes abandoned before being enqueued")]
   LKNSDbWriteJobDone -> LeiosNSInfo ["Db", "WriteJobDone"] LSDebug []
+  LKNSDbFillsRejected ->
+    LeiosNSInfo
+      ["Db", "FillsRejected"]
+      LSInfo
+      [("leiosDbFillsRejected", "LeiosDb: body writes with local fills that did not land")]
   LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
   LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
   LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []

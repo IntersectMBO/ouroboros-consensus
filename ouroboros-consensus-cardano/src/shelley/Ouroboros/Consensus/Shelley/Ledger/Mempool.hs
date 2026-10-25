@@ -100,6 +100,7 @@ import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
+import Cardano.Slotting.EpochInfo (epochInfoFirst)
 import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
@@ -230,6 +231,18 @@ instance
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
+
+  txSlotRange (ShelleyTx _ tx) = shelleyBasedTxSlotRange tx
+
+  -- Protocol parameters and the era only change at epoch boundaries.
+  ledgerSlotRange cfg st =
+    either (const noSlot) id $ do
+      from <- epochInfoFirst ei epoch
+      next <- epochInfoFirst ei (succ epoch)
+      pure $ SlotRange from (Just next)
+   where
+    ei = L.epochInfo (shelleyLedgerGlobals cfg)
+    epoch = SL.nesEL (tickedShelleyLedgerState st)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)

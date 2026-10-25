@@ -7,7 +7,6 @@
 -- must not run against a file that a node has open.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
   ( truncateLeiosDbAfterSlot
-  , deleteDanglingTxs
   , vacuumLeiosDb
   ) where
 
@@ -38,15 +37,15 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
  where
   deletes =
     unlines
-      [ "DELETE FROM ebTxBytes WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      [ "DELETE FROM ebClosures WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebBodies WHERE ebHashBytes IN (" <> droppedHashes <> ");"
       , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
       ]
 
   -- The EBs whose bodies the truncation drops.
   --
   -- 'ebs' holds one row per announcement, so the same EB hash can appear at
-  -- several slots. 'ebTxs' and 'ebTxBytes' hold one copy per hash and carry
+  -- several slots. 'ebBodies' and 'ebClosures' hold rows per hash and carry
   -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
   -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
   -- announced after the cut, then remove the ones also announced at or before
@@ -56,15 +55,6 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
       <> show slot
       <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
       <> show slot
-
--- | Delete the transaction bytes that no announced EB owns.
---
--- Used in tests.
-deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
-deleteDanglingTxs dbPath =
-  withExistingLeiosDbFile dbPath $ \db ->
-    dbExec db . fromString $
-      "DELETE FROM ebTxBytes WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM ebs)"
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --

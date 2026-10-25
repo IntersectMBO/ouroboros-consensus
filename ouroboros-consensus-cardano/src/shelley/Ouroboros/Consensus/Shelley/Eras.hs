@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Shelley.Eras
 
 import Cardano.Binary (FromCBOR, ToCBOR)
 import Cardano.Ledger.Allegra (AllegraEra)
+import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
 import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core as Core
@@ -54,6 +55,7 @@ import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
   )
+import Cardano.Ledger.Dijkstra.TxBody (subTransactionsTxBodyL)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -69,7 +71,8 @@ import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( WhetherToIntervene (..)
+  ( SlotRange (..)
+  , WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
@@ -153,6 +156,10 @@ class
   -- 'defaultBlockBodyContainsLeiosCert'.
   blockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
 
+  -- | The slots the transaction's validity interval admits it at, see
+  -- 'txSlotRange'.
+  shelleyBasedTxSlotRange :: Core.Tx TopTx era -> SlotRange
+
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
@@ -188,6 +195,13 @@ defaultGetConwayEraGovDict _ = Nothing
 defaultBlockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
 defaultBlockBodyContainsLeiosCert _ = False
 
+validityIntervalSlotRange :: ValidityInterval -> SlotRange
+validityIntervalSlotRange (ValidityInterval before hereafter) =
+  SlotRange (strictMaybe 0 id before) (strictMaybeToMaybe hereafter)
+
+allegraTxSlotRange :: (EraTx era, AllegraEraTxBody era) => Core.Tx l era -> SlotRange
+allegraTxSlotRange tx = validityIntervalSlotRange (tx ^. bodyTxL . vldtTxBodyL)
+
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
@@ -196,6 +210,9 @@ instance ShelleyBasedEra ShelleyEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
+  -- The TTL is the last slot the transaction is valid in.
+  shelleyBasedTxSlotRange tx = SlotRange 0 (Just (succ (tx ^. bodyTxL . L.ttlTxBodyL)))
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -206,6 +223,8 @@ instance ShelleyBasedEra AllegraEra where
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
+  shelleyBasedTxSlotRange = allegraTxSlotRange
+
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
@@ -214,6 +233,8 @@ instance ShelleyBasedEra MaryEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
+  shelleyBasedTxSlotRange = allegraTxSlotRange
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -224,6 +245,8 @@ instance ShelleyBasedEra AlonzoEra where
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
+  shelleyBasedTxSlotRange = allegraTxSlotRange
+
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
@@ -232,6 +255,8 @@ instance ShelleyBasedEra BabbageEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
+  shelleyBasedTxSlotRange = allegraTxSlotRange
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -242,6 +267,8 @@ instance ShelleyBasedEra ConwayEra where
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
   blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
+  shelleyBasedTxSlotRange = allegraTxSlotRange
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -256,6 +283,10 @@ instance ShelleyBasedEra DijkstraEra where
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
 
   blockBodyContainsLeiosCert bb = isSJust (bb ^. leiosCertBlockBodyL)
+
+  -- Each sub-transaction is only valid within its own interval too.
+  shelleyBasedTxSlotRange tx =
+    allegraTxSlotRange tx <> foldMap allegraTxSlotRange (tx ^. bodyTxL . subTransactionsTxBodyL)
 
 applyAlonzoBasedTx ::
   forall era.

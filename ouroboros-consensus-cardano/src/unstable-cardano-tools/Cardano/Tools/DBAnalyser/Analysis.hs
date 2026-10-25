@@ -1074,11 +1074,14 @@ reproMempoolForge numBlks env = do
   mempool <-
     Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState = do
+        { Mempool.getCertifiedParent = \_ -> pure Nothing
+        , Mempool.applyAnnouncedClosure = \_ _ _ -> pure Nothing
+        , Mempool.getCurrentLedgerState = do
             st <- LedgerDB.getVolatileTip ledgerDB
             pure $
               MempoolLedgerDBView
                 (ledgerState st)
+                Nothing
                 ( fmap (fmap LedgerDB.ledgerStateReadOnlyForker) $
                     LedgerDB.openReadOnlyForker ledgerDB (SpecificPoint (castPoint $ getTip st))
                 )

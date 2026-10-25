@@ -35,6 +35,20 @@ data TraceLeiosDb
     TraceLeiosDbWriteJobDone
       -- | the job
       String
+      -- | bytes of EB bodies and txs it was handed
+      Int
+      -- | seconds the writer spent on it
+      Double
+  | -- | A body write's local fills that did not land, so their txs are
+    -- fetched instead: the source no longer or not yet holds the bytes, or
+    -- the tx cache located them wrongly.
+    TraceLeiosDbFillsRejected
+      -- | the EB
+      String
+      -- | offsets the fills were for
+      Int
+      -- | of those, the offsets left unfilled
+      Int
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
   | -- | The background copier committed EBs' closures to the immutable

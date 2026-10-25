@@ -837,7 +837,7 @@ initInternalState
     mempool <-
       openMempool
         registry
-        (chainDBLedgerInterface chainDB)
+        (chainDBLedgerInterface (configLedger cfg) leiosDB chainDB)
         (configLedger cfg)
         mempoolCapacityOverride
         mempoolTimeoutConfig

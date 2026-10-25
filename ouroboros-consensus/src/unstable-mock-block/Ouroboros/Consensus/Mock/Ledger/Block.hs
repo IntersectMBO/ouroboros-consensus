@@ -661,6 +661,13 @@ instance
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
+  txSlotRange (SimpleGenTx (Mock.Tx expiry _ _) _) = case expiry of
+    Mock.DoNotExpire -> anySlot
+    Mock.ExpireAtOnsetOf s -> SlotRange 0 (Just s)
+
+  -- Ticking changes nothing a transaction's validity depends on.
+  ledgerSlotRange _ _ = anySlot
+
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
   type TxMeasurePhase2 (SimpleBlock c ext) = TrivialTxMeasurePhase2

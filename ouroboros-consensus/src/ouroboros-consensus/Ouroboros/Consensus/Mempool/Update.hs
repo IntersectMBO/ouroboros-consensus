@@ -15,14 +15,14 @@ module Ouroboros.Consensus.Mempool.Update
   , implSyncWithLedger
   ) where
 
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
@@ -33,6 +33,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
+import Ouroboros.Consensus.Mempool.CertifyingView
+  ( buildCertifyingView
+  , catchUpCertifyingView
+  , promoteCertifyingView
+  , removeFromCertifyingView
+  )
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
@@ -205,125 +211,126 @@ doAddTx mpEnv caller wti tx = do
             Nothing -> pure ()
             Just prevSize -> check $ isMempoolSize is /= prevSize
 
-    eRes <- withSVarAnd istate additionalCheck $
-      \is () ->
-        case runExcept $ txMeasurePhase1 cfg (forgetLedgerTables $ isLedgerState is) tx of
-          Left err ->
-            -- The transaction does not have a valid measure (eg its ExUnits is
-            -- greater than what this ledger state allows for a single transaction).
-            pure
-              ( Right
-                  ( TransactionProcessingResult
-                      Nothing
-                      (MempoolTxRejected tx err)
-                      ( TraceMempoolRejectedTx
-                          tx
-                          err
-                          MempoolRejectedByLedger
-                          (isMempoolSize is)
-                      )
-                  )
-              , is
-              )
-          Right txsz1
-            | let currentSize = TxSeq.toSize (isTxs is)
-            , not $
-                currentSize
-                  Measure.<= currentSize
-                  `Measure.plus` MempoolMeasure (TxMeasure txsz1 Measure.zero) Measure.zero Measure.zero ->
-                pure (Left (isMempoolSize is), is)
-            | let MempoolMeasure{mmTxMeasure} = TxSeq.toSize (isTxs is)
-            , not $ mmTxMeasure `Measure.plus` (TxMeasure txsz1 Measure.zero) Measure.<= isCapacity is ->
-                pure (Left (isMempoolSize is), is)
-            | otherwise -> do
-                -- NOTE: the input read and the full validation ('pureTryAddTx') both run
-                -- under the lock, serialising ingestion. They could move off it
-                -- (validate optimistically against a snapshot, then only reapply under
-                -- the lock) to parallelise adds; see the 'ch1bo/high-throughput-mempool-
-                -- ingest' branch. Deferred as ingestion is not the current bottleneck.
-                frkr <- readMVar forker
-                tbs <- roforkerReadTables frkr (getTransactionKeySets tx)
-                before <- getMonotonicTime
-                mbX <- do
-                  let f m = case mbToCfg of
-                        Nothing -> Just <$> m
-                        Just toCfg -> timeout (mempoolTimeoutHard toCfg) m
-                  f $ do
-                    x <- evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs txsz1
-                    case (caller, x) of
-                      (TestingAddTx testDiffTime, Processed{}) -> do
-                        after <- getMonotonicTime
-                        let sofar = after `diffTime` before
-                        threadDelay $ testDiffTime - min testDiffTime sofar
-                      -- Note that @sofar == 0@ always and this 'threadDelay' would
-                      -- be perfectly precise in the @IOSim@ monad. Unfortunately,
-                      -- the state machines tests are still only in IO.
-                      _ -> pure ()
-                    pure x
-                dur <- do
-                  -- Note that both the hard 'timeout' and the soft duration check use
-                  -- the actual monotonic clock measurements instead of simply
-                  -- deferring to 'TestingAddTx'. This means the test will fail if the
-                  -- 'timeout' and the monotonic clock measurement primitives are not
-                  -- as precise as the test expects (recall that the test suite chooses
-                  -- intended validation times that are not "too close" to the
-                  -- thresholds).
-                  after <- getMonotonicTime
-                  pure $ after `diffTime` before
-                let rejectBecauseOfTimeoutSoft txerr = do
-                      let outcome =
-                            TransactionProcessingResult
-                              Nothing
-                              (MempoolTxRejected tx txerr)
-                              $ TraceMempoolRejectedTx
-                                tx
-                                txerr
-                                (MempoolRejectedByTimeoutSoft dur)
-                                (isMempoolSize is)
-                      pure (Right outcome, is)
-                    mbTimeoutSoftTxErr =
-                      -- This @txerr@ is not available in historical Cardano eras, but
-                      -- it is starting from Conway. So this rejection will be disabled
-                      -- prior to Conway. Which is irrelevant, since mainnet is already
-                      -- in Conway.
-                      let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-                       in mkMempoolApplyTxError (isLedgerState is) txt
-                case mbX of
-                  Nothing -> case (wti, mbTimeoutSoftTxErr) of
-                    (Intervene, Just txerr) -> do
-                      rejectBecauseOfTimeoutSoft txerr
-                    _ -> do
-                      -- Either they're not a local client or the era doesn't allow for
-                      -- soft rejections.
-                      throwIO $ MkExnMempoolTimeout dur tx
-                  Just _
-                    | Just toCfg <- mbToCfg
-                    , dur > mempoolTimeoutSoft toCfg
-                    , Just txerr <- mbTimeoutSoftTxErr -> do
-                        rejectBecauseOfTimeoutSoft txerr
-                  Just NotEnoughSpaceLeft -> do
-                    pure (Left (isMempoolSize is), is)
-                  Just (NotProcessed outcome) -> do
-                    let TransactionProcessingResult is' _ _ = outcome
-                    pure (Right outcome, fromMaybe is is')
-                  Just (Processed mkResult) -> do
-                    let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
-                          ProductionAddTx -> dur
-                          TestingAddTx testDiffTime ->
-                            -- For the sake of an accurate cumulative measure, pretend
-                            -- the tx took exactly as long to validate as the test
-                            -- suite intended.
-                            --
-                            -- Note that @testDiffTime == dur@ always in @IOSim@.
-                            -- Unfortunately, the state machines tests are still only
-                            -- in IO.
-                            testDiffTime
-                        TransactionProcessingResult is' _ _ = outcome
-                    pure (Right outcome, fromMaybe is is')
+    eRes <- withSVarAnd istate additionalCheck $ \is () -> addTo is
     case (caller, eRes) of
       (ProductionAddTx, _) -> either (doAddTx' . Just) (pure . Identity) eRes
       (TestingAddTx _, Left _) -> pure Nothing
       (TestingAddTx _, Right x) -> pure $ Just x
+   where
+    addTo is =
+      case runExcept $ txMeasurePhase1 cfg (forgetLedgerTables $ isLedgerState is) tx of
+        Left err ->
+          -- The transaction does not have a valid measure (eg its ExUnits is
+          -- greater than what this ledger state allows for a single transaction).
+          pure
+            ( Right
+                ( TransactionProcessingResult
+                    Nothing
+                    (MempoolTxRejected tx err)
+                    ( TraceMempoolRejectedTx
+                        tx
+                        err
+                        MempoolRejectedByLedger
+                        (isMempoolSize is)
+                    )
+                )
+            , is
+            )
+        Right txsz1
+          | let currentSize = TxSeq.toSize (isTxs is)
+          , not $
+              currentSize
+                Measure.<= currentSize
+                `Measure.plus` MempoolMeasure (TxMeasure txsz1 Measure.zero) Measure.zero Measure.zero ->
+              pure (Left (isMempoolSize is), is)
+          | let MempoolMeasure{mmTxMeasure} = TxSeq.toSize (isTxs is)
+          , not $ mmTxMeasure `Measure.plus` (TxMeasure txsz1 Measure.zero) Measure.<= isCapacity is ->
+              pure (Left (isMempoolSize is), is)
+          | otherwise -> do
+              -- NOTE: the input read and the full validation ('pureTryAddTx') both run
+              -- under the lock, serialising ingestion. They could move off it
+              -- (validate optimistically against a snapshot, then only reapply under
+              -- the lock) to parallelise adds; see the 'ch1bo/high-throughput-mempool-
+              -- ingest' branch. Deferred as ingestion is not the current bottleneck.
+              frkr <- readMVar forker
+              tbs <- roforkerReadTables frkr (getTransactionKeySets tx)
+              before <- getMonotonicTime
+              mbX <- do
+                let f m = case mbToCfg of
+                      Nothing -> Just <$> m
+                      Just toCfg -> timeout (mempoolTimeoutHard toCfg) m
+                f $ do
+                  x <- evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs txsz1
+                  case (caller, x) of
+                    (TestingAddTx testDiffTime, Processed{}) -> do
+                      after <- getMonotonicTime
+                      let sofar = after `diffTime` before
+                      threadDelay $ testDiffTime - min testDiffTime sofar
+                    -- Note that @sofar == 0@ always and this 'threadDelay' would
+                    -- be perfectly precise in the @IOSim@ monad. Unfortunately,
+                    -- the state machines tests are still only in IO.
+                    _ -> pure ()
+                  pure x
+              dur <- do
+                -- Note that both the hard 'timeout' and the soft duration check use
+                -- the actual monotonic clock measurements instead of simply
+                -- deferring to 'TestingAddTx'. This means the test will fail if the
+                -- 'timeout' and the monotonic clock measurement primitives are not
+                -- as precise as the test expects (recall that the test suite chooses
+                -- intended validation times that are not "too close" to the
+                -- thresholds).
+                after <- getMonotonicTime
+                pure $ after `diffTime` before
+              let rejectBecauseOfTimeoutSoft txerr = do
+                    let outcome =
+                          TransactionProcessingResult
+                            Nothing
+                            (MempoolTxRejected tx txerr)
+                            $ TraceMempoolRejectedTx
+                              tx
+                              txerr
+                              (MempoolRejectedByTimeoutSoft dur)
+                              (isMempoolSize is)
+                    pure (Right outcome, is)
+                  mbTimeoutSoftTxErr =
+                    -- This @txerr@ is not available in historical Cardano eras, but
+                    -- it is starting from Conway. So this rejection will be disabled
+                    -- prior to Conway. Which is irrelevant, since mainnet is already
+                    -- in Conway.
+                    let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
+                     in mkMempoolApplyTxError (isLedgerState is) txt
+              case mbX of
+                Nothing -> case (wti, mbTimeoutSoftTxErr) of
+                  (Intervene, Just txerr) -> do
+                    rejectBecauseOfTimeoutSoft txerr
+                  _ -> do
+                    -- Either they're not a local client or the era doesn't allow for
+                    -- soft rejections.
+                    throwIO $ MkExnMempoolTimeout dur tx
+                Just _
+                  | Just toCfg <- mbToCfg
+                  , dur > mempoolTimeoutSoft toCfg
+                  , Just txerr <- mbTimeoutSoftTxErr -> do
+                      rejectBecauseOfTimeoutSoft txerr
+                Just NotEnoughSpaceLeft -> do
+                  pure (Left (isMempoolSize is), is)
+                Just (NotProcessed outcome) -> do
+                  let TransactionProcessingResult is' _ _ = outcome
+                  pure (Right outcome, fromMaybe is is')
+                Just (Processed mkResult) -> do
+                  let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
+                        ProductionAddTx -> dur
+                        TestingAddTx testDiffTime ->
+                          -- For the sake of an accurate cumulative measure, pretend
+                          -- the tx took exactly as long to validate as the test
+                          -- suite intended.
+                          --
+                          -- Note that @testDiffTime == dur@ always in @IOSim@.
+                          -- Unfortunately, the state machines tests are still only
+                          -- in IO.
+                          testDiffTime
+                      TransactionProcessingResult is' _ _ = outcome
+                  pure (Right outcome, fromMaybe is is')
 
 pureTryAddTx ::
   forall m blk.
@@ -342,12 +349,8 @@ pureTryAddTx ::
   LedgerTables blk ValuesMK ->
   TxMeasurePhase1 blk ->
   TriedToAddTx blk
-pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
-  let MempoolEnv
-        { mpEnvTimeoutConfig = mbToCfg
-        } = mpEnv
-
-      st =
+pureTryAddTx _mpEnv cfg wti tx is values p1TxMeasure =
+  let st =
         applyMempoolDiffs
           values
           (getTransactionKeySets tx)
@@ -430,10 +433,9 @@ pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
           | let MempoolMeasure{mmTxMeasure} = currentSize
           , not $ mmTxMeasure `Measure.plus` (TxMeasure p1TxMeasure txsz) Measure.<= isCapacity is ->
               NotEnoughSpaceLeft
-          | Just toCfg <- mbToCfg
-          , let MempoolMeasure{mmDiffTime} = currentSize
-          , not $ mmDiffTime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
-              NotEnoughSpaceLeft
+          -- No time capacity: the forge bounds the snapshot it takes in time
+          -- itself ('mempoolTimeoutCapacity' / 10), and serves most from the
+          -- cached state or the certifying view without revalidating.
           | otherwise ->
               case validateNewTransaction cfg wti tx (TxMeasure p1TxMeasure txsz) values st is of
                 (Left err, _) ->
@@ -502,6 +504,9 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
           (isLastTicketNo is)
           newGen
           toKeep
+      readTVarIO viewVar >>= \mbCv -> forM_ mbCv $ \cv -> do
+        cv' <- removeFromCertifyingView mpEnv frkr is' cv
+        atomically $ writeTVar viewVar (Just cv')
       traceWith trcr $
         TraceMempoolManuallyRemovedTxs toRemove (map getInvalidated removed) (isMempoolSize is')
       pure ((), is')
@@ -512,6 +517,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
+    , mpEnvCertifyingView = viewVar
     } = mpEnv
 
 {-------------------------------------------------------------------------------
@@ -551,7 +557,10 @@ implSyncWithLedger ::
   MempoolEnv m blk ->
   m r
 implSyncWithLedger projectResult mpEnv =
-  encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) goSync
+  encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
+    is <- goSync
+    syncCertifyingView
+    pure (projectResult is)
  where
   -- Sync with a bounded lock hold. Everything expensive is done /off the lock/,
   -- against a snapshot @is0@ taken with a non-emptying 'readTMVar' while adds
@@ -573,9 +582,8 @@ implSyncWithLedger projectResult mpEnv =
       Left is0 -> do
         -- The tip didn't change, put the same state.
         traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is0)
-        pure (projectResult is0)
+        pure is0
       Right (getForker, is0, slot, ls, tipHash0) ->
-        -- The tip changed, we have to revalidate.
         -- NOTE: The forker is closed in a bracket here because exceptions here
         -- are fatal anyways. See also 'mldViewGetForker' (the function we call
         -- here).
@@ -588,31 +596,72 @@ implSyncWithLedger projectResult mpEnv =
             traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
             goSync
           Right frk -> do
-            -- OFF-LOCK, and the tall tent pole of the whole sync: read the
-            -- snapshot's inputs and revalidate the entire mempool against the new
-            -- tip. Everything after this ('revalidateDeltas') is just a bounded
-            -- catch-up loop reapplying whatever was added or removed while this
-            -- ran, so the state lock is held only briefly at the very end.
-            --
-            -- TODO: this re-reads the entire working set from the LedgerDB on
-            -- every sync. The mempool already caches these values ('isTxValues')
-            -- at its last-synced tip; if the forker exposed the changelog diff
-            -- since that tip, we could forward the cache through it ('applyDiffs')
-            -- instead of re-reading — an O(occupancy) read becomes O(tip-diff).
-            -- Needs a LedgerDB/forker API change (discuss with UTxO-HD).
-            seed <-
-              revalidateTxsFor
-                frk
-                capacityOverride
-                cfg
-                slot
-                ls
-                (isLastTicketNo is0)
-                (isRemovalCounter is0)
-                (TxSeq.toList (isTxs is0))
+            -- OFF-LOCK, and the tall tent pole of the whole sync: a candidate
+            -- of the snapshot's txs at the new tip. A block certifying the EB
+            -- the snapshot's tip announced starts from the certifying view;
+            -- any other revalidates every tx. Everything after this
+            -- ('revalidateDeltas') is just a bounded catch-up loop reapplying
+            -- whatever was added or removed while this ran, so the state lock
+            -- is held only briefly at the very end.
+            mbPromoted <- promotion frk is0 slot ls
+            seed <- case mbPromoted of
+              Just promoted -> pure (RevalidateTxsResult promoted [])
+              -- TODO: this re-reads the entire working set from the LedgerDB on
+              -- every sync. The mempool already caches these values ('isTxValues')
+              -- at its last-synced tip; if the forker exposed the changelog diff
+              -- since that tip, we could forward the cache through it ('applyDiffs')
+              -- instead of re-reading — an O(occupancy) read becomes O(tip-diff).
+              -- Needs a LedgerDB/forker API change (discuss with UTxO-HD).
+              Nothing ->
+                revalidateTxsFor
+                  frk
+                  capacityOverride
+                  cfg
+                  slot
+                  ls
+                  (isLastTicketNo is0)
+                  (isRemovalCounter is0)
+                  (TxSeq.toList (isTxs is0))
             revalidateDeltas frk tipHash0 slot seed (0 :: Int) >>= \case
               Nothing -> goSync -- Retry if the commit found the state stale.
-              Just r -> pure r
+              Just isFinal -> do
+                when (isJust mbPromoted) $
+                  traceWith trcr $
+                    TraceMempoolSwitchedToCertifyingView (isTip isFinal) (isMempoolSize isFinal)
+                pure isFinal
+
+  -- The certifying view as the main view on a new tip that certifies the EB
+  -- the mempool's tip announced.
+  promotion frk is0 slot ls =
+    getCertifiedParent ldgrInterface (castPoint (getTip ls)) >>= \case
+      Just parent
+        | parent == pointHash (isTip is0) ->
+            readTVarIO viewVar >>= \case
+              Just cv | isTip (cvState cv) == isTip is0 -> promoteCertifyingView mpEnv frk slot ls cv
+              _ -> pure Nothing
+      _ -> pure Nothing
+
+  -- Build the certifying view for the EB the main view's tip announces, unless
+  -- it is built already. Off the lock against a snapshot, then under it catch
+  -- up with what was added meanwhile.
+  syncCertifyingView = do
+    (ledger, is, mbView) <-
+      atomically $
+        (,,) <$> getCurrentLedgerState ldgrInterface <*> readSVarSTM istate <*> readTVar viewVar
+    case mldViewAnnounced ledger of
+      Just eb
+        | castPoint (getTip (mldViewState ledger)) == isTip is
+        , maybe True (\cv -> cvEb cv /= eb || isTip (cvState cv) /= isTip is) mbView -> do
+            frk <- readMVar forkerMVar
+            buildCertifyingView mpEnv frk eb is >>= \case
+              Nothing -> pure ()
+              Just cv ->
+                withSVar istate $ \isLocked -> do
+                  when (isTip isLocked == isTip is && isRemovalCounter isLocked == isRemovalCounter is) $ do
+                    cv' <- catchUpCertifyingView mpEnv frk isLocked cv
+                    atomically $ writeTVar viewVar (Just cv')
+                  pure ((), isLocked)
+      _ -> pure ()
 
   checkTodo = atomically $ do
     view <- getCurrentLedgerState ldgrInterface
@@ -638,7 +687,7 @@ implSyncWithLedger projectResult mpEnv =
     SlotNo ->
     RevalidateTxsResult blk ->
     Int ->
-    m (Maybe r)
+    m (Maybe (InternalState blk))
   revalidateDeltas frk tipHash0 slot = go
    where
     -- The candidate is doomed the moment the tip moves or a tx is force-removed
@@ -666,7 +715,7 @@ implSyncWithLedger projectResult mpEnv =
             else
               -- Delta is small enough (or out of iterations); commit under the lock.
               withSVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-                \isLocked (MempoolLedgerDBView ls _getForker) -> do
+                \isLocked MempoolLedgerDBView{mldViewState = ls} -> do
                   -- ON-LOCK: the same staleness check, now atomic with the commit.
                   -- The off-lock checks above cannot be final: the tip can still
                   -- move between the last one and acquiring the lock. Re-reading
@@ -697,7 +746,9 @@ implSyncWithLedger projectResult mpEnv =
                           TraceMempoolCapacityChanged (isCapacity isLocked) (isCapacity isFinal)
                       -- Store the forker to be used with the new state
                       modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
-                      pure (Just (projectResult isFinal), isFinal)
+                      -- The certifying view was for the old tip.
+                      atomically $ writeTVar viewVar Nothing
+                      pure (Just isFinal, isFinal)
 
   MempoolEnv
     { mpEnvStateVar = istate
@@ -706,4 +757,5 @@ implSyncWithLedger projectResult mpEnv =
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
+    , mpEnvCertifyingView = viewVar
     } = mpEnv

@@ -37,6 +37,7 @@ import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
 import Control.Tracer (mkTracer)
 import Data.Bifunctor (first, second)
+import qualified Data.ByteString as BS
 import Data.Either (isRight)
 import Data.Functor ((<&>))
 import qualified Data.List as List
@@ -48,9 +49,11 @@ import qualified Data.Measure as Measure
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
+import Ouroboros.Consensus.Block (ChainHash, Point, WithOrigin (..), pointHash, pointSlot)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (EbHash)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..), MempoolMeasure (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
@@ -65,6 +68,7 @@ import Test.Crypto.Hash ()
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes)
 import Test.Util.Orphans.IOLike ()
 
 tests :: TestTree
@@ -95,6 +99,7 @@ tests =
         , testProperty "Invalid transactions are never added" prop_Mempool_InvalidTxsNeverAdded
         , testProperty "removeTxs" prop_Mempool_removeTxs
         , testProperty "removeTxs [..] == forM [..] removeTxs" prop_Mempool_semigroup_removeTxs
+        , testProperty "certifying view == revalidation on the closure" prop_Mempool_certifyingView
         , testProperty "result of getCapacity" prop_Mempool_getCapacity
         , -- FIXME: we should add an issue to test this aspect somehow.
           -- , testProperty "Mempool capacity implementation"              prop_Mempool_Capacity
@@ -375,10 +380,77 @@ prop_Mempool_TraceRemovedTxs setup =
     | (tx, Left err) <- fst $ validateTxs cfg ledgerState txsInMempool
     ]
 
+-- | The certifying view holds what revalidating every tx on the tip with the
+-- announced closure would, and syncing to a block certifying the EB makes it
+-- the main view, catching up with the txs added after it was built. The
+-- closure is the first half of the mempool's txs.
+prop_Mempool_certifyingView :: TestSetupWithTxs -> Property
+prop_Mempool_certifyingView TestSetupWithTxs{testSetup, txs} =
+  not (null (testInitialTxs testSetup)) ==>
+    withTestMempool testSetup $ \testMempool -> do
+      let TestMempool
+            { mempool
+            , getTraceEvents
+            , addTxsToLedger
+            , getCurrentLedger
+            , setCertifiedParent
+            , setAnnounced
+            } = testMempool
+      parent <- atomically getCurrentLedger
+      inMempool <- txsOf <$> atomically (getSnapshot mempool)
+      let closure = take (max 1 (length inMempool `div` 2)) inMempool
+          certified = either (error . show) id $ txsAreValid cfg parent closure
+      -- The tip announces the EB, and the node has its closure.
+      atomically $ setAnnounced (Just (eb, certified))
+      _ <- testSyncWithLedger mempool
+      inCertifying <-
+        maybe [] txsOf
+          <$> atomically
+            (getCertifyingSnapshotFor mempool eb (pointHash (ledgerTipPoint parent)) (succ (tipSlot parent)))
+      _ <- addTxs mempool (map fst txs)
+      inMain <- txsOf <$> atomically (getSnapshot mempool)
+      -- The block certifying the EB.
+      _ <- atomically $ addTxsToLedger closure
+      tip <- atomically $ ledgerTipPoint <$> getCurrentLedger
+      atomically $ do
+        setCertifiedParent tip (pointHash (ledgerTipPoint parent))
+        setAnnounced Nothing
+      MempoolSnapshot{snapshotTxs} <- testSyncWithLedger mempool
+      evs <- getTraceEvents
+      current <- atomically getCurrentLedger
+      pure $
+        counterexample "certifying view" (inCertifying === validOn certified inMempool)
+          .&&. counterexample "did not switch to the certifying view" (any isSwitch evs)
+          .&&. counterexample
+            "after the switch"
+            (map (txForgetValidated . prjTx) snapshotTxs === validOn current inMain)
+ where
+  cfg = testLedgerCfg testSetup
+  eb = unsafeEbHashFromBytes (BS.replicate 32 0)
+  txsOf = map (txForgetValidated . prjTx) . snapshotTxs
+  validOn st ts = [tx | (tx, Right ()) <- fst (validateTxs cfg st ts)]
+  tipSlot st = case pointSlot (ledgerTipPoint st) of
+    Origin -> 0
+    NotOrigin s -> s
+  isSwitch = \case
+    TraceMempoolSwitchedToCertifyingView{} -> True
+    _ -> False
+
 prjTx ::
   (Validated (GenTx TestBlock), TicketNo, TxMeasure TestBlock) ->
   Validated (GenTx TestBlock)
 prjTx (a, _b, _c) = a
+
+-- | A forker on the given ledger state.
+forkerOn :: IOLike m => LedgerState TestBlock ValuesMK -> ReadOnlyForker m LedgerState TestBlock
+forkerOn st =
+  ReadOnlyForker
+    { roforkerClose = pure ()
+    , roforkerReadTables = pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
+    , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+    , roforkerGetLedgerState = pure $ forgetLedgerTables st
+    , roforkerReadStatistics = pure $ Statistics 0
+    }
 
 {-------------------------------------------------------------------------------
   TestSetup: how to set up a TestMempool
@@ -736,6 +808,11 @@ data TestMempool m = TestMempool
   -- Remember to synchronise the mempool afterwards.
   , getCurrentLedger :: STM m (LedgerState TestBlock ValuesMK)
   -- ^ Return the current ledger.
+  , setCertifiedParent :: Point TestBlock -> ChainHash TestBlock -> STM m ()
+  -- ^ Make the block at the point certify the EB its parent announced.
+  , setAnnounced :: Maybe (EbHash, LedgerState TestBlock ValuesMK) -> STM m ()
+  -- ^ Make the tip announce an EB whose closure the node has, with the ledger
+  -- state its closure leads to.
   }
 
 withTestMempool ::
@@ -781,24 +858,29 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   setUpAndRun = do
     -- Set up the LedgerInterface
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
+    varCertifiedParents <- uncheckedNewTVarM Map.empty
+    varAnnounced <- uncheckedNewTVarM Nothing
     let ledgerInterface =
           LedgerInterface
-            { getCurrentLedgerState = do
+            { getCertifiedParent = \pt -> Map.lookup pt <$> readTVarIO varCertifiedParents
+            , applyAnnouncedClosure = \eb frk slot -> do
+                (announced, parent) <- atomically $ (,) <$> readTVar varAnnounced <*> readTVar varCurrentLedgerState
+                parentTip <- atomically $ getTip <$> roforkerGetLedgerState frk
+                pure $ case announced of
+                  Just (eb', certified)
+                    | eb' == eb
+                    , parentTip == getTip parent ->
+                        -- Applying a closure leaves the tip where it is; the
+                        -- mock ledger moves it per tx.
+                        let onParent st = st{simpleLedgerState = (simpleLedgerState st){mockTip = mockTip (simpleLedgerState parent)}}
+                         in Just $
+                              trackingToDiffs (calculateDifference parent certified)
+                                `prependDiffs` applyChainTick OmitLedgerEvents testLedgerCfg slot (onParent (forgetLedgerTables certified))
+                  _ -> Nothing
+            , getCurrentLedgerState = do
                 st <- readTVar varCurrentLedgerState
-                pure $
-                  MempoolLedgerDBView
-                    (forgetLedgerTables st)
-                    ( pure $
-                        Right $
-                          ReadOnlyForker
-                            { roforkerClose = pure ()
-                            , roforkerReadTables =
-                                pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
-                            , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                            , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                            , roforkerReadStatistics = pure $ Statistics 0
-                            }
-                    )
+                announced <- fmap fst <$> readTVar varAnnounced
+                pure $ MempoolLedgerDBView (forgetLedgerTables st) announced (pure $ Right $ forkerOn st)
             }
 
     -- Set up the Tracer
@@ -836,6 +918,8 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
             , eraseTraceEvents = atomically $ writeTVar varEvents []
             , addTxsToLedger = addTxsToLedger varCurrentLedgerState
             , getCurrentLedger = readTVar varCurrentLedgerState
+            , setCertifiedParent = \pt parent -> modifyTVar varCertifiedParents (Map.insert pt parent)
+            , setAnnounced = writeTVar varAnnounced
             }
     validContents <-
       atomically $
@@ -1334,14 +1418,14 @@ instance Arbitrary TestSetupWithTxsAndDiffTimes where
     txs' <- sequence [genDiffTime valid <&> \dt -> (tx, valid, dt) | (tx, valid) <- txs]
     pure $ TestSetupWithTxsAndDiffTimes toCfg testSetup txs'
 
-data MempoolTimeoutCategory = MtcAccepted | MtcRejected | MtcDiscard | MtcDisconnect | MtcNoSpace
+data MempoolTimeoutCategory = MtcAccepted | MtcRejected | MtcDiscard | MtcDisconnect
   deriving Show
 
 -- | Like 'prop_Mempool_addTxs_result', but also exercising mempool timeouts.
 prop_Mempool_timeout :: TestSetupWithTxsAndDiffTimes -> Property
 prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) =
   withTestMempoolWithTimeoutConfig (Just timeoutConfig) testSetup $ \TestMempool{mempool} -> do
-    let go !acc = \case
+    let go = \case
           [] -> pure $ property ()
           (tx, valid, dt) : txs' -> do
             let eTxsz =
@@ -1352,10 +1436,9 @@ prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) 
                       (simpleGenTx tx)
             let expected
                   | Left{} <- eTxsz = MtcRejected
-                  | acc > mempoolTimeoutCapacity timeoutConfig = MtcNoSpace
-                  -- Recall that the test setup generator ensures other
-                  -- dimensions of the mempool capacity are big enough to
-                  -- fit all the valid @txs@.
+                  -- The validation time does not bound the mempool's capacity,
+                  -- and the test setup generator ensures its other dimensions
+                  -- are big enough to fit all the valid @txs@.
                   | dt > mempoolTimeoutHard timeoutConfig = MtcDisconnect
                   | dt > mempoolTimeoutSoft timeoutConfig = MtcDiscard
                   | not valid = MtcRejected
@@ -1366,22 +1449,20 @@ prop_Mempool_timeout (TestSetupWithTxsAndDiffTimes timeoutConfig testSetup txs) 
             eRes <- try $ testTryAddTx mempool dt AddTxForRemotePeer tx
             tabulate "addTextTx expectation" [show expected] <$> case (expected, eRes) of
               (MtcAccepted, Right (Just MempoolTxAdded{})) ->
-                go (acc + dt) txs'
+                go txs'
               (MtcRejected, Right (Just (MempoolTxRejected _ err)))
                 | notMempoolError err ->
-                    go acc txs'
+                    go txs'
               (MtcDiscard, Right (Just (MempoolTxRejected _ MockMempoolError{}))) ->
                 if valid
                   then pure $ label "soft-timeout for otherwise-valid tx" ()
                   else
-                    go acc txs'
+                    go txs'
               (MtcDisconnect, Left MkExnMempoolTimeout{}) ->
-                pure $ property ()
-              (MtcNoSpace, Right Nothing) ->
                 pure $ property ()
               _ ->
                 pure $
                   counterexample ("Expected " <> show expected <> " but got...") $
                     counterexample (show eRes) $
                       False
-    go 0 txs
+    go txs

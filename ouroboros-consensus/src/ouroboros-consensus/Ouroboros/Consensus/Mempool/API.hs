@@ -55,7 +55,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types (TxHash)
+import Ouroboros.Consensus.Leios.Types (EbHash, TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -215,6 +215,14 @@ data Mempool m blk = Mempool
   -- the stale pre-rebase snapshot). Values are read at the unticked parent,
   -- so the caller's @ticked@ diffs (closure ⊕ tick) must be relative to that
   -- same state. See input-output-hk/ouroboros-leios#838.
+  , getCertifyingSnapshotFor ::
+      EbHash ->
+      ChainHash blk ->
+      SlotNo ->
+      STM m (Maybe (MempoolSnapshot blk))
+  -- ^ The certifying view as a snapshot for forging on the given tip at the
+  -- given slot, if it is built for that tip and EB and still valid at that
+  -- slot.
   , getCapacity :: STM m (TxMeasure blk)
   -- ^ Get the mempool's capacity
   --
@@ -302,25 +310,11 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
   -- 'mempoolTimeoutSoft' is irrelevant. If it's equal or just barely larger,
   -- then the soft/hard distinction will likely be unreliable.
   , mempoolTimeoutCapacity :: DiffTime
-  -- ^ If the txs in the mempool took longer than this cumulatively to
-  -- validate when each entered the mempool, then the mempool is at capacity,
-  -- ie it's full, ie no tx can be added.
-  --
-  -- A potential minor surprise: unlike the other components of the capacity
-  -- (ie those from `TxMeasure`), this component admits one tx above the
-  -- given limit. This is unavoidable, because we must not validate a tx
-  -- unless it could fit in the mempool but we can't know its validation time
-  -- before we validate it. If we validate it and it's less than
-  -- 'mempoolTimeoutSoft', then it'd be a waste of resources to ever not add
-  -- it.
-  --
-  -- Therefore, the recommended value of this parameter is @X -
-  -- 'mempoolTimeoutSoft'@, where @X@ is the forging thread's limit for how
-  -- much of this component it will put into a block.
-  --
-  -- Latency spikes (eg GC pauses, snapshot writing, OS sleeping the process,
-  -- etc) do risk "wasting" this capacity, but only up to
-  -- 'mempoolTimeoutSoft' /per/ /validated/ /tx/.
+  -- ^ A tenth of this bounds the time the forge spends revalidating the
+  -- mempool for its snapshot, when it cannot use the cached state or the
+  -- certifying view. It no longer bounds the mempool's capacity: the forge
+  -- bounds itself, and how long the transactions took to validate when they
+  -- entered says nothing about what the forge pays to use them.
   }
   deriving (Eq, Show)
 

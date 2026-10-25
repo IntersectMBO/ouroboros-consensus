@@ -3,35 +3,29 @@
 -- "Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema".
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   ( sql_scan_ebs
-  , sql_scan_complete_ebs_since
   , sql_insert_eb
-  , sql_lookup_stored_eb_size
-  , sql_set_eb_point_size
-  , sql_lookup_ebBodies
-  , sql_insert_ebBody
-  , sql_prealloc_ebTxBytes
-  , sql_fill_from_local
-  , sql_fill_ebTxBytes
-  , sql_decrement_missing_tx_count
-  , sql_init_missing_tx_count
-  , sql_mark_point_notified
-  , sql_retrieve_from_ebTxs_json
+  , sql_insert_eb_body
+  , sql_lookup_eb_body
+  , sql_lookup_eb_index
+  , sql_insert_eb_closure
   , sql_lookup_eb_closure
-  , sql_scan_recent_ebs
+  , sql_lookup_eb_points
+  , sql_lookup_eb_body_size
+  , sql_scan_bodied_points_since
+  , sql_scan_closures
   , sql_pin_eb
   , sql_mark_as_copied
-  , sql_copy_completeness
+  , sql_copy_has_closure
   , sql_copy_insert_eb
-  , sql_copy_insert_ebTxs
-  , sql_copy_insert_ebTxBytes
-  , sql_imm_filter_present
+  , sql_copy_insert_ebBody
+  , sql_copy_insert_ebClosures
   , sql_next_pinned_eb
   , sql_gc_has_work
   , sql_gc_markable
   , sql_gc_mark
   , sql_sweep_pick_marked
-  , sql_gc_ebTxs
-  , sql_gc_ebTxBytes
+  , sql_gc_ebBodies
+  , sql_gc_ebClosures
   , sql_gc_ebs_by_hash
   ) where
 
@@ -42,181 +36,76 @@ sql_scan_ebs =
   \ORDER BY ebSlot ASC\n\
   \"
 
--- | For @sqlScanCompleteEbPointsSince@
---
--- The two conditions are decoupled across rows: the same EB hash can have
--- several @(ebSlot, ebHashBytes)@ rows (one per announcer slot), and
--- 'missingTxCount' is maintained per row on body insert but per hash on tx
--- arrival, so the /complete/ row and the /recent/ row can differ. Requiring
--- both on a single row would wrongly drop a complete EB re-announced recently
--- (its recent row never got a body insert, so its @missingTxCount@ is still
--- NULL), leaving its cert-RB parked forever. Hence: keep a hash that has
--- /any/ complete row and /any/ row at @ebSlot >= ?@.
-sql_scan_complete_ebs_since :: String
-sql_scan_complete_ebs_since =
-  "SELECT MAX(ebSlot), ebHashBytes FROM ebs\n\
-  \WHERE ebSlot >= ?\n\
-  \  AND ebHashBytes IN\n\
-  \      (SELECT ebHashBytes FROM ebs WHERE missingTxCount IS NOT NULL AND missingTxCount <= 0)\n\
-  \GROUP BY ebHashBytes\n\
-  \"
-
 sql_insert_eb :: String
 sql_insert_eb =
   "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
 
--- | The size the stored body of this EB really is, read off whichever of its
--- points has already acquired it (@missingTxCount IS NOT NULL@) --- the rows
--- whose @ebBytesSize@ is an actual size rather than an announcement's claim.
+-- | Insert an EB's body. @OR IGNORE@: a second delivery of the same body
+-- changes nothing.
 --
--- @idx_ebs_acquired@ indexes exactly those rows, so this is a seek among them
--- rather than a walk over every point naming the hash.
+-- Parameters: 1 = ebHashBytes, 2 = txBounds, 3 = body (wire encoding)
+sql_insert_eb_body :: String
+sql_insert_eb_body =
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, body) VALUES (?1, ?2, ?3)"
+
+-- | An EB's body, in its wire encoding.
+sql_lookup_eb_body :: String
+sql_lookup_eb_body =
+  "SELECT body FROM ebBodies WHERE ebHashBytes = ?1"
+
+-- | Where an EB's blobs are: the rowid of its body, how many txs it lists,
+-- and the rowid of its closure, NULL until a tx is written. @length@ of a
+-- blob reads its row header only, never the blob.
+sql_lookup_eb_index :: String
+sql_lookup_eb_index =
+  "SELECT b.rowid, length(b.txBounds) / 4 - 1, c.rowid\n\
+  \FROM ebBodies b LEFT JOIN ebClosures c ON c.ebHashBytes = b.ebHashBytes\n\
+  \WHERE b.ebHashBytes = ?1\n\
+  \"
+
+-- | Allocate an EB's closure with zeroes, which tx writes then overwrite in
+-- place.
 --
--- Parameters: 1 = ebHashBytes
-sql_lookup_stored_eb_size :: String
-sql_lookup_stored_eb_size =
-  "SELECT ebBytesSize FROM ebs\n\
-  \WHERE ebHashBytes = ? AND missingTxCount IS NOT NULL\n\
-  \LIMIT 1\n\
-  \"
+-- Parameters: 1 = ebHashBytes, 2 = closure size
+sql_insert_eb_closure :: String
+sql_insert_eb_closure =
+  "INSERT INTO ebClosures (ebHashBytes, txs) VALUES (?1, zeroblob(?2))"
 
--- | Overwrite one point's recorded size; see 'sql_lookup_stored_eb_size'.
---
--- Parameters: 1 = ebBytesSize, 2 = ebSlot, 3 = ebHashBytes
-sql_set_eb_point_size :: String
-sql_set_eb_point_size =
-  "UPDATE ebs SET ebBytesSize = ? WHERE ebSlot = ? AND ebHashBytes = ?"
-
-sql_lookup_ebBodies :: String
-sql_lookup_ebBodies =
-  "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
-  \WHERE ebHashBytes = ?\n\
-  \ORDER BY txOffset ASC\n\
-  \"
-
-sql_insert_ebBody :: String
-sql_insert_ebBody =
-  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize) VALUES (?, ?, ?, ?)\n\
-  \"
-
--- | Allocate the body's whole 'ebTxBytes' range in one offset-ordered pass:
--- one @zeroblob@ row per body row, physically contiguous and fully packed.
--- @OR IGNORE@: a redelivered body (second announcement of the same content)
--- must not clobber rows already filled.
-sql_prealloc_ebTxBytes :: String
-sql_prealloc_ebTxBytes =
-  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes)\n\
-  \SELECT ebHashBytes, txOffset, 0, zeroblob(txBytesSize) FROM ebTxs\n\
-  \WHERE ebHashBytes = ?1 ORDER BY txOffset\n\
-  \"
-
--- | Copy one tx's bytes from another EB's durable row into this EB's
--- pre-allocated one, in place. Same guards as 'sql_fill_ebTxBytes', plus the
--- source must exist, be filled, and declare the SAME tx hash -- a source
--- swept or a stale location resolving to the wrong EB simply fills nothing.
--- The length guard stays besides the hash guard: two EBs can declare
--- different sizes for the same hash, and an in-place overwrite must not
--- change the row size.
---
--- Parameters: 1 = dst ebHashBytes, 2 = dst txOffset, 3 = src ebHashBytes,
--- 4 = src txOffset
-sql_fill_from_local :: String
-sql_fill_from_local =
-  "UPDATE ebTxBytes AS d\n\
-  \SET txBytes = s.txBytes, filled = 1\n\
-  \FROM ebTxBytes AS s, ebTxs AS dt, ebTxs AS st\n\
-  \WHERE d.ebHashBytes = ?1 AND d.txOffset = ?2 AND d.filled = 0\n\
-  \  AND s.ebHashBytes = ?3 AND s.txOffset = ?4 AND s.filled = 1\n\
-  \  AND dt.ebHashBytes = d.ebHashBytes AND dt.txOffset = d.txOffset\n\
-  \  AND st.ebHashBytes = s.ebHashBytes AND st.txOffset = s.txOffset\n\
-  \  AND st.txHashBytes = dt.txHashBytes\n\
-  \  AND length(s.txBytes) = length(d.txBytes)\n\
-  \"
-
--- | Fill one pre-allocated row in place. Guarded three ways: the row must
--- exist (a bogus offset updates nothing), must not be filled yet (a duplicate
--- delivery updates nothing), and the payload must have exactly the declared
--- size (the row was allocated as @zeroblob@ of it, and an in-place overwrite
--- must not change the row size). One successful UPDATE is therefore exactly
--- one previously-missing valid tx, which is what makes counting by
--- @changes()@ sound.
-sql_fill_ebTxBytes :: String
-sql_fill_ebTxBytes =
-  "UPDATE ebTxBytes SET txBytes = ?3, filled = 1\n\
-  \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
-  \  AND length(txBytes) = length(?3)\n\
-  \"
-
--- | Decrement missingTxCount on every announcement of this content hash by
--- the number of tx-bytes rows a batch actually inserted, returning each
--- touched row so the caller can spot the ones that just completed. Counting
--- replaces the old per-tx 'ebsMissingTxs' bookkeeping: bytes are keyed by
--- @(ebHash, txOffset)@, so an insert can only ever fill a hole in this EB.
---
--- Parameters: 1 = ebHashBytes, 2 = rows inserted
-sql_decrement_missing_tx_count :: String
-sql_decrement_missing_tx_count =
-  "UPDATE ebs SET missingTxCount = missingTxCount - ?2\n\
-  \WHERE ebHashBytes = ?1 AND status = 0 AND missingTxCount IS NOT NULL\n\
-  \RETURNING ebSlot, missingTxCount\n\
-  \"
-
--- | Initialize missingTxCount after an EB body is inserted: the rows still
--- unfilled (a redelivered body at a second point finds the first point's
--- fills). RETURNING lets the caller detect @missingTxCount = 0@ with a PK
--- lookup on the touched row.
---
--- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
-sql_init_missing_tx_count :: String
-sql_init_missing_tx_count =
-  "UPDATE ebs SET missingTxCount = (\n\
-  \    SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = ?1 AND filled = 0\n\
-  \) WHERE ebHashBytes = ?2 AND ebSlot = ?3\n\
-  \RETURNING missingTxCount\n\
-  \"
-
--- | Mark a specific EB as notified (@missingTxCount = -1@). PK-scoped
--- variant of 'sql_mark_notified_ebs'; used by 'sqlInsertEbBody' when the
--- body's arrival is what completed the closure.
---
--- Parameters: 1 = ebSlot, 2 = ebHashBytes
-sql_mark_point_notified :: String
-sql_mark_point_notified =
-  "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ? AND ebHashBytes = ?"
-
--- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
--- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
--- JSON int array of offsets. The join uses ebTxs' PK
--- @(ebHashBytes, txOffset)@, so index lookups still fire.
-sql_retrieve_from_ebTxs_json :: String
-sql_retrieve_from_ebTxs_json =
-  "SELECT je.value, e.txHashBytes,\n\
-  \       CASE WHEN b.filled = 1 THEN b.txBytes END\n\
-  \FROM json_each(?2) je\n\
-  \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
-  \LEFT JOIN ebTxBytes b ON b.ebHashBytes = ?1 AND b.txOffset = je.value\n\
-  \ORDER BY je.value ASC\n\
-  \"
-
+-- | Where an EB's txs are, and its closure, NULL until a tx is written.
 sql_lookup_eb_closure :: String
 sql_lookup_eb_closure =
-  unlines
-    [ "SELECT ebTx.txHashBytes, CASE WHEN b.filled = 1 THEN b.txBytes END"
-    , "FROM ebTxs as ebTx"
-    , "LEFT JOIN ebTxBytes as b ON b.ebHashBytes = ebTx.ebHashBytes AND b.txOffset = ebTx.txOffset"
-    , "WHERE ebTx.ebHashBytes = ?"
-    , "ORDER BY ebTx.txOffset ASC"
-    ]
+  "SELECT b.txBounds, c.txs, b.body\n\
+  \FROM ebBodies b LEFT JOIN ebClosures c ON c.ebHashBytes = b.ebHashBytes\n\
+  \WHERE b.ebHashBytes = ?1\n\
+  \"
 
--- | Every recent announcement, with or without completeness evidence.
--- Companion of 'sql_scan_complete_ebs_since': the difference of the two sets
--- is probed against the immutable partition (see
--- @sqlScanCompleteEbPointsSince@).
-sql_scan_recent_ebs :: String
-sql_scan_recent_ebs =
-  "SELECT MAX(ebSlot), ebHashBytes FROM ebs\n\
-  \WHERE ebSlot >= ?\n\
-  \GROUP BY ebHashBytes\n\
+-- | The slots of every announcement of an EB.
+sql_lookup_eb_points :: String
+sql_lookup_eb_points =
+  "SELECT ebSlot FROM ebs WHERE ebHashBytes = ?1"
+
+-- | The size of an EB's stored body, if any. @length@ of a blob reads its row
+-- header only.
+sql_lookup_eb_body_size :: String
+sql_lookup_eb_body_size =
+  "SELECT length(body) FROM ebBodies WHERE ebHashBytes = ?1"
+
+-- | The points no older than slot @?1@ whose EB body is stored, oldest first.
+sql_scan_bodied_points_since :: String
+sql_scan_bodied_points_since =
+  "SELECT e.ebSlot, e.ebHashBytes FROM ebs e\n\
+  \WHERE e.ebSlot >= ?1\n\
+  \  AND EXISTS (SELECT 1 FROM ebBodies b WHERE b.ebHashBytes = e.ebHashBytes)\n\
+  \ORDER BY e.ebSlot ASC\n\
+  \"
+
+-- | Every stored body with its tx bounds and its closure (NULL until a tx is
+-- written). Read once, when the database opens, to find the EBs still
+-- missing txs.
+sql_scan_closures :: String
+sql_scan_closures =
+  "SELECT b.ebHashBytes, b.txBounds, c.txs\n\
+  \FROM ebBodies b LEFT JOIN ebClosures c ON c.ebHashBytes = b.ebHashBytes\n\
   \"
 
 -- ** Promoting an EB to the immutable partition
@@ -237,14 +126,11 @@ sql_mark_as_copied :: String
 sql_mark_as_copied =
   "UPDATE ebs SET status = 2 WHERE ebHashBytes = ? AND status = 1"
 
--- | Body row count and closure row count of the EB in the volatile
--- partition, in one probe: the EB's closure is complete iff both counts are
--- equal (and non-zero). Two range COUNTs on the shared PK.
-sql_copy_completeness :: String
-sql_copy_completeness =
-  "SELECT (SELECT COUNT(*) FROM vol.ebTxs WHERE ebHashBytes = ?1),\n\
-  \       (SELECT COUNT(*) FROM vol.ebTxBytes WHERE ebHashBytes = ?1 AND filled = 1)\n\
-  \"
+-- | Whether the volatile partition holds a closure for the EB. Whether it is
+-- complete is the fetch logic's to know.
+sql_copy_has_closure :: String
+sql_copy_has_closure =
+  "SELECT 1 FROM vol.ebClosures WHERE ebHashBytes = ?1"
 
 -- | Copy the EB's newest announcement row. Only the columns the immutable
 -- partition has ('sql_schema_imm'): completeness and GC status are
@@ -261,31 +147,20 @@ sql_copy_insert_eb =
   \ORDER BY ebSlot DESC LIMIT 1\n\
   \"
 
--- | Copy the EB's body rows. @OR IGNORE@ for the same reason as
+-- | Copy the EB's body. @OR IGNORE@ for the same reason as
 -- 'sql_copy_insert_eb'.
-sql_copy_insert_ebTxs :: String
-sql_copy_insert_ebTxs =
-  "INSERT OR IGNORE INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize)\n\
-  \SELECT ebHashBytes, txOffset, txHashBytes, txBytesSize FROM vol.ebTxs\n\
-  \WHERE ebHashBytes = ?1\n\
+sql_copy_insert_ebBody :: String
+sql_copy_insert_ebBody =
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, body)\n\
+  \SELECT ebHashBytes, txBounds, body FROM vol.ebBodies WHERE ebHashBytes = ?1\n\
   \"
 
--- | Copy the EB's tx bytes: a range copy on the shared PK. @OR IGNORE@ for
--- the same reason as 'sql_copy_insert_eb'.
-sql_copy_insert_ebTxBytes :: String
-sql_copy_insert_ebTxBytes =
-  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes)\n\
-  \SELECT ebHashBytes, txOffset, filled, txBytes FROM vol.ebTxBytes\n\
-  \WHERE ebHashBytes = ?1 ORDER BY txOffset\n\
-  \"
-
--- | Which of the given hashes (JSON hex array) the immutable partition holds.
--- Presence is proof of a complete closure: copies land atomically and only
--- complete EBs are copied.
-sql_imm_filter_present :: String
-sql_imm_filter_present =
-  "SELECT unhex(je.value) FROM json_each(?1) je\n\
-  \WHERE EXISTS (SELECT 1 FROM ebs e WHERE e.ebHashBytes = unhex(je.value))\n\
+-- | Copy the EB's closure. @OR IGNORE@ for the same reason as
+-- 'sql_copy_insert_eb'.
+sql_copy_insert_ebClosures :: String
+sql_copy_insert_ebClosures =
+  "INSERT OR IGNORE INTO ebClosures (ebHashBytes, txs)\n\
+  \SELECT ebHashBytes, txs FROM vol.ebClosures WHERE ebHashBytes = ?1\n\
   \"
 
 -- ** Garbage collection of the volatile partition
@@ -304,13 +179,13 @@ sql_next_pinned_eb =
   "SELECT ebHashBytes FROM vol.ebs WHERE status = 1 ORDER BY ebSlot LIMIT ?1"
 
 -- | Whether a GC at slot @?1@ could has any work, i.e.
---   if there are any old volatile EBs or already copied EBs.
+--   if there are any old volatile EBs, already copied EBs or leftover EBs
+--   from an interrupted GC pass.
 sql_gc_has_work :: String
 sql_gc_has_work =
-  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2) AND ebSlot < ?1)"
+  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2, 3) AND ebSlot < ?1)"
 
--- | The markability predicate of 'sql_gc_mark'.
--- @c@ is the row under test; it is markable if it is
+-- | The markability predicate of 'sql_gc_mark'. @c@ is the row under test; it is markable if it is
 --   - old enough (its slot is before the GC frontier @?1@) and
 --   - either volatile (status 0) or already copied (status 2) and
 --   - not vetoed by a live row of the same hash (pinned, or announced at or
@@ -349,15 +224,15 @@ sql_sweep_pick_marked =
   \LIMIT ?1\n\
   \"
 
--- | Evict the 'ebTxs' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
-sql_gc_ebTxs :: String
-sql_gc_ebTxs =
-  "DELETE FROM ebTxs WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
+-- | Evict the 'ebBodies' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
+sql_gc_ebBodies :: String
+sql_gc_ebBodies =
+  "DELETE FROM ebBodies WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
 
--- | Evict the 'ebTxBytes' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
-sql_gc_ebTxBytes :: String
-sql_gc_ebTxBytes =
-  "DELETE FROM ebTxBytes WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
+-- | Evict the 'ebClosures' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
+sql_gc_ebClosures :: String
+sql_gc_ebClosures =
+  "DELETE FROM ebClosures WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
 
 -- | Evict the 'ebs' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
 sql_gc_ebs_by_hash :: String

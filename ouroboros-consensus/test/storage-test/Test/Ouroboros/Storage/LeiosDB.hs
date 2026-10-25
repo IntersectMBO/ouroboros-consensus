@@ -12,6 +12,7 @@
 module Test.Ouroboros.Storage.LeiosDB (module Test.Ouroboros.Storage.LeiosDB) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent (forkFinally, forkIO)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -28,18 +29,19 @@ import Control.Exception
   , catch
   , displayException
   , fromException
-  , throwIO
   , try
   )
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
 import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
+import LeiosDemoTypes (decodeLeiosEb)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EbHash (..)
@@ -49,6 +51,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash (..)
   , TxLocation (..)
   , encodeLeiosEbSize
+  , hashTxBytes
   , leiosEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -59,7 +62,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosEbNotification (..)
   , Promise (..)
   , TraceLeiosDb (..)
-  , deleteDanglingTxs
   , newLeiosDBInMemory
   , newLeiosDBSQLite
   , truncateLeiosDbAfterSlot
@@ -112,11 +114,6 @@ tests =
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
              ]
          , testGroup
-             "deleteDanglingTxs"
-             [ testCase "keeps the txs an EB references" $
-                 withFreshSQLiteFile test_deleteDanglingTxs
-             ]
-         , testGroup
              "close"
              [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
              ]
@@ -158,14 +155,28 @@ rwInsertTxs rw point offBytes = await =<< writeTxs (rwWriter rw) point offBytes
 rwScanEbPoints :: RW -> IO [(SlotNo, EbHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
 
+-- | The stored body, decoded; [] if none is stored.
 rwLookupEbBody :: RW -> EbHash -> IO [(TxHash, BytesSize)]
-rwLookupEbBody = lookupEbBody . rwReader
+rwLookupEbBody rw ebHash =
+  lookupEbBody (rwReader rw) ebHash >>= \case
+    Nothing -> pure []
+    Just body -> case CBOR.deserialiseFromBytes decodeLeiosEb (BSL.fromStrict body) of
+      Left err -> assertFailure ("stored body does not decode: " <> show err)
+      Right (_, eb) -> pure (V.toList (leiosEbTxs eb))
 
 rwLookupTrustedEbClosure :: RW -> EbHash -> IO (Maybe [(TxHash, BS.ByteString)])
 rwLookupTrustedEbClosure = lookupEbClosure . rwReader
 
+-- | The requested txs with the hashes the body lists, 'Nothing' for a tx not
+-- written yet (which reads as zeroes).
 rwBatchRetrieveTxs :: RW -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe BS.ByteString)]
-rwBatchRetrieveTxs = batchRetrieveTxs . rwReader
+rwBatchRetrieveTxs rw ebHash offsets = do
+  items <- V.fromList <$> rwLookupEbBody rw ebHash
+  txs <- batchRetrieveTxs (rwReader rw) ebHash offsets
+  pure
+    [ (off, fst (items V.! off), if BS.null bs || BS.head bs == 0 then Nothing else Just bs)
+    | (off, bs) <- txs
+    ]
 
 -- | Create a fresh database and run an action with it.
 -- Ensures proper cleanup for SQLite databases.
@@ -337,9 +348,10 @@ genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
 -- path rejects anything else ('sql_fill_ebTxBytes' pins the size the row was
 -- allocated with).
 txBytesFor :: LeiosEb -> Int -> BS.ByteString
-txBytesFor eb off = BS.replicate (fromIntegral sz) (fromIntegral off)
- where
-  (_h, sz) = leiosEbTxs eb V.! off
+txBytesFor eb off = testTxBytes off (snd (leiosEbTxs eb V.! off))
+
+testTxBytes :: Int -> BytesSize -> BS.ByteString
+testTxBytes off sz = BS.cons 0x84 (BS.replicate (fromIntegral sz - 1) (fromIntegral off))
 
 -- | Max sized tx (16k) with all zeros.
 -- * Test fixtures for unit tests
@@ -360,13 +372,15 @@ mkTestPoint slot seed = MkLeiosPoint slot (mkTestEbHash seed)
 testRbHash :: RbHash
 testRbHash = MkRbHash (BS.replicate 32 7)
 
--- | Create a test LeiosEb with the given number of transactions.
+-- | Create a test LeiosEb with the given number of transactions, listing the
+-- hashes of their 'txBytesFor'.
 mkTestEb :: Int -> LeiosEb
 mkTestEb numTxs =
   MkLeiosEb $
     V.fromList
-      [ (mkTestTxHash (fromIntegral i), 100 + fromIntegral i)
+      [ (hashTxBytes (testTxBytes i sz), sz)
       | i <- [0 .. numTxs - 1]
+      , let sz = 100 + fromIntegral i
       ]
 
 -- * Timing helpers
@@ -1035,22 +1049,16 @@ test_awaiterHearsAFailedJob = do
         immDbPath = tmpDir <> "/test.imm.db"
         point = mkTestPoint 5 1
         eb = mkTestEb 2
-        -- 'sqlInsertEbBody' traces a collision from inside the job it runs,
-        -- and an 'IOException' is not a 'LeiosDbException', so 'publish' lets
-        -- it past and the job dies with its result unwritten. That trace is
-        -- the only one a job makes, so if it moves out of the job the second
-        -- write below succeeds and this test fails, asking for another way to
-        -- make a job throw.
-        tracer = Tracer . emit $ \case
-          TraceLeiosDbInsertCollision{} -> throwIO (userError jobFailureMarker)
-          _ -> pure ()
+        -- An empty body is refused from inside the job, which then dies
+        -- with its result unwritten.
+        tracer = nullTracer
         forkAwaiter w =
           void . forkIO $ do
             -- Submitting is outside the 'try'. If it throws, nothing is
             -- recorded, and the budget below reports that the awaiter was
             -- never told rather than counting a refused submission as a
             -- report.
-            promise <- writeEbBody w point eb []
+            promise <- writeEbBody w point (MkLeiosEb V.empty) []
             outcome <- try (await promise) :: IO (Either SomeException (CompletedEbs, [Int]))
             void $ tryPutMVar outcomeVar outcome
         -- This thread creates the handle, so this is where the worker's
@@ -1060,8 +1068,7 @@ test_awaiterHearsAFailedJob = do
             withWriter db $ \w -> do
               void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
               void $ await =<< writeEbBody w point eb []
-              -- The same body again collides on the primary key of ebTxs, so
-              -- this second write is the job whose action throws.
+              -- The empty body is the job whose action throws.
               forkAwaiter w
               void $ Timeout.timeout awaitBudgetMicros (readMVar outcomeVar)
     -- The handle's registry delivers the worker's parting exception to the
@@ -1088,7 +1095,7 @@ test_awaiterHearsAFailedJob = do
               <> displayException e
  where
   jobFailureMarker :: String
-  jobFailureMarker = "the tracer threw inside the write job"
+  jobFailureMarker = "empty EB body"
 
   awaitBudgetMicros :: Int
   awaitBudgetMicros = 20_000_000
@@ -1146,34 +1153,3 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     keptBody @?= V.toList (leiosEbTxs eb)
     droppedBody <- rwLookupEbBody con droppedHash
     droppedBody @?= []
-
--- * deleteDanglingTxs
-
-test_deleteDanglingTxs :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
-test_deleteDanglingTxs volDbPath _immDbPath db = do
-  let eb = mkTestEb 2
-      ebHash = mkTestEbHash 1
-      danglingTx = mkTestTxHash 9
-  withRW db $ \con -> do
-    rwInsertEbPoint con (MkLeiosPoint 5 ebHash) (encodeLeiosEbSize eb)
-    void $ rwInsertEbBody con (MkLeiosPoint 5 ebHash) eb
-    -- The out-of-range offset is dropped by the guarded fill; the in-range
-    -- ones land.
-    void $
-      rwInsertTxs con (MkLeiosPoint 5 ebHash) $
-        (V.length (leiosEbTxs eb), txBytesFor eb 0)
-          : [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] (V.toList (leiosEbTxs eb))]
-
-  deleteDanglingTxs volDbPath
-
-  withRW db $ \con -> do
-    closure <- rwLookupTrustedEbClosure con ebHash
-    fmap (map fst) closure @?= Just (map fst (V.toList (leiosEbTxs eb)))
-    -- A closure resolves only when the db holds every tx the body names. So
-    -- this probe resolves only if the delete missed the dangling tx.
-    let probeEb = MkLeiosEb (V.fromList [(danglingTx, 10)])
-        probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
-    rwInsertEbPoint con probePoint (encodeLeiosEbSize probeEb)
-    void $ rwInsertEbBody con probePoint probeEb
-    probeClosure <- rwLookupTrustedEbClosure con probePoint.pointEbHash
-    probeClosure @?= Nothing

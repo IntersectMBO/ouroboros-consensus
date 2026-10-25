@@ -16,6 +16,8 @@
 
 module Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
   ( TestBlock
+  , TValue (..)
+  , Token (..)
   , extLedgerDbConfig
   , genBlocks
   , genesis

@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , prepareVolStmts
   , finalizeVolStmts
   , ImmStmts (..)
+  , ReadStmts (..)
   , prepareImmStmts
   , finalizeImmStmts
   , GcStmts (..)
@@ -49,32 +50,32 @@ preparingStmts db k = do
 -- | The copy statements, prepared on the copier's immutable connection --
 -- main is the immutable file, the volatile file is ATTACHed as @vol@.
 data CopierStmts = CopierStmts
-  { ccCompleteness :: !DB.Statement
-  -- ^ 'sql_copy_completeness'
+  { ccHasClosure :: !DB.Statement
+  -- ^ 'sql_copy_has_closure'
   , ccInsertEb :: !DB.Statement
   -- ^ 'sql_copy_insert_eb'
-  , ccInsertEbTxs :: !DB.Statement
-  -- ^ 'sql_copy_insert_ebTxs'
-  , ccInsertEbTxBytes :: !DB.Statement
-  -- ^ 'sql_copy_insert_ebTxBytes'
+  , ccInsertEbBody :: !DB.Statement
+  -- ^ 'sql_copy_insert_ebBody'
+  , ccInsertEbClosures :: !DB.Statement
+  -- ^ 'sql_copy_insert_ebClosures'
   }
 
 -- | Prepare the copy statements on the copier's immutable connection, which
 -- must already have the volatile partition ATTACHed as @vol@.
 prepareCopierStmts :: HasCallStack => DB.Database -> IO CopierStmts
 prepareCopierStmts db = preparingStmts db $ \prep -> do
-  ccCompleteness <- prep sql_copy_completeness
+  ccHasClosure <- prep sql_copy_has_closure
   ccInsertEb <- prep sql_copy_insert_eb
-  ccInsertEbTxs <- prep sql_copy_insert_ebTxs
-  ccInsertEbTxBytes <- prep sql_copy_insert_ebTxBytes
+  ccInsertEbBody <- prep sql_copy_insert_ebBody
+  ccInsertEbClosures <- prep sql_copy_insert_ebClosures
   pure CopierStmts{..}
 
 finalizeCopierStmts :: CopierStmts -> IO ()
 finalizeCopierStmts CopierStmts{..} = do
-  dbFinalize ccCompleteness
+  dbFinalize ccHasClosure
   dbFinalize ccInsertEb
-  dbFinalize ccInsertEbTxs
-  dbFinalize ccInsertEbTxBytes
+  dbFinalize ccInsertEbBody
+  dbFinalize ccInsertEbClosures
 
 -- | The GC tick's prepared statements, prepared once on the writer's
 -- volatile connection.
@@ -101,10 +102,10 @@ finalizeGcStmts GcStmts{..} = do
 data SweeperStmts = SweeperStmts
   { swPickMarked :: !DB.Statement
   -- ^ 'sql_sweep_pick_marked'
-  , swEvictEbTxs :: !DB.Statement
-  -- ^ 'sql_gc_ebTxs'
-  , swEvictEbTxBytes :: !DB.Statement
-  -- ^ 'sql_gc_ebTxBytes'
+  , swEvictEbBodies :: !DB.Statement
+  -- ^ 'sql_gc_ebBodies'
+  , swEvictEbClosures :: !DB.Statement
+  -- ^ 'sql_gc_ebClosures'
   , swEvictEbs :: !DB.Statement
   -- ^ 'sql_gc_ebs_by_hash'
   }
@@ -113,83 +114,75 @@ data SweeperStmts = SweeperStmts
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
   swPickMarked <- prep sql_sweep_pick_marked
-  swEvictEbTxs <- prep sql_gc_ebTxs
-  swEvictEbTxBytes <- prep sql_gc_ebTxBytes
+  swEvictEbBodies <- prep sql_gc_ebBodies
+  swEvictEbClosures <- prep sql_gc_ebClosures
   swEvictEbs <- prep sql_gc_ebs_by_hash
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
   dbFinalize swPickMarked
-  dbFinalize swEvictEbTxs
-  dbFinalize swEvictEbTxBytes
+  dbFinalize swEvictEbBodies
+  dbFinalize swEvictEbClosures
   dbFinalize swEvictEbs
 
 -- | Compiled SQL statements for the Volatile partition.
 data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
-  , stLookupStoredEbSize :: !DB.Statement
-  , stSetEbPointSize :: !DB.Statement
-  , stLookupEbBody :: !DB.Statement
-  , stInsertEbTxsRow :: !DB.Statement
-  , stInitMissingCount :: !DB.Statement
-  , stPreallocEbTxBytes :: !DB.Statement
-  , stFillEbTxBytes :: !DB.Statement
-  , stFillFromLocal :: !DB.Statement
-  , stDecrMissingCount :: !DB.Statement
-  , stMarkPointNotified :: !DB.Statement
-  , stBatchRetrieveTxs :: !DB.Statement
-  , stLookupEbClosure :: !DB.Statement
-  , stScanCompleteEbsSince :: !DB.Statement
+  , stInsertEbBody :: !DB.Statement
+  , stInsertEbClosure :: !DB.Statement
+  , stLookupEbPoints :: !DB.Statement
+  , stLookupEbBodySize :: !DB.Statement
+  , stReads :: !ReadStmts
   }
+
+-- | The statements of the reads, prepared on both partitions.
+data ReadStmts = ReadStmts
+  { rsLookupEbBody :: !DB.Statement
+  , rsLookupEbIndex :: !DB.Statement
+  , rsLookupEbClosure :: !DB.Statement
+  }
+
+prepareReadStmts :: (String -> IO DB.Statement) -> IO ReadStmts
+prepareReadStmts prep = do
+  rsLookupEbBody <- prep sql_lookup_eb_body
+  rsLookupEbIndex <- prep sql_lookup_eb_index
+  rsLookupEbClosure <- prep sql_lookup_eb_closure
+  pure ReadStmts{..}
+
+finalizeReadStmts :: ReadStmts -> IO ()
+finalizeReadStmts ReadStmts{..} = do
+  dbFinalize rsLookupEbBody
+  dbFinalize rsLookupEbIndex
+  dbFinalize rsLookupEbClosure
 
 -- | Prepared statements of the fallback reads into the immutable partition.
 -- The partitions share one schema, so these are the volatile SQL strings
--- prepared against the immutable connection (plus the presence probe).
+-- prepared against the immutable connection.
 -- Lifecycle mirrors 'VolStmts': prepared at open time, finalized in 'close'
 -- before their connection.
-data ImmStmts = ImmStmts
-  { immStLookupEbBody :: !DB.Statement
-  , immStLookupEbClosure :: !DB.Statement
-  , immStBatchRetrieveTxs :: !DB.Statement
-  , immStFilterPresent :: !DB.Statement
+newtype ImmStmts = ImmStmts
+  { immReads :: ReadStmts
   }
 
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
-prepareImmStmts db = preparingStmts db $ \prep -> do
-  immStLookupEbBody <- prep sql_lookup_ebBodies
-  immStLookupEbClosure <- prep sql_lookup_eb_closure
-  immStBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
-  immStFilterPresent <- prep sql_imm_filter_present
-  pure ImmStmts{..}
+prepareImmStmts db = preparingStmts db $ \prep -> ImmStmts <$> prepareReadStmts prep
 
 -- | Same use-after-free discipline as 'finalizeVolStmts'.
 finalizeImmStmts :: ImmStmts -> IO ()
-finalizeImmStmts ImmStmts{..} = do
-  dbFinalize immStLookupEbBody
-  dbFinalize immStLookupEbClosure
-  dbFinalize immStBatchRetrieveTxs
-  dbFinalize immStFilterPresent
+finalizeImmStmts = finalizeReadStmts . immReads
 
 -- | Prepare every statement 'VolStmts' names. Order is not observable.
 prepareVolStmts :: DB.Database -> IO VolStmts
 prepareVolStmts db = preparingStmts db $ \prep -> do
   stScanEbPoints <- prep sql_scan_ebs
   stInsertEbPoint <- prep sql_insert_eb
-  stLookupStoredEbSize <- prep sql_lookup_stored_eb_size
-  stSetEbPointSize <- prep sql_set_eb_point_size
-  stLookupEbBody <- prep sql_lookup_ebBodies
-  stInsertEbTxsRow <- prep sql_insert_ebBody
-  stInitMissingCount <- prep sql_init_missing_tx_count
-  stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
-  stFillEbTxBytes <- prep sql_fill_ebTxBytes
-  stFillFromLocal <- prep sql_fill_from_local
-  stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stMarkPointNotified <- prep sql_mark_point_notified
-  stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
-  stLookupEbClosure <- prep sql_lookup_eb_closure
-  stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
+  stInsertEbBody <- prep sql_insert_eb_body
+  stInsertEbClosure <- prep sql_insert_eb_closure
+  stLookupEbPoints <- prep sql_lookup_eb_points
+  stLookupEbBodySize <- prep sql_lookup_eb_body_size
+  stReads <- prepareReadStmts prep
   pure VolStmts{..}
 
 -- | Finalise every statement in 'VolStmts'. Called from 'close' immediately
@@ -198,16 +191,8 @@ finalizeVolStmts :: VolStmts -> IO ()
 finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
-  dbFinalize stLookupStoredEbSize
-  dbFinalize stSetEbPointSize
-  dbFinalize stLookupEbBody
-  dbFinalize stInsertEbTxsRow
-  dbFinalize stInitMissingCount
-  dbFinalize stPreallocEbTxBytes
-  dbFinalize stFillEbTxBytes
-  dbFinalize stFillFromLocal
-  dbFinalize stDecrMissingCount
-  dbFinalize stMarkPointNotified
-  dbFinalize stBatchRetrieveTxs
-  dbFinalize stLookupEbClosure
-  dbFinalize stScanCompleteEbsSince
+  dbFinalize stInsertEbBody
+  dbFinalize stInsertEbClosure
+  dbFinalize stLookupEbPoints
+  dbFinalize stLookupEbBodySize
+  finalizeReadStmts stReads

@@ -308,6 +308,30 @@ instance
     f idx (FlipTickedLedgerState tlst) =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
+  txSlotRange =
+    hcollapse
+      . hcmap proxySingle (K . txSlotRange)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
+  -- Eras change at epoch boundaries, where the current era's range ends.
+  ledgerSlotRange
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $ hczipWith proxySingle f cfgs (State.tip hardForkState)
+     where
+      cfgs =
+        hcmap proxySingle (completeLedgerConfig'' ei) $
+          getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      f :: SingleEraBlock x => WrapLedgerConfig x -> FlipTickedLedgerState mk x -> K SlotRange x
+      f (WrapLedgerConfig cfg) (FlipTickedLedgerState tlst) = K $ ledgerSlotRange cfg tlst
+
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasurePhase1 (HardForkBlock xs) = HardForkTxMeasurePhase1 xs
   type TxMeasurePhase2 (HardForkBlock xs) = HardForkTxMeasurePhase2 xs

@@ -96,11 +96,12 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
   let canUseCache = case policy of
         UseCache -> pointHash (isTip is) == castHash (getTipHash ticked)
         AlwaysRevalidate -> False
-  if canUseCache && isSlotNo is == slot
+  if canUseCache && (isSlotNo is == slot || cheapTick is)
     then
       -- We are looking for a snapshot exactly for the ledger state we already
-      -- have cached, then just return it.
-      pure $ snapshotFromIS is
+      -- have cached, or for a slot at which every transaction would reapply
+      -- just as it did at the cached one, then just return it.
+      pure $ (snapshotFromIS is){snapshotSlotNo = slot}
     else do
       resolveValues <-
         return $
@@ -119,6 +120,12 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
         ticked
         (isTxs is)
  where
+  -- Ticking forward within the epoch changes nothing a transaction's validity
+  -- depends on but its validity interval.
+  cheapTick is =
+    slot > isSlotNo is
+      && inSlotRange slot (isTxSlotRange is <> ledgerSlotRange cfg (isLedgerState is))
+
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg

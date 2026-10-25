@@ -321,7 +321,8 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
             keys
           pure vec
     res <-
-      encloseTimedWith (BackendTrace . SomeBackendTrace . LSMLookup >$< tracer) $ LSM.lookups t vec'
+      encloseTimedWith (BackendTrace . SomeBackendTrace . LSMLookup >$< tracer) $
+        V.concat <$> mapM (LSM.lookups t) (lookupBatches vec')
     pure
       . LedgerTables
       . ValuesMK
@@ -334,6 +335,15 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
         )
         Map.empty
       $ V.zip vec' res
+
+-- | Split keys into batches 'LSM.lookups' can take: lsm-tree indexes a batch's
+-- keys with 16 bits and reads out of bounds beyond that.
+lookupBatches :: V.Vector a -> [V.Vector a]
+lookupBatches v
+  | V.null v = []
+  | otherwise = batch : lookupBatches rest
+ where
+  (batch, rest) = V.splitAt 65536 v
 
 implReadRange ::
   forall m l blk.

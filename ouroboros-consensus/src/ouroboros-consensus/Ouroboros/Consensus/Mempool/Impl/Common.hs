@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , isMempoolSize
 
     -- * Mempool environment
+  , CertifyingView (..)
   , MempoolEnv (..)
   , initMempoolEnv
 
@@ -47,6 +48,8 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , snapshot
   ) where
 
+import Control.Exception (ErrorCall)
+import Control.Monad (guard)
 import Control.Monad.Trans.Except (runExcept)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
@@ -63,14 +66,15 @@ import qualified Data.Text as Text
 import Data.Typeable
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (acquiredLeiosEbsSetMember, announcementLeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Leios.Types (TxHash)
+import Ouroboros.Consensus.Leios.Types (EbHash, LeiosPoint (..), TxHash)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -78,6 +82,7 @@ import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withReader)
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -168,6 +173,11 @@ data InternalState blk = IS
   -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
   -- which is different from the slot of the original ledger state, which
   -- will remain in 'isTip'.
+  , isTxSlotRange :: !SlotRange
+  -- ^ The intersection of the 'txSlotRange's of the transactions in 'isTxs'.
+  --
+  -- At any slot within it and 'ledgerSlotRange', 'isTxs' would reapply exactly
+  -- as at 'isSlotNo', so a snapshot for such a slot needs no reapplication.
   , isLastTicketNo :: !TicketNo
   -- ^ The mempool 'TicketNo' counter.
   --
@@ -242,6 +252,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
     , isLedgerState = st
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
+    , isTxSlotRange = anySlot
     , isLastTicketNo = lastTicketNo
     , isRemovalCounter = 0
     , isCapacity = computeMempoolCapacity cfg st capacityOverride
@@ -252,13 +263,27 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
 -------------------------------------------------------------------------------}
 
 -- | Abstract interface needed to run a Mempool.
-newtype LedgerInterface m blk = LedgerInterface
+data LedgerInterface m blk = LedgerInterface
   { getCurrentLedgerState :: STM m (MempoolLedgerDBView m blk)
+  , getCertifiedParent :: Point blk -> m (Maybe (ChainHash blk))
+  -- ^ The parent of the block at the given point if that block certifies the
+  -- EB its parent announced: it then adds nothing to its parent but that
+  -- EB's closure.
+  , applyAnnouncedClosure ::
+      EbHash ->
+      ReadOnlyForker m LedgerState blk ->
+      SlotNo ->
+      m (Maybe (TickedLedgerState blk DiffMK))
+  -- ^ The forker's ledger state with the EB's closure applied, ticked to the
+  -- slot, with diffs relative to the forker's state. 'Nothing' if the closure
+  -- does not apply.
   }
 
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
+  , mldViewAnnounced :: Maybe EbHash
+  -- ^ The EB the tip announces, once the node has its closure
   , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m LedgerState blk))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
@@ -267,22 +292,61 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
   -- only happens if the system is going down, and in that case open forkers are unimportant.
   }
 
--- | Create a 'LedgerInterface' from a 'ChainDB'.
+-- | Create a 'LedgerInterface' from a 'ChainDB', reading closures from the
+-- 'LeiosDbHandle'.
 chainDBLedgerInterface ::
-  (IOLike m, IsLedger LedgerState blk) =>
+  forall m blk.
+  ( IOLike m
+  , IsLedger LedgerState blk
+  , ResolveLeiosBlock blk
+  , GetPrevHash blk
+  , HasLedgerTables LedgerState blk
+  , HasLedgerTables (Ticked LedgerState) blk
+  ) =>
+  LedgerConfig blk ->
+  LeiosDbHandle m ->
   ChainDB m blk ->
   LedgerInterface m blk
-chainDBLedgerInterface chainDB =
+chainDBLedgerInterface cfg leiosDb chainDB =
   LedgerInterface
     { getCurrentLedgerState = do
         st <- ChainDB.getCurrentLedger chainDB
+        acquired <- ChainDB.getAcquiredLeiosEbs chainDB
+        let announced = do
+              ann <- protocolStateLeiosAnnouncement @blk (headerStateChainDep (headerState st))
+              let eb = pointEbHash (announcementLeiosPoint ann)
+              guard (acquiredLeiosEbsSetMember eb acquired)
+              pure eb
         pure
           $ MempoolLedgerDBView
             (ledgerState st)
+            announced
           $ fmap (second ledgerStateReadOnlyForker)
           $ ChainDB.openReadOnlyForkerAtPoint
             chainDB
             (SpecificPoint (castPoint $ getTip st))
+    , applyAnnouncedClosure = \eb frk slot -> do
+        st <- atomically $ roforkerGetLedgerState frk
+        -- Resolving throws if the LeiosDB evicted the closure meanwhile.
+        res <-
+          try $
+            withReader leiosDb $ \reader ->
+              resolveAndApplyLeiosClosure reader cfg eb (roforkerReadTables frk) emptyLedgerTables st
+        pure $ case res of
+          Right (Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff}) ->
+            Just $
+              lcaClosureDiff
+                `prependDiffs` applyChainTick OmitLedgerEvents cfg slot (forgetLedgerTables lcaStateAfterEB)
+          Right (Left _) -> Nothing
+          Left (_ :: ErrorCall) -> Nothing
+    , getCertifiedParent = \case
+        GenesisPoint -> pure Nothing
+        BlockPoint slot hash -> do
+          mbBlk <- ChainDB.getBlockComponent chainDB ChainDB.GetBlock (RealPoint slot hash)
+          pure $ do
+            blk <- mbBlk
+            _ <- blockLeiosCert blk
+            pure (blockPrevHash blk)
     }
 
 {-------------------------------------------------------------------------------
@@ -311,6 +375,19 @@ data MempoolEnv m blk = MempoolEnv
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
   , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
   , mpEnvTimeoutConfig :: Maybe MempoolTimeoutConfig
+  , mpEnvCertifyingView :: StrictTVar m (Maybe (CertifyingView blk))
+  -- ^ The certifying view, if the tip announces an EB whose closure the node
+  -- has. Written only under the lock of 'mpEnvStateVar', like the main view.
+  }
+
+-- | See "Ouroboros.Consensus.Mempool.CertifyingView".
+data CertifyingView blk = CertifyingView
+  { cvEb :: !EbHash
+  -- ^ The EB the main view's tip announces
+  , cvBase :: !(TickedLedgerState blk DiffMK)
+  -- ^ The main view's tip with the EB's closure applied, ticked to its slot
+  , cvState :: !(InternalState blk)
+  -- ^ The main view's txs on 'cvBase'
   }
 
 initMempoolEnv ::
@@ -325,7 +402,7 @@ initMempoolEnv ::
   Tracer m (TraceEventMempool blk) ->
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
-  MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface
+  MempoolLedgerDBView st _ meFrk <- atomically $ getCurrentLedgerState ledgerInterface
   eFrk <- meFrk
   case eFrk of
     -- This should happen very rarely, if between getting the state and getting
@@ -340,6 +417,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
           initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
+      certifyingView <- uncheckedNewTVarM Nothing
       return
         MempoolEnv
           { mpEnvLedger = ledgerInterface
@@ -351,6 +429,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
           , mpEnvTracer = tracer
           , mpEnvCapacityOverride = capacityOverride
           , mpEnvTimeoutConfig = mbTimeoutConfig
+          , mpEnvCertifyingView = certifyingView
           }
 
 {-------------------------------------------------------------------------------
@@ -421,6 +500,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             , isTxIds = Set.insert (txId tx) isTxIds
             , isLeiosTxIndex = strictMaybe id (\h -> Map.insert h vtx) (leiosHashOf vtx) isLeiosTxIndex
             , isLedgerState = prependMempoolDiffs isLedgerState st'
+            , isTxSlotRange = isTxSlotRange <> txSlotRange tx
             , isLastTicketNo = nextTicketNo
             }
       )
@@ -434,6 +514,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     , isLedgerState
     , isLastTicketNo
     , isSlotNo
+    , isTxSlotRange
     } = is
 
   nextTicketNo = succ isLastTicketNo
@@ -556,6 +637,8 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
             st'
               `withLedgerTables` ltliftA2 rawPrependDiffs (projectLedgerTables (isLedgerState cand)) (LedgerTables survivorDiffs)
         , isCapacity = computeMempoolCapacity cfg st' capacityOverride
+        , isTxSlotRange =
+            isTxSlotRange cand <> Foldable.foldMap' (txSlotRange . txForgetValidated . fst3) validDelta
         , isLastTicketNo = lastTicketNo
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
@@ -762,6 +845,12 @@ data TraceEventMempool blk
     -- an alternative fork. It is completely innocuous but we would like to
     -- double check that it happens very rarely or almost never.
     TraceMempoolTipMovedBetweenSTMBlocks
+  | -- | The mempool synced to a block certifying the EB its tip announced
+    -- starting from its certifying view, instead of revalidating.
+    TraceMempoolSwitchedToCertifyingView
+      -- | the new tip
+      (Point blk)
+      MempoolSize
   deriving Generic
 
 deriving instance
