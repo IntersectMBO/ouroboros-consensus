@@ -30,6 +30,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
+  , SlotRange (..)
+  , anySlot
+  , inSlotRange
+  , noSlot
   , TxId
   , TxLimits (..)
   , TxMeasure (..)
@@ -254,10 +258,53 @@ class
     Text ->
     Maybe (ApplyTxErr blk)
 
+  -- | The slots at which the transaction's own validity interval admits it.
+  --
+  -- Together with 'ledgerSlotRange', this lets the mempool advance its slot
+  -- without reapplying anything. The default commits to no slot, so the
+  -- mempool reapplies on every slot change.
+  txSlotRange :: GenTx blk -> SlotRange
+  txSlotRange _ = noSlot
+
+  -- | The slots to which the given state can be ticked without changing
+  -- anything the validity of a transaction depends on, other than its own
+  -- validity interval: up to the next epoch boundary for the Shelley eras.
+  ledgerSlotRange :: LedgerConfig blk -> TickedLedgerState blk mk -> SlotRange
+  ledgerSlotRange _ _ = noSlot
+
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
+
+-- | The half-open range of slots @[from, until)@; 'Nothing' is unbounded.
+-- '<>' intersects.
+data SlotRange = SlotRange
+  { slotRangeFrom :: !SlotNo
+  , slotRangeUntil :: !(Maybe SlotNo)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance Semigroup SlotRange where
+  SlotRange f1 u1 <> SlotRange f2 u2 = SlotRange (max f1 f2) (minUntil u1 u2)
+   where
+    minUntil Nothing u = u
+    minUntil u Nothing = u
+    minUntil (Just a) (Just b) = Just (min a b)
+
+instance Monoid SlotRange where
+  mempty = anySlot
+
+anySlot :: SlotRange
+anySlot = SlotRange 0 Nothing
+
+-- | Contains no slot: what a block type that cannot tell commits to.
+noSlot :: SlotRange
+noSlot = SlotRange maxBound (Just 0)
+
+inSlotRange :: SlotNo -> SlotRange -> Bool
+inSlotRange s (SlotRange f u) = s >= f && maybe True (s <) u
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult

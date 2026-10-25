@@ -168,6 +168,11 @@ data InternalState blk = IS
   -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
   -- which is different from the slot of the original ledger state, which
   -- will remain in 'isTip'.
+  , isTxSlotRange :: !SlotRange
+  -- ^ The intersection of the 'txSlotRange's of the transactions in 'isTxs'.
+  --
+  -- At any slot within it and 'ledgerSlotRange', 'isTxs' would reapply exactly
+  -- as at 'isSlotNo', so a snapshot for such a slot needs no reapplication.
   , isLastTicketNo :: !TicketNo
   -- ^ The mempool 'TicketNo' counter.
   --
@@ -242,6 +247,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
     , isLedgerState = st
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
+    , isTxSlotRange = anySlot
     , isLastTicketNo = lastTicketNo
     , isRemovalCounter = 0
     , isCapacity = computeMempoolCapacity cfg st capacityOverride
@@ -421,6 +427,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             , isTxIds = Set.insert (txId tx) isTxIds
             , isLeiosTxIndex = strictMaybe id (\h -> Map.insert h vtx) (leiosHashOf vtx) isLeiosTxIndex
             , isLedgerState = prependMempoolDiffs isLedgerState st'
+            , isTxSlotRange = isTxSlotRange <> txSlotRange tx
             , isLastTicketNo = nextTicketNo
             }
       )
@@ -434,6 +441,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     , isLedgerState
     , isLastTicketNo
     , isSlotNo
+    , isTxSlotRange
     } = is
 
   nextTicketNo = succ isLastTicketNo
@@ -556,6 +564,8 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
             st'
               `withLedgerTables` ltliftA2 rawPrependDiffs (projectLedgerTables (isLedgerState cand)) (LedgerTables survivorDiffs)
         , isCapacity = computeMempoolCapacity cfg st' capacityOverride
+        , isTxSlotRange =
+            isTxSlotRange cand <> Foldable.foldMap' (txSlotRange . txForgetValidated . fst3) validDelta
         , isLastTicketNo = lastTicketNo
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
