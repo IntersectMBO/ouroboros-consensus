@@ -99,10 +99,13 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
     ledgerItf :: Mempool.LedgerInterface IO TestBlock
     ledgerItf =
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState =
+        { Mempool.getCertifiedParent = \_ -> pure Nothing
+        , Mempool.applyAnnouncedClosure = \_ _ _ -> pure Nothing
+        , Mempool.getCurrentLedgerState =
             pure $
               MempoolLedgerDBView
                 (testInitLedgerWithState NoPayLoadDependentState)
+                Nothing
                 ( pure $
                     Right $
                       ReadOnlyForker

@@ -83,11 +83,14 @@ openMockedMempool capacityOverride tracer initialParams = do
   currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
   let ledgerItf =
         Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = do
+          { Mempool.getCertifiedParent = \_ -> pure Nothing
+          , Mempool.applyAnnouncedClosure = \_ _ _ -> pure Nothing
+          , Mempool.getCurrentLedgerState = do
               st <- readTVar currentLedgerStateTVar
               pure $
                 MempoolLedgerDBView
                   (forgetLedgerTables st)
+                  Nothing
                   ( pure $
                       Right $
                         ReadOnlyForker

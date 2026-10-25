@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -792,52 +793,70 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
             let (rbTxs', rbTxsSize', ebTxs', ebTxsSize') = snapshotPartition snap rbCap ebCap
             pure (rbTxs', ebTxs', rbTxsSize', ebTxsSize', snap)
         pure (rbTxs', ebTxs', rbTxsSize', snap')
-      Just (_cert, announcedPoint) -> do
-        -- We have a Leios certificate: only take transactions for a new EB, as the RB will
-        -- carry the certificate and must not carry additional txs.
+      Just (_cert, announcedPoint) ->
+        -- The certifying view, kept up to date off the forging path, is the
+        -- mempool already revalidated on top of the closure.
+        pmTrace'Via
+          (const ())
+          "get-certifying-view"
+          currentSlot
+          ( atomically
+              (getCertifyingSnapshotFor mempool announcedPoint (castHash (getTipHash unticked)) currentSlot)
+          )
+          >>= \case
+            Just snap -> do
+              (_, ebTxs', _, _ebTxsSize, snap') <-
+                pmTrace'Via partitionSizes "take-eb-txs" currentSlot $ do
+                  let (_noRbTxs, _, ebTxs', ebTxsSize') =
+                        snapshotPartition snap Data.Measure.zero ebCap
+                  pure ([], ebTxs', Data.Measure.zero, ebTxsSize', snap)
+              pure ([], ebTxs', Data.Measure.zero, snap')
+            Nothing -> do
+              -- We have a Leios certificate: only take transactions for a new EB, as the RB will
+              -- carry the certificate and must not carry additional txs.
 
-        -- Apply the EB's transactions onto the ledger state
-        res <-
-          pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
-            resolveAndApplyLeiosClosure
-              leiosDbReader
-              (configLedger cfg)
-              announcedPoint
-              readTables
-              emptyLedgerTables
-              (ledgerState unticked)
+              -- Apply the EB's transactions onto the ledger state
+              res <-
+                pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
+                  resolveAndApplyLeiosClosure
+                    leiosDbReader
+                    (configLedger cfg)
+                    announcedPoint
+                    readTables
+                    emptyLedgerTables
+                    (ledgerState unticked)
 
-        case res of
-          Left err ->
-            -- Should not happen: we are certifying this EB, so a quorum of
-            -- the committee applied its closure before signing. Fail loudly.
-            error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
-          Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
-            -- Compose the EB closure diff (relative to the unticked
-            -- parent) with the tick diff (relative to the
-            -- state with the EB closure applied), so the mempool snapshot is revalidated
-            -- against parent + closure + tick.
-            tickedLsAfterEB <-
-              pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $ do
-                lcaStateAfterEBTicked <-
-                  evaluate $
-                    applyChainTick
-                      OmitLedgerEvents
-                      (configLedger cfg)
-                      currentSlot
-                      (forgetLedgerTables lcaStateAfterEB)
-                evaluate $ lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
+              case res of
+                Left err ->
+                  -- Should not happen: we are certifying this EB, so a quorum of
+                  -- the committee applied its closure before signing. Fail loudly.
+                  error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
+                Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
+                  -- Compose the EB closure diff (relative to the unticked
+                  -- parent) with the tick diff (relative to the
+                  -- state with the EB closure applied), so the mempool snapshot is revalidated
+                  -- against parent + closure + tick.
+                  tickedLsAfterEB <-
+                    pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $ do
+                      lcaStateAfterEBTicked <-
+                        evaluate $
+                          applyChainTick
+                            OmitLedgerEvents
+                            (configLedger cfg)
+                            currentSlot
+                            (forgetLedgerTables lcaStateAfterEB)
+                      evaluate $ lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
 
-            snap <-
-              pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
-                getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
+                  snap <-
+                    pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
+                      getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
 
-            (_, ebTxs', _, _ebTxsSize, snap') <-
-              pmTrace'Via partitionSizes "take-eb-txs" currentSlot $ do
-                let (_noRbTxs, _, ebTxs', ebTxsSize') =
-                      snapshotPartition snap Data.Measure.zero ebCap
-                pure ([], ebTxs', Data.Measure.zero, ebTxsSize', snap)
-            pure ([], ebTxs', Data.Measure.zero, snap')
+                  (_, ebTxs', _, _ebTxsSize, snap') <-
+                    pmTrace'Via partitionSizes "take-eb-txs" currentSlot $ do
+                      let (_noRbTxs, _, ebTxs', ebTxsSize') =
+                            snapshotPartition snap Data.Measure.zero ebCap
+                      pure ([], ebTxs', Data.Measure.zero, ebTxsSize', snap)
+                  pure ([], ebTxs', Data.Measure.zero, snap')
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
  where

@@ -635,21 +635,20 @@ calculateBlockFetchClientMetrics
       At slotNo@(SlotNo slotNo_) ->
         if Cdf.null cmCdfState && forgeDelay > 20 -- During startup wait until we are in sync
           then nothingToDo
-          else
-            case Cdf.processDataPoint
-              Cdf.defaultConfig -- should come from config file
-              (fromIntegral slotNo_, slotNo, forgeDelay)
-              cmCdfState
-              cm of
-              Nothing -> nothingToDo
-              Just (cm', cmCdfState') ->
-                cm'
-                  { cmTraceIt = True
-                  , cmCdfState = cmCdfState'
-                  , cmTraceVars = Cdf.size cmCdfState' >= 45 -- wait until we have at least 45 samples before providing cdf estimates
-                  , cmBlockSize = getSizeInBytes blockSize
-                  , cmDelay = realToFrac forgeDelay
-                  }
+          else case Cdf.processDataPoint
+            Cdf.defaultConfig -- should come from config file
+            (fromIntegral slotNo_, slotNo, forgeDelay)
+            cmCdfState
+            cm of
+            Nothing -> nothingToDo
+            Just (cm', cmCdfState') ->
+              cm'
+                { cmTraceIt = True
+                , cmCdfState = cmCdfState'
+                , cmTraceVars = Cdf.size cmCdfState' >= 45 -- wait until we have at least 45 samples before providing cdf estimates
+                , cmBlockSize = getSizeInBytes blockSize
+                , cmDelay = realToFrac forgeDelay
+                }
    where
     nothingToDo = cm{cmTraceIt = False}
 calculateBlockFetchClientMetrics cm _lc _ = cm
@@ -1188,6 +1187,12 @@ instance
       [ "kind" .= String "TraceMempoolSyncNotNeeded"
       , "tip" .= forMachine dtal t
       ]
+  forMachine dtal (TraceMempoolSwitchedToCertifyingView tip mpSz) =
+    mconcat
+      [ "kind" .= String "TraceMempoolSwitchedToCertifyingView"
+      , "tip" .= forMachine dtal tip
+      , "mempoolSize" .= forMachine dtal mpSz
+      ]
   forMachine dtal (TraceMempoolAttemptingAdd tx) =
     mconcat
       [ "kind" .= String "TraceMempoolAttemptingAdd"
@@ -1237,6 +1242,7 @@ instance
   asMetrics (TraceMempoolSynced RisingEdge) = []
   asMetrics TraceMempoolSyncNotNeeded{} = []
   asMetrics TraceMempoolAttemptingAdd{} = []
+  asMetrics TraceMempoolSwitchedToCertifyingView{} = []
   asMetrics TraceMempoolTipMovedBetweenSTMBlocks{} = []
   asMetrics (TraceMempoolCapacityChanged _capBefore capAfter) =
     [ IntM "mempoolCapacityBytes" (fromIntegral . unByteSize32 . txMeasureMetricTxSizeBytes $ capAfter)
@@ -1266,6 +1272,7 @@ instance MetaTrace (TraceEventMempool blk) where
   namespaceFor TraceMempoolSynced{} = Namespace [] ["Synced"]
   namespaceFor TraceMempoolSyncNotNeeded{} = Namespace [] ["SyncNotNeeded"]
   namespaceFor TraceMempoolAttemptingAdd{} = Namespace [] ["AttemptAdd"]
+  namespaceFor TraceMempoolSwitchedToCertifyingView{} = Namespace [] ["SwitchedToCertifyingView"]
   namespaceFor TraceMempoolTipMovedBetweenSTMBlocks{} = Namespace [] ["TipMovedBetweenSTMBlocks"]
   namespaceFor TraceMempoolCapacityChanged{} = Namespace [] ["CapacityChanged"]
 
@@ -1276,6 +1283,7 @@ instance MetaTrace (TraceEventMempool blk) where
   severityFor (Namespace _ ["ManuallyRemovedTxs"]) _ = Just Warning
   severityFor (Namespace _ ["SyncNotNeeded"]) _ = Just Debug
   severityFor (Namespace _ ["AttemptAdd"]) _ = Just Debug
+  severityFor (Namespace _ ["SwitchedToCertifyingView"]) _ = Just Info
   severityFor (Namespace [] ["TipMovedBetweenSTMBlocks"]) _ = Just Debug
   severityFor (Namespace _ ["CapacityChanged"]) _ = Just Debug
   severityFor _ _ = Nothing
@@ -1332,6 +1340,9 @@ instance MetaTrace (TraceEventMempool blk) where
   documentFor (Namespace _ ["SyncNotNeeded"]) =
     Just
       "The mempool and the LedgerDB are in sync already."
+  documentFor (Namespace _ ["SwitchedToCertifyingView"]) =
+    Just
+      "The mempool synced to a block certifying the EB its tip announced by switching to its certifying view."
   documentFor (Namespace _ ["Synced"]) =
     Just
       "The mempool and the LedgerDB are syncing or in sync depending on the argument on the trace."
@@ -1353,6 +1364,7 @@ instance MetaTrace (TraceEventMempool blk) where
     , Namespace [] ["ManuallyRemovedTxs"]
     , Namespace [] ["Synced"]
     , Namespace [] ["SyncNotNeeded"]
+    , Namespace [] ["SwitchedToCertifyingView"]
     , Namespace [] ["AttemptAdd"]
     , Namespace [] ["TipMovedBetweenSTMBlocks"]
     , Namespace [] ["CapacityChanged"]

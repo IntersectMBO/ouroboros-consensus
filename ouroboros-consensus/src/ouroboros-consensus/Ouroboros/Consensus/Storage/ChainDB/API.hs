@@ -102,6 +102,7 @@ import Data.Map (Map)
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (AcquiredLeiosEbsSet)
 import LeiosValidClaims (ValidClaims)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -306,6 +307,8 @@ data ChainDB m blk = ChainDB
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
   , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get current ledger
+  , getAcquiredLeiosEbs :: STM m AcquiredLeiosEbsSet
+  -- ^ The endorser blocks whose closures the node has.
   , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
   , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))

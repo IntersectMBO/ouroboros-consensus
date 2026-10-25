@@ -343,6 +343,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , closeDB = closeDB h
             , isOpen = isOpen h
             , getCurrentLedger = getEnvSTM h Query.getCurrentLedger
+            , getAcquiredLeiosEbs = getEnvSTM h $ fmap acquiredLeiosEbHashes . readTVar . cdbAcquiredLeiosEbs
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory

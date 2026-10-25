@@ -599,11 +599,14 @@ newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = do
+        { getCertifiedParent = \_ -> pure Nothing
+        , applyAnnouncedClosure = \_ _ _ -> pure Nothing
+        , getCurrentLedgerState = do
             st <- ldbTip <$> readTVar t
             pure $
               MempoolLedgerDBView
                 (forgetLedgerTables st)
+                Nothing
                 ( pure $
                     Right $
                       ReadOnlyForker
@@ -931,11 +934,14 @@ prop_removeDuringSyncSM = do
         pure (ltliftA2 restrictValuesMK (projectLedgerTables st) keys)
       ledgerInterface =
         LedgerInterface
-          { getCurrentLedgerState = do
+          { getCertifiedParent = \_ -> pure Nothing
+          , applyAnnouncedClosure = \_ _ _ -> pure Nothing
+          , getCurrentLedgerState = do
               st <- ldbTip <$> readTVar ldb
               pure $
                 MempoolLedgerDBView
                   (forgetLedgerTables st)
+                  Nothing
                   ( pure $
                       Right $
                         ReadOnlyForker

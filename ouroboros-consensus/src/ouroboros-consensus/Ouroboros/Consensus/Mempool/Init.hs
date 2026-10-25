@@ -16,8 +16,13 @@ import LeiosDemoTypes (protVerParity)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (EbHash)
 import Ouroboros.Consensus.Mempool.API (Mempool (..), MempoolTimeoutConfig)
 import Ouroboros.Consensus.Mempool.Capacity
+import Ouroboros.Consensus.Mempool.CertifyingView
+  ( certifyingViewCatchUp
+  , implGetCertifyingSnapshotFor
+  )
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
@@ -50,10 +55,13 @@ openMempool ::
 openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
   env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
   forkSyncStateOnTipPointChange env topLevelRegistry
+  void $
+    forkLinkedThread topLevelRegistry "Mempool.certifyingViewCatchUp" $
+      certifyingViewCatchUp env
   return $ mkMempool env
 
--- | Spawn a thread which syncs the 'Mempool' state whenever the 'LedgerState'
--- changes.
+-- | Spawn a thread which syncs the 'Mempool' state whenever the tip changes,
+-- or the node gets the closure of the EB the tip announces.
 forkSyncStateOnTipPointChange ::
   forall m blk.
   ( IOLike m
@@ -76,13 +84,14 @@ forkSyncStateOnTipPointChange menv reg =
         , wReader = getCurrentTip
         }
  where
-  action :: Point blk -> m ()
+  action :: (Point blk, Maybe EbHash) -> m ()
   action _a = implSyncWithLedger (const ()) menv
 
   -- Using the tip ('Point') allows for quicker equality checks
-  getCurrentTip :: STM m (Point blk)
-  getCurrentTip =
-    ledgerTipPoint . mldViewState <$> getCurrentLedgerState (mpEnvLedger menv)
+  getCurrentTip :: STM m (Point blk, Maybe EbHash)
+  getCurrentTip = do
+    view <- getCurrentLedgerState (mpEnvLedger menv)
+    pure (ledgerTipPoint (mldViewState view), mldViewAnnounced view)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.
@@ -121,6 +130,7 @@ mkMempool mpEnv =
     , getSnapshot = snapshotFromIS <$> readSVarSTM istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
+    , getCertifyingSnapshotFor = implGetCertifyingSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readSVarSTM istate
     , getLeiosTxIndex = do
         st <- readSVarSTM istate
