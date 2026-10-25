@@ -9,7 +9,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( -- * Partition files
     initialiseLeiosDbFiles
   , openRawConnection
-  , openReadOnlyRawConnection
   , withReadOnlyConn
   , closeChecked
 
@@ -54,7 +53,7 @@ withReadOnlyConn dbPath =
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openReadOnlyRawConnection dbPath = do
   db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
-  dbExec db "pragma busy_timeout = 1000;"
+  -- Only mmap_size: journal_mode and page_size need write access.
   dbExec db "pragma mmap_size = 268435500;"
   pure db
 
@@ -96,13 +95,10 @@ connectionPragmas =
     "pragma busy_timeout = 1000;"
   , "pragma synchronous = normal;"
   , "pragma mmap_size = 268435500;"
-  , -- SQLite's default, spelled out. Automatic checkpointing is what keeps
-    -- the WAL bounded on both partitions: a checkpoint every 1000 frames,
-    -- run inline on whichever connection trips the threshold. Nothing must
-    -- disable it -- with nobody checkpointing, the WAL grows without bound
-    -- ('journal_size_limit' cannot truncate a log that never checkpoints;
-    -- observed 5 GB of WAL on a 1 GB partition, twelve of which filled a
-    -- disk).
+  , -- SQLite's own default, spelled out because it is what keeps the log
+    -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
+    -- no connection is sitting on a stale read snapshot. One that is will
+    -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
     "pragma wal_autocheckpoint = 1000;"
   , -- Sweep-sized sorts otherwise spill to a temp file.
     "pragma temp_store = memory;"

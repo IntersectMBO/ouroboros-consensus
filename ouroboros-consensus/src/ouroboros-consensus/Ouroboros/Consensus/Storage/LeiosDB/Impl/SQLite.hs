@@ -10,16 +10,14 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
-  , deleteDanglingTxs
   , vacuumLeiosDb
 
     -- * SQL strings (re-exported for leios-schedule-gen)
   , sql_schema_vol
   , sql_schema_imm
   , sql_insert_eb
-  , sql_insert_ebBody
-  , sql_fill_ebTxBytes
-  , sql_prealloc_ebTxBytes
+  , sql_insert_eb_body
+  , sql_insert_eb_closure
   ) where
 
 import Cardano.Prelude (forM_, when)
@@ -29,22 +27,21 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , check
   , dupTChan
   , isEmptyTBQueue
+  , modifyTVar
   , newBroadcastTChan
   , newTBQueueIO
   , newTVarIO
   , putTMVar
-  , readTVar
   , readTVarIO
   , tryReadTBQueue
   , writeTChan
   , writeTVar
   )
 import Control.Exception
-  ( SomeException
-  , throwIO
+  ( throwIO
   , toException
   )
-import Control.Monad (unless, void)
+import Control.Monad (void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -61,20 +58,28 @@ import Control.ResourceRegistry
 import Control.Tracer (Tracer, traceWith)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
+import GHC.Clock (getMonotonicTime)
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
-import Ouroboros.Consensus.Leios.Types (ebHashBytes)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), ebHashBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
+  , LeiosEbNotification
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbFailure (..)
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Completion
+  ( Missing
+  , scanMissing
+  , txIsWritten
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
@@ -130,8 +135,6 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath =
 
 -- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
 -- the writer evicts per turn, between the jobs it serves.
---
--- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
@@ -144,16 +147,18 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   -- create .db files
   initialiseLeiosDbFiles volLeiosDbPath immLeiosDbPath
+  -- which stored EBs still miss txs, read once from the closures
+  missingVar <- newTVarIO =<< scanMissing volLeiosDbPath
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerThread <- startVolatileStatsSampler registry tracer statsVar volLeiosDbPath
-  -- Both start set, so a restart picks up whatever the last run left
-  -- pinned or marked; the copier and the writer clear them once they find
-  -- nothing.
+  -- This variable signals the copier thread to wake up and copy the rows
+  -- from the volatile to the immutable LeiosDB partition.
+  -- It starts set, so that on a node restart we continue a potentially
+  -- interrupted copy pass.
   copierDoorbell <- newTVarIO True
-  sweepDoorbell <- newTVarIO True
 
   -- the volatile partition writer thread
   writeQueue <-
@@ -161,8 +166,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       registry
       tracer
       statsVar
+      missingVar
       notificationChan
-      sweepDoorbell
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
@@ -179,7 +184,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   pure
     LeiosDbHandle
       { closeLeiosDbHandle = close samplerThread copierThread writeQueue
-      , openReader = implOpenReader statsVar
+      , openReader = implOpenReader statsVar missingVar
       , openWriter = implOpenWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
@@ -203,24 +208,39 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
     --
     -- A sealed queue refuses the job. Nothing is left to close then: the
     -- worker closes the connections on every exit path before it seals,
-    -- and whatever killed it already reached the awaiter of the write
-    -- that failed.
+    -- and whatever killed it is already taking the node down through the
+    -- link.
     try (submitJob writeQueue Shutdown) >>= \case
       Left (_writerGone :: LeiosDbException) -> pure ()
       Right promise -> await promise
 
-  implOpenReader statsVar = do
-    volDb <- openReadOnlyRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
+  implOpenReader statsVar missingVar = do
+    volDb <- openRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
         { closeReader = closeConn conn
         , testScanEbPoints = sqlScanEbPoints conn
-        , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
-        , lookupEbClosure = sqlLookupEbClosure conn
+        , lookupEbClosure = \ebHash -> do
+            -- Read before the closure: an EB leaves 'Missing' only once
+            -- the write completing it has committed. But it only enters it
+            -- with its body, which may land between the two reads, so the
+            -- closure read must be complete in itself too.
+            incomplete <- Map.member ebHash <$> readTVarIO missingVar
+            if incomplete
+              then pure Nothing
+              else do
+                mbClosure <- sqlLookupEbClosure conn ebHash
+                pure $ case mbClosure of
+                  Just txs | all (txIsWritten . snd) txs -> Just txs
+                  _ -> Nothing
+        , scanCompleteEbClosuresNotOlderThanSlot = \slot -> do
+            points <- sqlScanBodiedPointsSince conn slot
+            missing <- readTVarIO missingVar
+            pure [p | p <- points, not (Map.member (pointEbHash p) missing)]
         }
 
   implOpenWriter writeQueue =
@@ -230,7 +250,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
           closeWriter = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
         , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
-        , writeTxs = \point offBytes -> submitJob writeQueue (WriteTxs point offBytes)
+        , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'closeLeiosDbHandle': on release
@@ -293,34 +313,26 @@ withWriterConns tracer statsVar volPath immPath k =
 -- connections itself, on its own thread ('withWriterConns'), and closes them
 -- on every way out.
 --
--- The worker publishes each job's outcome into its 'WriteResult'. For insert
--- jobs it then rethrows a failure: publishing first lets an awaiting producer
--- see the exception rather than block on a promise the dying worker would
--- never fill, and a failed insert write is not survivable (no caller catches
--- 'LeiosDbException') -- producers still submitting eventually block on the
--- full queue and go down as blocked-indefinitely. A failed maintenance job is
--- the submitting scheduler's problem instead (traced, paced, retried); the
--- worker survives it.
+-- The worker puts each job's result into its 'WriteResult'. A failed write is
+-- not survivable: the worker stops and seals the queue with the exception, so
+-- awaiting a job it did not serve, or submitting another, throws it.
 startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
+  StrictTVar IO Missing ->
   StrictTChan IO LeiosEbNotification ->
-  StrictTVar IO Bool ->
   Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar missingVar notificationChan gcBatchSize volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  sweepStateVar <- newTVarIO SweepIdle
-  jobsServedVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
-
-      worker :: WriterConns -> IO ()
+  let worker :: WriterConns -> IO ()
       worker
         WriterConns
           { wcVolDb = volDb
@@ -330,129 +342,133 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
           , wcGcStmts = gcStmts
           , wcPinStmt = pinStmt
           , wcMarkCopiedStmt = markCopiedStmt
-          } = serve
+          } = serve 0 (Just 0)
          where
-          runJob :: WriteJob -> IO Bool
+          -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
+          -- and maintenance jobs.
+          -- We prioritise queued jobs first: writes arrive in bursts, and the quiet in
+          -- between is the time to do maintenance. But a burst can go on for as
+          -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
+          --
+          -- The second argument is the state of the GC sweep pass: 'Nothing'
+          -- when no sweep is in progress; 'Just' the EBs evicted so far while a
+          -- pass is in progress. It starts as 'Just', to continue a sweep pass
+          -- potentially interrupted by a node restart.
+          serve :: Int -> Maybe Int -> IO ()
+          serve served sweep = do
+            mJob <-
+              if served >= maxJobsBetweenMaintenance
+                then
+                  -- we've served enough queued jobs, time to do maintenance
+                  pure Nothing
+                else
+                  -- 'Nothing' when there are no queued jobs: do maintenance
+                  atomically $ tryReadTBQueue queue
+            case mJob of
+              -- do a normal queue job
+              Just job -> do
+                start <- getMonotonicTime
+                next <- runJob job
+                end <- getMonotonicTime
+                traceWith tracer $
+                  TraceLeiosDbWriteJobDone (describeJob job) (jobBytes job) (end - start)
+                case next of
+                  Stop -> pure ()
+                  Continue -> serve (served + 1) sweep
+                  ContinueAndSweep -> serve (served + 1) (Just (fromMaybe 0 sweep))
+              -- do maintenance
+              Nothing -> do
+                sweep' <- stepMaintenance sweep
+                case sweep' of
+                  Nothing -> blockUntilJob
+                  Just _ -> pure ()
+                serve 0 sweep'
+
+          runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
             Shutdown resultVar -> do
               -- Only stop serving: the brackets in 'withWriterConns' close the
               -- connections once 'serve' returns, and the worker hands the
               -- outcome of that close to this job's awaiter.
               writeIORef shutdownVar (Just resultVar)
-              pure True
+              pure Stop
             WriteEbPoint point size resultVar ->
-              publish resultVar (sqlInsertEbPoint conn notify point size) >> pure False
+              publish resultVar (sqlInsertEbPoint conn missingVar notify point size) >> pure Continue
             WriteEbBody point eb fills resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn notify point eb fills) >> pure False
-            WriteTxs point offBytes resultVar ->
-              publish resultVar (sqlInsertTxs tracer conn notify point offBytes) >> pure False
+              publish resultVar (sqlInsertEbBody conn missingVar notify point eb fills) >> pure Continue
+            WriteTxs point txs resultVar ->
+              publish resultVar (sqlInsertTxs conn missingVar notify point txs) >> pure Continue
             Flush resultVar ->
-              publish resultVar (pure ()) >> pure False
+              publish resultVar (pure ()) >> pure Continue
             PinEb ebHashes resultVar -> do
               -- One transaction for the batch: the submitter awaits this while
               -- holding the ImmutableDB write lock, so a round-trip per EB throttles
               -- block immutalisation to this queue's drain rate.
-              publishMaintenance volDb immDb resultVar $
+              publish resultVar $
                 dbWithWriteTransactionRaw volDb $
                   forM_ ebHashes $ \ebHash ->
                     useStmt pinStmt $ do
                       dbBindBlob pinStmt 1 (ebHashBytes ebHash)
                       dbStep1Safe pinStmt
-              pure False
+              pure Continue
             MarkCopied ebHashes resultVar -> do
               -- One transaction for the batch: the mark is what makes a copied EB
               -- evictable, and under sync it otherwise costs a queue round-trip
               -- per EB behind a saturated insert FIFO.
-              publishMaintenance volDb immDb resultVar $
+              publish resultVar $
                 dbWithWriteTransactionRaw volDb $
                   forM_ ebHashes $ \ebHash ->
                     useStmt markCopiedStmt $ do
                       dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
                       dbStep1Safe markCopiedStmt
-              pure False
+              pure Continue
             GcMark slot resultVar -> do
-              publishMaintenance volDb immDb resultVar $
-                gcMark sweepDoorbell volDb gcStmts slot
-              pure False
+              nEbsMarked <- publish resultVar (gcMark volDb gcStmts slot)
+              pure $ if nEbsMarked > 0 then ContinueAndSweep else Continue
 
-          -- Queued jobs first: writes arrive in bursts, and the quiet in
-          -- between is what maintenance is for. But a burst can go on for as
-          -- long as it likes, so 'maxJobsBetweenMaintenance' of them is the
-          -- most that may pass before maintenance gets its turn regardless.
-          serve = do
-            mJob <- atomically $ do
-              served <- readTVar jobsServedVar
-              if served >= maxJobsBetweenMaintenance
-                then pure Nothing
-                else
-                  tryReadTBQueue queue >>= \case
-                    Nothing -> pure Nothing
-                    Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
-            case mJob of
-              Just job -> do
-                -- 'tryReadTBQueue' above removed the job, so the drain that runs
-                -- when the worker stops cannot reach it. If running it throws,
-                -- only this handler can still tell the awaiter.
-                stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
-                traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-                unless stop serve
-              Nothing -> do
-                quiet <- stepMaintenance
-                atomically $ writeTVar jobsServedVar 0
-                when quiet blockUntilWork
-                serve
-
-          -- Nothing queued and no sweep outstanding: wait for either.
-          blockUntilWork = IO.atomically $ do
+          -- Nothing queued and no sweep outstanding: wait for a job.
+          blockUntilJob = IO.atomically $ do
             noJobs <- isEmptyTBQueue queue
-            rung <- readTVar sweepDoorbell
-            check (not noJobs || rung)
+            check (not noJobs)
 
-          -- Advance a sweep by one batch; 'True' when there was nothing to do.
+          -- Advance a sweep by one batch, returning the new sweep state.
           -- A failure here is the maintenance's problem, not the writer's:
           -- trace it, roll back anything left open, and let the next GC tick
-          -- bring the work back.
-          stepMaintenance =
+          -- bring the work back. Hence 'catch' rather than 'bracket': the
+          -- exception must stop here, not take the writer down, and the
+          -- cleanup is for failure only.
+          stepMaintenance :: Maybe Int -> IO (Maybe Int)
+          stepMaintenance sweep =
             step `catch` \(e :: LeiosDbException) -> do
               _ <- DB.exec volDb "ROLLBACK"
               _ <- DB.exec immDb "ROLLBACK"
               traceWith tracer $ TraceLeiosDbGCError (displayException e)
-              atomically $ writeTVar sweepStateVar SweepIdle
-              pure True
+              pure Nothing
            where
             step =
-              readTVarIO sweepStateVar >>= \case
-                SweepIdle -> do
-                  asked <- atomically $ do
-                    rung <- readTVar sweepDoorbell
-                    when rung $ do
-                      writeTVar sweepDoorbell False
-                      writeTVar sweepStateVar (SweepEbs 0)
-                    pure rung
-                  pure (not asked)
-                SweepEbs nEbs -> do
-                  evicted <- sweepEbBatch sweeperConn gcBatchSize
-                  if evicted > 0
+              case sweep of
+                Nothing -> pure Nothing
+                Just nEbs -> do
+                  (evicted, evictedHashes) <- sweepEbBatch sweeperConn gcBatchSize
+                  -- Only now, with their closures gone: an EB marked here
+                  -- but announced again before the sweep stays, and its
+                  -- completion with it.
+                  evictedEbs <- mapM ebHashFromBlob evictedHashes
+                  atomically $ modifyTVar missingVar $ \m -> foldr Map.delete m evictedEbs
+                  if evicted == 0
                     then do
-                      bumpVolatileStatsVar statsVar (negate evicted)
-                      atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
-                    else do
                       when (nEbs > 0) $ do
                         -- Flush the WAL only after real work.
                         dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
                         traceWith tracer $ TraceLeiosDbEvicted nEbs
-                      atomically $ writeTVar sweepStateVar SweepIdle
-                  pure False
+                      pure Nothing
+                    else do
+                      bumpVolatileStatsVar statsVar (negate evicted)
+                      pure (Just (nEbs + evicted))
 
-      -- Seal, then fail what was already queued: nothing can be queued after
-      -- the seal ('submitJob'), so afterwards the queue stays empty forever.
-      sealAndDrain cause = do
-        atomically $ writeTVar sealedVar (Just cause)
-        let drain =
-              atomically (tryReadTBQueue queue) >>= \case
-                Nothing -> pure ()
-                Just job -> failJob cause job >> drain
-        drain
+      -- Nothing can be queued after the seal ('submitJob'), and awaiting a
+      -- job left in the queue throws the cause.
+      seal cause = atomically $ writeTVar sealedVar (Just cause)
 
   void $ forkLinkedThread registry "leiosdb-writer" $ do
     -- The brackets close the connections on every way out of 'worker': a
@@ -460,16 +476,21 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
     outcome <- try $ withWriterConns tracer statsVar volPath immPath worker
     readIORef shutdownVar >>= \case
       -- Stopped on request: the close outcome, failed or not, is the
-      -- awaiter's to report, and the worker ends quietly.
-      Just resultVar -> do
-        atomically $ putTMVar resultVar outcome
-        sealAndDrain closedException
+      -- awaiter's to report (a failed close through the seal), and the worker
+      -- ends quietly.
+      Just resultVar -> case outcome of
+        Left err -> seal err
+        Right result -> do
+          atomically $ putTMVar resultVar result
+          seal closedException
       -- Anything else stopped the worker. Then out, so the link takes the
       -- node down where the write failed rather than at whatever submits
       -- next. Cancellation by the registry is the one stop the link lets pass.
-      Nothing -> do
-        sealAndDrain (either id (const closedException) outcome)
-        either throwIO pure outcome
+      Nothing -> case outcome of
+        Left err -> do
+          seal err
+          throwIO err
+        Right () -> seal closedException
   pure WriteQueue{wqJobs = queue, wqSealed = sealedVar, wqTracer = tracer}
  where
   closedException =
@@ -479,24 +500,18 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
           { ldfErrorMessage = "the LeiosDB writer is closed"
           , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
           }
-  -- Only a 'LeiosDbException' is a failed write; anything else -- a
-  -- cancellation above all -- belongs to this thread, not to the job.
-  publish :: WriteResult a -> IO a -> IO ()
-  publish resultVar action =
-    try action >>= \case
-      Right x -> atomically $ putTMVar resultVar (Right x)
-      Left (e :: LeiosDbException) -> do
-        atomically $ putTMVar resultVar (Left (toException e))
-        throwIO e
+  -- The action rolls back its own transaction on failure.
+  publish :: WriteResult a -> IO a -> IO a
+  publish resultVar action = do
+    x <- action
+    atomically $ putTMVar resultVar x
+    pure x
 
-  -- The transaction brackets have already rolled back on failure; the extra
-  -- best-effort ROLLBACKs cover only the case where that rollback itself
-  -- failed and would otherwise leave a transaction open under every later job.
-  publishMaintenance :: DB.Database -> DB.Database -> WriteResult a -> IO a -> IO ()
-  publishMaintenance volDb immDb resultVar action =
-    try action >>= \case
-      Right x -> atomically $ putTMVar resultVar (Right x)
-      Left (e :: LeiosDbException) -> do
-        _ <- DB.exec volDb "ROLLBACK"
-        _ <- DB.exec immDb "ROLLBACK"
-        atomically $ putTMVar resultVar (Left (toException e))
+-- | What the writer does after serving a job.
+data WhetherContinueServing
+  = -- | Stop serving.
+    Stop
+  | -- | Keep serving.
+    Continue
+  | -- | Keep serving, and start a GC sweep pass or extend the one in progress.
+    ContinueAndSweep

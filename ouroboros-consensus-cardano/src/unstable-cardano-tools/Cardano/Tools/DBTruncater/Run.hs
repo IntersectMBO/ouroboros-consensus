@@ -31,8 +31,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( deleteDanglingTxs
-  , truncateLeiosDbAfterSlot
+  ( truncateLeiosDbAfterSlot
   , vacuumLeiosDb
   )
 import Ouroboros.Consensus.Util.Args
@@ -125,7 +124,6 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leios} args = do
  where
   truncateLeiosDbFile path slot = do
     truncateLeiosDbAfterSlot path slot
-    deleteDanglingTxs path
     vacuumLeiosDb path
 
 leiosDbCutFailed :: Tip blk -> String

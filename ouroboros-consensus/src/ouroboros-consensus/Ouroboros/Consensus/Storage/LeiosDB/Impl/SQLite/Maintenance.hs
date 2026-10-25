@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 
     -- * GC sweep
   , SweeperConn (..)
-  , SweepState (..)
   , sweepEbBatch
 
     -- * GC batch sizes
@@ -43,7 +42,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTVar
   )
-import Control.Monad (filterM, forever, unless, void, when)
+import Control.Monad (filterM, forever, unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -55,6 +54,7 @@ import Control.ResourceRegistry
   , forkLinkedThread
   )
 import Control.Tracer (Tracer, traceWith)
+import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
@@ -68,7 +68,6 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
-  , throwLeiosDbException
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -123,7 +122,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       traceWith tracer $
         TraceLeiosDbCopyError
           (show ebHash)
-          "pinned EB has no complete closure in the volatile partition"
+          "pinned EB has no closure in the volatile partition"
       pure False
     Just _copiedTxs -> do
       -- successfully copied, bump the stats
@@ -132,59 +131,38 @@ copyEbToImmutable tracer statsVar conn ebHash =
       pure True
  where
   CopierConn{ccDb, ccStmts} = conn
-  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
+  CopierStmts{ccHasClosure, ccInsertEb, ccInsertEbBody, ccInsertEbClosures} = ccStmts
 
   -- Attempt to do the actual copying.
   --
-  -- Returns the number of copied body rows, or Nothing if
-  -- the volatile partition does not hold the full closure.
+  -- Returns the number of copied rows, or Nothing if the volatile
+  -- partition holds no closure.
   appendToImmutable :: IO (Maybe Int)
   appendToImmutable =
     dbWithTransaction ccDb $ do
-      -- the cert-RB is on our chain, hence the EB must be complete by this point.
-      -- Still check if it is, as a defensive programming measure, as it's very cheap.
-      (bodyCount, closureCount) <-
-        useStmt ccCompleteness $ do
-          dbBindBlob ccCompleteness 1 (ebHashBytes ebHash)
-          -- step the first time, expecting a single result row
-          dbStepSafe ccCompleteness >>= \case
-            DB.Done ->
-              -- no row: critical error, fail fast and loud.
-              -- this should not happen.
-              throwLeiosDbException "sql_copy_completeness: expected a row"
-            DB.Row -> do
-              n <- DB.columnInt64 ccCompleteness 0
-              m <- DB.columnInt64 ccCompleteness 1
-              -- step again, expecting no more row
-              dbStepSafe ccCompleteness >>= \case
-                DB.Done ->
-                  -- we have our result
-                  pure (n, m)
-                DB.Row ->
-                  -- another row: critical error, fail fast and loud.
-                  -- this should not happen.
-                  throwLeiosDbException "sql_copy_completeness: expected exactly one row"
-      if bodyCount == 0 || bodyCount /= closureCount
+      -- the cert-RB is on our chain, hence the fetch logic completed the EB.
+      -- Still check that it has a closure at all, as it's very cheap.
+      hasClosure <-
+        useStmt ccHasClosure $ do
+          dbBindBlob ccHasClosure 1 (ebHashBytes ebHash)
+          (== DB.Row) <$> dbStepSafe ccHasClosure
+      if not hasClosure
         then
-          -- the EB is incomplete, don't copy
+          -- the EB has no closure, don't copy
           pure Nothing
         else do
-          -- the EB is complete: body is non-empty and bodyCounty matches closureCount
-          --
           -- copy the EB
           useStmt ccInsertEb $ do
             dbBindBlob ccInsertEb 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEb
-          -- copy the eb-to-transactions mapping
-          useStmt ccInsertEbTxs $ do
-            dbBindBlob ccInsertEbTxs 1 (ebHashBytes ebHash)
-            dbStep1Safe ccInsertEbTxs
-          nTxs <- DB.changes ccDb
-          -- copy the transactions
-          useStmt ccInsertEbTxBytes $ do
-            dbBindBlob ccInsertEbTxBytes 1 (ebHashBytes ebHash)
-            dbStep1Safe ccInsertEbTxBytes
-          pure (Just nTxs)
+          -- copy its body and closure
+          useStmt ccInsertEbBody $ do
+            dbBindBlob ccInsertEbBody 1 (ebHashBytes ebHash)
+            dbStep1Safe ccInsertEbBody
+          useStmt ccInsertEbClosures $ do
+            dbBindBlob ccInsertEbClosures 1 (ebHashBytes ebHash)
+            dbStep1Safe ccInsertEbClosures
+          Just <$> DB.changes ccDb
 
 -- | The copier: the only writer into the immutable partition.
 --
@@ -276,39 +254,37 @@ defaultGcBatchSize = 4
 -- as a 'GcMark' job on the writer (see 'gcMark').
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
-  await =<< submitJob writeQueue (GcMark gcSlot)
+  void . await =<< submitJob writeQueue (GcMark gcSlot)
 
--- | The MARK phase of GC mark-and-sweep:
---   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
---     than the given slot and not pinned (@status = 1@);
---   - ask for a sweep.
+-- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
+-- hash all of whose announcements are older than the given slot and not
+-- pinned (@status = 1@). Returns the number of 'ebs' rows marked.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
--- for the writer's own sweep steps (see 'startWriter').
+-- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
+-- marked EBs one batch per turn, so an insert waits for a batch at most.
 gcMark ::
   HasCallStack =>
-  StrictTVar IO Bool ->
   DB.Database ->
   GcStmts ->
   SlotNo ->
-  IO ()
-gcMark sweepDoorbell db gcStmts gcSlot = do
+  IO Int
+gcMark db gcStmts gcSlot = do
   let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
     useStmt gsHasWork $ do
       dbBindInt64 gsHasWork 1 slot
       (/= 0) <$> readSingleInt64 gsHasWork
-  when hasWork $ do
-    nEbsMarked <-
+  if hasWork
+    then
+      -- mark EBs that are ready to be garbage collected
       dbWithWriteTransactionRaw db $ do
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC
         DB.changes db
-    when (nEbsMarked > 0) $
-      atomically $
-        writeTVar sweepDoorbell True
+    else pure 0
  where
   slot = fromIntegral (unSlotNo gcSlot)
 
@@ -323,39 +299,30 @@ data SweeperConn = SweeperConn
   }
 
 -- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
--- EBs. Runs on the writer.
-sweepEbBatch :: SweeperConn -> Int64 -> IO Int
+-- EBs, with their bodies and closures -- three deletes on the EBs' hashes.
+-- Returns the number of evicted 'ebs' rows and the hashes of the evicted EBs.
+-- Runs on the writer.
+sweepEbBatch :: SweeperConn -> Int64 -> IO (Int, [ByteString])
 sweepEbBatch conn batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxs, swEvictEbTxBytes, swEvictEbs} = swStmts
+      SweeperStmts{swPickMarked, swEvictEbBodies, swEvictEbClosures, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
-      -- a negative LIMIT means no limit in SQLite
+      -- batchSize will never be negative, but we handle a negative batch size
+      -- gracefully here with a negative LIMIT, which means no limit in SQLite.
       dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
       collectBlobs swPickMarked
-    -- Three range deletes: the bytes are owned by their EB, so there is
-    -- nothing to orphan and nothing to probe.
+    -- evict EBs if any are ready to be GCed
     if null evictableEbs
-      then pure 0
+      then pure (0, [])
       else do
         let evictableEbsJson = jsonHexArray evictableEbs
-        execJson swEvictEbTxBytes evictableEbsJson
-        execJson swEvictEbTxs evictableEbsJson
+        execJson swEvictEbClosures evictableEbsJson
+        execJson swEvictEbBodies evictableEbsJson
+        -- last, so 'DB.changes' counts the evicted 'ebs' rows
         execJson swEvictEbs evictableEbsJson
-        DB.changes swDb
-
--- | How far a sweep pass has got. The writer advances it one batch per turn
--- rather than running a pass to completion, so an insert waits for a batch at
--- most.
-data SweepState
-  = SweepIdle
-  | -- | Evicting GC-marked EBs. There is no orphan phase: an EB's tx bytes
-    -- live in its own rows and die with it.
-    SweepEbs
-      -- | EBs evicted so far
-      !Int
-  deriving Eq
+        (\n -> (n, evictableEbs)) <$> DB.changes swDb
 
 -- * Stats
 

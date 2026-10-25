@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
 -- block bodies and their sizes.
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Leios.Types
   , TxHash (..)
   , txHashBytes
   , mkTxHash
+  , hashTxBytes
   , prettyTxHash
 
     -- * Points
@@ -49,6 +51,7 @@ module Ouroboros.Consensus.Leios.Types
   ) where
 
 import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
+import Cardano.Crypto.Hash (Blake2b_256, hashToPackedBytes, hashWith)
 import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
@@ -154,6 +157,10 @@ txHashBytes (MkTxHash bytes) = unpackPinnedBytes bytes
 -- | Fails unless the input is exactly 32 bytes.
 mkTxHash :: MonadFail m => ByteString -> m TxHash
 mkTxHash = fmap MkTxHash . packByteString
+
+-- | The hash of a tx's bytes, as an EB lists it.
+hashTxBytes :: ByteString -> TxHash
+hashTxBytes = MkTxHash . hashToPackedBytes . hashWith @Blake2b_256 id
 
 prettyTxHash :: TxHash -> String
 prettyTxHash = BS8.unpack . BS16.encode . txHashBytes

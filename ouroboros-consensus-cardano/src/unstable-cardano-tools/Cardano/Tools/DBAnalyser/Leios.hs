@@ -34,16 +34,21 @@ module Cardano.Tools.DBAnalyser.Leios
   ) where
 
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
-import Control.Monad (when)
+import qualified Codec.CBOR.Read as CBOR
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Foldable as F
 import Data.SOP (All, Top)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
   , HasLeiosVoting (..)
+  , LeiosEb (..)
   , LeiosExtValidationError (..)
   , LeiosPoint
+  , TxHash
   , announcementEbBodySize
   , announcementLeiosPoint
+  , decodeLeiosEb
   , pointEbHash
   , verifyLeiosCert
   )
@@ -190,13 +195,9 @@ certifiedEbTxSizes reader prevAnnouncement blk =
   case certifiedEbHash prevAnnouncement blk of
     Nothing -> pure []
     Just ebHash ->
-      lookupEbBody reader ebHash >>= \case
-        -- 'lookupEbBody' returns a bare list, so an absent EB and an EB
-        -- with no txs both give []. Here the EB is a certified one, and a
-        -- certified EB holds at least one tx: a committee member votes for an
-        -- EB only when it is not empty (CIP-0164). So [] means absent.
-        [] -> error (missingEbBodyError ebHash)
-        ebBody -> pure [SizeInBytes size | (_txHash, size) <- ebBody]
+      lookupEbItems reader ebHash >>= \case
+        Nothing -> error (missingEbBodyError ebHash)
+        Just ebBody -> pure [SizeInBytes size | (_txHash, size) <- ebBody]
 
 -- | This block with the txs of the EB that it certifies in its body. 'Nothing'
 -- for a block that carries no Leios certificate.
@@ -234,10 +235,19 @@ readEbClosure reader ebHash = do
   -- Check that the EB is here before resolving it. On an absent EB
   -- 'resolveLeiosClosure' errors with "chain-sel selected a cert-RB without its
   -- EB closure". Report the absence here.
-  ebBody <- lookupEbBody reader ebHash
-  when (null ebBody) $ error (missingEbBodyError ebHash)
+  ebBody <- maybe (error (missingEbBodyError ebHash)) pure =<< lookupEbItems reader ebHash
   txs <- either (error . show) (map snd) <$> resolveLeiosClosure reader ebHash
   pure (txs, sum (snd <$> ebBody))
+
+-- | The tx hashes and sizes the stored EB body lists, or 'Nothing' if the
+-- LeiosDb holds no body for it.
+lookupEbItems :: LeiosDbReader IO -> EbHash -> IO (Maybe [(TxHash, BytesSize)])
+lookupEbItems reader ebHash =
+  lookupEbBody reader ebHash >>= \case
+    Nothing -> pure Nothing
+    Just body -> case CBOR.deserialiseFromBytes decodeLeiosEb (BSL.fromStrict body) of
+      Left err -> error $ "The stored body of EB " <> show ebHash <> " does not decode: " <> show err
+      Right (_, eb) -> pure (Just (F.toList (leiosEbTxs eb)))
 
 missingEbBodyError :: EbHash -> String
 missingEbBodyError ebHash =

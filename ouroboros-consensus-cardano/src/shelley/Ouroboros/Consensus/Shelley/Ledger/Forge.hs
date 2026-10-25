@@ -28,6 +28,7 @@ import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
 import Control.Monad (when)
 import Control.Tracer (traceWith)
+import qualified Data.ByteString as BS
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
 import Data.Maybe.Strict (maybeToStrictMaybe)
@@ -202,7 +203,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockLeiosArgs{fbLeiosTracer} ForgeBlockArgs{.
         TraceLeiosBlockForged
           { slot = fbCurrentSlotNo
           , eb = forgedEb.body
-          , ebMeasure = ByteSize32 ebSize -- FIXME: this should be the closure size, return it from partitionMempool and put it here
+          , ebMeasure = ByteSize32 (sum (map (fromIntegral . BS.length . snd) forgedEb.txClosure))
           , mempoolRestMeasure = ByteSize32 0 -- FIXME: use a real number
           }
       pure (Just (forgedEb, ebAnn))

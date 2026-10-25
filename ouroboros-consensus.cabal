@@ -338,6 +338,7 @@ library
     Ouroboros.Consensus.Storage.LeiosDB.Exception
     Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
+    Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Completion
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
@@ -2330,6 +2331,7 @@ executable leios-schedule-gen
     cardano-crypto-class,
     cborg,
     containers,
+    contra-tracer,
     direct-sqlite,
     directory,
     dlist,

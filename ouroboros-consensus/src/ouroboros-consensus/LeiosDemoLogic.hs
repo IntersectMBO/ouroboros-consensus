@@ -17,17 +17,18 @@
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
 import Cardano.Slotting.Slot (SlotNo (..), withOrigin)
+import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (foldM, forM_, guard, when)
+import Control.Monad (foldM, forM, forM_, guard, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
-import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (fold)
 import Data.Functor (void, (<&>))
 import qualified Data.IntMap as IntMap
@@ -51,7 +52,6 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
-import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
@@ -104,7 +104,6 @@ import LeiosDemoTypes
   , hashLeiosEb
   , hashLeiosTx
   , leiosEbTxs
-  , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
@@ -224,10 +223,8 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
 data SomeLeiosFetchContext m
   = MkSomeLeiosFetchContext !(LeiosFetchContext m)
 
-data LeiosFetchContext m = MkLeiosFetchContext
-  { leiosDbReader :: !(LeiosDbReader m)
-  , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
-  , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
+newtype LeiosFetchContext m = MkLeiosFetchContext
+  { leiosDbReader :: LeiosDbReader m
   }
 
 -- | Build a per-instance fetch context around an already-opened DB connection.
@@ -237,14 +234,11 @@ data LeiosFetchContext m = MkLeiosFetchContext
 -- its own thread, so the caller is expected to bracket a fresh 'open' /
 -- 'close' pair for the lifetime of that instance (see 'withReader').
 newLeiosFetchContext ::
-  PrimMonad m =>
+  Applicative m =>
   LeiosDbReader m ->
   m (LeiosFetchContext m)
-newLeiosFetchContext leiosDbReader = do
-  leiosEbBuffer <- MV.new maxTxsPerEb
-  leiosEbTxsBuffer <- MV.new maxTxsPerEb
-  pure
-    MkLeiosFetchContext{leiosDbReader, leiosEbBuffer, leiosEbTxsBuffer}
+newLeiosFetchContext leiosDbReader =
+  pure MkLeiosFetchContext{leiosDbReader}
 
 -----
 
@@ -272,29 +266,19 @@ msgLeiosBlockRequest ::
   LeiosPoint ->
   m LeiosEb
 msgLeiosBlockRequest tracer leiosContext point@MkLeiosPoint{pointEbHash} = do
-  let MkLeiosFetchContext{leiosDbReader, leiosEbBuffer = buf} = leiosContext
-  n <- traceException tracer TraceLeiosPeerDbException $ do
-    -- get the EB items using new db
-    items <- lookupEbBody leiosDbReader pointEbHash
-    when (null items) $ throwIO $ ExnLeiosUnknownBlockRequested point
-    -- A database written by an older build can hold a body with more rows
-    -- than the buffer has room for.
-    let rowCount = length items
-    when (rowCount > maxTxsPerEb) $
-      throwLeiosDbException $
-        "EB "
-          <> Leios.prettyEbHash pointEbHash
-          <> " has "
-          <> show rowCount
-          <> " rows, more than maxTxsPerEb = "
-          <> show maxTxsPerEb
-    let loop !i [] = pure i
-        loop !i ((txHash, txBytesSize) : rest) = do
-          MV.write buf i (txHash, txBytesSize)
-          loop (i + 1) rest
-    loop 0 items
-  v <- V.freeze $ MV.slice 0 n buf
-  pure $ MkLeiosEb v
+  let MkLeiosFetchContext{leiosDbReader} = leiosContext
+  traceException tracer TraceLeiosPeerDbException $ do
+    body <-
+      lookupEbBody leiosDbReader pointEbHash
+        >>= maybe (throwIO $ ExnLeiosUnknownBlockRequested point) pure
+    -- TODO serve the stored wire bytes as they are, which needs a pre-encoded
+    -- endorser block in the codec. Decoding also bounds the item count by
+    -- 'maxTxsPerEb', which a database an older build wrote can exceed.
+    case CBOR.deserialiseFromBytes Leios.decodeLeiosEb (BSL.fromStrict body) of
+      Left err ->
+        throwLeiosDbException $
+          "stored EB " <> Leios.prettyEbHash pointEbHash <> " does not decode: " <> show err
+      Right (_, eb) -> pure eb
 
 msgLeiosBlockTxsRequest ::
   IOLike m =>
@@ -304,39 +288,25 @@ msgLeiosBlockTxsRequest ::
   [(Word16, Word64)] ->
   m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
-  let MkLeiosFetchContext{leiosDbReader, leiosEbTxsBuffer = buf} = leiosContext
-  let txOffsets = bitmapOffsets bitmaps
-  n <- do
-    -- Use new db to batch retrieve transactions
-    results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
-    -- See the same check in 'msgLeiosBlockRequest'.
-    let rowCount = length results
-    when (rowCount > maxTxsPerEb) $
-      throwLeiosDbException $
-        "EB "
-          <> Leios.prettyEbHash point.pointEbHash
-          <> " has "
-          <> show rowCount
-          <> " requested rows, more than maxTxsPerEb = "
-          <> show maxTxsPerEb
-    -- Process results and write to buffer
-    -- REVIEW: why a mutable vector?
-    -- Every requested offset must come back, or the request named one this
-    -- endorser block does not have.
-    when (length results /= length txOffsets) $
-      throwIO $
-        ExnLeiosUnknownTxsRequested point txOffsets
-    let loop !i [] = pure i
-        loop !i ((offset, _txHash, mbTxBytes) : rest) = do
-          case mbTxBytes of
-            Nothing -> throwIO $ ExnLeiosUnknownTxsRequested point [offset]
-            Just txBytes -> do
-              -- NOTE: We do not need to decode the stored bytes into a proper
-              -- 'Tx era' in order to serve them through the mini-protocols.
-              MV.write buf i (MkLeiosTx txBytes)
-              loop (i + 1) rest
-    loop 0 results
-  V.freeze $ MV.slice 0 n buf
+  let MkLeiosFetchContext{leiosDbReader} = leiosContext
+      txOffsets = bitmapOffsets bitmaps
+  results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
+  -- Every requested offset must come back, or the request named one this
+  -- endorser block does not have.
+  when (length results /= length txOffsets) $
+    throwIO $
+      ExnLeiosUnknownTxsRequested point txOffsets
+  -- A tx not written yet reads as zeroes; we have not offered it then.
+  V.fromList
+    <$> forM
+      results
+      ( \(offset, txBytes) ->
+          if BS.null txBytes || BS.head txBytes == 0
+            then throwIO $ ExnLeiosUnknownTxsRequested point [offset]
+            -- NOTE: We do not need to decode the stored bytes into a proper
+            -- 'Tx era' in order to serve them through the mini-protocols.
+            else pure (MkLeiosTx txBytes)
+      )
 
 -- | For example
 -- @

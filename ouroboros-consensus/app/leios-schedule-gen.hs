@@ -17,6 +17,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, when)
+import Control.Tracer (nullTracer)
 import qualified Data.Aeson as JSON
 import qualified Data.Bits as Bits
 import Data.ByteString (ByteString)
@@ -41,10 +42,13 @@ import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T (decodeUtf8', encodeUtf8)
 import qualified Data.Vector as V
+import qualified Data.Vector.Strict as VS
 import Data.Word (Word16, Word32, Word64, Word8)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Generics (Generic)
 import qualified Numeric
+import Ouroboros.Consensus.Block (SlotNo (..))
+import qualified Ouroboros.Consensus.Leios.Types as Leios
 import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
@@ -75,9 +79,14 @@ main2 =
             doesFileExist schedulePath >>= \case
               True -> die "schedule path must not exist"
               False -> pure ()
-            db <- withDieMsg $ DB.open (fromString dbPath)
             prng0 <- R.initStdGen
-            schedule <- generateDb prng0 db manifest
+            -- The immutable partition sits next to the volatile one, as the
+            -- node's do.
+            let immPath = take (length dbPath - length ".db") dbPath <> ".imm.db"
+            schedule <-
+              LeiosDB.withLeiosDBSQLite nullTracer dbPath immPath $ \leiosDb ->
+                LeiosDB.withWriter leiosDb $ \writer ->
+                  generateDb prng0 writer manifest
             writeFile schedulePath $
               (\s -> "[\n  " ++ s ++ "\n]\n") $
                 intercalate "\n,\n  " $
@@ -163,29 +172,11 @@ newtype LeiosScheduleItem = MkLeiosScheduleItem (Double, (Word64, T.Text, Maybe 
 -- | Deriving via "GHC.Generics"
 instance JSON.ToJSON LeiosScheduleItem
 
--- TODO: we should pull this out so it stays maintainable against the LeiosDB
-generateDb :: R.RandomGen g => g -> DB.Database -> [EbRecipe] -> IO [LeiosScheduleItem]
-generateDb prng0 db ebRecipes = do
+-- | Writes through the LeiosDB's own writer, so it follows the storage layout.
+generateDb :: R.RandomGen g => g -> LeiosDB.LeiosDbWriter IO -> [EbRecipe] -> IO [LeiosScheduleItem]
+generateDb prng0 writer ebRecipes = do
   gref <- R.newIOGenM prng0
-  -- init db
-  -- NOTE: The SQLSchema evolved and the "generate" tool was only patched to stay compatible.
-  withDieMsg $ DB.exec db (fromString LeiosDB.sql_schema_vol)
-  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDB.sql_insert_eb)
-  stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDB.sql_insert_ebBody)
-  -- Clustered schema: bytes are owned per (ebHashBytes, txOffset). The
-  -- generator holds the bytes at insert time, so it writes the row directly
-  -- as filled, skipping the node's prealloc-then-fill two-step.
-  stmt_write_tx <-
-    withDieJust $
-      DB.prepare
-        db
-        (fromString "INSERT INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes) VALUES (?, ?, 1, ?)")
-  -- Nothing is missing by construction; the completeness scan demands an
-  -- explicit zero ('sql_scan_complete_ebs_since').
-  stmt_complete_eb <-
-    withDieJust $
-      DB.prepare db (fromString "UPDATE ebs SET missingTxCount = 0 WHERE ebHashBytes = ?")
-  -- loop over EBs (one SQL transaction each, to be gentle)
+  -- loop over EBs
   (_dynEnv', sigma, revSchedule) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty, []) ebRecipes) $ \(dynEnv, sigma, revSchedule) ebRecipe -> do
     -- generate txs, so we have their hashes
     let finishX (n, x) = V.fromListN n $ Foldable.toList $ revX x -- TODO in ST with mut vector
@@ -224,34 +215,17 @@ generateDb prng0 db ebRecipes = do
         ebHash :: Hash.Hash HASH ByteString
         ebHash = Hash.castHash $ Hash.hashWith id ebBytes
     let (ebId, mbDynEnv') = ebIdFromPoint ebSlot (Hash.hashToBytes ebHash) dynEnv
-    withDieMsg $ DB.exec db (fromString "BEGIN")
-    -- INSERT INTO ebPoints
-    withDie $ DB.bindInt64 stmt_write_ebPoint 1 (fromIntegral ebSlot)
-    withDie $ DB.bindBlob stmt_write_ebPoint 2 (Hash.hashToBytes ebHash)
-    withDieDone $ DB.stepNoCB stmt_write_ebPoint
-    withDie $ DB.reset stmt_write_ebPoint
-
-    withDie $ DB.bindBlob stmt_write_ebBody 1 (Hash.hashToBytes ebHash)
-    -- loop over txs
-    V.iforM_ txs $ \txOffset (txBytes, txHash) -> do
-      let txHashBytes = let MkHashBytes x = txHash in x
-      -- INSERT INTO ebTxs
-      withDie $ DB.bindInt64 stmt_write_ebBody 2 (fromIntegral txOffset)
-      withDie $ DB.bindBlob stmt_write_ebBody 3 txHashBytes
-      withDie $ DB.bindInt64 stmt_write_ebBody 4 (fromIntegral (BS.length txBytes))
-      withDieDone $ DB.stepNoCB stmt_write_ebBody
-      withDie $ DB.reset stmt_write_ebBody
-      -- INSERT INTO ebTxBytes
-      withDie $ DB.bindBlob stmt_write_tx 1 (Hash.hashToBytes ebHash)
-      withDie $ DB.bindInt64 stmt_write_tx 2 (fromIntegral txOffset)
-      withDie $ DB.bindBlob stmt_write_tx 3 txBytes
-      withDieDone $ DB.stepNoCB stmt_write_tx
-      withDie $ DB.reset stmt_write_tx
-    -- finalize each EB
-    withDie $ DB.bindBlob stmt_complete_eb 1 (Hash.hashToBytes ebHash)
-    withDieDone $ DB.stepNoCB stmt_complete_eb
-    withDie $ DB.reset stmt_complete_eb
-    withDieMsg $ DB.exec db (fromString "COMMIT")
+    point <-
+      Leios.MkLeiosPoint (SlotNo ebSlot) <$> Leios.mkEbHash (Hash.hashToBytes ebHash)
+    eb <-
+      Leios.MkLeiosEb . VS.fromList
+        <$> traverse
+          ( \(txBytes, MkHashBytes h) -> (\txHash -> (txHash, fromIntegral (BS.length txBytes))) <$> Leios.mkTxHash h
+          )
+          (V.toList txs)
+    _ <- LeiosDB.await =<< LeiosDB.writeEbPoint writer point (fromIntegral (BS.length ebBytes))
+    _ <- LeiosDB.await =<< LeiosDB.writeEbBody writer point eb []
+    _ <- LeiosDB.await =<< LeiosDB.writeTxs writer point (zip [0 ..] (map fst (V.toList txs)))
     pure
       ( fromMaybe dynEnv mbDynEnv'
       , maybe id (\bndr -> Map.insert bndr (ebId, V.length txs)) (ebRecipeNickname ebRecipe) sigma

@@ -787,9 +787,11 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
           pmTrace'Via (const ()) "mempool-get-snapshot-for" currentSlot $
             getSnapshotFor mempool currentSlot tickedLedgerState readTables
 
-        pmTrace'Via (const ()) "take-rb-eb-txs" currentSlot $ do
-          let (rbTxs', rbTxsSize', ebTxs', _ebTxsSize) = snapshotPartition snap rbCap ebCap
-          pure (rbTxs', ebTxs', rbTxsSize', snap)
+        (rbTxs', ebTxs', rbTxsSize', _ebTxsSize, snap') <-
+          pmTrace'Via partitionSizes "take-rb-eb-txs" currentSlot $ do
+            let (rbTxs', rbTxsSize', ebTxs', ebTxsSize') = snapshotPartition snap rbCap ebCap
+            pure (rbTxs', ebTxs', rbTxsSize', ebTxsSize', snap)
+        pure (rbTxs', ebTxs', rbTxsSize', snap')
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
         -- carry the certificate and must not carry additional txs.
@@ -830,9 +832,37 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
               pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
                 getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
 
-            pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
-              let (_noRbTxs, _, ebTxs', _ebTxsSize) =
-                    snapshotPartition snap Data.Measure.zero ebCap
-              pure ([], ebTxs', Data.Measure.zero, snap)
+            (_, ebTxs', _, _ebTxsSize, snap') <-
+              pmTrace'Via partitionSizes "take-eb-txs" currentSlot $ do
+                let (_noRbTxs, _, ebTxs', ebTxsSize') =
+                      snapshotPartition snap Data.Measure.zero ebCap
+                pure ([], ebTxs', Data.Measure.zero, ebTxsSize', snap)
+            pure ([], ebTxs', Data.Measure.zero, snap')
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
+ where
+  -- What the partition took out of the mempool for the RB and the EB, and
+  -- what it left there.
+  partitionSizes ::
+    ( [Validated (GenTx blk)]
+    , [Validated (GenTx blk)]
+    , MempoolMeasure blk
+    , MempoolMeasure blk
+    , MempoolSnapshot blk
+    ) ->
+    Aeson.Value
+  partitionSizes (rbTxs, ebTxs, rbSize, ebSize, snap) =
+    Aeson.object
+      [ "mempoolTxs" .= msNumTxs (snapshotMempoolSize snap)
+      , "mempoolBytes" .= mempoolBytes
+      , "rbTxs" .= length rbTxs
+      , "rbBytes" .= rbBytes
+      , "ebTxs" .= length ebTxs
+      , "ebBytes" .= ebBytes
+      , "restTxs" .= (fromIntegral (msNumTxs (snapshotMempoolSize snap)) - length rbTxs - length ebTxs)
+      , "restBytes" .= (mempoolBytes - rbBytes - ebBytes)
+      ]
+   where
+    mempoolBytes = toInteger (unByteSize32 (msNumBytes (snapshotMempoolSize snap)))
+    rbBytes = toInteger (unByteSize32 (txMeasureMetricTxSizeBytes rbSize))
+    ebBytes = toInteger (unByteSize32 (txMeasureMetricTxSizeBytes ebSize))

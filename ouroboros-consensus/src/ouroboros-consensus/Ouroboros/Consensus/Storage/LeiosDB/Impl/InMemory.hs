@@ -11,8 +11,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, maybeToList, when)
+import Cardano.Prelude (Generic, forM_, fromMaybe, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Codec.CBOR.Write (toStrictByteString)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , StrictTVar
@@ -26,6 +27,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Functor ((<&>))
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -33,16 +35,18 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Vector.Strict as V
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EbHash (..)
-  , LeiosEb
+  , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
   , TxLocation (..)
   , TxOffset
+  , encodeLeiosEb
   , encodeLeiosEbSize
   , leiosEbBodyItems
   )
@@ -267,16 +271,18 @@ imInsertEbPoint stateVar notificationChan point ebBytesSize = atomically $ do
               pure [point]
             else pure []
 
-imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m [(TxHash, BytesSize)]
+imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe ByteString)
 imLookupEbBody stateVar ebHash = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup ebHash (imEbBodies state) of
-    Nothing -> pure []
-    Just storedBody ->
-      pure
-        [ (eteTxHash e, eteTxBytesSize e)
-        | e <- IntMap.elems (sebTxEntries storedBody)
-        ]
+  pure $
+    Map.lookup ebHash (imEbBodies state) <&> \storedBody ->
+      toStrictByteString $
+        encodeLeiosEb $
+          MkLeiosEb $
+            V.fromList
+              [ (eteTxHash e, eteTxBytesSize e)
+              | e <- IntMap.elems (sebTxEntries storedBody)
+              ]
 
 imInsertEbBody ::
   IOLike m =>
@@ -456,15 +462,19 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
     ]
 
 imBatchRetrieveTxs ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, ByteString)]
 imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure []
     Just storedBody ->
       pure
-        [ (offset, eteTxHash entry, IntMap.lookup offset bytes)
-        | offset <- offsets
+        [ ( offset
+          , fromMaybe
+              (BS.replicate (fromIntegral (eteTxBytesSize entry)) 0)
+              (IntMap.lookup offset bytes)
+          )
+        | offset <- IntSet.toAscList (IntSet.fromList offsets)
         , Just entry <- [IntMap.lookup offset (sebTxEntries storedBody)]
         ]
      where
