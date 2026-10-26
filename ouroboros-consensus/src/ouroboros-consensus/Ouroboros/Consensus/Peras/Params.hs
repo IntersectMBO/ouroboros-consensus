@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Peras.Params
   , maxRollbackWeight
   , PerasQuorumWeightThreshold (..)
   , PerasQuorumWeightThresholdSafetyMargin (..)
+  , PerasBootstrapRound (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -163,14 +164,22 @@ newtype PerasQuorumWeightThresholdSafetyMargin
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
+-- | Peras bootstrap round.
+--
+-- NOTE: this is used to resynchronize the round of the latest certificate on
+-- chain across nodes should something go wrong.
+newtype PerasBootstrapRound
+  = PerasBootstrapRound {unPerasBootstrapRound :: Word64}
+  deriving Show via Quiet PerasBootstrapRound
+  deriving stock Generic
+  deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
+
 -- * Protocol parameters bundle
 
 -- | Peras protocol parameters.
 --
 -- These are documented in the section 2.1 of the Peras design report:
 -- https://tweag.github.io/cardano-peras/peras-design.pdf#section.2.1
---
--- TODO: make fields strict when we have concrete default values for them.
 data PerasParams blk = PerasParams
   { perasIgnoranceRounds :: !PerasIgnoranceRounds
   , perasCooldownRounds :: !PerasCooldownRounds
@@ -181,14 +190,16 @@ data PerasParams blk = PerasParams
   , perasQuorumWeightThreshold :: !PerasQuorumWeightThreshold
   , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
+  , perasBootstrapRound :: !(StrictMaybe PerasBootstrapRound)
   }
   deriving (Show, Eq, Generic, NoThunks)
 
 instance Typeable blk => FromCBOR (PerasParams blk) where
   fromCBOR = do
-    decodeListLenOf 9
+    decodeListLenOf 10
     PerasParams
       <$> fromCBOR
+      <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
@@ -200,7 +211,7 @@ instance Typeable blk => FromCBOR (PerasParams blk) where
 
 instance Typeable blk => ToCBOR (PerasParams blk) where
   toCBOR params =
-    encodeListLen 9
+    encodeListLen 10
       <> toCBOR (perasIgnoranceRounds params)
       <> toCBOR (perasCooldownRounds params)
       <> toCBOR (perasBlockMinSlots params)
@@ -210,6 +221,7 @@ instance Typeable blk => ToCBOR (PerasParams blk) where
       <> toCBOR (perasQuorumWeightThreshold params)
       <> toCBOR (perasQuorumWeightThresholdSafetyMargin params)
       <> toCBOR (perasTargetCommitteeSize params)
+      <> toCBOR (perasBootstrapRound params)
 
 -- | Retag a 'PerasParams' with a new phantom @blk@ type.
 castPerasParams :: forall blk' blk. PerasParams blk -> PerasParams blk'
@@ -256,6 +268,9 @@ mkPerasParams securityParam activeSlotCoeff plv =
     , perasTargetCommitteeSize =
         Committee.TargetCommitteeSize
           targetCommitteeSize
+    , perasBootstrapRound =
+        PerasBootstrapRound
+          <$> bootstrapRound
     }
  where
   k :: Word64
@@ -307,6 +322,9 @@ mkPerasParams securityParam activeSlotCoeff plv =
 
   targetCommitteeSize :: Word64
   targetCommitteeSize = fromIntegral @Word16 @Word64 (plvTargetCommitteeSize plv)
+
+  bootstrapRound :: StrictMaybe Word64
+  bootstrapRound = fromIntegral @Word32 @Word64 <$> plvBootstrapRound plv
 
 -- | Instantiate default Peras protocol parameters.
 --
