@@ -186,7 +186,7 @@ sqlInsertEbBody conn missingVar notify point eb fills = do
       foldM fillFrom IntMap.empty $
         Map.toList $
           Map.fromListWith
-            (flip (++))
+            (++)
             [(srcHash, [(dstOff, srcOff)]) | (dstOff, MkTxLocation srcHash srcOff) <- fills]
     rowid <- allocateClosure db stInsertEbClosure ebHashRaw (end (n - 1))
     unless (IntMap.null filled) $
