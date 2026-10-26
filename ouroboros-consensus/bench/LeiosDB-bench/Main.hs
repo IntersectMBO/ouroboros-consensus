@@ -66,7 +66,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (foldl', sort, sortOn)
+import Data.List as List (foldl', sort, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
