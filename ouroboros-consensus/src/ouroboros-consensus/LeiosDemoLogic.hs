@@ -1044,8 +1044,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- 'locatedTxs' came from the body-insert pass above; keep only the ones
         -- the mempool cannot supply. Optimistic -- a source swept in the meantime
         -- fills nothing -- so the fetch set is decided at settle time from what
-        -- actually filled, not promised here.
-        let fills = [ol | ol@(off, _loc) <- locatedTxs, off `IntMap.member` missedBoth]
+        -- actually filled, not promised here. A forge writes its whole closure
+        -- right after, so it fills nothing.
+        let fills = case source of
+              ForgedBlock{} -> []
+              ReceivedBlockFrom{} -> [ol | ol@(off, _loc) <- locatedTxs, off `IntMap.member` missedBoth]
         -- The body is not marked held here: the state is claimed 'BodyAcquired'
         -- only once the write is durable (see 'settle' below), after the write
         -- has been enqueued. Until then the body reads as not-held, so a
