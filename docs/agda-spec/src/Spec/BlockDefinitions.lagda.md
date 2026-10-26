@@ -1,7 +1,9 @@
-\subsection{Block Definitions}
-\label{sec:defs-blocks}
+# Block Definitions
 
-\begin{code}[hide]
+<a id="sec:defs-blocks"></a>
+
+<!--
+```agda
 {-# OPTIONS --safe #-}
 
 open import Spec.BaseTypes using (Nonces)
@@ -19,18 +21,20 @@ open import Ledger.PParams using (ProtVer)
 
 record BlockStructure : Type₁ where
   field
-\end{code}
+```
+-->
 
-\begin{figure*}[h]
-\begin{AgdaAlign}
-\emph{Abstract types}
-\begin{code}
+*Abstract types*
+
+```agda
     HashHeader : Type -- hash of a block header
     HashBBody  : Type -- hash of a block body
     VRFRes     : Type -- VRF result value
     HashEB     : Type -- hash of endorser block
-\end{code}
-\begin{code}[hide]
+```
+
+<!--
+```agda
     ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
     ⦃ DecEq-HashBBody  ⦄ : DecEq HashBBody
     ⦃ DecEq-VRFRes     ⦄ : DecEq VRFRes
@@ -39,51 +43,55 @@ record BlockStructure : Type₁ where
     ⦃ Show-HashBBody   ⦄ : Show HashBBody
     ⦃ Show-VRFRes      ⦄ : Show VRFRes
     ⦃ Show-HashEB      ⦄ : Show HashEB
-\end{code}
-\emph{Concrete types}
-\begin{code}
+```
+-->
+
+*Concrete types*
+
+```agda
   BlockNo = ℕ -- block number
   Certifiedℕ = ∃[ n ] n < 2 ^ 512 -- [0, 2^512) (64-byte VRF output)
-\end{code}
-\emph{Announced Endorser Block}
-\begin{code}
+```
+
+*Announced Endorser Block*
+
+```agda
   record AnnouncedEB : Type where
     field
       hash : HashEB
       size : ℕ
-\end{code}
-\emph{Operational Certificate}
-\begin{AgdaSuppressSpace}
-\begin{code}
+```
+
+*Operational Certificate*
+
+<!--
+The checked declaration retains its constructor. Keep the display below in sync.
+```agda
   record OCert : Type where
-\end{code}
-\begin{code}[hide]
     constructor ⟦_,_,_,_⟧ᵒᶜ
     field
-\end{code}
-\begin{code}
       vkₕ : VKeyᵏ     -- operational (hot) key
       n   : ℕ         -- certificate issue number
       c₀  : KESPeriod -- start KES period
       σ   : Sigˢ      -- cold key signature
-\end{code}
-\end{AgdaSuppressSpace}
-\end{AgdaAlign}
-\caption{Block definitions}
-\label{fig:defs:blocks}
-\end{figure*}
+```
+-->
 
-\begin{figure*}[h]
-\begin{AgdaAlign}
-\emph{Block Header Body}
-\begin{AgdaSuppressSpace}
-\begin{code}
+<pre><code>record OCert : Type where
+  field
+    vkₕ : VKeyᵏ     -- operational (hot) key
+    n   : ℕ         -- certificate issue number
+    c₀  : KESPeriod -- start KES period
+    σ   : Sigˢ      -- cold key signature
+</code></pre>
+
+<a id="fig:defs:blocks"></a>
+
+*Block Header Body*
+
+```agda
   record BHBody : Type where
-\end{code}
-\begin{code}[hide]
     field
-\end{code}
-\begin{code}
       prevHeader  : Maybe HashHeader  -- hash of previous block header
       issuerVk    : VKeyˢ             -- block issuer
       vrfVk       : VKeyᵛ             -- VRF verification key
@@ -97,35 +105,41 @@ record BlockStructure : Type₁ where
       pv          : ProtVer           -- protocol version
       announcedEB : Maybe AnnouncedEB -- announced endorser block
       certifiesEB : Bool              -- claims to certify the preceding block's EB
-\end{code}
-\end{AgdaSuppressSpace}
-\emph{Block Types}
-\begin{code}
+```
+
+*Block Types*
+
+```agda
   record BHeader : Type where
     constructor 〖_,_〗
     field
       body : BHBody
       sig  : Sigᵏ
-\end{code}
-\emph{Abstract functions}
-\begin{code}[hide]
+```
+
+*Abstract functions*
+
+<!--
+```agda
   record AbstractFunctions : Type where
     field
-\end{code}
-\begin{code}
+```
+-->
+
+```agda
+
       headerHash      : BHeader → HashHeader -- hash of a block header
       headerSize      : BHeader → ℕ -- size of a block header
       slotToSeed      : Slot → Seed -- big-endian encoding of the slot number in 8 bytes
       prevHashToNonce : Maybe HashHeader → Nonce
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
-\end{code}
-\end{AgdaAlign}
-\caption{Block header definitions}
-\label{fig:defs:block-header}
-\end{figure*}
+```
 
-\begin{code}[hide]
+<a id="fig:defs:block-header"></a>
+
+<!--
+```agda
 open BlockStructure
 open import Tactic.Derive.Show
 
@@ -146,4 +160,7 @@ instance
 
   unquoteDecl Show-BHeader = derive-Show
     [(quote BHeader , Show-BHeader)]
-\end{code}
+```
+-->
+
+[Specification contents](../../SPECIFICATION.md)

@@ -1,4 +1,7 @@
-\begin{code}[hide]
+# Base Types
+
+<!--
+```agda
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
@@ -32,4 +35,7 @@ Epoch  = ℕ
 PoolDistr : Type
 PoolDistr = KeyHashˢ ⇀ (ℚ × KeyHashᵛ)
 
-\end{code}
+```
+-->
+
+[Specification contents](../../SPECIFICATION.md)

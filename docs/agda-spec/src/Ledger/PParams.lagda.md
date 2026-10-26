@@ -1,9 +1,12 @@
-\section{Protocol Parameters}
-\label{sec:protocol-parameters}
+# Protocol Parameters
+
+<a id="sec:protocol-parameters"></a>
 This section defines the adjustable protocol parameters of the Cardano consensus.
 These parameters are used in block header validation and can affect various features
 of the system, such as maximum and minimum sizes of certain components, and more.
-\begin{code}[hide]
+
+<!--
+```agda
 {-# OPTIONS --safe #-}
 
 open import Data.Product.Properties
@@ -18,106 +21,115 @@ module Ledger.PParams where
 
 private variable
   m n : ℕ
-\end{code}
+```
+-->
 
-\begin{figure*}[ht]
-\begin{AgdaMultiCode}
-\begin{code}
+```agda
 ProtVer : Type
 ProtVer = ℕ × ℕ
-\end{code}
-\begin{code}[hide]
+```
+
+<!--
+```agda
 instance
   Show-ProtVer : Show ProtVer
   Show-ProtVer = Show-×
-\end{code}
-\begin{code}
+```
+-->
+
+```agda
 data pvCanFollow : ProtVer → ProtVer → Type where
   canFollowMajor : pvCanFollow (m , n) (m + 1 , 0)
   canFollowMinor : pvCanFollow (m , n) (m , n + 1)
-\end{code}
-\end{AgdaMultiCode}
-\caption{Definitions related to protocol parameters}
-\label{fig:protocol-parameter-defs}
-\end{figure*}
+```
 
-\begin{figure*}[ht]
-\begin{AgdaMultiCode}
-\begin{code}
+**Definitions related to protocol parameters**
+<a id="fig:protocol-parameter-defs"></a>
+
+```agda
 data PParamGroup : Type where
   NetworkGroup : PParamGroup
 record PParams : Type where
-\end{code}
-\begin{code}[hide]
+
   field
-\end{code}
-\emph{Network group}
-\begin{code}
+```
+
+*Network group*
+
+```agda
     maxHeaderSize        : ℕ
     maxBlockSize         : ℕ
     pv                   : ProtVer
-\end{code}
-\emph{Network group (Leios)}
-\begin{code}
+```
+
+*Network group (Leios)*
+
+```agda
     leiosHeaderPeriod    : Milliseconds
     leiosVotingPeriod    : Milliseconds
     leiosDiffusionPeriod : Milliseconds
-\end{code}
-\end{AgdaMultiCode}
-\caption{Protocol parameter definitions}
-\label{fig:protocol-parameter-declarations}
-\end{figure*}
-\begin{figure*}
-\begin{AgdaMultiCode}
-\begin{code}
+```
+
+**Protocol parameter definitions**
+<a id="fig:protocol-parameter-declarations"></a>
+
+```agda
 positivePParams : PParams → List ℕ
 positivePParams pp = maxHeaderSize ∷ maxBlockSize ∷ []
-\end{code}
-\begin{code}[hide]
+```
+
+<!--
+```agda
   where open PParams pp
-\end{code}
-\begin{code}
+```
+-->
+
+```agda
 
 paramsWellFormed : PParams → Type
 paramsWellFormed pp = 0 ∉ fromList (positivePParams pp)
-\end{code}
-\begin{code}[hide]
+```
+
+<!--
+```agda
 paramsWF-elim : (pp : PParams) → paramsWellFormed pp → (n : ℕ) → n ∈ˡ (positivePParams pp) → n > 0
 paramsWF-elim pp pwf (suc n) x = z<s
 paramsWF-elim pp pwf 0 0∈ = ⊥-elim (pwf (to ∈-fromList 0∈))
   where open Equivalence
-\end{code}
-\end{AgdaMultiCode}
-\caption{Protocol parameter well-formedness}
-\label{fig:protocol-parameter-well-formedness}
-\end{figure*}
-\begin{code}[hide]
+```
+-->
+
+**Protocol parameter well-formedness**
+<a id="fig:protocol-parameter-well-formedness"></a>
+
+<!--
+```agda
 instance
   unquoteDecl DecEq-PParams        = derive-DecEq
     ((quote PParams , DecEq-PParams) ∷ [])
   unquoteDecl Show-PParams        = derive-Show
     ((quote PParams , Show-PParams) ∷ [])
-\end{code}
+```
+-->
 
-\PParams contains parameters used in the Cardano consensus, which we group according
+`PParams` contains parameters used in the Cardano consensus, which we group according
 to the general purpose that each parameter serves.
 
-\begin{itemize}
-  \item \NetworkGroup: parameters related to the network settings;
-\end{itemize}
+- `NetworkGroup`: parameters related to the network settings;
 
 The Leios parameters governing the timing of endorser block announcement, voting
-and diffusion belong to the \NetworkGroup. They are wall-clock durations rather
+and diffusion belong to the `NetworkGroup`. They are wall-clock durations rather
 than slot counts, so that sub-second delivery periods can be expressed.
 
-They are deliberately absent from \positivePParams: zero values are the
+They are deliberately absent from `positivePParams`: zero values are the
 protocol's disabled state, and governance must be able to reach it.
 
-Figure~\ref{fig:protocol-parameter-declarations} also defines the
-function \paramsWellFormed. It performs some sanity checks on protocol
+[Protocol parameter definitions](PParams.lagda.md#fig:protocol-parameter-declarations) also defines the
+function `paramsWellFormed`. It performs some sanity checks on protocol
 parameters.
 
-\begin{code}[hide]
+<!--
+```agda
 instance
   pvCanFollow? : ∀ {pv} {pv'} → Dec (pvCanFollow pv pv')
   pvCanFollow? {m , n} {pv} with pv ≟ (m + 1 , 0) | pv ≟ (m , n + 1)
@@ -126,4 +138,7 @@ instance
   ... | no ¬p    | yes refl = yes canFollowMinor
   ... | yes refl | no ¬p    = yes canFollowMajor
   ... | yes refl | yes p    = ⊥-elim $ m+1+n≢m m $ ×-≡,≡←≡ p .proj₁
-\end{code}
+```
+-->
+
+[Specification contents](../../SPECIFICATION.md)
