@@ -1,5 +1,7 @@
-\section{Cryptographic Primitives}
-\begin{code}[hide]
+# Cryptographic Primitives
+
+<!--
+```agda
 {-# OPTIONS --safe #-}
 module Ledger.Crypto where
 
@@ -11,42 +13,50 @@ module _ (M : Type↑) where
 
 _⁇⁴ = _⁇ ⁴
 
-\end{code}
+```
+-->
 
-\subsection{Serialization}
+## Serialization
 
 -- TODO: Add paragraph
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 record Serializer : Type₁ where
   field
-\end{code}
-\emph{Types \& functions}
-\begin{code}
+```
+-->
+
+*Types & functions*
+
+```agda
         Ser             : Type
         encode          : {T : Type} → T → Ser
         decode          : {T : Type} → Ser → Maybe T
         _∥_             : Ser → Ser → Ser
-\end{code}
-\emph{Properties}
-\begin{code}[hide]
+```
+
+*Properties*
+
+<!--
+```agda
         ⦃ DecEq-Ser  ⦄ : DecEq Ser
         ⦃ Show-Ser   ⦄ : Show Ser
         enc-dec-correct :
-\end{code}
-\begin{code}
-          ∀ {T : Type} (x : T) → decode (encode x) ≡ just x
-\end{code}
-\caption{Definitions for serialization}
-\label{fig:defs:serialization}
-\end{figure*}
+```
+-->
 
-\subsection{Cryptographic Hashes}
+```agda
+          ∀ {T : Type} (x : T) → decode (encode x) ≡ just x
+```
+
+<a id="fig:defs:serialization"></a>
+
+## Cryptographic Hashes
 
 -- TODO: Add paragraph and show only the relevant bits of the code below.
 
-\begin{code}
+```agda
 record isHashableSet (T : Type) : Set₁ where
   constructor mkIsHashableSet
   field THash : Type
@@ -60,41 +70,52 @@ record HashableSet : Type₁ where
   constructor mkHashableSet
   field T : Type; ⦃ T-isHashable ⦄ : isHashableSet T
   open isHashableSet T-isHashable public
-\end{code}
+```
 
-\subsection{Public-Key Cryptography}
+## Public-Key Cryptography
 
 The Cardano blockchain system is based on a public-key cryptographic system.
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 record PKScheme : Type₁ where
   field
-\end{code}
-\emph{Types \& functions}
-\begin{code}
-        SKey VKey : Type
-        isKeyPair : SKey → VKey → Type
+```
+-->
+
+*Types & functions*
+
+<!--
+The checked declarations retain Agda's record indentation. Keep the display below
+in sync with this block.
+```agda
+   SKey VKey : Type
+   isKeyPair : SKey → VKey → Type
 
   KeyPair = Σ[ sk ∈ SKey ] Σ[ vk ∈ VKey ] isKeyPair sk vk
-\end{code}
-\begin{code}[hide]
+
   field
         ⦃ DecEq-SKey  ⦄ : DecEq SKey
         ⦃ DecEq-VKey  ⦄ : DecEq VKey
         ⦃ Show-SKey   ⦄ : Show SKey
         ⦃ Show-VKey   ⦄ : Show VKey
-\end{code}
-\caption{Definitions for the public-key cryptographic system}
-\label{fig:defs:pkscheme}
-\end{figure*}
+```
+-->
 
-\subsection{Digital Signatures}
+<pre><code>SKey VKey : Type
+isKeyPair : SKey → VKey → Type
+
+KeyPair = Σ[ sk ∈ SKey ] Σ[ vk ∈ VKey ] isKeyPair sk vk
+</code></pre>
+
+<a id="fig:defs:pkscheme"></a>
+
+## Digital Signatures
 
 -- TODO: Add paragraph.
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 record DSigScheme (srl : Serializer) : Type₁ where
   open Serializer srl
   
@@ -104,35 +125,45 @@ record DSigScheme (srl : Serializer) : Type₁ where
   open PKScheme pks public
 
   field
-\end{code}
-\emph{Types \& functions}
-\begin{code}
+```
+-->
+
+*Types & functions*
+
+```agda
         Sig      : Type
         isSigned : VKey → Ser → Sig → Type
         sign     : SKey → Ser → Sig
-\end{code}
-\emph{Properties}
-\begin{code}[hide]
+```
+
+*Properties*
+
+<!--
+```agda
   field ⦃ Dec-isSigned ⦄ : isSigned ⁇³
         isSigned-correct :
-\end{code}
-\begin{code}
+```
+-->
+
+```agda
           ∀ ((sk , vk , _) : KeyPair) (d : Ser) (σ : Sig) → sign sk d ≡ σ → isSigned vk d σ
-\end{code}
-\begin{code}[hide]
+```
+
+<!--
+```agda
         ⦃ DecEq-Sig  ⦄ : DecEq Sig
         ⦃ Show-Sig   ⦄ : Show Sig
-\end{code}        
-\caption{Definitions for the digital signature scheme}
-\label{fig:defs:dsigscheme}
-\end{figure*}
+```
+-->
 
-\subsection{Key-Evolving Signatures}
+<a id="fig:defs:dsigscheme"></a>
+
+## Key-Evolving Signatures
 
 -- TODO: Add paragraph.
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 record KESScheme (srl : Serializer) : Type₁ where
   open Serializer srl
   
@@ -142,36 +173,46 @@ record KESScheme (srl : Serializer) : Type₁ where
   open PKScheme pks public
 
   field
-\end{code}
-\emph{Types \& functions}
-\begin{code}
+```
+-->
+
+*Types & functions*
+
+```agda
         Sig      : Type
         isSigned : VKey → ℕ → Ser → Sig → Type
         sign     : (ℕ → SKey) → ℕ → Ser → Sig
-\end{code}
-\emph{Properties}
-\begin{code}[hide]
+```
+
+*Properties*
+
+<!--
+```agda
   field ⦃ Dec-isSigned ⦄ : isSigned ⁇⁴
         isSigned-correct :
-\end{code}
-\begin{code}        
+```
+-->
+
+```agda
           ∀ (n : ℕ) (sk : ℕ → SKey) ((skₙ , vk , _) : KeyPair) (d : Ser) (σ : Sig)
             → skₙ ≡ sk n → sign sk n d ≡ σ → isSigned vk n d σ
-\end{code}
-\begin{code}[hide]          
+```
+
+<!--
+```agda
         ⦃ DecEq-Sig  ⦄ : DecEq Sig
         ⦃ Show-Sig   ⦄ : Show Sig
-\end{code}        
-\caption{Definitions for key-evolving signatures}
-\label{fig:defs:kesscheme}
-\end{figure*}
+```
+-->
 
-\subsection{Verifiable Random Functions}
+<a id="fig:defs:kesscheme"></a>
+
+## Verifiable Random Functions
 
 -- TODO: Add paragraph.
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 record VRFScheme : Type₁ where
   field
         pks : PKScheme
@@ -179,34 +220,45 @@ record VRFScheme : Type₁ where
   open PKScheme pks public
 
   field
-\end{code}
-\emph{Types \& functions}
-\begin{code}
+```
+-->
+
+*Types & functions*
+
+```agda
         Seed Proof : Type
         verify     : {T : Type} → VKey → Seed → Proof × T → Type
         evaluate   : {T : Type} → SKey → Seed → Proof × T
         _XOR_      : Seed → Seed → Seed
-\end{code}
-\emph{Properties}
-\begin{code}[hide]
+```
+
+*Properties*
+
+<!--
+```agda
   field ⦃ Dec-verify ⦄ : {T : Type} → verify {T} ⁇³
         verify-correct :
-\end{code}
-\begin{code}        
+```
+-->
+
+```agda
           ∀ {T : Type} ((sk , vk , _) : KeyPair) (seed : Seed)
             → verify {T = T} vk seed (evaluate sk seed)
-\end{code}
-\begin{code}[hide]         
+```
+
+<!--
+```agda
         ⦃ DecEq-Seed  ⦄ : DecEq Seed
         ⦃ DecEq-Proof ⦄ : DecEq Proof
         ⦃ Show-Seed   ⦄ : Show Seed
         ⦃ Show-Proof  ⦄ : Show Proof
-\end{code}        
-\caption{Definitions for verifiable random functions}
-\label{fig:defs:vrfscheme}
-\end{figure*}
+```
+-->
 
-\begin{code}[hide]         
+<a id="fig:defs:vrfscheme"></a>
+
+<!--
+```agda
 record Crypto : Type₁ where
   field srl  : Serializer
         dsig : DSigScheme srl
@@ -225,4 +277,7 @@ record Crypto : Type₁ where
   open isHashableSet khsˢ renaming (THash to KeyHashˢ) hiding (DecEq-T) public
   open isHashableSet khsᵛ renaming (THash to KeyHashᵛ) hiding (DecEq-T) public
   open isHashableSet shs  renaming (THash to SerHash)  hiding (DecEq-T) public
-\end{code}
+```
+-->
+
+[Specification contents](../../SPECIFICATION.md)

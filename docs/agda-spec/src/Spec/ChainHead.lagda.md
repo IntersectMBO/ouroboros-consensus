@@ -1,36 +1,34 @@
-\subsection{$\mathsf{CHAINHEAD}$ Transition}
-\label{sec:chainhead-trans}
+# CHAINHEAD Transition
+
+<a id="sec:chainhead-trans"></a>
 
 The Chain Head Transition rule ($\mathsf{CHAINHEAD}$) is the main rule of the blockchain layer
 part of the STS. It calls $\mathsf{TICKF}$, $\mathsf{TICKN}$, and $\mathsf{PRTCL}$,
 as sub-rules.
 
-Its state is shown in Figure~\ref{fig:ts-types:chainhead} and consists of
-the epoch specific state \afld{NewEpochState} and its signal is a block header. Its
-state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the following:
+Its environment is the epoch-specific ledger state `NewEpochState`, and its
+signal is a block header. Its
+[state](ChainHead.lagda.md#fig:ts-types:chainhead) consists of:
 
-\begin{itemize}
-  \item The operational certificate issue number map \afld{cs}.
-  \item The epoch nonce \afld{η₀}.
-  \item The evolving nonce \afld{ηv}.
-  \item The candidate nonce \afld{ηc}.
-  \item The previous epoch hash nonce \afld{ηh}.
-  \item The last header hash \afld{h}.
-  \item The last slot \afld{sℓ}.
-  \item The last block number \afld{bℓ}.
-  \item The endorser block announced by the last block \afld{aeb}.
-\end{itemize}
+- The operational certificate issue number map `cs`.
+- The epoch nonce `η₀`.
+- The evolving nonce `ηv`.
+- The candidate nonce `ηc`.
+- The previous epoch hash nonce `ηh`.
+- The last header hash `h`.
+- The last slot `sℓ`.
+- The last block number `bℓ`.
+- The endorser block announced by the last block `aeb`.
 
-\begin{code}[hide]
+<!--
+```agda
 {-# OPTIONS --safe #-}
-
 open import InterfaceLibrary.Ledger
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
-
 module Spec.ChainHead
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
@@ -40,7 +38,6 @@ module Spec.ChainHead
   (li     : LedgerInterface crypto es) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)  
   where
-
 open import Spec.BaseTypes crypto using (OCertCounters; PoolDistr)
 open import Spec.TickForecast crypto es li
 open import Spec.TickNonce crypto es nonces
@@ -50,64 +47,54 @@ open import Ledger.PParams using (PParams; ProtVer)
 open import Ledger.Prelude
 open import Data.Rational using (ℚ; normalize)
 open import Data.Product renaming (map₁ to ×-map₁)
+```
+-->
 
-\end{code}
+*Chain Head environments*
 
-\begin{figure*}[h]
-\begin{AgdaAlign}
-\emph{Chain Head environments}
-\begin{code}
+```agda
 ChainHeadEnv = NewEpochState
-\end{code}
-\emph{Chain Head states}
-\begin{AgdaSuppressSpace}
-\begin{code}
+```
+
+*Chain Head states*
+
+```agda
 record LastAppliedBlock : Type where
-\end{code}
-\begin{code}[hide]
   constructor ⟦_,_,_,_⟧ℓ
   field
-\end{code}
-\begin{code}
     bℓ  : BlockNo           -- last block number
     sℓ  : Slot              -- last slot
     h   : HashHeader        -- latest header hash
     aeb : Maybe AnnouncedEB -- endorser block announced by the last block
-\end{code}
-\end{AgdaSuppressSpace}
-\begin{AgdaSuppressSpace}
-\begin{code}
+
 record ChainHeadState : Type where
-\end{code}
-\begin{code}[hide]
   constructor ⟦_,_,_,_,_,_⟧ᶜˢ
   field
-\end{code}
-\begin{code}  
     cs  : OCertCounters          -- operational certificate issue numbers
     η₀  : Nonce                  -- epoch nonce
     ηv  : Nonce                  -- evolving nonce
     ηc  : Nonce                  -- candidate nonce
     ηh  : Nonce                  -- nonce from hash of last epoch’s last header
     lab : Maybe LastAppliedBlock -- latest applied block
-\end{code}
-\end{AgdaSuppressSpace}
-\emph{Chain Head transitions}
-\begin{code}[hide]
-data
-\end{code}
-\begin{code}
-  _⊢_⇀⦇_,CHAINHEAD⦈_ : ChainHeadEnv → ChainHeadState → BHeader → ChainHeadState → Type
-\end{code}
-\end{AgdaAlign}
-\caption{Chain Head transition system types}
-\label{fig:ts-types:chainhead}
-\end{figure*}
+```
 
-\begin{figure*}[h]
-\begin{AgdaAlign}
-\emph{Chain Head helper functions}
-\begin{code}
+*Chain Head transitions*
+
+<!--
+```agda
+data
+```
+-->
+
+```agda
+  _⊢_⇀⦇_,CHAINHEAD⦈_ : ChainHeadEnv → ChainHeadState → BHeader → ChainHeadState → Type
+```
+
+<a id="fig:ts-types:chainhead"></a>
+
+*Chain Head helper functions*
+
+```agda
 extractPoolDistr : PoolDelegatedStake → PoolDistr
 extractPoolDistr pds = mapValues (×-map₁ stakeToProportion) pds
   where
@@ -136,8 +123,7 @@ prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ , _ ⟧ℓ) bh = sℓ < slot × bℓ
   where
     open BHeader; open BHBody (bh .body)
     ph = lastAppliedHash lab
-\end{code}
-\begin{code}
+
 certificationDelay : PParams → Slot
 certificationDelay pp = slotsFromDuration
     (3 * leiosHeaderPeriod + leiosVotingPeriod + leiosDiffusionPeriod)
@@ -149,63 +135,62 @@ certChecks _  nothing                          true  _ = ⊥
 certChecks _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = ⊥
 certChecks pp (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
   sℓ + certificationDelay pp ≤ s
-\end{code}
-\end{AgdaAlign}
-\caption{Chain Head transition system functions}
-\label{fig:ts-funs:chainhead}
-\end{figure*}
+```
+
+<a id="fig:ts-funs:chainhead"></a>
 
 The transition checks the following things
-(via the functions \afun{chainChecks}, \afun{prtlSeqChecks} and \afun{certChecks}
-from Figure~\ref{fig:ts-funs:chainhead}):
-\begin{itemize}
-\item The slot in the block header body is larger than the last slot recorded.
-\item The block number increases by exactly one.
-\item The previous hash listed in the block header matches the previous
+(via the functions `chainChecks`, `prtlSeqChecks` and `certChecks`
+from "Chain Head helper functions"):
+
+- The slot in the block header body is larger than the last slot recorded.
+- The block number increases by exactly one.
+- The previous hash listed in the block header matches the previous
   block header hash which was recorded.
-\item The size of the block header is less than or equal to the maximal size that the
+- The size of the block header is less than or equal to the maximal size that the
   protocol parameters allow for block headers.
-\item The size of the block body, as claimed by the block header, is less than or equal to the
+- The size of the block body, as claimed by the block header, is less than or equal to the
   maximal size that the protocol parameters allow for block bodies.
-\item The node is not obsolete, meaning that the major component of the
-  protocol version in the protocol parameters is not bigger than the constant \afld{MaxMajorPV}.
-\item If the block header claims to certify an endorser block, then the last applied
+- The node is not obsolete, meaning that the major component of the
+  protocol version in the protocol parameters is not bigger than the constant `MaxMajorPV`.
+- If the block header claims to certify an endorser block, then the last applied
   block announced one, and enough slots have elapsed since it did.
-\end{itemize}
 
 The last of these checks deserves comment, since it is the only one concerned with
-endorser blocks. A block header carries a flag \afld{certifiesEB} recording whether the
+endorser blocks. A block header carries a flag `certifiesEB` recording whether the
 block certifies the endorser block announced by its predecessor; the hash of that
 endorser block is not repeated in the header, as it is already available from the
-predecessor's \afld{announcedEB} field. Consequently the last applied block must
-retain what it announced, which is why \afld{LastAppliedBlock} carries an
-\afld{aeb} field.
+predecessor's `announcedEB` field. Consequently the last applied block must
+retain what it announced, which is why `LastAppliedBlock` carries an
+`aeb` field.
 
 A certificate may only be included once $3 L_\text{hdr} + L_\text{vote} +
 L_\text{diff}$ has elapsed since the block that announced the endorser
-block~\cite{cip_164}, so that the endorser block has had time to reach the whole
+block (see [CIP-0164](https://cips.cardano.org/cip/CIP-164)), so that the endorser block has had time to reach the whole
 network. These three protocol parameters are wall-clock durations, so their sum is
-converted to a number of slots by \slotsFromDuration, using the genesis slot length
-and rounding up. A header that sets \afld{certifiesEB} obliges the corresponding body
-to carry a matching certificate, thus this constraint is checked by the ledger rules.
+converted to a number of slots by `slotsFromDuration`, using the genesis slot length
+and rounding up. A header that sets `certifiesEB` requires the corresponding body
+to carry a matching certificate. The ledger rules check this requirement, while
+`CHAINHEAD` checks that the required certification delay has elapsed.
 
-Note that the \afld{size} component of \afld{announcedEB} is deliberately \emph{not}
-checked here. As specified in \cite{cip_164}, an incorrect announced size invalidates
+Note that the `size` component of `announcedEB` is deliberately *not*
+checked here. As specified in [CIP-0164](https://cips.cardano.org/cip/CIP-164), an incorrect announced size invalidates
 neither the header nor the block; it merely costs the block producer the votes of
 honest nodes, which validate the endorser block itself.
 
-\begin{figure*}[h]
-\begin{code}[hide]
+<!--
+```agda
 private variable
   nes forecast                : NewEpochState
   cs cs′                      : OCertCounters
   η₀ ηv ηc ηh η₀′ ηv′ ηc′ ηh′ : Nonce
   lab                         : Maybe LastAppliedBlock
   bh                          : BHeader
-
 data _⊢_⇀⦇_,CHAINHEAD⦈_ where
-\end{code}
-\begin{code}
+```
+-->
+
+```agda
   Chain-Head :
     let 〖 bhb , _ 〗 = bh; open BHBody bhb
         e₁   = getEpoch nes
@@ -225,30 +210,29 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
     ────────────────────────────────
     nes ⊢ ⟦ cs  , η₀  , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
           ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ
+```
 
-\end{code}
-\caption{Chain Head transition system rules}
-\label{fig:ts-rules:chainhead}
-\end{figure*}
+<a id="fig:ts-rules:chainhead"></a>
 
-The transition rule $\mathsf{CHAINHEAD}$ is shown in Figure~\ref{fig:ts-rules:chainhead} and
+The transition rule $\mathsf{CHAINHEAD}$ is shown above and
 has the following predicate failures:
-\begin{enumerate}
-\item If the slot of the block header body is not larger than the last slot,
-  there is a \emph{WrongSlotInterval} failure.
-\item If the block number does not increase by exactly one, there is a \emph{WrongBlockNo} failure.
-\item If the hash of the previous header of the block header body is not equal
-  to the last header hash, there is a \emph{WrongBlockSequence} failure.
-\item If the size of the block header is larger than the maximally allowed size,
-  there is a \emph{HeaderSizeTooLarge} failure.
-\item If the size of the block body is larger than the maximally allowed size,
-  there is a \emph{BlockSizeTooLarge} failure.
-\item If the major component of the protocol version is larger than \afld{MaxMajorPV},
-  there is a \emph{ObsoleteNode} failure.
-\item If the block header certifies an endorser block but there is no last applied
+
+- If the slot of the block header body is not larger than the last slot,
+  there is a *WrongSlotInterval* failure.
+- If the block number does not increase by exactly one, there is a *WrongBlockNo* failure.
+- If the hash of the previous header of the block header body is not equal
+  to the last header hash, there is a *WrongBlockSequence* failure.
+- If the size of the block header is larger than the maximally allowed size,
+  there is a *HeaderSizeTooLarge* failure.
+- If the size of the block body is larger than the maximally allowed size,
+  there is a *BlockSizeTooLarge* failure.
+- If the major component of the protocol version is larger than `MaxMajorPV`,
+  there is an *ObsoleteNode* failure.
+- If the block header certifies an endorser block but there is no last applied
   block, or the last applied block announced no endorser block, there is a
-  \emph{NoEndorserBlockToCertify} failure.
-\item If the block header certifies an endorser block but less than
+  *NoEndorserBlockToCertify* failure.
+- If the block header certifies an endorser block but less than
   $3 L_\text{hdr} + L_\text{vote} + L_\text{diff}$ has elapsed since the last
-  applied block, there is a \emph{CertifiedTooEarly} failure.
-\end{enumerate}
+  applied block, there is a *CertifiedTooEarly* failure.
+
+[Specification contents](../../SPECIFICATION.md)
