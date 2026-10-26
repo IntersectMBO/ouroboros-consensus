@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( Tip
@@ -9,6 +10,11 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncBlocksServer
   , chainSyncHeaderServerFollower
   , chainSyncHeadersServer
+  , inlineCertifiedEbTxs
+
+    -- * Exceptions
+  , CertRbWithoutEbTxs (..)
+  , CertRbWithoutEbTxsReason (..)
 
     -- * Trace events
   , BlockingType (..)
@@ -25,7 +31,8 @@ import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import LeiosDemoTypes (LeiosPoint (..))
+import Data.Typeable (Typeable)
+import LeiosDemoTypes (LeiosClosureError, LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (GetHeader, GetRawBlock)
@@ -102,13 +109,15 @@ chainSyncHeadersServer tracer chainDB flr =
 -- through unchanged.
 --
 -- The server keeps only the announcer's announcement point ('LeiosPoint')
--- between blocks rather than the full announcer header. A splice is needed
--- only for a CertRB ('headerContainsLeiosCert'); a block carrying no cert is
--- served unchanged (its predecessor's announced EB may never have been
--- certified), which also skips the deserialise/re-encode roundtrip.
+-- between blocks rather than the full announcer header. See
+-- 'inlineCertifiedEbTxs' for what is sent for each block.
+--
+-- Throws 'CertRbWithoutEbTxs' rather than send a CertRB without its EB's
+-- transactions.
 chainSyncBlocksServer ::
   forall m blk.
   ( IOLike m
+  , HasHeader blk
   , HasHeader (Header blk)
   , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
@@ -154,39 +163,13 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ 
     resolve (WithPoint (hdr, sblk) pt) = do
       mPrevAnn <- readTVarIO prevAnnVar
       atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
-      sblk' <- case mPrevAnn of
-        -- Only a CertRB — a block whose header records that it carries a Leios
-        -- certificate ('headerContainsLeiosCert') — splices in an EB closure,
-        -- and it splices the EB announced by its predecessor (the one the cert
-        -- attests to). A block that merely follows an announcement but carries
-        -- no certificate of its own — e.g. one whose predecessor announced an
-        -- EB that was never certified — is served unchanged. Splicing there
-        -- would inline an EB that is not chain content, and whose closure may
-        -- be absent from the LeiosDb (throwing in 'resolveLeiosClosure').
-        Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
-          Left _ -> pure sblk
-          Right blk -> do
-            resolveLeiosClosure leiosDbReader (pointEbHash prevAnn) >>= \case
-              -- Serve what we have rather than dying on a closure we cannot
-              -- read; the peer validates the block regardless.
-              Left _ -> pure sblk
-              Right closure -> pure . encode $ inlineLeiosClosure blk (map snd closure)
-        _ -> pure sblk
+      sblk' <- inlineCertifiedEbTxs ccfg leiosDbReader mPrevAnn pt hdr sblk
       pure (WithPoint sblk' pt)
 
-    decodeRaw :: Serialised blk -> Either String blk
-    decodeRaw (Serialised bs) =
-      case CBOR.Read.deserialiseFromBytes annotator bs of
-        Left e -> Left (show e)
-        Right (_, applyBytes) -> case applyBytes bs of
-          Left e -> Left (show e)
-          Right blk -> Right blk
-     where
-      annotator :: forall s. CBOR.Decoding.Decoder s (Lazy.ByteString -> Either DecoderError blk)
-      annotator = decodeDisk ccfg
-
-    -- possible race? 'pt' could be GC'd from the VolatileDB between the
-    -- follower emitting it and this lookup; we then fall back to Nothing.
+    -- After a rollback or an intersection, the next block follows the block
+    -- at 'pt', not the last block sent. Remember the EB that block announced,
+    -- so a CertRB sent next gets that EB's transactions. The block is always
+    -- found: 'getBlockComponent' checks the VolatileDB before the ImmutableDB.
     setPrev :: Point blk -> m ()
     setPrev pt = case pointToWithOriginRealPoint pt of
       Origin -> atomically $ writeTVar prevAnnVar Nothing
@@ -194,8 +177,81 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ 
         mHdr <- ChainDB.getBlockComponent chainDB GetHeader rp
         atomically $ writeTVar prevAnnVar (fst <$> (mHdr >>= headerLeiosAnnouncement))
 
-    encode :: blk -> Serialised blk
-    encode = Serialised . CBOR.Write.toLazyByteString . encodeDisk ccfg
+-- | What 'chainSyncBlocksServer' sends for one block.
+--
+-- A CertRB is sent with the transactions of the EB it certifies, which the
+-- block before it announced. Every other block is sent as stored.
+--
+-- Throws 'CertRbWithoutEbTxs' rather than send a CertRB without them. This
+-- should never happen: the node adopts a CertRB only once it has the EB's
+-- transactions.
+inlineCertifiedEbTxs ::
+  forall m blk.
+  ( MonadThrow m
+  , HasHeader blk
+  , ResolveLeiosBlock blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
+  ) =>
+  CodecConfig blk ->
+  LeiosDbReader m ->
+  -- | The EB that the block before this one announced, if any.
+  Maybe LeiosPoint ->
+  Point blk ->
+  Header blk ->
+  Serialised blk ->
+  m (Serialised blk)
+inlineCertifiedEbTxs ccfg leiosDbReader mPrevAnn pt hdr sblk
+  | not (headerContainsLeiosCert hdr) = pure sblk
+  | otherwise = do
+      prevAnn <- maybe (failWith NoAnnouncement) pure mPrevAnn
+      blk <- either (failWith . Undecodable) pure (decodeRaw sblk)
+      closure <-
+        either (failWith . EbTxsUnavailable) pure
+          =<< resolveLeiosClosure leiosDbReader (pointEbHash prevAnn)
+      pure . encode $ inlineLeiosClosure blk (map snd closure)
+ where
+  failWith :: CertRbWithoutEbTxsReason -> m a
+  failWith = throwIO . CertRbWithoutEbTxs pt
+
+  decodeRaw :: Serialised blk -> Either String blk
+  decodeRaw (Serialised bs) =
+    case CBOR.Read.deserialiseFromBytes annotator bs of
+      Left e -> Left (show e)
+      Right (_, applyBytes) -> case applyBytes bs of
+        Left e -> Left (show e)
+        Right blk -> Right blk
+   where
+    annotator :: forall s. CBOR.Decoding.Decoder s (Lazy.ByteString -> Either DecoderError blk)
+    annotator = decodeDisk ccfg
+
+  encode :: blk -> Serialised blk
+  encode = Serialised . CBOR.Write.toLazyByteString . encodeDisk ccfg
+
+-- | Thrown by 'chainSyncBlocksServer' when it cannot send a CertRB with its
+-- EB's transactions. A correct node never gets here, so this means a bug
+-- elsewhere in the node. It ends the client's connection.
+data CertRbWithoutEbTxs blk
+  = CertRbWithoutEbTxs
+      -- | The CertRB.
+      !(Point blk)
+      !CertRbWithoutEbTxsReason
+
+deriving instance StandardHash blk => Show (CertRbWithoutEbTxs blk)
+
+instance (StandardHash blk, Typeable blk) => Exception (CertRbWithoutEbTxs blk)
+
+-- | Why 'chainSyncBlocksServer' could not add the EB's transactions to a
+-- CertRB.
+data CertRbWithoutEbTxsReason
+  = -- | The server does not know which EB the block before the CertRB
+    -- announced.
+    NoAnnouncement
+  | -- | The stored CertRB does not decode.
+    Undecodable !String
+  | -- | The LeiosDB cannot give the EB's transactions.
+    EbTxsUnavailable !LeiosClosureError
+  deriving Show
 
 -- | A chain sync server.
 --
