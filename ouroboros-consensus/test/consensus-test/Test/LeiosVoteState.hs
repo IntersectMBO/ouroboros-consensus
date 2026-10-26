@@ -11,6 +11,7 @@ module Test.LeiosVoteState (tests) where
 import Cardano.Crypto.DSIGN
   ( DSIGNAlgorithm (deriveVerKeyDSIGN)
   )
+import qualified Codec.CBOR.Write as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
   ( atomically
   , newTVar
@@ -20,10 +21,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Function (on)
 import Data.List (nub, nubBy)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Ratio ((%))
+import Data.Word (Word16)
 import LeiosDemoTypes
   ( LeiosSeatId (..)
   , LeiosSigningKey
@@ -31,8 +34,10 @@ import LeiosDemoTypes
   , RbHash
   , VoteInvalid (..)
   , Weight
+  , encodeLeiosVote
   , getLeiosSeatId
   , leiosCommitteeSize
+  , maxEncodedLeiosVoteSize
   , signLeiosVote
   , validateLeiosVote
   )
@@ -48,7 +53,8 @@ import LeiosVoteState
   )
 import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeiosSigningKey)
 import Test.QuickCheck
-  ( Gen
+  ( Arbitrary (..)
+  , Gen
   , Property
   , counterexample
   , elements
@@ -70,7 +76,10 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosVoteState"
-    [ testProperty "subscriber receives added vote" prop_subscriberReceivesVote
+    [ testProperty
+        "a vote encodes within maxEncodedLeiosVoteSize, exactly so from seat 256"
+        prop_voteEncodedSize
+    , testProperty "subscriber receives added vote" prop_subscriberReceivesVote
     , testProperty "subscriber receives all distinct votes" prop_subscriberReceivesAll
     , testProperty "duplicate vote is reported as AlreadyKnown" prop_deduplicateVotes
     , testProperty "duplicate check before validation" prop_deduplicateBeforeValidation
@@ -335,3 +344,17 @@ prop_tallyAccumulates =
 addedWeights :: AddVoteResult -> Maybe (Weight, Weight)
 addedWeights (Added VoteTally{vtWeight, vtTally} _) = Just (vtWeight, vtTally)
 addedWeights _ = Nothing
+
+-- | Every vote encodes within 'maxEncodedLeiosVoteSize', and to exactly
+-- that from seat index 256 on, where the index takes its three bytes.
+prop_voteEncodedSize :: Property
+prop_voteEncodedSize =
+  forAll genLeiosSigningKey $ \key ->
+    forAll (arbitrary :: Gen Word16) $ \seat ->
+      forAll genRbHash $ \rbHash ->
+        let vote = signLeiosVote key (LeiosSeatId seat) rbHash
+            size = fromIntegral $ LBS.length $ CBOR.toLazyByteString $ encodeLeiosVote vote
+         in counterexample ("encoded size " ++ show size) $
+              if seat >= 256
+                then size === maxEncodedLeiosVoteSize
+                else property (size <= maxEncodedLeiosVoteSize)

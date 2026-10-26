@@ -44,6 +44,8 @@ module Ouroboros.Consensus.Network.NodeToNode
     -- * Leios mini-protocol limits
   , leiosFetchPipelineDepth
   , leiosNotifyPipelineDepth
+  , leiosNotifyVoteBatch
+  , enqueueVote
   , leiosNotifyProtocolLimits
   , leiosFetchProtocolLimits
   ) where
@@ -69,7 +71,6 @@ import Control.Monad.Except (runExceptT)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
-import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -835,28 +836,34 @@ mkHandlers
                   TVar.Unchecked.writeTVar queue out{olnMessages = msgs'}
                   pure msg
 
-            -- 'Nothing' when the notification it consumed is one we must not
-            -- relay (eg because it'd be too old): the caller commits that
-            -- anyway, so the channel drains.
+            -- An offer, or 'Left Nothing' when the notification it consumed
+            -- is one we must not relay (eg because it'd be too old): the
+            -- caller commits that anyway, so the channel drains. Or a vote,
+            -- which 'enqueueVote' places.
             pumpNext ::
               STM
                 m
-                ( Maybe
-                    ( LeiosDemoOnlyTestNotify.Message
-                        (LeiosNotify LeiosPoint (Header blk) LeiosVote)
-                        LeiosDemoOnlyTestNotify.StBusy
-                        LeiosDemoOnlyTestNotify.StIdle
+                ( Either
+                    ( Maybe
+                        ( LeiosDemoOnlyTestNotify.Message
+                            (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+                            LeiosDemoOnlyTestNotify.StBusy
+                            LeiosDemoOnlyTestNotify.StIdle
+                        )
                     )
+                    LeiosVote
                 )
             pumpNext = do
               pruneAnnounced
-              ( readTChan chan >>= \case
-                  AcquiredEb point ebSize ->
-                    offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point ->
-                    offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
+              fmap
+                Left
+                ( readTChan chan >>= \case
+                    AcquiredEb point ebSize ->
+                      offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
+                    AcquiredEbTxs point ->
+                      offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
                 )
-                <|> (getNextVote <&> \vote -> Just $ MsgLeiosVotes [vote])
+                <|> (Right <$> getNextVote)
 
             -- Keep 'olnAnnounced' to our immutable tip, so it does not grow for
             -- the life of the connection. Nothing below that is ever offered
@@ -914,19 +921,30 @@ mkHandlers
                   MVar.modifyMVar_ getLeiosCentralState $
                     pure . Announcements.insertPeerCentral peer qav
                   forever $ atomically $ do
-                    mMsg <- pumpNext
+                    item <- pumpNext
                     c <- TVar.Unchecked.readTVar credits
-                    -- FIXME: Is this dropping messages when we run out of credits?
-                    forM_ mMsg $ \msg ->
-                      when (c > 0) $ do
-                        TVar.Unchecked.writeTVar credits $! c - 1
-                        out <- TVar.Unchecked.readTVar queue
-                        TVar.Unchecked.writeTVar
-                          queue
-                          out
-                            { olnMessages = olnMessages out Seq.|> msg
-                            , olnAnnounced = recordOffer msg (olnAnnounced out)
-                            }
+                    out <- TVar.Unchecked.readTVar queue
+                    case item of
+                      -- FIXME: Is this dropping messages when we run out of credits?
+                      Left mMsg ->
+                        forM_ mMsg $ \msg ->
+                          when (c > 0) $ do
+                            TVar.Unchecked.writeTVar credits $! c - 1
+                            TVar.Unchecked.writeTVar
+                              queue
+                              out
+                                { olnMessages = olnMessages out Seq.|> msg
+                                , olnAnnounced = recordOffer msg (olnAnnounced out)
+                                }
+                      -- A vote joins the votes message at the tail of the
+                      -- queue when that has room, for no credit; otherwise
+                      -- it needs a credit for a message of its own, and is
+                      -- dropped without one.
+                      Right vote ->
+                        forM_ (enqueueVote leiosNotifyVoteBatch vote c (olnMessages out)) $
+                          \(c', msgs) -> do
+                            TVar.Unchecked.writeTVar credits $! c'
+                            TVar.Unchecked.writeTVar queue out{olnMessages = msgs}
               )
                 `finally` ( MVar.modifyMVar_ getLeiosCentralState $
                               pure . Announcements.deletePeerCentral peer
@@ -2144,6 +2162,59 @@ headersWithPredecessorStates acceptedThrough jumpInfo =
 
 leiosNotifyPipelineDepth :: Int
 leiosNotifyPipelineDepth = 1000 -- TODO magic number
+
+-- | The most votes one 'MsgLeiosVotes' we send carries, sized for the
+-- receiver's ingress queue: a client keeps 'leiosNotifyPipelineDepth'
+-- requests outstanding, so that many responses can sit unread in its queue
+-- while it verifies votes, and each may be a full votes message. The
+-- budget per message is the queue over the depth; the framing (the CBOR
+-- list and key, the vote count, the mux SDU header, with slack) comes off
+-- that, and the rest is votes at their largest encoding. The decoder's
+-- bound, 'LeiosDemoOnlyTestNotify.leiosNotifyMaxVotesPerMessage', sits
+-- four times above this.
+--
+-- Nothing waits for a batch to fill; see 'enqueueVote'.
+leiosNotifyVoteBatch :: Int
+leiosNotifyVoteBatch =
+  (perMessage - framing) `div` Leios.maxEncodedLeiosVoteSize
+ where
+  perMessage =
+    fromIntegral (Leios.maxLeiosNotifyIngressQueue Leios.demoLeiosFetchStaticEnv)
+      `div` leiosNotifyPipelineDepth
+  framing = 16
+
+-- | Where a vote goes in a peer's outgoing LeiosNotify queue, given the cap
+-- on votes per message and the peer's free credits: into the votes message
+-- at the tail of the queue when it has room, which costs no credit and
+-- delays nothing, since that message leaves no later than a new one would;
+-- else into a message of its own for one credit; else nowhere, and the vote
+-- is dropped. A vote that finds the queue empty goes alone, at once. A cap
+-- below one acts as one.
+enqueueVote ::
+  Int ->
+  vote ->
+  Int ->
+  Seq.Seq
+    ( LeiosDemoOnlyTestNotify.Message
+        (LeiosNotify point announcement vote)
+        LeiosDemoOnlyTestNotify.StBusy
+        LeiosDemoOnlyTestNotify.StIdle
+    ) ->
+  Maybe
+    ( Int
+    , Seq.Seq
+        ( LeiosDemoOnlyTestNotify.Message
+            (LeiosNotify point announcement vote)
+            LeiosDemoOnlyTestNotify.StBusy
+            LeiosDemoOnlyTestNotify.StIdle
+        )
+    )
+enqueueVote cap vote credits msgs = case Seq.viewr msgs of
+  msgs' Seq.:> MsgLeiosVotes vs
+    | length vs < cap -> Just (credits, msgs' Seq.|> MsgLeiosVotes (vs ++ [vote]))
+  _
+    | credits > 0 -> Just (credits - 1, msgs Seq.|> MsgLeiosVotes [vote])
+    | otherwise -> Nothing
 
 -- | The most LeiosFetch requests to leave outstanding on one connection.
 --

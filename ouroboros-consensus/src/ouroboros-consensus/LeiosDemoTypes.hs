@@ -1374,6 +1374,14 @@ encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
     <> CBOR.encodeWord16 voterId.leiosSeatIndex
     <> encodeFixedSized voteSignature
 
+-- | The most bytes 'encodeLeiosVote' produces for one vote: the list
+-- header, the hash as a 32-byte string with its two-byte header, the seat
+-- index as a 'Word16' (one to three bytes, three from index 256 on) and the
+-- 48-byte signature with its two-byte header. Receivers size their vote
+-- buffers by this.
+maxEncodedLeiosVoteSize :: Int
+maxEncodedLeiosVoteSize = 1 + (2 + 32) + 3 + (2 + 48)
+
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do

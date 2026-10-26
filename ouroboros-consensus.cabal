@@ -882,6 +882,7 @@ test-suite consensus-test
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoLogic.Invariants
     Test.LeiosDemoTypes
+    Test.LeiosNotifyCodec
     Test.LeiosFreshBytes
     Test.LeiosTxCache.Optimized
     Test.LeiosTxCache.Optimized.MutableHashTable
@@ -1573,6 +1574,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.NodeUnderTest
+    Test.Consensus.Leios.NotifyQueue
     Test.Consensus.Leios.RecoveryPath
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch

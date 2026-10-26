@@ -20,6 +20,7 @@ module LeiosDemoOnlyTestNotify
   , Message (..)
   , SingLeiosNotify (..)
   , leiosNotifyMiniProtocolNum
+  , leiosNotifyMaxVotesPerMessage
   , byteLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
@@ -40,7 +41,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (join, replicateM)
+import Control.Monad (join, replicateM, when)
 -- for runLookaheadFixedSenderPeerWithLimits
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadFork
@@ -238,6 +239,14 @@ deriving instance
 
 -----
 
+-- | The most votes the decoder accepts in one 'MsgLeiosVotes', and it
+-- accepts no fewer than one: an empty message would cost a request for
+-- nothing. Four times the cap a sender uses
+-- (@leiosNotifyVoteBatch@ in "Ouroboros.Consensus.Network.NodeToNode"), so
+-- an honest relayer whose budget differs a little never trips it.
+leiosNotifyMaxVotesPerMessage :: Int
+leiosNotifyMaxVotesPerMessage = 44
+
 byteLimitsLeiosNotify ::
   ProtocolSizeLimits (LeiosNotify point announcement vote) bytes
 byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
@@ -385,6 +394,12 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
+          when (n < 1 || n > leiosNotifyMaxVotesPerMessage) $
+            fail $
+              printf
+                "codecLeiosNotify: %d votes in one MsgLeiosVotes, 1 to %d allowed"
+                n
+                leiosNotifyMaxVotesPerMessage
           replicateM n decodeV
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
