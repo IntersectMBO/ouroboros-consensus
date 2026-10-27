@@ -368,7 +368,8 @@ filterByPredecessorModel dbm = whenOpen dbm $ \predecessor ->
       Map.empty
       (getBlockToPredecessor dbm)
 
--- | The model's blocks announce no endorser block.
+-- | The model does not track announcements, so it finds none, but like every
+-- getter it fails on a closed database.
 getLeiosAnnouncersModel ::
   DBModel blk ->
   Either (VolatileDBError blk) (EndorserBlockHash -> Set (HeaderHash blk))
