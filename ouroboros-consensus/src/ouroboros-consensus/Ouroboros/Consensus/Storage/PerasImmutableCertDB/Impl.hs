@@ -148,6 +148,11 @@ module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
     -- * Errors
   , CertFileError (..)
   , displayCertFileError
+
+    -- * Internals, exposed for benchmarking
+  , checkCertFileCRC
+  , decodeCertFile
+  , fsPathCertFile
   )
 where
 
@@ -747,6 +752,14 @@ decodeCertFile ::
   BSL.ByteString ->
   Either CertFileError (ValidatedPerasCert blk)
 decodeCertFile ccfg fileBytes = do
+  payload <- checkCertFileCRC fileBytes
+  first CertFileMalformed $
+    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeDisk ccfg) payload
+
+-- | Check the integrity of the bytes produced by 'encodeCertFileBytes' against
+-- their leading CRC, returning the (not yet decoded) certificate payload.
+checkCertFileCRC :: BSL.ByteString -> Either CertFileError BSL.ByteString
+checkCertFileCRC fileBytes = do
   -- Decoding only the leading CRC leaves the inline payload as the unconsumed
   -- suffix, which is exactly the byte range the CRC was computed over on write.
   (payload, expectedCRC) <-
@@ -754,8 +767,7 @@ decodeCertFile ccfg fileBytes = do
       CBOR.deserialiseFromBytes decodeCRC fileBytes
   unless (getCRC (computeCRC payload) == expectedCRC) $
     Left CertFileChecksumMismatch
-  first CertFileMalformed $
-    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeDisk ccfg) payload
+  pure payload
  where
   decodeCRC :: Decoder s Word32
   decodeCRC = fromCBOR

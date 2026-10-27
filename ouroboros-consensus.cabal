@@ -993,13 +993,19 @@ benchmark PerasImmutableCertDB-bench
   other-modules:
   build-depends:
     base,
+    bytestring,
+    cardano,
+    containers,
     contra-tracer,
+    deepseq,
+    directory,
+    filepath,
     fs-api,
     nonempty-containers,
     ouroboros-consensus,
+    tasty,
     tasty-bench,
     temporary,
-    unstable-consensus-testlib,
 
 benchmark txid-eq-ord-instances-bench
   import: common-bench
