@@ -64,9 +64,7 @@ record BlockStructure : Type₁ where
 
 *Operational Certificate*
 
-<!--
-The checked declaration retains its constructor. Keep the display below in sync.
-```agda
+  ```agda
   record OCert : Type where
     constructor ⟦_,_,_,_⟧ᵒᶜ
     field
@@ -74,16 +72,7 @@ The checked declaration retains its constructor. Keep the display below in sync.
       n   : ℕ         -- certificate issue number
       c₀  : KESPeriod -- start KES period
       σ   : Sigˢ      -- cold key signature
-```
--->
-
-<pre><code>record OCert : Type where
-  field
-    vkₕ : VKeyᵏ     -- operational (hot) key
-    n   : ℕ         -- certificate issue number
-    c₀  : KESPeriod -- start KES period
-    σ   : Sigˢ      -- cold key signature
-</code></pre>
+  ```
 
 <a id="fig:defs:blocks"></a>
 
