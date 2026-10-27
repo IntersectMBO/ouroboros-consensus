@@ -19,7 +19,6 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
-  , storeForgedEb
   , toConsensusMode
   ) where
 
@@ -69,13 +68,6 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosProtocol (..))
-import Ouroboros.Consensus.Leios.Types
-  ( ForgedLeiosEb
-  , LeiosPoint (..)
-  , forgedEbBody
-  , forgedEbTxs
-  )
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -118,6 +110,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
   , LeiosDbWriter (..)
   , openWriter
+  , storeForgedEb
   )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
@@ -618,7 +611,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (storeForgedEb cfg leiosDbWriter)
+              (storeForgedEb leiosDbWriter . blockSlot)
               currentSlot
     )
  where
@@ -635,33 +628,6 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   -- the LeiosDB write queue.
   finalizeForging (bf, leiosDbWriter) =
     finalize bf `finally` closeWriter leiosDbWriter
-
--- | Write an endorser block that this node forged to the LeiosDB.
---
--- The forge does not await the writes. On SQLite, it blocks while the write
--- queue is full. If a write fails, the node stops. Peers can get the header
--- before the endorser block is stored.
-storeForgedEb ::
-  forall m blk.
-  (IOLike m, RunNode blk) =>
-  TopLevelConfig blk ->
-  LeiosDbWriter m ->
-  Header blk ->
-  ForgedLeiosEb ->
-  m ()
-storeForgedEb cfg writer hdr forgedEb = do
-  _ <- writeEbPoint writer point (announcementEbSize announcement)
-  _ <- writeEbBody writer point (forgedEbBody forgedEb)
-  void $ writeTxs writer point (zip [0 ..] (forgedEbTxs forgedEb))
- where
-  announcement =
-    case getLeiosAnnouncement (Proxy @(BlockProtocol blk)) (validateView (configBlock cfg) hdr) of
-      Just ann -> ann
-      Nothing -> error "storeForgedEb: the header does not announce the endorser block"
-
-  -- Peers key the endorser block by the slot of the header that announces
-  -- it, as 'mkAnnouncingHeader' does.
-  point = MkLeiosPoint (blockSlot hdr) (announcementEbHash announcement)
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

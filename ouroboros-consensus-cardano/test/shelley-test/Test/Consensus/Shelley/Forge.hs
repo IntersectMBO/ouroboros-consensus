@@ -44,7 +44,6 @@ import Ouroboros.Consensus.Leios.Types
   , forgedEbBody
   , forgedEbTxs
   )
-import Ouroboros.Consensus.NodeKernel (storeForgedEb)
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
   , PraosIsLeader (..)
@@ -78,6 +77,7 @@ import Ouroboros.Consensus.Shelley.Node.Praos (praos2SharedBlockForging)
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbReader (..)
   , newLeiosDBInMemory
+  , storeForgedEb
   , withReader
   , withWriter
   )
@@ -136,10 +136,10 @@ prop_storesEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
     forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
       let ebTxs = take numEbTxs distinctTxs
-      (cfg, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
+      (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
       db <- newLeiosDBInMemory
       withWriter db $ \writer ->
-        mapM_ (storeForgedEb cfg writer (getHeader blk)) forgedEb
+        mapM_ (storeForgedEb writer (blockSlot blk)) forgedEb
       case announcement blk of
         SNothing -> pure $ counterexample "the block announces no endorser block" False
         SJust ann -> do

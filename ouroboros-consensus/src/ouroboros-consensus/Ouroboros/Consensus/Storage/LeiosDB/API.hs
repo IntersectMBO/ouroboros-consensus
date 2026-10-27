@@ -20,12 +20,14 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
+  , storeForgedEb
   , CompletedEbs
   , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
+import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
@@ -35,9 +37,14 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
-  , LeiosPoint
+  , ForgedLeiosEb
+  , LeiosPoint (..)
   , TxHash
   , TxOffset
+  , encodeEndorserBlockSize
+  , endorserBlockHash
+  , forgedEbBody
+  , forgedEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
@@ -181,3 +188,21 @@ allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) clo
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter
+
+-- | Write an endorser block that this node forged to the LeiosDB.
+--
+-- The slot is the slot of the ranking block that announces the endorser block.
+-- That ranking block must announce the 'endorserBlockHash' and the
+-- 'encodeEndorserBlockSize' of the endorser block body.
+--
+-- This function does not await the writes. On SQLite, it blocks while the
+-- write queue is full. If a write fails, the node stops. Peers can get the
+-- header before the endorser block is stored.
+storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedLeiosEb -> m ()
+storeForgedEb writer slot forgedEb = do
+  _ <- writeEbPoint writer point (encodeEndorserBlockSize body)
+  _ <- writeEbBody writer point body
+  void $ writeTxs writer point (zip [0 ..] (forgedEbTxs forgedEb))
+ where
+  body = forgedEbBody forgedEb
+  point = MkLeiosPoint slot (endorserBlockHash body)
