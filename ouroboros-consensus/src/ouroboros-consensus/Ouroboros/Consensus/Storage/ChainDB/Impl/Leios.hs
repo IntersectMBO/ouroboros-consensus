@@ -27,7 +27,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
+import Data.Maybe.Strict (maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
@@ -124,9 +124,7 @@ pruneAcquiredLeiosEbs slot (AcquiredLeiosEbs youngest bySlot) =
 -- is not acquired. ChainSel must not select such a block until it is, so it
 -- treats the block as absent: the block is parked.
 --
--- The certified endorser block is the one the block's predecessor announces. A
--- predecessor missing from the VolatileDB leaves it unknown, so the block is
--- parked too.
+-- The certified endorser block is the one the block's predecessor announces.
 isParkedCertRB ::
   AcquiredLeiosEbs ->
   (HeaderHash blk -> Maybe (BlockInfo blk)) ->
@@ -135,14 +133,20 @@ isParkedCertRB ::
 isParkedCertRB acquired lookupBlockInfo hash =
   case lookupBlockInfo hash of
     Nothing -> False
-    Just info ->
-      lbiHasCert (biLeios info) && case biPrevHash info of
-        GenesisHash -> True
-        BlockHash prevHash ->
-          case lbiAnnouncedEb . biLeios <$> lookupBlockInfo prevHash of
-            Just (SJust ebHash) -> not (isAcquiredLeiosEb ebHash acquired)
-            Just SNothing -> True
-            Nothing -> True
+    Just info
+      | not (lbiHasCert (biLeios info)) -> False
+      | otherwise -> case certifiedEb info of
+          Just ebHash -> not (isAcquiredLeiosEb ebHash acquired)
+          -- Either the VolatileDB lacks the predecessor, so the block cannot
+          -- be selected before it arrives anyway, or the predecessor (perhaps
+          -- genesis) announces nothing, so the block can never be valid and
+          -- staying parked for good is harmless.
+          Nothing -> True
+ where
+  certifiedEb info = case biPrevHash info of
+    GenesisHash -> Nothing
+    BlockHash prevHash ->
+      lookupBlockInfo prevHash >>= strictMaybeToMaybe . lbiAnnouncedEb . biLeios
 
 -- | Hide parked blocks ('isParkedCertRB') from a @getBlockInfo@. The given one
 -- must be the VolatileDB's own, so that it still finds every predecessor.
