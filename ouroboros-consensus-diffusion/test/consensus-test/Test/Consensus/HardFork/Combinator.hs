@@ -112,7 +112,7 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
   case forged of
     Z (I blkA) -> blkA_body blkA @?= [txA 1, txA 2]
     S _ -> assertFailure "the block is not from era A"
-  forgedEb @?= Just (ebListing (txA 3 :| []))
+  forgedEb @?= Just (mkForgedLeiosEb (txA 3 :| []))
  where
   hardForkForging :: BlockForging Identity TestBlock
   hardForkForging =
@@ -134,12 +134,12 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
           pure
             ForgeBlockResult
               { rankingBlock = blkA{blkA_body = map forgetValidatedGenTxA (fbTxs argsA)}
-              , endorserBlock = ebListing <$> nonEmpty (map forgetValidatedGenTxA (fbEbTxs argsA))
+              , endorserBlock = mkForgedLeiosEb <$> nonEmpty (map forgetValidatedGenTxA (fbEbTxs argsA))
               }
       }
 
-  ebListing :: NonEmpty (GenTx BlockA) -> ForgedLeiosEb
-  ebListing = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
+  mkForgedLeiosEb :: NonEmpty (GenTx BlockA) -> ForgedLeiosEb
+  mkForgedLeiosEb = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB
