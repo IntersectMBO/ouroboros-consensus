@@ -3,9 +3,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeSynonymInstances #-}
-{-# OPTIONS_GHC -Wno-deprecations #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
 -- block bodies and their sizes.
@@ -67,10 +64,10 @@ import Cardano.Crypto.Hash
   ( Hash
   , castHash
   , hashFromBytesShort
+  , hashSize
   , hashToBytes
   , hashToStringAsHex
   , hashWith
-  , sizeHash
   )
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -121,7 +118,7 @@ import Data.Word (Word32)
 import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), HeaderHash)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (toShortRawHash), HeaderHash)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 
@@ -144,8 +141,8 @@ newtype RankingBlockHash = MkRankingBlockHash
 instance SignableRepresentation RankingBlockHash where
   getSignableRepresentation = hashToBytes . unRankingBlockHash
 
--- | Convert a ranking block's 'HeaderHash'. It must be as long as a
--- 'RankingBlockHash'.
+-- | Convert a ranking block's 'HeaderHash'. It must be the same length as a
+-- 'RankingBlockHash', ie 32 bytes.
 --
 -- TODO Rule out a 'HeaderHash' of another size at compile time, as Peras does
 -- with @HashSize blk ~ 32@, without requiring it of every 'RunNode' block.
@@ -155,7 +152,10 @@ toRankingBlockHash p h =
     fromMaybe (error "toRankingBlockHash: header hash of the wrong size") $
       hashFromBytesShort (toShortRawHash p h)
 
--- | The hash of a transaction an endorser block references.
+-- | The hash of a transaction an endorser block references. It hashes all of the
+-- transaction's bytes, witnesses included, unlike the ledger's @TxId@ and so
+-- the mempool's 'Ouroboros.Consensus.Ledger.SupportsMempool.GenTxId', which
+-- hash only the transaction's body.
 type TxHash = Hash HASH EraIndependentTx
 
 -- * Transactions
@@ -261,7 +261,7 @@ type BytesSize = Word32
 -- by naming a list of 'TxHash' and 'BytesSize' pairs. Construct using
 -- 'mkEndorserBlock'.
 --
--- An anti-corruption layer over the ledger's 'Ledger.EbReferences': consensus
+-- A compatibility layer over the ledger's 'Ledger.EbReferences': consensus
 -- sees only this module's functions, never the ledger's representation.
 newtype EndorserBlock = MkEndorserBlock Ledger.EbReferences
   deriving stock Generic
@@ -284,11 +284,12 @@ mkEndorserBlock =
     . map (\(txHash, txSize) -> (unsafeMakeSafeHash txHash, txSize))
 
 -- | The endorser block naming the transactions with these bytes, in this
--- order. It names each by the Blake2b-256 hash and the length of its bytes.
+-- order. It names each by the 'TxHash' and the length of its bytes.
 endorserBlockFromTxBytes :: NonEmpty ByteString -> EndorserBlock
 endorserBlockFromTxBytes =
   mkEndorserBlock . map reference . toList
  where
+  reference :: ByteString -> (TxHash, BytesSize)
   reference bytes = (castHash $ hashWith @HASH id bytes, fromIntegral $ BS.length bytes)
 
 -- | The position of a transaction in its endorser block.
@@ -316,7 +317,7 @@ sizeEndorserBlockReference :: ByteSize32 -> ByteSize32
 sizeEndorserBlockReference (ByteSize32 txSize) =
   ByteSize32 $ cborBytesSize txHashSize + cborIntBytesSize txSize
  where
-  txHashSize = fromIntegral (sizeHash (Proxy @HASH))
+  txHashSize = fromIntegral (hashSize (Proxy @HASH))
 
   cborBytesSize len = cborIntBytesSize len + len
 
@@ -364,9 +365,12 @@ decodeEndorserBlock = do
         <> show maxEndorserBlockBytesSize
   pure eb
 
--- | The widest framing 'encodeEndorserBlock' writes around the references: the
--- map header. CBOR map headers have the same widths as 'cborIntBytesSize', and
--- the reference count fits 'BytesSize'.
+-- | The most bytes 'encodeEndorserBlock' writes besides the references, for an
+-- endorser block that 'mkEndorserBlock' built: its map header. Each
+-- reference's own CBOR headers count towards 'sizeEndorserBlockReference'
+-- instead. The map header widens with the reference count as
+-- 'cborIntBytesSize' does, never narrowing, and the count fits 'BytesSize', so
+-- the header of 'maxBound' references is the widest.
 maxFramingSize :: BytesSize
 maxFramingSize = cborIntBytesSize (maxBound :: BytesSize)
 

@@ -1834,7 +1834,7 @@ type LimitedApp' m addr blk =
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
-    -- The annotated LeiosFetch codec needs the bytes, too.
+    -- The annotated LeiosFetch codec needs the bytes.
     Lazy.ByteString
     NodeToNodeInitiatorResult
     ()

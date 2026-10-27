@@ -534,6 +534,9 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN bLF = Codec
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
   , cLeiosFetchCodec :: AnnotatedCodec (LeiosFetch LeiosPoint EndorserBlock LeiosTx) e m bLF
+  -- ^ Unlike the others, an 'AnnotatedCodec', because a received
+  -- 'EndorserBlock' keeps the bytes it arrived in. Its driver joins the chunks a
+  -- message arrives in, so 'mkApps' requires a 'Monoid' of @bLF@.
   }
 
 -- | Protocol codecs for the node-to-node protocols

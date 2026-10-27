@@ -93,7 +93,7 @@ prop_referenceSizeConsistent =
           (estimatedSize === fromIntegral (BS.length encoded))
 
 -- | Whatever 'encodeEndorserBlock' writes around the references stays within
--- the 'framing' that 'referencesCapacity' subtracts.
+-- 'maxFraming'.
 prop_ebFramingBounded :: Property
 prop_ebFramingBounded =
   forAll (genNumReferences >>= genEndorserBlock) $ \eb ->
@@ -108,9 +108,12 @@ prop_ebFramingBounded =
           ("references: " <> show (length (endorserBlockReferences eb)) <> ", framing: " <> show framing)
           (property $ actualSize >= itemsSize && framing <= maxFraming)
 
--- | The framing 'referencesCapacity' subtracts from a parameter.
+-- | The framing 'referencesCapacity' subtracts from a parameter. That amount is
+-- monotonic in the parameter, so 'maxBound' gives the most.
 maxFraming :: BytesSize
-maxFraming = maxBound - referencesCapacity maxBound
+maxFraming = capacity - referencesCapacity capacity
+ where
+  capacity = maxBound
 
 -- | A @maxEndorserBlockReferencesSize@ at or below the framing yields a zero
 -- references capacity, so nothing fits. It never wraps around to \"no limit\",
