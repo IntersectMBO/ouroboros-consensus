@@ -14,7 +14,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
 
     -- * Acquired closures
   , AcquiredLeiosEbs
-  , acquiredLeiosEbsFromList
+  , mkAcquiredLeiosEbs
   , insertAcquiredLeiosEb
   , isAcquiredLeiosEb
   , pruneAcquiredLeiosEbs
@@ -74,7 +74,10 @@ leiosBlockInfo bcfg blk =
 
 -- | The endorser blocks whose closure the LeiosDB holds, each with the slot of
 -- its youngest announcement.
-data AcquiredLeiosEbs = AcquiredLeiosEbs
+--
+-- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
+-- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.
+data AcquiredLeiosEbs = UnsafeAcquiredLeiosEbs
   { aleYoungestSlot :: !(Map EndorserBlockHash SlotNo)
   , aleBySlot :: !(Map SlotNo (NESet EndorserBlockHash))
   -- ^ The inverse of 'aleYoungestSlot', so that pruning costs only what it
@@ -83,14 +86,14 @@ data AcquiredLeiosEbs = AcquiredLeiosEbs
   deriving stock Generic
   deriving anyclass NoThunks
 
-acquiredLeiosEbsFromList :: [LeiosPoint] -> AcquiredLeiosEbs
-acquiredLeiosEbsFromList =
-  List.foldl' (flip insertAcquiredLeiosEb) (AcquiredLeiosEbs Map.empty Map.empty)
+mkAcquiredLeiosEbs :: [LeiosPoint] -> AcquiredLeiosEbs
+mkAcquiredLeiosEbs =
+  List.foldl' (flip insertAcquiredLeiosEb) (UnsafeAcquiredLeiosEbs Map.empty Map.empty)
 
 -- | Record that the endorser block's closure is acquired, and that the given
 -- point announces it.
 insertAcquiredLeiosEb :: LeiosPoint -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(AcquiredLeiosEbs youngest bySlot) =
+insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredLeiosEbs youngest bySlot) =
   case Map.lookup ebHash youngest of
     Nothing -> record bySlot
     Just prevSlot
@@ -98,7 +101,7 @@ insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(AcquiredLeiosEbs youn
       | otherwise -> record (Map.update (NESet.nonEmptySet . NESet.delete ebHash) prevSlot bySlot)
  where
   record bySlot' =
-    AcquiredLeiosEbs
+    UnsafeAcquiredLeiosEbs
       (Map.insert ebHash slot youngest)
       (Map.insertWith NESet.union slot (NESet.singleton ebHash) bySlot')
 
@@ -109,8 +112,8 @@ isAcquiredLeiosEb ebHash = Map.member ebHash . aleYoungestSlot
 -- slot: once the immutable tip has passed them, no block that ChainSel has yet
 -- to select can certify it.
 pruneAcquiredLeiosEbs :: SlotNo -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-pruneAcquiredLeiosEbs slot (AcquiredLeiosEbs youngest bySlot) =
-  AcquiredLeiosEbs
+pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot) =
+  UnsafeAcquiredLeiosEbs
     (youngest `Map.withoutKeys` foldMap NESet.toSet pruned)
     kept
  where
