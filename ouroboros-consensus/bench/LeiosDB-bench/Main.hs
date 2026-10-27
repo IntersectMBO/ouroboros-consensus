@@ -66,7 +66,8 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List as List (foldl', sort, sortOn)
+import Data.List (sort, sortOn)
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
@@ -513,7 +514,8 @@ sleepUntil t = do
 -- | Generate the EB of the given index, fully evaluated.
 genBenchEb :: Int -> Bool -> IO BenchEb
 genBenchEb ebIdx measured = do
-  _ <- evaluate $ foldl' (\n (h, _) -> n + BS.length (hashToBytes h)) 0 (endorserBlockReferences eb)
+  _ <-
+    evaluate $ List.foldl' (\n (h, _) -> n + BS.length (hashToBytes h)) 0 (endorserBlockReferences eb)
   _ <- evaluate $ sum [BS.length tx | batch <- batches, (_, tx) <- batch]
   pure
     BenchEb
