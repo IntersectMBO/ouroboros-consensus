@@ -105,7 +105,6 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -193,13 +192,6 @@ instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
 instance Show LeiosPoint where
   show = prettyLeiosPoint
-
-instance SignableRepresentation LeiosPoint where
-  getSignableRepresentation point =
-    toStrictByteString $
-      -- REVIEW: Flat concatenation expected as what is signed?
-      encode (pointSlotNo point)
-        <> toCBOR (pointEbHash point)
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
