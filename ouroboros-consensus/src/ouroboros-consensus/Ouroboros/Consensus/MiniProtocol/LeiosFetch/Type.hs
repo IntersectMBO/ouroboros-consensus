@@ -197,15 +197,21 @@ deriving instance
 maxLeiosTxsRequestBytesSize :: Word32
 maxLeiosTxsRequestBytesSize = 500 * 1000
 
+-- | The limits assume that peers write the parts of a message that are not
+-- hashed, such as the framing around its payloads, in tight CBOR: each
+-- integer and length in its fewest bytes. The decoders accept wider ones too,
+-- but the limits do not make room for them.
 byteLimitsLeiosFetch ::
   (bytes -> Word) ->
   ProtocolSizeLimits (LeiosFetch point eb tx) bytes
 byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
-  -- A 'MsgLeiosBlock' adds two bytes to an endorser block. Bounding its
-  -- encoding by 'maxEndorserBlockBytesSize' also bounds its references by
-  -- 'maxTxsPerEndorserBlock'.
-  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 2
+  -- A 'MsgLeiosBlock' adds at most three bytes to an endorser block: the
+  -- header of a list of two items, the tag 2, and the closing marker if the
+  -- list is indefinite-length. 'decodeEndorserBlock' rejects an endorser block
+  -- larger than 'maxEndorserBlockBytesSize' only after decoding it, and this
+  -- limit keeps that work close to what the largest acceptable one costs.
+  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 3
   SingBlockTxs -> withMargin maxLeiosTxsRequestBytesSize
   st@SingDone -> notActiveState st
  where

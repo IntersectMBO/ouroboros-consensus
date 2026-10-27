@@ -1595,7 +1595,6 @@ test-suite consensus-diffusion-test
     strict-checked-vars,
     strict-sop-core,
     tasty,
-    tasty-expected-failure,
     tasty-hunit,
     tasty-quickcheck,
     temporary,

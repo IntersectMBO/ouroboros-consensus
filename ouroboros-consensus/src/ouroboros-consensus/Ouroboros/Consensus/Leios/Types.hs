@@ -108,6 +108,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
+import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -341,17 +342,35 @@ encodeEndorserBlock (MkEndorserBlock references) =
 -- from, not just the endorser block's bytes: the ledger's annotator slices
 -- them by the byte offsets of this decoder's run. Like the ledger, it rejects
 -- an empty map of transaction references and one naming a transaction twice.
+-- It also rejects one whose bytes exceed 'maxEndorserBlockBytesSize'. It can
+-- tell only after decoding them (if endorser blocks were wrapped as
+-- CBOR-in-CBOR, they would instead state their length up front), since a CBOR
+-- map gives its number of entries rather than of bytes. So the byte limit of
+-- the message carrying it must keep small the work it does before then, eg
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'.
 --
 -- The endorser block keeps its slice of those bytes, so its hash and encoding
 -- are of the bytes received.
 decodeEndorserBlock :: Decoder s (BSL.ByteString -> EndorserBlock)
-decodeEndorserBlock =
-  toPlainDecoder Nothing endorserBlockVersion $
-    (. Full)
-      -- The annotator only slices the bytes, which cannot fail.
-      . (either (\e -> error ("Impossible, endorser block decoder failed: " <> show e)) MkEndorserBlock .)
-      . runAnnotator
-      <$> decCBOR
+decodeEndorserBlock = do
+  start <- CBOR.peekByteOffset
+  eb <-
+    toPlainDecoder Nothing endorserBlockVersion $
+      (. Full)
+        -- The annotator only slices the bytes, which cannot fail.
+        . (either (\e -> error ("Impossible, endorser block decoder failed: " <> show e)) MkEndorserBlock .)
+        . runAnnotator
+        <$> decCBOR
+  end <- CBOR.peekByteOffset
+  -- Nothing currently bounds the number of references more tightly than this
+  -- bound on the bytes does, ie by 'maxTxsPerEndorserBlock'.
+  when (end - start > fromIntegral maxEndorserBlockBytesSize) $
+    fail $
+      "endorser block of "
+        <> show (end - start)
+        <> " bytes exceeds "
+        <> show maxEndorserBlockBytesSize
+  pure eb
 
 -- | The widest framing 'encodeEndorserBlock' writes around the references: the
 -- map header. CBOR map headers have the same widths as 'cborIntBytesSize', and
@@ -371,21 +390,22 @@ referencesCapacity paramLimit = paramLimit - min paramLimit maxFramingSize
 --
 -- TODO Nothing yet keeps the @maxEndorserBlockReferencesSize@ protocol
 -- parameter within it, so a larger value would let an honest peer send an
--- endorser block that
--- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'
--- rejects. Make it the constitution's guardrail on that parameter, and refuse
--- to run with a parameter above it.
+-- endorser block that 'decodeEndorserBlock' rejects. Make it the
+-- constitution's guardrail on that parameter, and refuse to run with a
+-- parameter above it.
 maxEndorserBlockBytesSize :: BytesSize
 maxEndorserBlockBytesSize = 600 * 1000
 
 -- | The most transactions an endorser block may name, given
--- 'maxEndorserBlockBytesSize'.
+-- 'maxEndorserBlockBytesSize'. Each reference takes at least as many bytes as
+-- 'sizeEndorserBlockReference' charges a transaction of size 0, however it is
+-- encoded.
 --
 -- It derives from the design ceiling and not from the protocol parameter,
 -- since the buffers it sizes are allocated before any ledger state is in reach.
 maxTxsPerEndorserBlock :: Int
 maxTxsPerEndorserBlock =
-  fromIntegral $ (maxEndorserBlockBytesSize - maxFramingSize) `div` minItemSize
+  fromIntegral $ maxEndorserBlockBytesSize `div` minItemSize
  where
   ByteSize32 minItemSize = sizeEndorserBlockReference (ByteSize32 0)
 

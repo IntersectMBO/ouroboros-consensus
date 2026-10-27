@@ -57,7 +57,6 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits (..))
 import Test.Tasty
-import Test.Tasty.ExpectedFailure (expectFailBecause)
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
   ( Gen
@@ -142,38 +141,56 @@ tests =
     , testGroup
         "the byte limit admits a MsgLeiosBlock of the largest endorser block"
         [ testCase "a definite message" $ fitsByteLimit definite
-        , expectFailBecause "the limit admits only the definite list's framing" $
-            testCase "an indefinite message" $
-              fitsByteLimit indefinite
+        , testCase "an indefinite message" $ fitsByteLimit indefinite
         ]
+    , testCase "the codec rejects an endorser block larger than maxEndorserBlockBytesSize" $ do
+        let eb = encodeEndorserBlock (endorserBlockOfSize (maxSize + 1))
+            msg = definite [CBOR.encodeWord 2, eb]
+        BS.length (CBOR.toStrictByteString eb) @?= maxSize + 1
+        -- Its message fits the byte limit, so only the codec can reject it.
+        assertFitsByteLimit msg
+        decodeBlock msg >>= (@?= Nothing)
     ]
 
--- | The codec accepts a 'MsgLeiosBlock' of 'largestEb' in this list encoding,
--- and the message fits 'byteLimitsLeiosFetch'.
+-- | The codec accepts a 'MsgLeiosBlock' of an endorser block of
+-- 'maxEndorserBlockBytesSize' in this list encoding, and the message fits
+-- 'byteLimitsLeiosFetch'.
 fitsByteLimit :: ([CBOR.Encoding] -> CBOR.Encoding) -> Assertion
 fitsByteLimit list = do
-  BS.length (CBOR.toStrictByteString (encodeEndorserBlock largestEb))
-    @?= fromIntegral maxEndorserBlockBytesSize
+  BS.length (CBOR.toStrictByteString eb) @?= maxSize
   decoded <- decodeBlock msg
   assertBool "the codec rejects the message" (isJust decoded)
+  assertFitsByteLimit msg
+ where
+  eb = encodeEndorserBlock (endorserBlockOfSize maxSize)
+  msg = list [CBOR.encodeWord 2, eb]
+
+assertFitsByteLimit :: CBOR.Encoding -> Assertion
+assertFitsByteLimit msg =
   assertBool
-    (show size <> " bytes exceed the limit of " <> show limit)
-    (size <= limit)
+    (show size <> " bytes exceed the limit of " <> show msgLeiosBlockByteLimit)
+    (size <= msgLeiosBlockByteLimit)
  where
-  msg = list [CBOR.encodeWord 2, encodeEndorserBlock largestEb]
   size = fromIntegral (BSL.length (CBOR.toLazyByteString msg))
-  limit = sizeLimitForState (byteLimitsLeiosFetch (fromIntegral . BSL.length)) SingBlock
 
--- | An endorser block whose encoding takes exactly 'maxEndorserBlockBytesSize'
--- bytes: after a 3-byte map header, each reference takes 35 bytes, or 36 for a
--- size of 100.
-largestEb :: EndorserBlock
-largestEb = mkEndorserBlock [(txHash i, if i < spare then 100 else 1) | i <- [0 .. n - 1]]
+msgLeiosBlockByteLimit :: Word
+msgLeiosBlockByteLimit = sizeLimitForState (byteLimitsLeiosFetch (fromIntegral . BSL.length)) SingBlock
+
+maxSize :: Int
+maxSize = fromIntegral maxEndorserBlockBytesSize
+
+-- | An endorser block whose encoding takes this many bytes, for sizes near
+-- 'maxSize': after a 3-byte map header, each reference takes 35 bytes, or 36
+-- for a size of 100.
+endorserBlockOfSize :: Int -> EndorserBlock
+endorserBlockOfSize size =
+  mkEndorserBlock [(distinctTxHash i, if i < spare then 100 else 1) | i <- [0 .. n - 1]]
  where
-  (n, spare) = (fromIntegral maxEndorserBlockBytesSize - 3) `divMod` 35
+  (n, spare) = (size - 3) `divMod` 35
 
-  txHash :: Int -> TxHash
-  txHash i = UnsafeHash $ SBS.pack $ replicate 28 0 <> [fromIntegral (i `shiftR` s) | s <- [24, 16, 8, 0]]
+-- | A tx hash for each 'Int' from 0 to @2^32 - 1@.
+distinctTxHash :: Int -> TxHash
+distinctTxHash i = UnsafeHash $ SBS.pack $ replicate 28 0 <> [fromIntegral (i `shiftR` s) | s <- [24, 16, 8, 0]]
 
 -- | Whatever CBOR encoding of its references an endorser block arrives in, the
 -- decoded endorser block names those references, and keeps, sizes and hashes
