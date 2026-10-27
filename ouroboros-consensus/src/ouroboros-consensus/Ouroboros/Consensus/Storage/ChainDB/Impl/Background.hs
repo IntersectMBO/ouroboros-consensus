@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   , addBlockRunner
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan, readTChan)
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, join, void, when)
 import Control.Monad.Trans.Class (lift)
@@ -115,11 +114,11 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | The LeiosDB's notifications, subscribed to before seeding
+  -- | The LeiosDB's next notification, subscribed to before seeding
   -- 'cdbAcquiredLeiosEbs', so that none is missed in between.
-  StrictTChan m LeiosEbNotification ->
+  STM m LeiosEbNotification ->
   m ()
-launchBgTasks cdb@CDB{..} leiosEbNotifications = do
+launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -146,7 +145,7 @@ launchBgTasks cdb@CDB{..} leiosEbNotifications = do
 
   !leiosAcquiredEbsThread <-
     launch "ChainDB.leiosAcquiredEbsRunner" $
-      leiosAcquiredEbsRunner cdb leiosEbNotifications
+      leiosAcquiredEbsRunner cdb nextLeiosEbNotification
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -166,10 +165,10 @@ launchBgTasks cdb@CDB{..} leiosEbNotifications = do
 -- reprocess of the blocks parked on each endorser block the first time its
 -- closure is acquired.
 leiosAcquiredEbsRunner ::
-  IOLike m => ChainDbEnv m blk -> StrictTChan m LeiosEbNotification -> m Void
-leiosAcquiredEbsRunner CDB{..} notifications =
+  IOLike m => ChainDbEnv m blk -> STM m LeiosEbNotification -> m Void
+leiosAcquiredEbsRunner CDB{..} nextNotification =
   forever $
-    atomically (readTChan notifications) >>= \case
+    atomically nextNotification >>= \case
       AcquiredEb{} -> pure ()
       AcquiredEbTxs point -> do
         novel <- atomically $ do

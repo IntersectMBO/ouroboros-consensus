@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -231,7 +232,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Subscribe before seeding, so that no closure acquired in between is
     -- missed. The seed is every closure the LeiosDB holds that a block the
     -- initial chain selection could select may certify.
-    leiosEbNotifications <- subscribeEbNotifications leiosDb
+    nextLeiosEbNotification <- readTChan <$> subscribeEbNotifications leiosDb
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
@@ -393,7 +394,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env leiosEbNotifications
+    when launchBgTasks $ Background.launchBgTasks env nextLeiosEbNotification
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
