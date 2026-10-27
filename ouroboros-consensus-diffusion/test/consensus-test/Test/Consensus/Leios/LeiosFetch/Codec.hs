@@ -4,20 +4,27 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests of LeiosFetch's codec: the bounds and CBOR encodings it accepts.
 module Test.Consensus.Leios.LeiosFetch.Codec (tests) where
 
 import Cardano.Binary (ToCBOR (..))
-import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Hash (Hash (UnsafeHash), castHash, hashWith)
+import Cardano.Ledger.Hashes (HASH)
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
+import Data.Bits (shiftL, shiftR, (.|.))
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
+import Data.Containers.ListUtils (nubOrd)
 import Data.Functor ((<&>))
+import Data.Maybe (isJust)
 import qualified Data.Vector.Strict as V
+import Data.Word (Word32, Word64, Word8)
 import Network.TypedProtocol.Codec
   ( ActiveState
   , AnnotatedCodec
@@ -29,22 +36,45 @@ import Network.TypedProtocol.Codec
   )
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlock
+  ( BytesSize
+  , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , TxHash
   , decodeEndorserBlock
   , decodeLeiosPoint
   , decodeLeiosTx
   , encodeEndorserBlock
+  , encodeEndorserBlockSize
   , encodeLeiosPoint
   , encodeLeiosTx
   , endorserBlockHash
+  , endorserBlockReferences
+  , maxEndorserBlockBytesSize
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
+import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits (..))
 import Test.Tasty
+import Test.Tasty.ExpectedFailure (expectFailBecause)
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck
+  ( Gen
+  , Property
+  , arbitrary
+  , choose
+  , conjoin
+  , counterexample
+  , elements
+  , forAll
+  , ioProperty
+  , listOf1
+  , oneof
+  , testProperty
+  , vectorOf
+  , (===)
+  )
 import Test.Util.Serialisation.CBOR (definite, definiteMap, indefinite, indefiniteMap)
 
 tests :: TestTree
@@ -78,6 +108,10 @@ tests =
             -- The same reference as 'oneRefEb', but other bytes.
             assertBool "hashes the bytes received" $
               fmap endorserBlockHash decoded /= Just (endorserBlockHash (fst oneRefEb))
+        , expectFailBecause "encodeEndorserBlockSize assumes the ledger's encoding" $
+            testProperty
+              "keeps, sizes and hashes the bytes of an endorser block in any encoding"
+              prop_endorserBlockInAnyEncoding
         , testCase "rejects an empty endorser block" $
             decodeBlock (definite [CBOR.encodeWord 2, definiteMap []]) >>= (@?= Nothing)
         , testCase "rejects an endorser block naming a transaction twice" $
@@ -106,7 +140,90 @@ tests =
         , testCase "an endorser block hash of 33 bytes" $
             decodeBlockRequest (definite [CBOR.encodeWord 1, pointOf 33]) >>= (@?= Nothing)
         ]
+    , testGroup
+        "the byte limit admits a MsgLeiosBlock of the largest endorser block"
+        [ testCase "a definite message" $ fitsByteLimit definite
+        , expectFailBecause "the limit admits only the definite list's framing" $
+            testCase "an indefinite message" $
+              fitsByteLimit indefinite
+        ]
     ]
+
+-- | The codec accepts a 'MsgLeiosBlock' of 'largestEb' in this list encoding,
+-- and the message fits 'byteLimitsLeiosFetch'.
+fitsByteLimit :: ([CBOR.Encoding] -> CBOR.Encoding) -> Assertion
+fitsByteLimit list = do
+  BS.length (CBOR.toStrictByteString (encodeEndorserBlock largestEb))
+    @?= fromIntegral maxEndorserBlockBytesSize
+  decoded <- decodeBlock msg
+  assertBool "the codec rejects the message" (isJust decoded)
+  assertBool
+    (show size <> " bytes exceed the limit of " <> show limit)
+    (size <= limit)
+ where
+  msg = list [CBOR.encodeWord 2, encodeEndorserBlock largestEb]
+  size = fromIntegral (BSL.length (CBOR.toLazyByteString msg))
+  limit = sizeLimitForState (byteLimitsLeiosFetch (fromIntegral . BSL.length)) SingBlock
+
+-- | An endorser block whose encoding takes exactly 'maxEndorserBlockBytesSize'
+-- bytes: after a 3-byte map header, each reference takes 35 bytes, or 36 for a
+-- size of 100.
+largestEb :: EndorserBlock
+largestEb = mkEndorserBlock [(txHash i, if i < spare then 100 else 1) | i <- [0 .. n - 1]]
+ where
+  (n, spare) = (fromIntegral maxEndorserBlockBytesSize - 3) `divMod` 35
+
+  txHash :: Int -> TxHash
+  txHash i = UnsafeHash $ SBS.pack $ replicate 28 0 <> [fromIntegral (i `shiftR` s) | s <- [24, 16, 8, 0]]
+
+-- | Whatever CBOR encoding of its references an endorser block arrives in, the
+-- decoded endorser block names those references, and keeps, sizes and hashes
+-- exactly the bytes it arrived in.
+prop_endorserBlockInAnyEncoding :: Property
+prop_endorserBlockInAnyEncoding = forAll genEncodedEb $ \(refs, bytes) -> ioProperty $ do
+  decoded <- decodeBlock (definite [CBOR.encodeWord 2, CBOR.encodePreEncoded bytes])
+  pure $ case decoded of
+    Nothing -> counterexample "the codec rejects the endorser block" False
+    Just eb ->
+      conjoin
+        [ counterexample "references" $ endorserBlockReferences eb === refs
+        , counterexample "bytes" $ CBOR.toStrictByteString (encodeEndorserBlock eb) === bytes
+        , counterexample "size" $ encodeEndorserBlockSize eb === fromIntegral (BS.length bytes)
+        , counterexample "hash" $ endorserBlockHash eb === castHash (hashWith @HASH id bytes)
+        ]
+
+-- | The references of an endorser block, and an encoding of them: either kind
+-- of map, and each CBOR head with its argument in its fewest bytes or more.
+genEncodedEb :: Gen ([(TxHash, BytesSize)], BS.ByteString)
+genEncodedEb = do
+  hashes <- nubOrd <$> listOf1 (vectorOf 32 arbitrary)
+  refs <- traverse (\hash -> (,) hash <$> genTxSize) hashes
+  encodedRefs <- concat <$> traverse encodeRef refs
+  framed <-
+    oneof
+      [ (<> encodedRefs) <$> genHead 5 (fromIntegral (length refs))
+      , pure $ [0xbf] <> encodedRefs <> [0xff]
+      ]
+  pure ([(UnsafeHash (SBS.pack hash), size) | (hash, size) <- refs], BS.pack framed)
+ where
+  encodeRef (hash, size) = do
+    hashHead <- genHead 2 32
+    sizeHead <- genHead 0 (fromIntegral size)
+    pure $ hashHead <> hash <> sizeHead
+
+  genTxSize :: Gen Word32
+  genTxSize = oneof [choose (0, 23), choose (24, 255), choose (256, 65535), arbitrary]
+
+-- | A CBOR head of this major type and argument, the argument in its fewest
+-- bytes or in any more that hold it.
+genHead :: Word8 -> Word64 -> Gen [Word8]
+genHead major n =
+  elements $
+    [[major `shiftL` 5 .|. fromIntegral n] | n < 24]
+      <> [ (major `shiftL` 5 .|. info) : [fromIntegral (n `shiftR` (8 * i)) | i <- [len - 1, len - 2 .. 0]]
+         | (info, len) <- [(24, 1), (25, 2), (26, 4), (27, 8)]
+         , toInteger n < 2 ^ (8 * len)
+         ]
 
 -- | Decode a message with a codec that admits at most two txs.
 decodeMsg ::
