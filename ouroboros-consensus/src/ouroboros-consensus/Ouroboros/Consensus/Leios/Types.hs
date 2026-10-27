@@ -42,7 +42,7 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Endorser blocks
   , BytesSize
-  , EndorserBlock
+  , EndorserBlock -- opaque
   , TxOffset
   , mkEndorserBlock
   , endorserBlockFromTxBytes
