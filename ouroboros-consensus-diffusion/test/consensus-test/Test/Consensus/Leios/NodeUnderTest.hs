@@ -269,6 +269,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
       , leiosDB
       , leiosTxCache
       , leiosFetchRng = mkStdGen 4
+      , txTierRng = mkStdGen 5
       , leiosMinOfferLead = nutcMinOfferLead cfg
       }
 
