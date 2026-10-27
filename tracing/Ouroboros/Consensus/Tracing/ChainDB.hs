@@ -1066,7 +1066,7 @@ instance MetaTrace (ChainDB.TraceAddBlockEvent blk) where
   documentFor (Namespace _ ["PoppedBlockFromQueue"]) = Just ""
   documentFor (Namespace _ ["ReconsideredParkedBlocks"]) =
     Just
-      "ChainSel reconsiders the blocks containing a certificate of an endorser block,\
+      "ChainSel reconsidered the blocks containing a certificate of an endorser block,\
       \ which it parked until the closure of that endorser block arrived."
   documentFor (Namespace _ ["TryAddToCurrentChain"]) =
     Just $
