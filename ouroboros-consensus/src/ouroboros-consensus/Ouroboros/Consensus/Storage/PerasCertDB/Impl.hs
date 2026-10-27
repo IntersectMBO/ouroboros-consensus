@@ -19,7 +19,7 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   , TraceEvent (..)
   ) where
 
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Foldable (for_)
@@ -63,6 +63,14 @@ data PerasCertDbState blk = PerasCertDbState
   , pcdsLatestCertSeen :: !(Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
+  , pcdsUnsettled ::
+      !(Map (WithOrigin SlotNo) (Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ The certificates that have not been settled yet (see 'markCertsSettled'),
+  -- indexed by the slot of their boosted block and their round number.
+  --
+  -- INVARIANT: Every certificate in here is also in 'pcdsCertsByTicket', and
+  -- is indexed by its own boosted slot and round number. No inner map is
+  -- empty.
   }
 
 deriving instance
@@ -82,6 +90,7 @@ initialPerasCertDbState =
       , pcdsCertsByTicket = Map.empty
       , pcdsLastTicketNo = zeroPerasCertTicketNo
       , pcdsLatestCertSeen = Nothing
+      , pcdsUnsettled = Map.empty
       }
     (Fingerprint 0)
 
@@ -102,11 +111,22 @@ invariantForPerasCertDbState pcds = do
           <> show ticketNo
           <> " > "
           <> show pcdsLastTicketNo
+  for_ (Map.toList pcdsUnsettled) $ \(slot, certs) -> do
+    when (Map.null certs) $
+      throwError $
+        "Empty set of unsettled certificates at slot " <> show slot
+    for_ (Map.toList certs) $ \(roundNo, cert) -> do
+      checkEqual "unsettled certificate round" (getPerasCertRound cert) roundNo
+      checkEqual "unsettled certificate slot" (pointSlot (getPerasCertPoint cert)) slot
+      when (roundNo `Set.notMember` pcdsCertIds) $
+        throwError $
+          "Unsettled certificate not in the db: " <> show roundNo
  where
   PerasCertDbState
     { pcdsCertIds
     , pcdsCertsByTicket
     , pcdsLastTicketNo
+    , pcdsUnsettled
     } = forgetFingerprint pcds
 
   checkEqual :: (Eq a, Show a) => String -> a -> a -> Either String ()
@@ -124,6 +144,11 @@ data TraceEvent blk
       AddPerasCertResult
   | GarbageCollected
       SlotNo
+  | -- | Garbage collection for the given slot kept these certificates, despite
+    -- them boosting an older slot, because they have not been settled yet.
+    RetainedUnsettledCerts
+      SlotNo
+      (Set PerasRoundNo)
 
 deriving instance
   Show (PerasCert blk) =>
@@ -174,6 +199,8 @@ createDB args = do
       , getCertsAfter = implGetCertsAfter env
       , getWeightSnapshot = implGetWeightSnapshot env
       , getLatestCertSeen = implGetLatestCertSeen env
+      , getUnsettledCertsUpTo = implGetUnsettledCertsUpTo env
+      , markCertsSettled = implMarkCertsSettled env
       , garbageCollect = implGarbageCollect env
       }
  where
@@ -214,6 +241,12 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
                       Just (CertBoostingBlockInVolatileDB cert)
                   | otherwise ->
                       Just prev
+            pcdsUnsettled' =
+              Map.insertWith
+                Map.union
+                (pointSlot (getPerasCertPoint cert))
+                (Map.singleton roundNo cert)
+                (pcdsUnsettled pcds)
         writeTVar pcdbState $
           WithFingerprint
             PerasCertDbState
@@ -221,6 +254,7 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
               , pcdsCertsByTicket = pcdsCertsByTicket'
               , pcdsLastTicketNo = pcdsLastTicketNo'
               , pcdsLatestCertSeen = pcdsLatestCertSeen'
+              , pcdsUnsettled = pcdsUnsettled'
               }
             (succ fp)
         pure AddedPerasCertToDB
@@ -290,6 +324,38 @@ implGetLatestCertSeen PerasCertDbEnv{pcdbState} = do
     forgetFingerprint <$> readTVar pcdbState
   pure pcdsLatestCertSeen
 
+implGetUnsettledCertsUpTo ::
+  IOLike m =>
+  PerasCertDbEnv m blk ->
+  WithOrigin SlotNo ->
+  STM m [WithArrivalTime (ValidatedPerasCert blk)]
+implGetUnsettledCertsUpTo PerasCertDbEnv{pcdbState} slot = do
+  PerasCertDbState{pcdsUnsettled} <-
+    forgetFingerprint <$> readTVar pcdbState
+  pure $
+    concatMap Map.elems $
+      Map.elems $
+        Map.takeWhileAntitone (<= slot) pcdsUnsettled
+
+implMarkCertsSettled ::
+  IOLike m =>
+  PerasCertDbEnv m blk ->
+  Set PerasRoundNo ->
+  STM m ()
+implMarkCertsSettled PerasCertDbEnv{pcdbState} roundNos =
+  -- No need to update the 'Fingerprint': settling a certificate does not change
+  -- the weights.
+  modifyTVar pcdbState $ fmap $ \pcds ->
+    pcds
+      { pcdsUnsettled =
+          Map.mapMaybe
+            ( \certs ->
+                let certs' = certs `Map.withoutKeys` roundNos
+                 in if Map.null certs' then Nothing else Just certs'
+            )
+            (pcdsUnsettled pcds)
+      }
+
 implGarbageCollect ::
   forall m blk.
   ( IOLike m
@@ -301,8 +367,19 @@ implGarbageCollect ::
 implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
   -- No need to update the 'Fingerprint' as we only remove certificates that do
   -- not matter for comparing interesting chains.
-  modifyTVar pcdbState (fmap gc)
-  pure $ traceWith pcdbTracer (GarbageCollected slotNo)
+  WithFingerprint pcds fp <- readTVar pcdbState
+  writeTVar pcdbState $ WithFingerprint (gc pcds) fp
+  let retained =
+        Set.unions
+          [ Map.keysSet certs
+          | certs <-
+              Map.elems $
+                Map.takeWhileAntitone (< NotOrigin slotNo) (pcdsUnsettled pcds)
+          ]
+  pure $ do
+    traceWith pcdbTracer (GarbageCollected slotNo)
+    unless (Set.null retained) $
+      traceWith pcdbTracer (RetainedUnsettledCerts slotNo retained)
  where
   gc :: PerasCertDbState blk -> PerasCertDbState blk
   gc
@@ -310,10 +387,17 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
       { pcdsCertsByTicket
       , pcdsLastTicketNo
       , pcdsLatestCertSeen
+      , pcdsUnsettled
       } =
-      let pcdsCertsByTicket' =
+      let isUnsettled cert =
+            maybe False (Map.member (getPerasCertRound cert)) $
+              Map.lookup (pointSlot (getPerasCertPoint cert)) pcdsUnsettled
+          pcdsCertsByTicket' =
             Map.filter
-              (\cert -> pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo)
+              ( \cert ->
+                  pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
+                    || isUnsettled cert
+              )
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
@@ -333,4 +417,5 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
             , pcdsCertsByTicket = pcdsCertsByTicket'
             , pcdsLastTicketNo = pcdsLastTicketNo
             , pcdsLatestCertSeen = pcdsLatestCertSeen'
+            , pcdsUnsettled = pcdsUnsettled
             }

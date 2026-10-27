@@ -419,6 +419,11 @@ data Internal m blk = Internal
   --
   -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
   -- returned. This can be used for a garbage collection on the VolatileDB.
+  , intPersistPerasCerts :: m ()
+  -- ^ Store the Peras certificates boosting blocks in the ImmutableDB in the
+  -- 'PerasImmutableCertDB', and settle all certificates boosting slots up to
+  -- the tip of the ImmutableDB, like the 'Background.perasCertPersistWatcher'
+  -- background thread does. See 'Background.settlePendingPerasCerts'.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()
@@ -1081,6 +1086,18 @@ data TraceCopyToImmutableDBEvent blk
     CopiedBlockToImmutableDB (Point blk)
   | -- | There are no block to copy to the ImmutableDB.
     NoBlocksToCopyToImmutableDB
+  | -- | A certificate boosting a block in the ImmutableDB was stored in the
+    -- 'PerasImmutableCertDB'.
+    StoredPerasCertInImmutableDB
+      PerasRoundNo
+      (Point blk)
+      PerasImmutableCertDB.AddPerasImmutableCertResult
+  | -- | A certificate boosting a block that is not in the ImmutableDB (and
+    -- never will be, as the ImmutableDB has already reached its slot) was not
+    -- stored in the 'PerasImmutableCertDB'.
+    DiscardedForkPerasCert
+      PerasRoundNo
+      (Point blk)
   deriving (Generic, Eq, Show)
 
 data TraceGCEvent blk

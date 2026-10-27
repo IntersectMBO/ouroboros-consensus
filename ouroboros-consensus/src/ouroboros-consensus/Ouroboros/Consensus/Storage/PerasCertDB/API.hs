@@ -18,7 +18,9 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
   , prop_addCertThenGetCertIds
   , prop_getCertsAfterZero
   , prop_getCertsAfterMonotonic
-  , prop_garbageCollectRemovesOldCerts
+  , prop_garbageCollectRemovesOldSettledCerts
+  , prop_garbageCollectRetainsUnsettledCerts
+  , prop_markCertsSettledThenGetUnsettledCertsUpTo
   , prop_addCertLatestCertSeenMonotonic
   , prop_garbageCollectPreservesLatestCertSeen
   ) where
@@ -80,11 +82,37 @@ data PerasCertDB m blk = PerasCertDB
   -- ^ This field impacts voting directly because having seen a certificate is a
   -- precondition for voting in any round except for the very first one
   -- (at origin).
+  , getUnsettledCertsUpTo ::
+      WithOrigin SlotNo ->
+      STM m [WithArrivalTime (ValidatedPerasCert blk)]
+  -- ^ Get the certificates that have not been settled yet (see
+  -- 'markCertsSettled') and whose boosted block has a slot smaller than or
+  -- equal to the given one, in ascending order of that slot.
+  --
+  -- Every certificate is unsettled when it is added to the database.
+  , markCertsSettled ::
+      Set PerasRoundNo ->
+      STM m ()
+  -- ^ Mark the certificates of the given rounds as settled. Unknown or already
+  -- settled rounds are ignored.
+  --
+  -- The ChainDB settles a certificate once its boosted block is old enough to
+  -- be known to be in the ImmutableDB or not, after having stored it in the
+  -- 'PerasImmutableCertDB' in the former case. Only settled certificates are
+  -- garbage-collected, so that no certificate is lost before it is stored.
+  --
+  -- Settling a certificate does not change the 'Fingerprint' of
+  -- 'getWeightSnapshot'.
   , garbageCollect ::
       SlotNo ->
       STM m (m ())
-  -- ^ Garbage-collect certificates whose target slot is strictly smaller
-  -- than the given slot number.
+  -- ^ Garbage-collect the /settled/ certificates whose target slot is strictly
+  -- smaller than the given slot number. Unsettled certificates are retained
+  -- (and traced) until they are settled and a later garbage collection
+  -- removes them.
+  --
+  -- The status reported by 'getLatestCertSeen' is updated regardless of
+  -- whether its certificate is settled.
   -- The STM transaction clears the relevant state from the in-memory index, and
   -- the resulting 'm' action performs tracing and might perform side-effects in
   -- implementations with on-disk storage.
@@ -199,23 +227,66 @@ prop_getCertsAfterMonotonic db ticketNo =
       tickets == List.sort tickets
         && all (> ticketNo) tickets
 
--- | After garbage collection for slot S, no certs with target slot < S should remain.
+-- | After garbage collection for slot S, the only certs with target slot < S
+-- that remain are unsettled ones.
 -- NOTE: this property is not purely STM.
-prop_garbageCollectRemovesOldCerts ::
+prop_garbageCollectRemovesOldSettledCerts ::
   ( MonadSTM m
   , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasCertDB m blk ->
   SlotNo ->
   m Bool
-prop_garbageCollectRemovesOldCerts db slotNo = do
-  allCertActions <- atomically $ do
+prop_garbageCollectRemovesOldSettledCerts db slotNo = do
+  (allCertActions, unsettled) <- atomically $ do
     _ <- garbageCollect db slotNo
-    getCertsAfter db zeroPerasCertTicketNo
+    (,)
+      <$> getCertsAfter db zeroPerasCertTicketNo
+      <*> getUnsettledCertsUpTo db (NotOrigin slotNo)
   allCertValues <- sequence (Map.elems allCertActions)
-  let targetSlots = pointSlot . getPerasCertPoint <$> allCertValues
+  let unsettledRounds = Set.fromList (getPerasCertRound <$> unsettled)
   pure $
-    all (>= NotOrigin slotNo) targetSlots
+    and
+      [ pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
+          || getPerasCertRound cert `Set.member` unsettledRounds
+      | cert <- allCertValues
+      ]
+
+-- | Garbage collection does not remove unsettled certs.
+prop_garbageCollectRetainsUnsettledCerts ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  SlotNo ->
+  m Bool
+prop_garbageCollectRetainsUnsettledCerts db slotNo =
+  atomically $ do
+    let getUnsettledRounds =
+          Set.fromList . fmap getPerasCertRound
+            <$> getUnsettledCertsUpTo db (NotOrigin slotNo)
+    before <- getUnsettledRounds
+    _ <- garbageCollect db slotNo
+    after <- getUnsettledRounds
+    certIds <- getCertIds db
+    pure $ before == after && before `Set.isSubsetOf` certIds
+
+-- | After settling some certs, they are no longer reported as unsettled.
+prop_markCertsSettledThenGetUnsettledCertsUpTo ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  Set PerasRoundNo ->
+  WithOrigin SlotNo ->
+  m Bool
+prop_markCertsSettledThenGetUnsettledCertsUpTo db roundNos slot =
+  atomically $ do
+    markCertsSettled db roundNos
+    unsettled <- getUnsettledCertsUpTo db slot
+    pure $
+      all (`Set.notMember` roundNos) (getPerasCertRound <$> unsettled)
+        && all ((<= slot) . pointSlot . getPerasCertPoint) unsettled
 
 -- | After adding a cert, the round number reported by 'getLatestCertSeen'
 -- should be greater than or equal to its previous value.

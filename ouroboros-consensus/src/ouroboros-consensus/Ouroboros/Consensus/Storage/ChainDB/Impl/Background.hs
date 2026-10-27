@@ -11,6 +11,8 @@
 -- | Background tasks:
 --
 -- * Copying blocks from the VolatileDB to the ImmutableDB
+-- * Storing Peras certificates boosting immutable blocks in the
+--   PerasImmutableCertDB
 -- * Performing and scheduling garbage collections on the VolatileDB
 -- * Writing snapshots of the LedgerDB to disk and deleting old ones
 -- * Executing scheduled chain selections
@@ -20,6 +22,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
 
     -- * Copying blocks from the VolatileDB to the ImmutableDB
   , copyToImmutableDB
+
+    -- * Storing Peras certificates in the PerasImmutableCertDB
+  , perasCertPersistWatcher
+  , settlePendingPerasCerts
 
     -- * Writing LedgerDB snapshots
   , snapshotRunner
@@ -56,6 +62,8 @@ import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Time.Clock
 import Data.Void (Void)
 import GHC.Generics (Generic)
@@ -131,6 +139,10 @@ launchBgTasks cdb@CDB{..} = do
     launch "ChainDB.snapshotRunner" $
       snapshotRunner cdb
 
+  !perasCertPersistThread <-
+    forkLinkedWatcher cdbRegistry "ChainDB.perasCertPersistWatcher" $
+      perasCertPersistWatcher cdb
+
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_
@@ -139,6 +151,7 @@ launchBgTasks cdb@CDB{..} = do
         , gcThread
         , copyToImmutableDBThread
         , snapshotThread
+        , cancelThread perasCertPersistThread
         ]
  where
   launch :: String -> m Void -> m (m ())
@@ -149,8 +162,10 @@ launchBgTasks cdb@CDB{..} = do
 -------------------------------------------------------------------------------}
 
 -- | Copy the blocks older than the immutable tip from the VolatileDB to the
--- ImmutableDB. Peras certificates boosting these blocks are also copied from
--- the volatile 'PerasCertDB' to the 'PerasImmutableCertDB'.
+-- ImmutableDB.
+--
+-- Peras certificates boosting these blocks are not copied here, but by
+-- 'perasCertPersistWatcher', so that copying blocks does not wait on them.
 --
 -- The headers of these blocks can be retrieved by considering headers in
 -- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
@@ -207,13 +222,6 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
       atomically $ removeFromChain pt
-      -- Copy any certificates boosting this now-immutable block from the
-      -- volatile PerasCertDB to the PerasImmutableCertDB, so that they
-      -- remain available for syncing nodes. This is best-effort: a
-      -- certificate arriving after its boosted block has already been
-      -- copied here is not retried.
-      certsBoostingBlk <- atomically $ PerasCertDB.getCertsBoosting cdbPerasCertDB pt
-      forM_ certsBoostingBlk (PerasImmutableCertDB.addCert cdbPerasImmutableCertDB . forgetArrivalTime)
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB
@@ -235,6 +243,109 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- We're the only one removing things from 'cdbChain', so this cannot
       -- happen if the precondition was satisfied.
       _ -> error "header to remove not on the current chain"
+
+{-------------------------------------------------------------------------------
+  Storing Peras certificates in the PerasImmutableCertDB
+-------------------------------------------------------------------------------}
+
+-- | Settle the Peras certificates boosting slots up to the tip of the
+-- ImmutableDB, whenever there are any.
+--
+-- Settling a certificate means storing it in the 'PerasImmutableCertDB' if it
+-- boosts a block in the ImmutableDB, or discarding it otherwise (see
+-- 'settlePerasCerts'), and then marking it as settled in the 'PerasCertDB'.
+--
+-- The work to do is not handed over by other threads, but read from the
+-- 'PerasCertDB' and the tip of the ImmutableDB. This way, a certificate is
+-- settled as soon as its boosted slot is in the ImmutableDB:
+--
+-- * when its boosted block is copied to the ImmutableDB, or
+--
+-- * when it is added to the 'PerasCertDB' after its boosted block has already
+--   been copied.
+--
+-- As the 'PerasCertDB' only garbage-collects settled certificates, no
+-- certificate boosting an immutable block is removed from it before it has
+-- been stored in the 'PerasImmutableCertDB', whatever slot garbage collection
+-- is run for. Garbage collection being run for slots that are not older than
+-- the tip of the ImmutableDB only delays the removal of the certificates (see
+-- 'garbageCollectPeras').
+perasCertPersistWatcher ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  ChainDbEnv m blk ->
+  Watcher
+    m
+    [WithArrivalTime (ValidatedPerasCert blk)]
+    (Set PerasRoundNo)
+perasCertPersistWatcher cdb =
+  Watcher
+    { wFingerprint = Set.fromList . map getPerasCertRound
+    , wInitial = Nothing
+    , wReader = getPendingPerasCerts cdb
+    , wNotify = settlePerasCerts cdb
+    }
+
+-- | Settle, synchronously, the Peras certificates boosting slots up to the
+-- tip of the ImmutableDB that have not been settled yet.
+--
+-- This is what 'perasCertPersistWatcher' does in the background.
+settlePendingPerasCerts ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  ChainDbEnv m blk ->
+  m ()
+settlePendingPerasCerts cdb =
+  atomically (getPendingPerasCerts cdb) >>= settlePerasCerts cdb
+
+-- | The unsettled Peras certificates boosting slots up to the tip of the
+-- ImmutableDB, in ascending order of that slot.
+getPendingPerasCerts ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  STM m [WithArrivalTime (ValidatedPerasCert blk)]
+getPendingPerasCerts CDB{cdbImmutableDB, cdbPerasCertDB} =
+  ImmutableDB.getTipSlot cdbImmutableDB
+    >>= PerasCertDB.getUnsettledCertsUpTo cdbPerasCertDB
+
+-- | Settle the given Peras certificates, one at a time.
+--
+-- PRECONDITION: the ImmutableDB has reached the boosted slot of every given
+-- certificate, so that whether it boosts a block in the ImmutableDB is final.
+--
+-- A certificate boosting a block in the ImmutableDB is stored in the
+-- 'PerasImmutableCertDB' /before/ it is marked as settled, so that it is never
+-- garbage-collected from the 'PerasCertDB' before it has been stored.
+settlePerasCerts ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  ChainDbEnv m blk ->
+  [WithArrivalTime (ValidatedPerasCert blk)] ->
+  m ()
+settlePerasCerts CDB{..} = mapM_ $ \cert -> do
+  let roundNo = getPerasCertRound cert
+      pt = getPerasCertPoint cert
+  isImmutable <- case pointToWithOriginRealPoint pt of
+    -- There is no actual genesis block that can be in the ImmutableDB
+    Origin -> pure False
+    NotOrigin rpt -> ImmutableDB.hasBlock cdbImmutableDB rpt
+  if isImmutable
+    then do
+      res <-
+        PerasImmutableCertDB.addCert cdbPerasImmutableCertDB (forgetArrivalTime cert)
+      trace $ StoredPerasCertInImmutableDB roundNo pt res
+    else
+      trace $ DiscardedForkPerasCert roundNo pt
+  atomically $ PerasCertDB.markCertsSettled cdbPerasCertDB (Set.singleton roundNo)
+ where
+  trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
 
 {-------------------------------------------------------------------------------
   Copy to ImmutableDB
@@ -460,6 +571,11 @@ garbageCollectBlocks CDB{..} slotNo = do
 
 -- | Garbage-collect Peras state (certificates and votes) whose target slot is
 -- strictly smaller than the given 'SlotNo'.
+--
+-- Only settled certificates are garbage-collected (see
+-- 'perasCertPersistWatcher'). As certificates boosting slots up to the tip of
+-- the ImmutableDB get settled, the given 'SlotNo' must not be newer than that
+-- tip, lest certificates be retained for longer than needed.
 garbageCollectPeras ::
   forall m blk.
   IOLike m =>
@@ -467,6 +583,8 @@ garbageCollectPeras ::
   SlotNo ->
   m ()
 garbageCollectPeras CDB{..} slotNo = do
+  immTipSlot <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
+  assert (NotOrigin slotNo <= immTipSlot) $ return ()
   join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
 

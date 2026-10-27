@@ -557,6 +557,8 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
   mSlotNo <- intCopyToImmutableDB
+  -- The PerasCertDB only garbage-collects settled certificates.
+  intPersistPerasCerts
   case (collectGarbage, mSlotNo) of
     (DoNotGarbageCollect, _) -> pure ()
     (GarbageCollect, Origin) -> pure ()

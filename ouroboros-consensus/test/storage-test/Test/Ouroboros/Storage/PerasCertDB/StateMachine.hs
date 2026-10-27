@@ -77,6 +77,7 @@ instance StateModel Model where
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
     GetLatestCertSeen ::
       Action Model (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert TestBlock))))
+    SettleCertsUpTo :: WithOrigin SlotNo -> Action Model (Set PerasRoundNo)
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
@@ -85,10 +86,22 @@ instance StateModel Model where
           [ (20, Some <$> genAddCert)
           , (20, pure $ Some GetWeightSnapshot)
           , (10, pure $ Some GetLatestCertSeen)
+          , (5, Some . SettleCertsUpTo <$> genSettleSlot)
           , (5, Some . GarbageCollect . SlotNo <$> arbitrary)
           ]
     | otherwise = pure $ Some OpenDB
    where
+    -- Settle up to the boosted slot of an existing certificate most of the
+    -- time, so that some but not all certificates get settled.
+    genSettleSlot :: Gen (WithOrigin SlotNo)
+    genSettleSlot =
+      frequency $
+        (1, pure Origin)
+          : (1, NotOrigin . SlotNo <$> arbitrary)
+          : [ (4, elements (pointSlot . getPerasCertPoint <$> Set.toList model.certs))
+            | not (Set.null model.certs)
+            ]
+
     genRelativeTime :: Gen RelativeTime
     genRelativeTime = RelativeTime . fromIntegral <$> arbitrary @Word64
 
@@ -140,6 +153,7 @@ instance StateModel Model where
     AddCert cert -> snd $ Model.addCert model cert
     GetWeightSnapshot -> model
     GetLatestCertSeen -> model
+    SettleCertsUpTo slot -> snd $ Model.settleCertsUpTo slot model
     GarbageCollect slotNo -> Model.garbageCollect slotNo model
 
   precondition (Model model) = \case
@@ -157,6 +171,7 @@ instance StateModel Model where
               || getPerasCertPoint cert == getPerasCertPoint cert'
         GetWeightSnapshot -> True
         GetLatestCertSeen -> True
+        SettleCertsUpTo _slot -> True
         GarbageCollect _slotNo -> True
 
 deriving stock instance Show (Action Model a)
@@ -180,6 +195,13 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
     GetLatestCertSeen -> do
       perasCertDB <- get
       lift $ atomically $ PerasCertDB.getLatestCertSeen perasCertDB
+    SettleCertsUpTo slot -> do
+      perasCertDB <- get
+      lift $ atomically $ do
+        certs <- PerasCertDB.getUnsettledCertsUpTo perasCertDB slot
+        let roundNos = Set.fromList (getPerasCertRound <$> certs)
+        PerasCertDB.markCertsSettled perasCertDB roundNos
+        pure roundNos
     GarbageCollect slotNo -> do
       perasCertDB <- get
       lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
@@ -198,6 +220,11 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
     counterexamplePost $ "Model: " <> show expected
     counterexamplePost $ "SUT: " <> show actual
     pure $ expected == actual
+  postcondition (Model model, _) (SettleCertsUpTo slot) _ actual = do
+    let expected = fst $ Model.settleCertsUpTo slot model
+    counterexamplePost $ "Model: " <> show expected
+    counterexamplePost $ "SUT: " <> show actual
+    pure $ expected == actual
   postcondition _ _ _ _ = pure True
 
   monitoring (Model model, _) (AddCert cert) _ _ prop =
@@ -211,5 +238,17 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
             Set.member
               (getPerasCertPoint cert)
               (Set.map getPerasCertPoint model.certs)
+        ]
+  monitoring (Model model, _) (GarbageCollect slotNo) _ _ prop =
+    prop
+      & tabulate
+        "Garbage collection retains unsettled certificates"
+        [ show $
+            any
+              ( \cert ->
+                  pointSlot (getPerasCertPoint cert) < NotOrigin slotNo
+                    && getPerasCertRound cert `Set.member` model.unsettled
+              )
+              model.certs
         ]
   monitoring _ _ _ _ prop = prop

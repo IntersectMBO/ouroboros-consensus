@@ -11,6 +11,7 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
   , addCert
   , getWeightSnapshot
   , getLatestCertSeen
+  , settleCertsUpTo
   , garbageCollect
   , hasRoundNo
   ) where
@@ -34,6 +35,8 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
   , latestCertSeen :: Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk)))
+  , unsettled :: Set PerasRoundNo
+  -- ^ The rounds of the certificates in 'certs' that have not been settled.
   , open :: Bool
   }
   deriving Generic
@@ -44,7 +47,13 @@ instance Show (PerasCert blk) => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
 initModel :: Model blk
-initModel = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
+initModel =
+  Model
+    { open = False
+    , certs = Set.empty
+    , latestCertSeen = Nothing
+    , unsettled = Set.empty
+    }
 
 openDB :: Model blk -> Model blk
 openDB model = model{open = True}
@@ -54,9 +63,16 @@ addCert ::
   , IsPerasCert (PerasCert blk) blk
   ) =>
   Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> (AddPerasCertResult, Model blk)
-addCert model@Model{certs, latestCertSeen} cert
+addCert model@Model{certs, latestCertSeen, unsettled} cert
   | certs `hasRoundNo` cert = (PerasCertAlreadyInDB, model)
-  | otherwise = (AddedPerasCertToDB, model{certs = certs', latestCertSeen = latestCertSeen'})
+  | otherwise =
+      ( AddedPerasCertToDB
+      , model
+          { certs = certs'
+          , latestCertSeen = latestCertSeen'
+          , unsettled = Set.insert (getPerasCertRound cert) unsettled
+          }
+      )
  where
   certs' = Set.insert cert certs
   latestCertSeen' =
@@ -95,16 +111,35 @@ getLatestCertSeen ::
 getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
+-- | Settle the unsettled certificates boosting slots up to the given one, and
+-- return their rounds.
+settleCertsUpTo ::
+  IsPerasCert (PerasCert blk) blk =>
+  WithOrigin SlotNo -> Model blk -> (Set PerasRoundNo, Model blk)
+settleCertsUpTo slot model@Model{certs, unsettled} =
+  (settled, model{unsettled = unsettled Set.\\ settled})
+ where
+  settled =
+    Set.fromList
+      [ getPerasCertRound cert
+      | cert <- Set.toList certs
+      , pointSlot (getPerasCertPoint cert) <= slot
+      , getPerasCertRound cert `Set.member` unsettled
+      ]
+
+-- | Remove the settled certificates boosting slots older than the given one.
 garbageCollect ::
   IsPerasCert (PerasCert blk) blk =>
   SlotNo -> Model blk -> Model blk
-garbageCollect slotNo model@Model{certs, latestCertSeen} =
+garbageCollect slotNo model@Model{certs, latestCertSeen, unsettled} =
   model
     { certs = Set.filter keepCert certs
     , latestCertSeen = updateIfBoostingGarbageCollectedBlock <$> latestCertSeen
     }
  where
-  keepCert cert = pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
+  keepCert cert =
+    pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
+      || getPerasCertRound cert `Set.member` unsettled
 
   updateIfBoostingGarbageCollectedBlock cert
     | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))

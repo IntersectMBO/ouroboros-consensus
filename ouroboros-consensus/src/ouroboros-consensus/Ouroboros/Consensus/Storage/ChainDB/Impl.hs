@@ -353,6 +353,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     let testing =
           Internal
             { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
+            , intPersistPerasCerts = getEnv h Background.settlePendingPerasCerts
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 Background.garbageCollectPeras e slot
@@ -438,6 +439,7 @@ closeDB ::
   forall m blk.
   ( IOLike m
   , HasHeader (Header blk)
+  , IsPerasCert (PerasCert blk) blk
   , HasCallStack
   ) =>
   ChainDbHandle m blk -> m ()
@@ -459,10 +461,15 @@ closeDB (CDBHandle varState) = do
     killBgThreads <- atomically $ readTVar cdbKillBgThreads
     killBgThreads
 
-    ImmutableDB.closeDB cdbImmutableDB
-    VolatileDB.closeDB cdbVolatileDB
-    LedgerDB.closeDB cdbLedgerDB
-    PerasImmutableCertDB.closeDB cdbPerasImmutableCertDB
+    -- Store the certificates boosting immutable blocks that the killed
+    -- 'Background.perasCertPersistWatcher' had not stored yet, as they would
+    -- otherwise be lost on shutdown. Close the databases even if this fails.
+    Background.settlePendingPerasCerts cdb
+      `finally` do
+        ImmutableDB.closeDB cdbImmutableDB
+        VolatileDB.closeDB cdbVolatileDB
+        LedgerDB.closeDB cdbLedgerDB
+        PerasImmutableCertDB.closeDB cdbPerasImmutableCertDB
 
     chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 

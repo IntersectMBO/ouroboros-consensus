@@ -4,6 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -24,27 +25,52 @@ import Control.Monad.Except
   , runExceptT
   , throwError
   )
+import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
-import Data.Maybe (isJust)
+import Data.Foldable (for_)
+import Data.Maybe (isJust, mapMaybe)
+import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
+import Data.Word (Word64)
+import Ouroboros.Consensus.Block
+  ( PerasRoundNo (..)
+  , PerasSeatIndex (..)
+  , PerasWeight (..)
+  , SlotNo (..)
+  , ValidatedPerasCert (..)
+  , WithOrigin (..)
+  , pattern BlockPoint
+  )
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
+  )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
-import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
+import Ouroboros.Consensus.Storage.ChainDB.Impl
+  ( Internal (..)
+  , TraceCopyToImmutableDBEvent (..)
+  , TraceEvent (..)
+  )
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.Common
   ( StreamFrom (..)
   , StreamTo (..)
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint, genesisPoint)
@@ -70,6 +96,7 @@ import Test.Util.ChainDB
   , fromMinimalChainDbArgs
   , nodeDBsVol
   )
+import Test.Util.Orphans.IOLike ()
 import Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
@@ -111,6 +138,9 @@ tests =
             "Empty slot, returns block at next filled slot"
             [testCase "system" $ runSystemIO waitForImmutableBlock_emptySlot]
         ]
+    , testCase
+        "Peras certificates are stored once their boosted block is immutable, and only collected afterwards"
+        perasCertsSettledOnceImmutable
     , testGroup
         "Interaction of ImmutableDB, wiping the VolatileDB and ledger state snapshots"
         [ testGroup
@@ -355,6 +385,100 @@ updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
       `orFailWith` ("Expected ChainDB tip after wiping VolatileDB to be at Genesis, but got: " <> show tip)
  where
   fork0 = TestBody 1 True Nothing
+
+-- | A Peras certificate boosting a block in the ImmutableDB is stored in the
+-- PerasImmutableCertDB even when it arrives after the block was copied to the
+-- ImmutableDB, while a certificate boosting a block that is not in the
+-- ImmutableDB is discarded. Neither is garbage-collected before having been
+-- settled that way.
+perasCertsSettledOnceImmutable :: Assertion
+perasCertsSettledOnceImmutable =
+  evaluate $
+    runSimOrThrow $
+      withTestChainDbEnv topLevelConfig chunkInfo initLedger $ \env getTrace -> do
+        let addBlk blk = void $ SM.run topLevelConfig env (SM.AddBlock blk (SM.Persistent []))
+        ChainDBState{chainDB, internal} <- readTVarIO (varDB env)
+        let ChainDB.Internal
+              { intCopyToImmutableDB
+              , intPersistPerasCerts
+              , intGarbageCollect
+              } = internal
+
+        let b1 = firstBlock 0 fork0
+            b2 = mkNextBlock b1 1 fork0
+            b3 = mkNextBlock b2 2 fork0
+            b4 = mkNextBlock b3 3 fork0
+            -- A block at the same slot as b1, not on the selected chain.
+            forkPt = BlockPoint 0 (TestHeaderHash 12345)
+        mapM_ addBlk [b1, b2, b3]
+        -- With k = 2, only b1 is immutable.
+        immTip1 <- intCopyToImmutableDB
+        expectEq "ImmutableDB tip" (NotOrigin 0) immTip1
+
+        -- Both certificates arrive after b1 was copied to the ImmutableDB, but
+        -- are not too old to be added.
+        for_ [mkCert 0 (blockPoint b1), mkCert 1 forkPt] $ \cert -> do
+          res <- API.addPerasCertSync chainDB cert
+          expectEq "Certificate added" (API.PerasCertProcessed PerasCertDB.AddedPerasCertToDB) res
+
+        addBlk b4
+        immTip2 <- intCopyToImmutableDB
+        expectEq "ImmutableDB tip" (NotOrigin 1) immTip2
+
+        -- The certificates have not been settled yet, so they are retained.
+        intGarbageCollect 1
+        intPersistPerasCerts
+        -- Now they are settled, so they are collected.
+        intGarbageCollect 1
+
+        evs <- mapMaybe relevant <$> getTrace
+        expectEq
+          "Trace"
+          [ "RetainedUnsettledCerts 1 [0,1]"
+          , "Stored 0 " <> show (blockPoint b1) <> " AddedCertToImmutableDB"
+          , "Discarded 1 " <> show forkPt
+          ]
+          evs
+ where
+  fork0 = TestBody 0 True Nothing
+  chunkInfo = ImmutableDB.simpleChunkInfo 100
+  k = SecurityParam (knownNonZeroBounded @2)
+  topLevelConfig = mkTestCfg k chunkInfo
+  initLedger = convertMapKind (testInitExtLedger (topLevelConfigLedger topLevelConfig))
+
+  mkCert :: Word64 -> Point TestBlock -> WithArrivalTime (ValidatedPerasCert TestBlock)
+  mkCert roundNo pt =
+    WithArrivalTime (RelativeTime 0) $
+      ValidatedPerasCert
+        { vpcCert =
+            MockPerasCert
+              { mockCertRound = PerasRoundNo roundNo
+              , mockCertBlock = pt
+              , mockCertVoters = NESet.singleton (PerasSeatIndex 0)
+              }
+        , vpcCertBoost = PerasWeight 1
+        }
+
+  relevant :: TraceEvent TestBlock -> Maybe String
+  relevant = \case
+    TracePerasCertDbEvent (PerasCertDB.RetainedUnsettledCerts slot rounds) ->
+      Just $
+        "RetainedUnsettledCerts "
+          <> show (unSlotNo slot)
+          <> " "
+          <> show (unPerasRoundNo <$> Set.toList rounds)
+    TraceCopyToImmutableDBEvent (StoredPerasCertInImmutableDB roundNo pt res) ->
+      Just $ "Stored " <> show (unPerasRoundNo roundNo) <> " " <> show pt <> " " <> show res
+    TraceCopyToImmutableDBEvent (DiscardedForkPerasCert roundNo pt) ->
+      Just $ "Discarded " <> show (unPerasRoundNo roundNo) <> " " <> show pt
+    _ -> Nothing
+
+  expectEq :: (Eq a, Show a, MonadThrow m) => String -> a -> a -> m ()
+  expectEq what expected actual =
+    unless (expected == actual) $
+      throwIO $
+        userError $
+          what <> ":\n\t Expected: " <> show expected <> "\n\t Actual: " <> show actual
 
 {-------------------------------------------------------------------------------
   Helpers and testing infrastructure
