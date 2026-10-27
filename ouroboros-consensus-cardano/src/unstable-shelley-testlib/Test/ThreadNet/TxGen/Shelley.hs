@@ -100,7 +100,7 @@ genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =
     <$> Gen.genTx
       genEnv
       ledgerEnv
-      (SL.LedgerState utxoSt dpState)
+      (SL.esLState epochState)
  where
   epochState :: SL.EpochState ShelleyEra
   epochState = SL.nesEs tickedShelleyLedgerState
@@ -114,18 +114,6 @@ genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =
       , ledgerPp = getPParams tickedShelleyLedgerState
       , ledgerAccount = SL.esChainAccountState epochState
       }
-
-  utxoSt :: SL.UTxOState ShelleyEra
-  utxoSt =
-    SL.lsUTxOState
-      . SL.esLState
-      $ epochState
-
-  dpState :: SL.CertState ShelleyEra
-  dpState =
-    SL.lsCertState
-      . SL.esLState
-      $ epochState
 
 data WhetherToGeneratePPUs = DoNotGeneratePPUs | DoGeneratePPUs
   deriving Show

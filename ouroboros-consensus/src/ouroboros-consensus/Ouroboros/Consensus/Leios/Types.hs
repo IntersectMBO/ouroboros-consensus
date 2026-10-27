@@ -3,6 +3,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
 -- block bodies and their sizes.
@@ -13,16 +16,10 @@
 -- as it lands.
 module Ouroboros.Consensus.Leios.Types
   ( -- * Hashes
-    EbHash (..)
-  , encodeEbHash
-  , decodeEbHash
-  , prettyEbHash
-  , RbHash (..)
-  , encodeRbHash
-  , decodeRbHash
-  , prettyRbHash
-  , TxHash (..)
-  , prettyTxHash
+    EndorserBlockHash
+  , RankingBlockHash (..)
+  , toRankingBlockHash
+  , TxHash
 
     -- * Transactions
   , LeiosTx (..)
@@ -45,36 +42,59 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Endorser blocks
   , BytesSize
-  , LeiosEb (..)
+  , EndorserBlock -- opaque
   , TxOffset
-  , leiosEbFromTxBytes
-  , hashLeiosEb
-  , leiosEbBodyItems
-  , encodeLeiosEb
-  , decodeLeiosEb
-  , encodeLeiosEbItemSize
-  , encodeLeiosEbMaxFramingSize
-  , encodeLeiosEbSize
-  , leiosReferencesCapacity
-  , maxLeiosEbBytesSize
-  , maxTxsPerEb
+  , mkEndorserBlock
+  , endorserBlockFromTxBytes
+  , endorserBlockHash
+  , endorserBlockReferences
+  , encodeEndorserBlock
+  , decodeEndorserBlock
+  , sizeEndorserBlockReference
+  , encodeEndorserBlockSize
+  , referencesCapacity
+  , maxEndorserBlockBytesSize
+  , maxTxsPerEndorserBlock
 
     -- * Header checks
   , milliseconds32ToNominalDiffTime
   , minCertificationSlot
   ) where
 
-import Cardano.Binary (decodeNestedCborBytes, encodeNestedCborBytes)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeNestedCborBytes, encodeNestedCborBytes)
 import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
-import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Hash
+  ( Hash
+  , castHash
+  , hashFromBytesShort
+  , hashToBytes
+  , hashToStringAsHex
+  , hashWith
+  , sizeHash
+  )
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Binary
+  ( Annotator (..)
+  , DecCBOR (..)
+  , EncCBOR (..)
+  , FullByteString (..)
+  , Version
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
+import Cardano.Ledger.Core (eraProtVerLow)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.Block.Endorser as Ledger
 import Cardano.Ledger.Hashes
-  ( EraIndependentEbReferences
+  ( EraIndependentBlockHeader
+  , EraIndependentEbReferences
+  , EraIndependentTx
   , HASH
-  , SafeHash
+  , extractHash
+  , hashAnnotated
   , unsafeMakeSafeHash
   )
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
@@ -87,81 +107,55 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
-import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as BS16
-import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (toList)
-import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty)
+import Data.Maybe (fromMaybe)
+import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
-import Data.Vector.Strict (Vector)
-import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
+import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), HeaderHash)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.CBOR (decodeMapUpTo)
 
 -- * Hashes
 
--- | Hash of an Endorser Block
-newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise)
-  deriving stock Generic
+-- | The hash of an endorser block, as ranking blocks announce it.
+type EndorserBlockHash = Hash HASH EraIndependentEbReferences
 
-instance Show EbHash where
-  show = prettyEbHash
-
-encodeEbHash :: EbHash -> Encoding
-encodeEbHash (MkEbHash bytes) = CBOR.encodeBytes bytes
-
-decodeEbHash :: Decoder s EbHash
-decodeEbHash = MkEbHash <$> CBOR.decodeBytes
-
-prettyEbHash :: EbHash -> String
-prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
-
--- | Hash of a Ranking Block
+-- | The hash of a ranking block's header, which votes sign.
 --
--- A Ranking Block is the Praos Block. While the regular Praos headers are parameterised
--- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
--- to convert between this type and 'HeaderHash'.
-newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks)
-  deriving stock Generic
-
-instance Show RbHash where
-  show = prettyRbHash
-
-encodeRbHash :: RbHash -> Encoding
-encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
-
-decodeRbHash :: Decoder s RbHash
-decodeRbHash = MkRbHash <$> CBOR.decodeBytes
-
-prettyRbHash :: RbHash -> String
-prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
-
-instance SignableRepresentation RbHash where
-  getSignableRepresentation point =
-    toStrictByteString $
-      encodeRbHash point
-
--- | Hash of a Leios transaction (the Blake2b-256 hash of its bytes).
-newtype TxHash = MkTxHash ByteString
+-- Ranking blocks are Praos blocks, whose 'HeaderHash' depends on 'blk'. Use
+-- 'toRankingBlockHash' to convert it to this monomorphic type.
+newtype RankingBlockHash = MkRankingBlockHash
+  { unRankingBlockHash :: Hash HASH EraIndependentBlockHeader
+  }
   deriving stock (Eq, Ord, Generic)
-  deriving anyclass (NFData, NoThunks)
+  deriving newtype (Show, NoThunks, ToCBOR, FromCBOR)
 
-instance Show TxHash where
-  show = prettyTxHash
+-- | Used by Leios voting, which signs the hash's bytes.
+instance SignableRepresentation RankingBlockHash where
+  getSignableRepresentation = hashToBytes . unRankingBlockHash
 
-prettyTxHash :: TxHash -> String
-prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
+-- | Convert a ranking block's 'HeaderHash'. It must be as long as a
+-- 'RankingBlockHash'.
+--
+-- TODO Rule out a 'HeaderHash' of another size at compile time, as Peras does
+-- with @HashSize blk ~ 32@, without requiring it of every 'RunNode' block.
+toRankingBlockHash :: ConvertRawHash blk => Proxy blk -> HeaderHash blk -> RankingBlockHash
+toRankingBlockHash p h =
+  MkRankingBlockHash $
+    fromMaybe (error "toRankingBlockHash: header hash of the wrong size") $
+      hashFromBytesShort (toShortRawHash p h)
+
+-- | The hash of a transaction an endorser block references.
+type TxHash = Hash HASH EraIndependentTx
 
 -- * Transactions
 
@@ -188,8 +182,8 @@ decodeLeiosTx = MkLeiosTx <$> decodeNestedCborBytes
 -- * Points
 
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
--- EbHash' eventually, but a dedicated type is better to explore.
-data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
+-- EndorserBlockHash' eventually, but a dedicated type is better to explore.
+data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EndorserBlockHash}
   deriving stock (Eq, Ord, Generic)
   deriving anyclass NoThunks
 
@@ -203,22 +197,22 @@ instance SignableRepresentation LeiosPoint where
     toStrictByteString $
       -- REVIEW: Flat concatenation expected as what is signed?
       encode (pointSlotNo point)
-        <> encodeEbHash (pointEbHash point)
+        <> toCBOR (pointEbHash point)
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
   CBOR.encodeListLen 2
     <> encode ebSlot
-    <> encodeEbHash ebHash
+    <> toCBOR ebHash
 
 decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint =
   decodeRecordNamed (T.pack "LeiosPoint") (const 2) $
-    MkLeiosPoint <$> decode <*> decodeEbHash
+    MkLeiosPoint <$> decode <*> fromCBOR
 
 prettyLeiosPoint :: LeiosPoint -> String
-prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
-  "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
+prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) ebHash) =
+  "(" ++ show slotNo ++ ", " ++ hashToStringAsHex ebHash ++ ")"
 
 -- * Elections
 
@@ -240,13 +234,13 @@ data ElectionId = ElectionId
 
 -- | A vote for a Leios announcement.
 data LeiosVote = MkLeiosVote
-  { voteAnnouncingRbHash :: !RbHash
+  { voteAnnouncingRbHash :: !RankingBlockHash
   -- ^ the 'HeaderHash' of the ranking block ('s header) that carries the
   -- announcement
   , voteSeatId :: !LeiosSeatId
   -- ^ the voter's seat in the committee
   , voteSignature :: !LeiosSignature
-  -- ^ the voter's signature of 'voteAnnouncingRbHash'
+  -- ^ The voter's signature of 'voteAnnouncingRbHash'.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -256,121 +250,120 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote (MkLeiosVote rbHash seat signature) =
   CBOR.encodeListLen 3
-    <> encodeRbHash rbHash
+    <> toCBOR rbHash
     <> CBOR.encodeWord16 (leiosSeatIndex seat)
     <> encodeFixedSized signature
 
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote =
   decodeRecordNamed (T.pack "LeiosVote") (const 3) $
-    MkLeiosVote <$> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
+    MkLeiosVote <$> fromCBOR <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
 
 -- * Endorser blocks
 
 type BytesSize = Word32
 
--- | An Endorser Block as it is submitted through the network.
--- TODO: Keep track of the slot of an EB?
-data LeiosEb = MkLeiosEb
-  { leiosEbTxs :: !(Vector (TxHash, BytesSize))
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
+-- | An endorser block in the Leios overlay protocol. It endorses transactions
+-- by naming a list of 'TxHash' and 'BytesSize' pairs. Construct using
+-- 'mkEndorserBlock'.
+--
+-- An anti-corruption layer over the ledger's 'Ledger.EbReferences': consensus
+-- sees only this module's functions, never the ledger's representation.
+newtype EndorserBlock = MkEndorserBlock Ledger.EbReferences
+  deriving stock Generic
+  deriving newtype (Eq, Show, NFData, NoThunks)
 
-instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
+instance ShowProxy EndorserBlock where showProxy _ = "EndorserBlock"
 
--- | The position of a transaction in its EB's body.
+-- | The protocol version endorser blocks are encoded at.
+--
+-- NOTE: We do not intend to use endorser blocks across eras, encoded or not.
+endorserBlockVersion :: Version
+endorserBlockVersion = eraProtVerLow @DijkstraEra
+
+-- | An endorser block naming these transactions, in this order.
+mkEndorserBlock :: [(TxHash, BytesSize)] -> EndorserBlock
+mkEndorserBlock =
+  MkEndorserBlock
+    . Ledger.mkEbReferences endorserBlockVersion
+    . IsList.fromList
+    . map (\(txHash, txSize) -> (unsafeMakeSafeHash txHash, txSize))
+
+-- | The endorser block naming the transactions with these bytes, in this
+-- order. It names each by the Blake2b-256 hash and the length of its bytes.
+endorserBlockFromTxBytes :: NonEmpty ByteString -> EndorserBlock
+endorserBlockFromTxBytes =
+  mkEndorserBlock . map reference . toList
+ where
+  reference bytes = (castHash $ hashWith @HASH id bytes, fromIntegral $ BS.length bytes)
+
+-- | The position of a transaction in its endorser block.
 type TxOffset = Int
 
--- | The endorser block that references the given transactions, in the given
--- order. The reference to a transaction holds the Blake2b-256 hash and the
--- length of its bytes.
-leiosEbFromTxBytes :: NonEmpty ByteString -> LeiosEb
-leiosEbFromTxBytes =
-  MkLeiosEb . V.fromList . map reference . toList
- where
-  reference bytes =
-    ( MkTxHash $ Hash.hashToBytes $ Hash.hashWith @HASH id bytes
-    , fromIntegral $ BS.length bytes
-    )
+-- | The hash ranking blocks announce for the endorser block: that of its
+-- encoding.
+endorserBlockHash :: EndorserBlock -> EndorserBlockHash
+endorserBlockHash (MkEndorserBlock references) = extractHash $ hashAnnotated references
 
--- | The hash that a ranking block header announces for an endorser block: the
--- Blake2b-256 hash of the 'encodeLeiosEb' bytes.
-hashLeiosEb :: LeiosEb -> SafeHash EraIndependentEbReferences
-hashLeiosEb =
-  unsafeMakeSafeHash
-    . Hash.castHash
-    . Hash.hashWith @HASH (toStrictByteString . encodeLeiosEb)
-
-leiosEbBodyItems :: LeiosEb -> [(TxOffset, TxHash, BytesSize)]
-leiosEbBodyItems eb =
-  leiosEbTxs eb
-    & V.imap (\ix (txh, size) -> (ix, txh, size))
-    & toList
+-- | The transactions an endorser block names, in order.
+endorserBlockReferences :: EndorserBlock -> [(TxHash, BytesSize)]
+endorserBlockReferences (MkEndorserBlock references) =
+  map (\(txHash, txSize) -> (extractHash txHash, txSize))
+    . IsList.toList
+    $ Ledger.getEbReferences references
 
 -- | The bytes one reference occupies for a transaction of the given size: the
--- hash and the size itself, exactly as the EB's CBOR encoding writes them.
+-- hash and the size, exactly as 'encodeEndorserBlock' writes them.
 --
 -- Also used on the Dijkstra transaction measure, so the mempool charges a
 -- transaction what it will actually cost in the reference list rather than an
 -- approximation of it.
-encodeLeiosEbItemSize :: ByteSize32 -> ByteSize32
-encodeLeiosEbItemSize (ByteSize32 txSize) =
-  ByteSize32 $ cborBytesSize 32 + cborIntBytesSize txSize
+sizeEndorserBlockReference :: ByteSize32 -> ByteSize32
+sizeEndorserBlockReference (ByteSize32 txSize) =
+  ByteSize32 $ cborBytesSize txHashSize + cborIntBytesSize txSize
  where
+  txHashSize = fromIntegral (sizeHash (Proxy @HASH))
+
   cborBytesSize len = cborIntBytesSize len + len
 
--- | Encode a 'LeiosEb' as a CBOR map from each transaction hash to the size
--- of that transaction. Must not add more overhead than
--- 'encodeLeiosEbMaxFramingSize', and the encoding of each reference must match
--- 'encodeLeiosEbItemSize'.
+-- | Encode an endorser block as the ledger does: a CBOR map from each
+-- transaction hash to the size of that transaction.
 --
--- The mempool charges each transaction 'encodeLeiosEbItemSize', and the
--- endorser-block capacity subtracts 'encodeLeiosEbMaxFramingSize'. If the
--- encoding changes, both sizes must change with it.
---
--- Endorser blocks are on chain, so peers on every node-to-node version must
--- write the same bytes. This encoding has no version yet. When an era after
--- Dijkstra changes it, the @ProtVer@ of that era will select the encoding.
-encodeLeiosEb :: LeiosEb -> Encoding
-encodeLeiosEb (MkLeiosEb references) =
-  foldl
-    ( \acc (MkTxHash bytes, txBytesSize) ->
-        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
-    )
-    (CBOR.encodeMapLen $ fromIntegral $ length references)
-    references
+-- The mempool charges each transaction 'sizeEndorserBlockReference', and
+-- 'referencesCapacity' subtracts the framing around the references. If the
+-- encoding changes, both must change with it.
+encodeEndorserBlock :: EndorserBlock -> Encoding
+encodeEndorserBlock (MkEndorserBlock references) =
+  toPlainEncoding endorserBlockVersion $ encCBOR references
 
--- | The inverse of 'encodeLeiosEb', though it also accepts an indefinite-length
--- map. It rejects an empty map of transaction references, and one with more
--- than 'maxTxsPerEb'.
-decodeLeiosEb :: Decoder s LeiosEb
-decodeLeiosEb = do
-  references <-
-    decodeMapUpTo "LeiosEb" maxTxsPerEb $
-      (,) <$> (MkTxHash <$> CBOR.decodeBytes) <*> CBOR.decodeWord32
-  when (null references) $
-    fail "LeiosEb: empty map of transaction references"
-  pure $ MkLeiosEb $ V.fromList references
-
--- | The widest the framing 'encodeLeiosEb' writes around the references can
--- get: the map header. CBOR map headers have the same widths as
--- 'cborIntBytesSize', and the reference count fits 'BytesSize'.
+-- | The inverse of 'encodeEndorserBlock', given the whole input it decoded
+-- from, not just the endorser block's bytes: the ledger's annotator slices
+-- them by the byte offsets of this decoder's run. Like the ledger, it rejects
+-- an empty map of transaction references and one naming a transaction twice.
 --
--- A capacity expressed in references ('encodeLeiosEbItemSize' each)
--- subtracts this once at the block level; no single transaction can be
--- charged for it.
-encodeLeiosEbMaxFramingSize :: ByteSize32
-encodeLeiosEbMaxFramingSize = ByteSize32 $ cborIntBytesSize (maxBound :: BytesSize)
+-- The endorser block keeps its slice of those bytes, so its hash and encoding
+-- are of the bytes received.
+decodeEndorserBlock :: Decoder s (BSL.ByteString -> EndorserBlock)
+decodeEndorserBlock =
+  toPlainDecoder Nothing endorserBlockVersion $
+    (. Full)
+      -- The annotator only slices the bytes, which cannot fail.
+      . (either (\e -> error ("Impossible, endorser block decoder failed: " <> show e)) MkEndorserBlock .)
+      . runAnnotator
+      <$> decCBOR
+
+-- | The widest framing 'encodeEndorserBlock' writes around the references: the
+-- map header. CBOR map headers have the same widths as 'cborIntBytesSize', and
+-- the reference count fits 'BytesSize'.
+maxFramingSize :: BytesSize
+maxFramingSize = cborIntBytesSize (maxBound :: BytesSize)
 
 -- | The references capacity a @maxEndorserBlockReferencesSize@ parameter
--- yields: the parameter minus the framing 'encodeLeiosEb' writes ahead of the
+-- yields: the parameter minus the framing 'encodeEndorserBlock' writes ahead of the
 -- references. A parameter smaller than the framing exhausts the capacity, so
 -- no reference fits, rather than wrapping around to \"no limit\".
-leiosReferencesCapacity :: BytesSize -> BytesSize
-leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
- where
-  ByteSize32 framing = encodeLeiosEbMaxFramingSize
+referencesCapacity :: BytesSize -> BytesSize
+referencesCapacity paramLimit = paramLimit - min paramLimit maxFramingSize
 
 -- | The design ceiling on an endorser block's encoding: what the node will
 -- forge, serve and size its buffers for.
@@ -381,26 +374,27 @@ leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
 -- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'
 -- rejects. Make it the constitution's guardrail on that parameter, and refuse
 -- to run with a parameter above it.
-maxLeiosEbBytesSize :: BytesSize
-maxLeiosEbBytesSize = 600 * 1000
+maxEndorserBlockBytesSize :: BytesSize
+maxEndorserBlockBytesSize = 600 * 1000
 
 -- | The most transactions an endorser block may name, given
--- 'maxLeiosEbBytesSize'.
+-- 'maxEndorserBlockBytesSize'.
 --
 -- It derives from the design ceiling and not from the protocol parameter,
 -- since the buffers it sizes are allocated before any ledger state is in reach.
-maxTxsPerEb :: Int
-maxTxsPerEb =
-  fromIntegral $ (maxLeiosEbBytesSize - framing) `div` minItemSize
+maxTxsPerEndorserBlock :: Int
+maxTxsPerEndorserBlock =
+  fromIntegral $ (maxEndorserBlockBytesSize - maxFramingSize) `div` minItemSize
  where
-  ByteSize32 framing = encodeLeiosEbMaxFramingSize
-  ByteSize32 minItemSize = encodeLeiosEbItemSize (ByteSize32 0)
+  ByteSize32 minItemSize = sizeEndorserBlockReference (ByteSize32 0)
 
--- | Compute the size of a 'LeiosEb' in its CBOR encoding.
-encodeLeiosEbSize :: LeiosEb -> BytesSize
-encodeLeiosEbSize (MkLeiosEb items) =
-  cborIntBytesSize (length items)
-    + sum (fmap (unByteSize32 . encodeLeiosEbItemSize . ByteSize32 . snd) items)
+-- | The size of an endorser block in its CBOR encoding.
+encodeEndorserBlockSize :: EndorserBlock -> BytesSize
+encodeEndorserBlockSize eb =
+  cborIntBytesSize (length references)
+    + sum (fmap (unByteSize32 . sizeEndorserBlockReference . ByteSize32 . snd) references)
+ where
+  references = endorserBlockReferences eb
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

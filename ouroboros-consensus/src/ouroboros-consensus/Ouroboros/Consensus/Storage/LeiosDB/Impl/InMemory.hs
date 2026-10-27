@@ -38,13 +38,13 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
-  , LeiosEb
+  , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxHash
   , TxOffset
-  , encodeLeiosEbSize
-  , leiosEbBodyItems
+  , encodeEndorserBlockSize
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( CompletedEbs
@@ -71,7 +71,7 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
-  { imEbTxBytes :: !(Map EbHash (IntMap {- txOffset -} ByteString))
+  { imEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
   -- ^ Tx bytes owned by the referencing EB, keyed by offset -- mirrors the
   -- SQLite backend's @ebTxBytes@ table. A tx shared by two EBs is stored
   -- twice, deliberately.
@@ -83,7 +83,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbBodiesDownloaded :: !(Set LeiosPoint)
   -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
   -- called. Only these points are considered for completion.
-  , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
+  , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by EB hash. Shared across every
   -- point that references the same EB.
   , imCompletedEbs :: !(Set LeiosPoint)
@@ -95,11 +95,11 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- 'addVote'). Each point carries the EB's hash and its announcer slot,
   -- so this is also the source for
   -- 'scanCompleteEbClosuresNotOlderThanSlot'.
-  , imImmutableEbBodies :: !(Map EbHash (IntMap EbTxEntry))
+  , imImmutableEbBodies :: !(Map EndorserBlockHash (IntMap EbTxEntry))
   -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
   -- collection evicts such an EB from the other fields like any other, and the
   -- reads fall back to this and 'imImmutableEbTxBytes'.
-  , imImmutableEbTxBytes :: !(Map EbHash (IntMap {- txOffset -} ByteString))
+  , imImmutableEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
   }
   deriving stock Generic
@@ -246,7 +246,7 @@ openInMemoryWriter stateVar notificationChan =
 
 -- * Top-level implementations
 
-imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EbHash)]
+imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EndorserBlockHash)]
 imScanEbPoints stateVar = atomically $ do
   state <- readTVar stateVar
   pure
@@ -261,7 +261,8 @@ imInsertEbPoint stateVar point ebBytesSize = atomically $
   modifyTVar stateVar $ \s ->
     s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
-imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m [(TxHash, BytesSize)]
+imLookupEbBody ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m [(TxHash, BytesSize)]
 imLookupEbBody stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state) of
@@ -277,11 +278,11 @@ imInsertEbBody ::
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
-  LeiosEb ->
+  EndorserBlock ->
   m CompletedEbs
 imInsertEbBody stateVar notificationChan point eb = do
-  let items = leiosEbBodyItems eb
-      ebBytesSize = encodeLeiosEbSize eb
+  let items = zip [0 :: Int ..] (endorserBlockReferences eb)
+      ebBytesSize = encodeEndorserBlockSize eb
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
@@ -296,7 +297,7 @@ imInsertEbBody stateVar notificationChan point eb = do
                   , eteTxBytesSize = size
                   }
               )
-            | (offset, txHash, size) <- items
+            | (offset, (txHash, size)) <- items
             ]
     modifyTVar stateVar $ \s ->
       s
@@ -329,7 +330,7 @@ imInsertEbBody stateVar notificationChan point eb = do
       else pure []
 
 -- | Whether every offset of this EB body has its bytes.
-hashCompleteIn :: InMemoryLeiosDb -> EbHash -> Bool
+hashCompleteIn :: InMemoryLeiosDb -> EndorserBlockHash -> Bool
 hashCompleteIn state h = case Map.lookup h (imEbBodies state) of
   Nothing -> False
   Just entries ->
@@ -415,7 +416,11 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
 -- body, even if that body's closure is incomplete. The SQLite implementation
 -- has the same shortcoming (see the TODO on @sqlBatchRetrieveTxs@).
 imBatchRetrieveTxs ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb ->
+  EndorserBlockHash ->
+  [Int] ->
+  m [(Int, TxHash, Maybe ByteString)]
 imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
   state <- readTVar stateVar
   pure $ case Map.lookup ebHash (imEbBodies state) of
@@ -431,7 +436,8 @@ imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
     ]
 
 imLookupEbClosure ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
 imLookupEbClosure stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   pure $ case Map.lookup ebHash (imEbBodies state) >>= closureWith (volatileTxBytes state ebHash) of
@@ -441,7 +447,7 @@ imLookupEbClosure stateVar ebHash = atomically $ do
         >>= closureWith (Map.findWithDefault IntMap.empty ebHash (imImmutableEbTxBytes state))
 
 -- | The EB's tx bytes by offset, from 'imEbTxBytes'.
-volatileTxBytes :: InMemoryLeiosDb -> EbHash -> IntMap ByteString
+volatileTxBytes :: InMemoryLeiosDb -> EndorserBlockHash -> IntMap ByteString
 volatileTxBytes s ebHash = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes s)
 
 -- | The body's closure, if the tx bytes hold each of its transactions.

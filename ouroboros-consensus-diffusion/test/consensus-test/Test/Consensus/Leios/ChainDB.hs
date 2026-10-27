@@ -2,11 +2,12 @@
 -- blocks that announce and certify them are immutable.
 module Test.Consensus.Leios.ChainDB (tests) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Control.Monad (forM_, void)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
-import qualified Data.Vector.Strict as V
+import qualified Data.ByteString.Short as SBS
 import Ouroboros.Consensus.Block (blockSlot)
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
@@ -29,7 +30,7 @@ tests =
   testGroup
     "ChainDB and LeiosDB"
     [ testCase "the GC keeps an endorser block an immutable block certifies" $
-        fst (runSimOrThrow bodiesAfterGc) @?= V.toList (leiosEbTxs ebA)
+        fst (runSimOrThrow bodiesAfterGc) @?= endorserBlockReferences ebA
     , testCase "the GC evicts an endorser block no block certifies" $
         snd (runSimOrThrow bodiesAfterGc) @?= []
     ]
@@ -44,7 +45,7 @@ bodiesAfterGc = withNode $ \nut -> do
   let leiosDb = getLeiosDB (nutKernel nut)
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
-      await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
+      await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
       void $ await =<< writeEbBody writer point eb
       void $
         await
@@ -52,7 +53,7 @@ bodiesAfterGc = withNode $ \nut -> do
             writer
             point
             [ (offset, BS.replicate (fromIntegral size) 0)
-            | (offset, (_txHash, size)) <- zip [0 ..] (V.toList (leiosEbTxs eb))
+            | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
             ]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
@@ -64,17 +65,18 @@ bodiesAfterGc = withNode $ \nut -> do
       <$> lookupEbBody reader (pointEbHash pointA)
       <*> lookupEbBody reader (pointEbHash pointB)
  where
-  pointA = MkLeiosPoint (blockSlot announcingA) (MkEbHash (BS.replicate 32 1))
-  pointB = MkLeiosPoint (blockSlot announcingB) (MkEbHash (BS.replicate 32 2))
+  pointA = MkLeiosPoint (blockSlot announcingA) (UnsafeHash (SBS.replicate 32 1))
+  pointB = MkLeiosPoint (blockSlot announcingB) (UnsafeHash (SBS.replicate 32 2))
 
-  announcingA = setAnnouncement (pointEbHash pointA) (encodeLeiosEbSize ebA) (firstLeiosBlock 1)
+  announcingA = setAnnouncement (pointEbHash pointA) (encodeEndorserBlockSize ebA) (firstLeiosBlock 1)
   certifyingA = setLeiosCert (successorLeiosBlock announcingA)
-  announcingB = setAnnouncement (pointEbHash pointB) (encodeLeiosEbSize ebB) (successorLeiosBlock certifyingA)
+  announcingB =
+    setAnnouncement (pointEbHash pointB) (encodeEndorserBlockSize ebB) (successorLeiosBlock certifyingA)
 
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.
   chain = take 16 $ announcingA : certifyingA : iterate successorLeiosBlock announcingB
 
-ebA, ebB :: LeiosEb
-ebA = MkLeiosEb (V.fromList [(MkTxHash (BS.replicate 32 1), 10)])
-ebB = MkLeiosEb (V.fromList [(MkTxHash (BS.replicate 32 2), 10)])
+ebA, ebB :: EndorserBlock
+ebA = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 1), 10)]
+ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]

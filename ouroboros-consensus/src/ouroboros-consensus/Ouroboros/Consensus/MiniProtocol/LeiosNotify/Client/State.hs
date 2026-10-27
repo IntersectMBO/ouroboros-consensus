@@ -70,8 +70,9 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , LeiosPoint (..)
   , LeiosVote (..)
-  , RbHash (..)
+  , RankingBlockHash
   , milliseconds32ToNominalDiffTime
+  , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
@@ -98,7 +99,7 @@ data LeiosNotifyPeerState blk = MkLeiosNotifyPeerState
   -- repeating an offer costs it the connection.
   , lnpsClosureOffers :: !(Set LeiosPoint)
   -- ^ Likewise, which it has offered the transaction closure of.
-  , lnpsAnnouncedRbHashes :: !(Map RbHash SlotNo)
+  , lnpsAnnouncedRbHashes :: !(Map RankingBlockHash SlotNo)
   -- ^ The announcing blocks this peer has sent, with their election slots, so
   -- that its votes can be held to them.
   , lnpsVotes :: !(Set (SlotNo, LeiosSeatId))
@@ -151,8 +152,8 @@ pruneLeiosNotifyPeerState immTipSlot st
 
 -- | The hash of the announcing block, which votes name.
 announcingRbHash ::
-  forall blk. (ConvertRawHash blk, GetHeader blk) => AnnouncingHeader blk -> RbHash
-announcingRbHash anc = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader anc)))
+  forall blk. (ConvertRawHash blk, GetHeader blk) => AnnouncingHeader blk -> RankingBlockHash
+announcingRbHash anc = toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc))
 
 -- | Thrown when a peer's offer over LeiosNotify is one an honest peer would not
 -- send; the ensuing thread death disconnects it.
@@ -321,7 +322,7 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st 
 data ExnLeiosNotifyInvalidVotes
   = -- | A vote for an announcing block this peer never sent us. This also rules
     -- out a vote in an empty slot.
-    ExnLeiosVoteWithoutAnnouncement !RbHash
+    ExnLeiosVoteWithoutAnnouncement !RankingBlockHash
   | -- | A second vote from one seat in one slot.
     ExnLeiosRepeatedVote
       -- | the election slot
@@ -333,7 +334,7 @@ data ExnLeiosNotifyInvalidVotes
     -- node's maximum clock skew so that an honest peer is never disconnected.
     ExnLeiosVoteTooEarly
       -- | the announcing block
-      !RbHash
+      !RankingBlockHash
       -- | the election slot
       !SlotNo
       -- | how long after the election slot began the vote arrived
@@ -344,7 +345,7 @@ data ExnLeiosNotifyInvalidVotes
     -- tip is among these, long past any window.
     ExnLeiosVoteTooLate
       -- | the announcing block
-      !RbHash
+      !RankingBlockHash
       -- | the election slot
       !SlotNo
       -- | how long after the election slot began the vote arrived
@@ -354,7 +355,7 @@ data ExnLeiosNotifyInvalidVotes
     -- tip, so this should never happen.
     ExnLeiosVoteOutsideHorizon
       -- | the announcing block
-      !RbHash
+      !RankingBlockHash
       -- | the election slot
       !SlotNo
   deriving Show

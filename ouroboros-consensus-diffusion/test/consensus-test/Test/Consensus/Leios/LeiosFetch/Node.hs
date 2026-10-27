@@ -7,6 +7,7 @@
 -- against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -18,18 +19,19 @@ import Data.Bits ((.|.))
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
-  , LeiosEb (..)
+  ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , TxHash (..)
-  , encodeLeiosEbSize
+  , TxHash
+  , encodeEndorserBlockSize
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -42,7 +44,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import Ouroboros.Network.Channel (Channel)
-import Ouroboros.Network.Driver.Simple (runPeer)
+import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -94,7 +96,7 @@ data ServerOutcome = ServerEnded | ServerFailed String
   deriving (Eq, Show)
 
 type EnvClient s =
-  Peer (LeiosFetch LeiosPoint LeiosEb LeiosTx) AsClient NonPipelined StIdle (IOSim s) ()
+  Peer (LeiosFetch LeiosPoint EndorserBlock LeiosTx) AsClient NonPipelined StIdle (IOSim s) ()
 
 -- | Run the node's server, with 'heldEb' in its LeiosDB, against a peer that
 -- runs this client.
@@ -115,12 +117,12 @@ nodeServerAgainst client = withNode $ \nut -> do
       Left e -> pure $ ServerFailed (show e)
 
 runEnvClient :: NodeUnderTest (IOSim s) -> EnvClient s -> Channel (IOSim s) ByteString -> IOSim s ()
-runEnvClient nut client chan = fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan client
+runEnvClient nut client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan client
 
 doneClient :: EnvClient s
 doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
 
-data Reply = ReplyBlock LeiosEb | ReplyTxs [LeiosTx]
+data Reply = ReplyBlock EndorserBlock | ReplyTxs [LeiosTx]
   deriving (Eq, Show)
 
 -- | The node's reply to the client's one request, if it replied, and how its
@@ -163,19 +165,19 @@ bitmapsNaming offsets =
 
 -- | An endorser block of 70 transactions, so that a request for them takes two
 -- bitmaps.
-heldEb :: LeiosEb
+heldEb :: EndorserBlock
 heldEb =
-  MkLeiosEb $
-    V.fromList [(heldTxHash i, fromIntegral (BS.length (heldTxBytes i))) | i <- [0 .. 69]]
+  mkEndorserBlock $
+    [(heldTxHash i, fromIntegral (BS.length (heldTxBytes i))) | i <- [0 .. 69]]
 
 heldPoint :: LeiosPoint
-heldPoint = MkLeiosPoint 1 (MkEbHash (BS.replicate 32 1))
+heldPoint = MkLeiosPoint 1 (UnsafeHash (SBS.replicate 32 1))
 
 unknownPoint :: LeiosPoint
-unknownPoint = MkLeiosPoint 1 (MkEbHash (BS.replicate 32 2))
+unknownPoint = MkLeiosPoint 1 (UnsafeHash (SBS.replicate 32 2))
 
 heldTxHash :: Int -> TxHash
-heldTxHash i = MkTxHash (BS.replicate 31 0 <> BS.singleton (fromIntegral i))
+heldTxHash i = UnsafeHash (SBS.replicate 31 0 <> SBS.singleton (fromIntegral i))
 
 heldTxBytes :: Int -> BS.ByteString
 heldTxBytes i = BS.replicate (10 + i) (fromIntegral i)
@@ -186,7 +188,7 @@ heldTx = MkLeiosTx . heldTxBytes
 -- | Write 'heldEb' and all its transactions but the last.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb nut = withWriter (getLeiosDB (nutKernel nut)) $ \writer -> do
-  await =<< writeEbPoint writer heldPoint (encodeLeiosEbSize heldEb)
+  await =<< writeEbPoint writer heldPoint (encodeEndorserBlockSize heldEb)
   _ <- await =<< writeEbBody writer heldPoint heldEb
   _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
   pure ()

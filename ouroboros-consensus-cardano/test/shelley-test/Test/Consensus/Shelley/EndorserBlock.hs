@@ -1,22 +1,25 @@
 -- | The sizes the mempool charges for an endorser block agree with
--- the bytes 'encodeLeiosEb' writes.
+-- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
+import Cardano.Binary (ToCBOR (..))
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (TopTx, Tx)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
-import qualified Data.Vector.Strict as V
+import qualified Data.ByteString.Short as SBS
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , LeiosEb (..)
-  , TxHash (..)
-  , encodeLeiosEb
-  , encodeLeiosEbItemSize
-  , encodeLeiosEbMaxFramingSize
-  , leiosReferencesCapacity
+  , EndorserBlock
+  , TxHash
+  , encodeEndorserBlock
+  , endorserBlockReferences
+  , mkEndorserBlock
+  , referencesCapacity
+  , sizeEndorserBlockReference
   )
 import Ouroboros.Consensus.Shelley.Ledger.Forge (ebTxBytes)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
@@ -28,10 +31,14 @@ tests :: TestTree
 tests =
   testGroup
     "Endorser block"
-    [ testProperty "encodeLeiosEbItemSize consistent with encodeLeiosEb" prop_referenceSizeConsistent
-    , testProperty "encodeLeiosEb framing bounded by encodeLeiosEbMaxFramingSize" prop_ebFramingBounded
+    [ testProperty
+        "sizeEndorserBlockReference consistent with encodeEndorserBlock"
+        prop_referenceSizeConsistent
     , testProperty
-        "leiosReferencesCapacity floors at zero instead of wrapping"
+        "encodeEndorserBlock framing bounded by what referencesCapacity subtracts"
+        prop_ebFramingBounded
+    , testProperty
+        "referencesCapacity floors at zero instead of wrapping"
         prop_referencesCapacityFloorsAtZero
     , testProperty
         "the tx size a forged endorser block records does not exceed the tx size the mempool records"
@@ -40,7 +47,7 @@ tests =
     ]
 
 genTxHash :: Gen TxHash
-genTxHash = MkTxHash . BS.pack <$> vectorOf 32 arbitrary
+genTxHash = UnsafeHash . SBS.pack <$> vectorOf 32 arbitrary
 
 -- | A tx size with good coverage of CBOR encoding boundaries.
 -- Values 0-23 encode in 1 byte, 24-255 in 2 bytes, 256-65535 in 3 bytes.
@@ -69,37 +76,41 @@ genNumReferences =
     , (3, chooseInt (0, 1000))
     ]
 
-genLeiosEb :: Int -> Gen LeiosEb
-genLeiosEb numTxs =
-  MkLeiosEb . V.fromList <$> vectorOf numTxs ((,) <$> genTxHash <*> genTxBytesSize)
+genEndorserBlock :: Int -> Gen EndorserBlock
+genEndorserBlock numTxs =
+  mkEndorserBlock <$> vectorOf numTxs ((,) <$> genTxHash <*> genTxBytesSize)
 
--- | The per-reference charge 'encodeLeiosEbItemSize', which the mempool charges a
--- transaction for its reference, agrees with the bytes 'encodeLeiosEb' writes
+-- | The per-reference charge 'sizeEndorserBlockReference', which the mempool charges a
+-- transaction for its reference, agrees with the bytes 'encodeEndorserBlock' writes
 -- for that reference.
 prop_referenceSizeConsistent :: Property
 prop_referenceSizeConsistent =
-  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash@(MkTxHash bytes), txSize) ->
-    let encoded = toStrictByteString $ CBOR.encodeBytes bytes <> CBOR.encodeWord32 txSize
-        ByteSize32 estimatedSize = encodeLeiosEbItemSize (ByteSize32 txSize)
+  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash, txSize) ->
+    let encoded = toStrictByteString $ toCBOR txHash <> CBOR.encodeWord32 txSize
+        ByteSize32 estimatedSize = sizeEndorserBlockReference (ByteSize32 txSize)
      in counterexample
           ("reference: " <> show (txHash, txSize))
           (estimatedSize === fromIntegral (BS.length encoded))
 
--- | Whatever 'encodeLeiosEb' writes around the references stays within
--- 'encodeLeiosEbMaxFramingSize', the one-off amount capacities subtract.
+-- | Whatever 'encodeEndorserBlock' writes around the references stays within
+-- the 'framing' that 'referencesCapacity' subtracts.
 prop_ebFramingBounded :: Property
 prop_ebFramingBounded =
-  forAll (genNumReferences >>= genLeiosEb) $ \eb ->
-    let actualSize = fromIntegral $ BS.length (toStrictByteString (encodeLeiosEb eb))
+  forAll (genNumReferences >>= genEndorserBlock) $ \eb ->
+    let actualSize = fromIntegral $ BS.length (toStrictByteString (encodeEndorserBlock eb))
         itemsSize =
           sum
-            [ unByteSize32 (encodeLeiosEbItemSize (ByteSize32 txSize))
-            | (_txHash, txSize) <- V.toList (leiosEbTxs eb)
+            [ unByteSize32 (sizeEndorserBlockReference (ByteSize32 txSize))
+            | (_txHash, txSize) <- endorserBlockReferences eb
             ]
         framing = actualSize - itemsSize
      in counterexample
-          ("references: " <> show (V.length (leiosEbTxs eb)) <> ", framing: " <> show framing)
-          (property $ actualSize >= itemsSize && framing <= unByteSize32 encodeLeiosEbMaxFramingSize)
+          ("references: " <> show (length (endorserBlockReferences eb)) <> ", framing: " <> show framing)
+          (property $ actualSize >= itemsSize && framing <= maxFraming)
+
+-- | The framing 'referencesCapacity' subtracts from a parameter.
+maxFraming :: BytesSize
+maxFraming = maxBound - referencesCapacity maxBound
 
 -- | A @maxEndorserBlockReferencesSize@ at or below the framing yields a zero
 -- references capacity, so nothing fits. It never wraps around to \"no limit\",
@@ -107,23 +118,21 @@ prop_ebFramingBounded =
 prop_referencesCapacityFloorsAtZero :: Property
 prop_referencesCapacityFloorsAtZero =
   forAll genParamLimit $ \paramLimit ->
-    let capacity = leiosReferencesCapacity paramLimit
+    let capacity = referencesCapacity paramLimit
      in counterexample ("capacity: " <> show capacity) $
           conjoin
             [ counterexample "capacity must never exceed the parameter (wrap-around)" $
                 property $
                   capacity <= paramLimit
             , counterexample "a parameter within the framing must yield zero capacity" $
-                paramLimit > framing .||. capacity === 0
+                paramLimit > maxFraming .||. capacity === 0
             ]
  where
-  framing = unByteSize32 encodeLeiosEbMaxFramingSize
-
   -- Weighted towards the boundary a plain subtraction wraps on.
   genParamLimit =
     frequency
-      [ (4, chooseEnum (0, framing))
-      , (1, chooseEnum (framing + 1, maxBound))
+      [ (4, chooseEnum (0, maxFraming))
+      , (1, chooseEnum (maxFraming + 1, maxBound))
       ]
 
 -- | The length of the 'ebTxBytes' of a Dijkstra transaction never exceeds

@@ -44,6 +44,8 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Network.TypedProtocol.Codec.CBOR
   ( ActiveState
+  , AnnotatedCodec
+  , Annotator (..)
   , AnyMessage (..)
   , Codec
   , CodecF (..)
@@ -59,7 +61,7 @@ import Network.TypedProtocol.Core
   , Protocol (..)
   , StateAgency
   )
-import Ouroboros.Consensus.Leios.Types (maxLeiosEbBytesSize)
+import Ouroboros.Consensus.Leios.Types (maxEndorserBlockBytesSize)
 import Ouroboros.Consensus.Util.CBOR (decodeListUpTo)
 import Ouroboros.Network.Protocol.Limits
   ( ProtocolSizeLimits (..)
@@ -200,17 +202,19 @@ byteLimitsLeiosFetch ::
   ProtocolSizeLimits (LeiosFetch point eb tx) bytes
 byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
-  SingBlock -> withMargin maxLeiosEbBytesSize
+  -- A 'MsgLeiosBlock' adds two bytes to an endorser block. Bounding its
+  -- encoding by 'maxEndorserBlockBytesSize' also bounds its references by
+  -- 'maxTxsPerEndorserBlock'.
+  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 2
   SingBlockTxs -> withMargin maxLeiosTxsRequestBytesSize
   st@SingDone -> notActiveState st
  where
-  -- The margin covers what each reply writes around its payload. A
-  -- 'MsgLeiosBlock' adds two bytes to an endorser block, whose own encoding
-  -- 'maxLeiosEbBytesSize' bounds. A 'MsgLeiosBlockTxs' adds at most seven
-  -- bytes, plus a CBOR-in-CBOR tag and byte-string header per transaction: four
-  -- bytes while the transaction is under 256 bytes, five under 64 KiB, seven
-  -- beyond. A valid transaction spends at least one input, so it takes at least
-  -- 47 bytes, and the headers add under 9% of 'maxLeiosTxsRequestBytesSize'.
+  -- The margin covers what a 'MsgLeiosBlockTxs' writes around its payload: at
+  -- most seven bytes, plus a CBOR-in-CBOR tag and byte-string header per
+  -- transaction: four bytes while the transaction is under 256 bytes, five under
+  -- 64 KiB, seven beyond. A valid transaction spends at least one input, so it
+  -- takes at least 47 bytes, and the headers add under 9% of
+  -- 'maxLeiosTxsRequestBytesSize'.
   withMargin :: Word32 -> Word
   withMargin x = fromIntegral $ x + x `div` 10
 
@@ -233,10 +237,13 @@ codecLeiosFetch ::
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
   (eb -> CBOR.Encoding) ->
-  (forall s. CBOR.Decoder s eb) ->
+  -- | Decode an endorser block, given the bytes of the whole message. Its byte
+  -- offsets count from the start of the message, as the ledger's annotators
+  -- expect, so it slices its own bytes out of them.
+  (forall s. CBOR.Decoder s (ByteString -> eb)) ->
   (tx -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s tx) ->
-  Codec (LeiosFetch point eb tx) CBOR.DeserialiseFailure m ByteString
+  AnnotatedCodec (LeiosFetch point eb tx) CBOR.DeserialiseFailure m ByteString
 codecLeiosFetch maxTxs encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
   mkCodecCborLazyBS
     (encodeLeiosFetch encodeP encodeEb encodeTx)
@@ -247,7 +254,7 @@ codecLeiosFetch maxTxs encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
     ActiveState st =>
     StateToken st ->
     forall s.
-    CBOR.Decoder s (SomeMessage st)
+    CBOR.Decoder s (Annotator ByteString st)
   decode stok =
     decodeRecordSum
       (T.pack $ "LeiosFetch (" <> show stok <> ")")
@@ -298,35 +305,42 @@ decodeLeiosFetch ::
   ActiveState st =>
   Int ->
   (forall s'. CBOR.Decoder s' point) ->
-  (forall s'. CBOR.Decoder s' eb) ->
+  (forall s'. CBOR.Decoder s' (ByteString -> eb)) ->
   (forall s'. CBOR.Decoder s' tx) ->
   StateToken st ->
   Word ->
-  CBOR.Decoder s (Int, SomeMessage st)
+  CBOR.Decoder s (Int, Annotator ByteString st)
 decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
   case (stok, key) of
-    (SingIdle, 0) -> fields 1 $ return (SomeMessage MsgDone)
+    (SingIdle, 0) -> fields 1 $ return (plain MsgDone)
     (SingIdle, 1) -> fields 2 $ do
       p <- decodeP
-      return $ SomeMessage $ MsgLeiosBlockRequest p
+      return $ plain $ MsgLeiosBlockRequest p
     (SingBlock, 2) -> fields 2 $ do
       x <- decodeEb
-      return $ SomeMessage $ MsgLeiosBlock x
+      return $ Annotator $ SomeMessage . MsgLeiosBlock . x
     (SingIdle, 3) -> fields 3 $ do
       p <- decodeP
       bitmaps <- decodeBitmaps maxTxs
-      return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
+      return $ plain $ MsgLeiosBlockTxsRequest p bitmaps
     (SingBlockTxs, 4) -> fields 2 $ do
       txs <- decodeListUpTo "MsgLeiosBlockTxs" maxTxs decodeTx
-      return $ SomeMessage $ MsgLeiosBlockTxs $ V.fromList txs
+      return $ plain $ MsgLeiosBlockTxs $ V.fromList txs
     (SingDone, _) -> notActiveState stok
     -- failures per protocol state
     (SingIdle, _) -> unexpected
     (SingBlock, _) -> unexpected
     (SingBlockTxs, _) -> unexpected
  where
-  fields :: Int -> CBOR.Decoder s (SomeMessage st) -> CBOR.Decoder s (Int, SomeMessage st)
+  fields ::
+    Int -> CBOR.Decoder s (Annotator ByteString st) -> CBOR.Decoder s (Int, Annotator ByteString st)
   fields n = fmap ((,) n)
+
+  plain ::
+    forall st'.
+    (StateTokenI st, StateTokenI st') =>
+    Message (LeiosFetch point eb tx) st st' -> Annotator ByteString st
+  plain = Annotator . const . SomeMessage
 
   unexpected :: forall a. CBOR.Decoder s a
   unexpected =

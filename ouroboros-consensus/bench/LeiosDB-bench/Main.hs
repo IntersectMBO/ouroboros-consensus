@@ -47,6 +47,7 @@
 -- a disk for realistic numbers.
 module Main (main) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (getNumCapabilities)
 import Control.Concurrent.Async (async, cancel, wait)
@@ -62,21 +63,24 @@ import Control.Tracer (nullTracer)
 import Data.Bits (shiftR, xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort, sortOn)
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
-import qualified Data.Vector.Strict as V
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
-  , LeiosEb (..)
+  , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxHash
   , TxOffset
-  , encodeLeiosEbSize
+  , encodeEndorserBlockSize
+  , endorserBlockReferences
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
@@ -110,7 +114,7 @@ main = do
             <> " Txs of "
             <> showBytes txBytesSize
             <> " (body "
-            <> showBytes (fromIntegral (encodeLeiosEbSize (genEb 0)))
+            <> showBytes (fromIntegral (encodeEndorserBlockSize (genEb 0)))
             <> ", closure "
             <> showBytes (txsPerEb * txBytesSize)
             <> ")"
@@ -204,8 +208,8 @@ numDownstreamPeers = 100
 -- see 'fetchEb'.
 data BenchEb = BenchEb
   { beIdx :: !Int
-  , beHash :: !EbHash
-  , beEb :: !LeiosEb
+  , beHash :: !EndorserBlockHash
+  , beEb :: !EndorserBlock
   , beBatches :: ![[(TxOffset, BS.ByteString)]]
   -- ^ The Txs, as the fetch responses deliver them.
   , beMeasured :: !Bool
@@ -334,7 +338,7 @@ drainWith q k = loop
 writeBody :: LeiosDbWriter IO -> LeiosPoint -> BenchEb -> Record -> IO ()
 writeBody w point eb@BenchEb{beEb} record =
   timedStep eb FetchBody record $ do
-    pointWritten <- writeEbPoint w point (encodeLeiosEbSize beEb)
+    pointWritten <- writeEbPoint w point (encodeEndorserBlockSize beEb)
     bodyWritten <- writeEbBody w point beEb
     awaitAll [pointWritten, void bodyWritten]
 
@@ -510,7 +514,8 @@ sleepUntil t = do
 -- | Generate the EB of the given index, fully evaluated.
 genBenchEb :: Int -> Bool -> IO BenchEb
 genBenchEb ebIdx measured = do
-  _ <- evaluate $ V.foldl' (\n (MkTxHash h, _) -> n + BS.length h) 0 (leiosEbTxs eb)
+  _ <-
+    evaluate $ List.foldl' (\n (h, _) -> n + BS.length (hashToBytes h)) 0 (endorserBlockReferences eb)
   _ <- evaluate $ sum [BS.length tx | batch <- batches, (_, tx) <- batch]
   pure
     BenchEb
@@ -525,23 +530,22 @@ genBenchEb ebIdx measured = do
   -- The upstreams' order is seed 0.
   batches = [[(off, genTx (genTxHash ebIdx off)) | off <- offs] | offs <- requests 0 ebIdx]
 
--- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
-genEbHash :: Int -> EbHash
-genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+-- | 'EndorserBlockHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
+genEbHash :: Int -> EndorserBlockHash
+genEbHash i = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
--- | 'LeiosEb' with 'txsPerEb' transactions of 'txBytesSize' each.
+-- | 'EndorserBlock' with 'txsPerEb' transactions of 'txBytesSize' each.
 --
 -- The declared size must be the payload size of 'genTx': a tx write of any
 -- other size is dropped.
-genEb :: Int -> LeiosEb
+genEb :: Int -> EndorserBlock
 genEb ebIdx =
-  MkLeiosEb $
-    V.fromList
-      [ (genTxHash ebIdx txIdx, fromIntegral txBytesSize :: BytesSize)
-      | txIdx <- [0 .. txsPerEb - 1]
-      ]
+  mkEndorserBlock
+    [ (genTxHash ebIdx txIdx, fromIntegral txBytesSize :: BytesSize)
+    | txIdx <- [0 .. txsPerEb - 1]
+    ]
 
 -- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
 -- to 32 bytes with zeros.
@@ -549,11 +553,13 @@ genEb ebIdx =
 -- NOTE: This is taking an EB index as it always generates the worst case of
 -- fully disjunct transaction closures between EBs.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to
 -- 'txBytesSize'.
 genTx :: TxHash -> BS.ByteString
-genTx (MkTxHash h) = h <> BS.replicate (txBytesSize - BS.length h) 0
+genTx txHash = h <> BS.replicate (txBytesSize - BS.length h) 0
+ where
+  h = hashToBytes txHash

@@ -6,11 +6,13 @@
 module Test.Consensus.Cardano.LeiosNotify (tests) where
 
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString, toStrict)
+import qualified Data.ByteString.Short as SBS
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
@@ -20,10 +22,9 @@ import Ouroboros.Consensus.Block (Header, SlotNo (..))
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock, StandardCrypto)
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , LeiosVote (..)
-  , RbHash (..)
+  , RankingBlockHash (..)
   , decodeLeiosPoint
   , decodeLeiosVote
   , encodeLeiosPoint
@@ -97,14 +98,17 @@ prop_nodeCodecMatchesCDDL =
   -- LeiosNotify runs only from 'NodeToNodeV_16' on.
   leiosVersion = supportedNodeToNodeVersions (Proxy @Blk) Map.! NodeToNodeV_16
 
-  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> (MkEbHash <$> genHash)
+  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> genHash
 
   -- The codec does not check a vote's signature, so any key will do.
   genVote = do
-    rbHash <- MkRbHash <$> genHash
+    rbHash <- MkRankingBlockHash <$> genHash
     seat <- LeiosSeatId <$> arbitrary
     pure $
       MkLeiosVote rbHash seat $
-        signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
+        signDSIGN
+          leiosSignContext
+          rbHash
+          (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
 
-  genHash = BS.pack <$> vectorOf 32 arbitrary
+  genHash = UnsafeHash . SBS.pack <$> vectorOf 32 arbitrary

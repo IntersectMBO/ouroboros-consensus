@@ -16,6 +16,7 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
+import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero, unNonZero)
 import Data.ByteString.Short (fromShort)
 import Data.Function (on)
@@ -32,7 +33,6 @@ import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
-import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
@@ -55,10 +55,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types
-  ( LeiosEb (..)
-  , TxHash (..)
-  )
+import Ouroboros.Consensus.Leios.Types (EndorserBlock, mkEndorserBlock)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -141,10 +138,10 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
               }
       }
 
-  ebListing :: [GenTx BlockA] -> LeiosEb
+  ebListing :: [GenTx BlockA] -> EndorserBlock
   ebListing txs =
-    MkLeiosEb $
-      V.fromList [(MkTxHash (fromShort (toRawTxIdHash (txId tx))), 0) | tx <- txs]
+    mkEndorserBlock
+      [(Hash.castHash (Hash.hashWith fromShort (toRawTxIdHash (txId tx))), 0) | tx <- txs]
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB

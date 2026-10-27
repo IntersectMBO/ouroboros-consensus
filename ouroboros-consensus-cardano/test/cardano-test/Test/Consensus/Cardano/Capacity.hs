@@ -188,7 +188,7 @@ prop_dijkstra st =
       ledgerTables
 
 -- | A Dijkstra transaction costs its block measure in the closure, and the
--- reference 'Ouroboros.Consensus.Leios.Types.encodeLeiosEb' writes for its
+-- reference 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes for its
 -- byte size. The reference-scripts size differs from the byte size, so
 -- reading the wrong field fails.
 test_dijkstraTxEbMeasure :: Assertion

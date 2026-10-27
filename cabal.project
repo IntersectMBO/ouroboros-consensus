@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-09-30T08:47:51Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-10-05T13:20:29Z
+  , cardano-haskell-packages 2026-10-16T13:16:21Z
 
 packages: .
 
@@ -43,12 +43,12 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- master after https://github.com/IntersectMBO/cardano-ledger/pull/6148
+-- Points to cardano-ledger master after https://github.com/IntersectMBO/cardano-ledger/pull/6219
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  --sha256: sha256-e1e3GwjKaFVtWxcJPfGlCKb1WJ8WV30qc//1eCki7BU=
-  tag: 6654c3e5e348aaa735d428fba0973dd17703d9d3
+  --sha256: sha256-WylaMiP9fbJyG88zkvnGhtmmVi84UEsimyXS8ecAFpQ=
+  tag: b21c518eb6ef27b8e5d3731bc9f432378a39ef1b
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
@@ -74,7 +74,3 @@ allow-newer:
     , cardano-keys:cardano-ledger-core
     , cardano-keys:cardano-ledger-shelley
     , cardano-keys:cardano-protocol
-    , cardano-config:cardano-ledger-conway
-    , cardano-config:cardano-ledger-core
-    , cardano-config:cardano-ledger-dijkstra
-    , cardano-config:cardano-ledger-shelley

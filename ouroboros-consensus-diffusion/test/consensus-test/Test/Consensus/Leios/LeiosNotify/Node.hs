@@ -8,6 +8,7 @@
 -- connections against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -17,20 +18,19 @@ import Control.Monad.Class.MonadTime.SI (DiffTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word8)
-import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
+import Ouroboros.Consensus.Block (SlotNo (..), blockHash)
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , LeiosVote (..)
-  , RbHash (..)
+  , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
@@ -152,7 +152,7 @@ tests =
         runSimOrThrow
           ( timeout 100 $
               nodeClientAgainstOffers
-                [MsgLeiosBlockOffer (MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 2))) 1000]
+                [MsgLeiosBlockOffer (MkLeiosPoint (SlotNo 1) (UnsafeHash (SBS.replicate 32 2))) 1000]
           )
           @?= Just (NodeClientDisconnected OfferWithoutAnnouncement)
     , testCase "the node's client disconnects a peer that repeats a body offer" $
@@ -189,7 +189,7 @@ tests =
         $ runSimOrThrow
           ( timeout 100 $
               nodeClientAgainstOffers
-                [MsgLeiosBlockTxsOffer (MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 2)))]
+                [MsgLeiosBlockTxsOffer (MkLeiosPoint (SlotNo 1) (UnsafeHash (SBS.replicate 32 2)))]
           )
           @?= Just (NodeClientDisconnected ClosureOfferWithoutAnnouncement)
     , testCase "the node's client disconnects a peer that repeats a closure offer" $
@@ -422,7 +422,7 @@ nodeClientUnpromptedCancel = withNode $ \nut ->
 
 -- | Announce an endorser block whose hash repeats the given byte 32 times.
 ann :: Word8 -> LeiosTestBlock -> LeiosTestBlock
-ann n = setAnnouncement (MkEbHash (BS.replicate 32 n)) 1000
+ann n = setAnnouncement (UnsafeHash (SBS.replicate 32 n)) 1000
 
 -- | A peer that relays these headers, one per request.
 nodeClientAgainstAnnouncements :: [LeiosTestBlock] -> IOSim s NodeClientOutcome
@@ -536,7 +536,7 @@ nodeClientAgainstSchedule schedule = withNode $ \nut -> do
 
 -- | A vote from this seat for the announcement this block carries.
 voteFor :: LeiosTestBlock -> Word16 -> LeiosVote
-voteFor blk seat = signedVote (MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))) seat
+voteFor blk seat = signedVote (toRankingBlockHash (Proxy @LeiosTestBlock) (blockHash blk)) seat
 
 someAnnouncingBlock :: LeiosTestBlock
 someAnnouncingBlock = ann 1 (firstLeiosBlock 0)
@@ -585,7 +585,7 @@ someAnnouncement = MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBloc
 
 -- | The endorser block 'someAnnouncement' announces.
 someOfferedPoint :: LeiosPoint
-someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
+someOfferedPoint = MkLeiosPoint (SlotNo 1) (UnsafeHash (SBS.replicate 32 1))
 
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)

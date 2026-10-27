@@ -832,13 +832,13 @@ instance TxEbMeasureByteSize DijkstraEbMeasure where
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes
--- 'Leios.encodeLeiosEb' writes for it.
+-- 'Leios.encodeEndorserBlock' writes for it.
 txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure
 txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
   DijkstraEbMeasure
     { ebClosureMeasure = TxMeasure alonzo refScripts
     , txReferencesSize =
-        IgnoringOverflow . Leios.encodeLeiosEbItemSize $
+        IgnoringOverflow . Leios.sizeEndorserBlockReference $
           txMeasureByteSize alonzo
     }
 
@@ -860,14 +860,14 @@ leiosEndorserBlockCapacity st =
               IgnoringOverflow $
                 ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
           )
-    , -- Transactions are charged 'Leios.encodeLeiosEbItemSize' for their
-      -- reference and nothing else, so the framing 'Leios.encodeLeiosEb' writes
+    , -- Transactions are charged 'Leios.sizeEndorserBlockReference' for their
+      -- reference and nothing else, so the framing 'Leios.encodeEndorserBlock' writes
       -- ahead of them comes off the capacity here.
       --
       -- Nothing checks that an endorser block of this size fits one LeiosFetch
       -- message. That check must come with the LeiosFetch protocol.
       txReferencesSize =
-        IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity $
+        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity $
           pparams ^. ppMaxEndorserBlockReferencesSizeL
     }
  where
