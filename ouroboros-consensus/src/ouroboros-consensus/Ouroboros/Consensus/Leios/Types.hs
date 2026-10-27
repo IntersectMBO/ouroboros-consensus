@@ -337,9 +337,10 @@ encodeEndorserBlock (MkEndorserBlock references) =
 -- an empty map of transaction references and one naming a transaction twice.
 -- It also rejects one whose bytes exceed 'maxEndorserBlockBytesSize'. It can
 -- tell only after decoding them (if endorser blocks were wrapped as
--- CBOR-in-CBOR, they would instead state their length up front), since a CBOR
--- map gives its number of entries rather than of bytes. So the byte limit of
--- the message carrying it must keep small the work it does before then, eg
+-- CBOR-in-CBOR, it would know their length before decoding them, even from an
+-- indefinite-length byte string), since a CBOR map gives its number of entries
+-- rather than of bytes. So the byte limit of the message carrying it must keep
+-- small the work it does before then, eg
 -- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'.
 --
 -- The endorser block keeps its slice of those bytes, so its hash and encoding
