@@ -108,10 +108,9 @@ tests =
             -- The same reference as 'oneRefEb', but other bytes.
             assertBool "hashes the bytes received" $
               fmap endorserBlockHash decoded /= Just (endorserBlockHash (fst oneRefEb))
-        , expectFailBecause "encodeEndorserBlockSize assumes the ledger's encoding" $
-            testProperty
-              "keeps, sizes and hashes the bytes of an endorser block in any encoding"
-              prop_endorserBlockInAnyEncoding
+        , testProperty
+            "keeps, sizes and hashes the bytes of an endorser block in any encoding"
+            prop_endorserBlockInAnyEncoding
         , testCase "rejects an empty endorser block" $
             decodeBlock (definite [CBOR.encodeWord 2, definiteMap []]) >>= (@?= Nothing)
         , testCase "rejects an endorser block naming a transaction twice" $

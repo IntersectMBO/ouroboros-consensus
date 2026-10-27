@@ -93,6 +93,7 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
+  , SafeToHash (originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
@@ -388,13 +389,10 @@ maxTxsPerEndorserBlock =
  where
   ByteSize32 minItemSize = sizeEndorserBlockReference (ByteSize32 0)
 
--- | The size of an endorser block in its CBOR encoding.
+-- | The size of 'encodeEndorserBlock': of the bytes the endorser block was
+-- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
-encodeEndorserBlockSize eb =
-  cborIntBytesSize (length references)
-    + sum (fmap (unByteSize32 . sizeEndorserBlockReference . ByteSize32 . snd) references)
- where
-  references = endorserBlockReferences eb
+encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

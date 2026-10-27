@@ -24,7 +24,6 @@ import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
-import Codec.CBOR.Write (toStrictByteString)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Maybe (isJust)
@@ -39,7 +38,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , TxHash
-  , encodeEndorserBlock
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
@@ -101,9 +99,6 @@ prop_announcesEb =
           conjoin
             [ counterexample "the endorser block does not reference the transactions in order" $
                 endorserBlockReferences eb === map reference ebTxs
-            , counterexample "encodeEndorserBlockSize differs from the length of encodeEndorserBlock" $
-                encodeEndorserBlockSize eb
-                  === fromIntegral (BS.length (toStrictByteString (encodeEndorserBlock eb)))
             , announcement blk
                 === SJust
                   EbReferencesAnnouncement
@@ -120,7 +115,8 @@ prop_noEb =
     ForgeBlockResult blk forgedEb <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
 
--- | A number of endorser-block transactions. 'encodeEndorserBlockSize' writes a
+-- | A number of endorser-block transactions.
+-- 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes a
 -- longer map header from 24 and from 256 references.
 genNumEbTxs :: Gen Int
 genNumEbTxs =
