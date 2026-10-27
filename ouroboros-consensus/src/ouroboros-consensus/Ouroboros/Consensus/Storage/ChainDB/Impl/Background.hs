@@ -165,9 +165,6 @@ launchBgTasks cdb@CDB{..} leiosEbNotifications = do
 -- | Grow 'cdbAcquiredLeiosEbs' from the LeiosDB's notifications, and enqueue a
 -- reprocess of the blocks parked on each endorser block the first time its
 -- closure is acquired.
---
--- The set grows before the enqueue, which can block, so that ChainSel sees
--- the closure even while the queue is full.
 leiosAcquiredEbsRunner ::
   IOLike m => ChainDbEnv m blk -> StrictTChan m LeiosEbNotification -> m Void
 leiosAcquiredEbsRunner CDB{..} notifications =
@@ -179,6 +176,8 @@ leiosAcquiredEbsRunner CDB{..} notifications =
           acquired <- readTVar cdbAcquiredLeiosEbs
           writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
           pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
+        -- The set has already grown, so ChainSel sees the closure even while
+        -- this enqueue blocks on a full queue.
         when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
 
 {-------------------------------------------------------------------------------
@@ -762,6 +761,9 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           case message of
             ChainSelReprocessLoEBlocks varProcessed ->
               void $ tryPutTMVar varProcessed ()
+            -- No promise to fulfil. The parked blocks are not lost: the ChainDB
+            -- is closing, and initial chain selection reconsiders them when it
+            -- reopens.
             ChainSelReprocessLeiosEb{} ->
               pure ()
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
