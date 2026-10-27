@@ -88,6 +88,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosEbNotification (..))
+import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -521,7 +522,7 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
-  leiosDbGarbageCollect cdbLeiosDb slotNo
+  LeiosDB.garbageCollect cdbLeiosDb slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo

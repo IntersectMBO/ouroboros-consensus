@@ -270,7 +270,7 @@ copyBatchSize = 32
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | Implements 'leiosDbGarbageCollect': the MARK phase of GC mark-and-sweep,
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the MARK phase of GC mark-and-sweep,
 -- as a 'GcMark' job on the writer (see 'gcMark').
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =

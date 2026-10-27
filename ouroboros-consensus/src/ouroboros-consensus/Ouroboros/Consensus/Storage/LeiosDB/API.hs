@@ -56,7 +56,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ New EBs and EB closures as they are stored, from the moment of
   -- subscription.
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
-  , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
+  , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Trigger garbage collection of the LeiosDB.
   --
   --   This function does not do have to do the actual GC, but rather
