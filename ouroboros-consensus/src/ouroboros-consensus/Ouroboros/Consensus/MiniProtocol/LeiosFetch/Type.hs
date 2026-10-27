@@ -63,7 +63,6 @@ import Network.TypedProtocol.Core
   )
 import Ouroboros.Consensus.Leios.Types (maxEndorserBlockBytesSize)
 import Ouroboros.Consensus.Util.CBOR (decodeListUpTo)
-import Ouroboros.Network.Protocol.Codec.Utils (bytesBetweenOffsets)
 import Ouroboros.Network.Protocol.Limits
   ( ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
@@ -238,7 +237,9 @@ codecLeiosFetch ::
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
   (eb -> CBOR.Encoding) ->
-  -- | Decode an endorser block, given the bytes it decoded.
+  -- | Decode an endorser block, given the bytes of the whole message. Its byte
+  -- offsets count from the start of the message, as the ledger's annotators
+  -- expect, so it slices its own bytes out of them.
   (forall s. CBOR.Decoder s (ByteString -> eb)) ->
   (tx -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s tx) ->
@@ -316,9 +317,8 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
       p <- decodeP
       return $ plain $ MsgLeiosBlockRequest p
     (SingBlock, 2) -> fields 2 $ do
-      (x, start, end) <- CBOR.decodeWithByteSpan decodeEb
-      return $ Annotator $ \bytes ->
-        SomeMessage $ MsgLeiosBlock $ x $ bytesBetweenOffsets start end bytes
+      x <- decodeEb
+      return $ Annotator $ SomeMessage . MsgLeiosBlock . x
     (SingIdle, 3) -> fields 3 $ do
       p <- decodeP
       bitmaps <- decodeBitmaps maxTxs

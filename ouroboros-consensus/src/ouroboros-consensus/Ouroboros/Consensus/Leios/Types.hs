@@ -336,12 +336,13 @@ encodeEndorserBlock :: EndorserBlock -> Encoding
 encodeEndorserBlock (MkEndorserBlock references) =
   toPlainEncoding endorserBlockVersion $ encCBOR references
 
--- | The inverse of 'encodeEndorserBlock', given the bytes it decoded. Like the
--- ledger, it rejects an empty map of transaction references and one naming a
--- transaction twice.
+-- | The inverse of 'encodeEndorserBlock', given the whole input it decoded
+-- from, not just the endorser block's bytes: the ledger's annotator slices
+-- them by the byte offsets of this decoder's run. Like the ledger, it rejects
+-- an empty map of transaction references and one naming a transaction twice.
 --
--- The endorser block keeps those bytes, so its hash and encoding are of the
--- bytes received.
+-- The endorser block keeps its slice of those bytes, so its hash and encoding
+-- are of the bytes received.
 decodeEndorserBlock :: Decoder s (BSL.ByteString -> EndorserBlock)
 decodeEndorserBlock =
   toPlainDecoder Nothing endorserBlockVersion $
