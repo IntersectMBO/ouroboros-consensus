@@ -26,6 +26,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
+import Data.Foldable (toList)
 import Data.Maybe (isJust)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
@@ -111,7 +112,7 @@ prop_announcesEb =
                 [ counterexample "the endorser block does not reference the transactions in order" $
                     endorserBlockReferences eb === map reference ebTxs
                 , counterexample "forgedEbTxs does not hold the referenced transaction bytes" $
-                    forgedEbTxs forged === map txBytes ebTxs
+                    toList (forgedEbTxs forged) === map txBytes ebTxs
                 , announcement blk
                     === SJust
                       EbReferencesAnnouncement
