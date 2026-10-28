@@ -28,7 +28,11 @@ import Ouroboros.Consensus.Storage.ChainDB
 
 -- | Peras vote forging events.
 data TracePerasVoteForgingEvent blk
-  = -- | We do nothing unless we are on the first slot of a round
+  = -- | We currently don't have a 'PerasVoteForging' installed in the node.
+    TracePerasVotingNoForgingCredentials
+      -- | The current round number
+      PerasRoundNo
+  | -- | We do nothing unless we are on the first slot of a round
     TracePerasVotingNoVoteAfterFirstSlotInRound
       -- | The current round number
       PerasRoundNo
