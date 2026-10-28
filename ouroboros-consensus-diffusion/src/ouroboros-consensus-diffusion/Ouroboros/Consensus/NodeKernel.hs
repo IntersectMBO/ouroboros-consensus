@@ -217,6 +217,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txTierRng :: StdGen
+  -- ^ Seeds the inbound tx-submission registry: the coin that draws which
+  -- inbound peers are polled for txids at full speed, and the peers' jitter.
+  -- An independent split of the node generator, like 'peerSharingRng'.
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -246,6 +250,7 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
+    , txTierRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
@@ -334,7 +339,7 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
-    peerTxRegistry <- newPeerTxRegistry
+    peerTxRegistry <- newPeerTxRegistry txTierRng
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of

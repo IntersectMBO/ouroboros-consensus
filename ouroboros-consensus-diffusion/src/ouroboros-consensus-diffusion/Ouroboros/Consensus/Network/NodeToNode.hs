@@ -59,6 +59,7 @@ import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -104,12 +105,16 @@ import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
 import Ouroboros.Network.Mux
+import Ouroboros.Network.PeerSelection.Governor.Types
+  ( PublicPeerSelectionState (..)
+  )
 import Ouroboros.Network.PeerSelection.PeerMetric.Type
   ( FetchedMetricsTracer
   , ReportPeerMetrics (..)
   )
 import Ouroboros.Network.PeerSharing
-  ( PeerSharingController
+  ( PeerSharingAPI (..)
+  , PeerSharingController
   , bracketPeerSharingClient
   , peerSharingClient
   , peerSharingServer
@@ -762,6 +767,7 @@ mkApps ::
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
+  , Hashable addrNTN
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
@@ -986,6 +992,11 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           (getPeerTxRegistry kernel)
           (getTxCountersVar kernel)
           them
+          -- fast by standing: a local root, read from the governor's public
+          -- state at each decision
+          ( Set.member (remoteAddress them) . localRootAddrs
+              <$> TVar.Unchecked.readTVar (psPublicPeerSelectionStateVar (getPeerSharingAPI kernel))
+          )
           $ \api ->
             runServer (newTxSubmissionServer api)
 

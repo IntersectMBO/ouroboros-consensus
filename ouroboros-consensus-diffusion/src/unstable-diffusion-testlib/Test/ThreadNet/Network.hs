@@ -1035,7 +1035,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, chainSyncRng) = splitGen rng''
+          (psRng, rng''') = splitGen rng''
+          (ttRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1057,6 +1058,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txTierRng = ttRng
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration

@@ -42,3 +42,10 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- ouroboros-network 2.0.0.0 plus karknu/txsub-bounded-sweep (inbound tx-submission fetch tiers)
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: efba9e48ac4397256057e6588eeff377975e4538
+  subdir: ouroboros-network
