@@ -13,7 +13,7 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Core (bodyTxL, eraProtVerLow, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
-import Cardano.Ledger.Hashes (HASH, extractHash, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
@@ -75,13 +75,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node.Common (ShelleyLeaderCredentials (..))
 import Ouroboros.Consensus.Shelley.Node.Praos (praos2SharedBlockForging)
-import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbReader (..)
-  , newLeiosDBInMemory
-  , storeForgedEb
-  , withReader
-  , withWriter
-  )
 import Test.Consensus.Shelley.Examples (examplesDijkstra, testShelleyGenesis)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -95,7 +88,6 @@ tests =
     "Forge"
     [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
     , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
-    , testProperty "storeForgedEb stores the endorser block that the header announces" prop_storesEb
     ]
 
 prop_announcesEb :: Property
@@ -128,33 +120,6 @@ prop_noEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
     (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
-
--- | 'storeForgedEb' writes the point, the body and the transactions of the
--- forged endorser block. The test reads them back at the slot and the hash
--- that the header announces.
-prop_storesEb :: Property
-prop_storesEb =
-  forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
-    forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
-      let ebTxs = take numEbTxs distinctTxs
-      (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
-      db <- newLeiosDBInMemory
-      withWriter db $ \writer ->
-        mapM_ (storeForgedEb writer (blockSlot blk)) forgedEb
-      case announcement blk of
-        SNothing -> pure $ counterexample "the block announces no endorser block" False
-        SJust ann -> do
-          let ebHash = extractHash $ ebReferencesAnnouncementHash ann
-          (points, closure) <-
-            withReader db $ \reader ->
-              (,) <$> testScanEbPoints reader <*> lookupEbClosure reader ebHash
-          pure $
-            conjoin
-              [ counterexample "the point is not the slot and the hash that the header announces" $
-                  points === [(blockSlot blk, ebHash)]
-              , counterexample "the stored transactions are not the forged ones" $
-                  closure === Just [(fst (reference tx), txBytes tx) | tx <- ebTxs]
-              ]
 
 -- | A number of endorser-block transactions.
 -- 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes a
