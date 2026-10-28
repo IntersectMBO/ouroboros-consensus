@@ -2,7 +2,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Tests that the node stores the endorser blocks that it forges.
+-- | Tests that 'forkBlockForging' writes each endorser block that it forges to
+-- the LeiosDB.
 module Test.Consensus.Leios.Forge (tests) where
 
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -34,6 +35,16 @@ tests =
         unit_storesForgedEbs
     ]
 
+-- | The node runs 'forkBlockForging' with 'ebForging' for slots 0 to 3. Then
+-- the test reads the chain and the LeiosDB.
+--
+-- * If the node forges no block, the other checks pass with no data. The
+--   first check catches this.
+-- * If 'forkBlockForging' does not give 'storeForgedEb' to 'forge', or if
+--   'storeForgedEb' writes at a slot or a hash that differs from the
+--   announcement in the header, the second check fails.
+-- * If 'storeForgedEb' does not write the transaction bytes, the third check
+--   fails.
 unit_storesForgedEbs :: Assertion
 unit_storesForgedEbs = do
   let ForgeOutcome{announcedEbs, storedPoints} = runSimOrThrow forgedEbs
