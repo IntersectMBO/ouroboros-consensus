@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_insert_ebBody
   , sql_prealloc_ebTxBytes
   , sql_fill_ebTxBytes
+  , sql_fill_ebTxBytes_locally
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
   , sql_mark_point_notified
@@ -100,6 +101,31 @@ sql_fill_ebTxBytes =
   "UPDATE ebTxBytes SET txBytes = ?3, filled = 1\n\
   \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
   \  AND length(txBytes) = length(?3)\n\
+  \"
+
+-- | Fill one pre-allocated row from another EB's filled row, if that row holds
+-- the tx this EB lists at this offset. Guarded like 'sql_fill_ebTxBytes', and
+-- also by the two bodies listing the same tx hash at their offsets, so a stale
+-- or wrong location updates nothing. The source's bytes hash to the hash its
+-- body lists, since a write must, so this needs no hashing.
+--
+-- Parameters: 1 = ebHashBytes, 2 = txOffset, 3 = source ebHashBytes,
+-- 4 = source txOffset
+sql_fill_ebTxBytes_locally :: String
+sql_fill_ebTxBytes_locally =
+  "UPDATE ebTxBytes SET filled = 1, txBytes = (\n\
+  \    SELECT src.txBytes FROM ebTxBytes AS src\n\
+  \    WHERE src.ebHashBytes = ?3 AND src.txOffset = ?4\n\
+  \)\n\
+  \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
+  \  AND EXISTS (\n\
+  \    SELECT 1 FROM ebTxs AS dstTx, ebTxs AS srcTx, ebTxBytes AS src\n\
+  \    WHERE dstTx.ebHashBytes = ?1 AND dstTx.txOffset = ?2\n\
+  \      AND srcTx.ebHashBytes = ?3 AND srcTx.txOffset = ?4\n\
+  \      AND srcTx.txHashBytes = dstTx.txHashBytes\n\
+  \      AND src.ebHashBytes = ?3 AND src.txOffset = ?4 AND src.filled = 1\n\
+  \      AND length(src.txBytes) = length(ebTxBytes.txBytes)\n\
+  \  )\n\
   \"
 
 -- | Decrement missingTxCount on every `ebs` row with this EB body hash that

@@ -26,6 +26,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.Foldable as Foldable
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , encodeEndorserBlockSize
   , endorserBlockReferences
@@ -53,6 +55,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -222,8 +225,8 @@ openInMemoryWriter stateVar notificationChan =
       { closeWriter = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
-      , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+      , writeEbBody = \point eb fills ->
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb fills)
       , writeTxs = \point txs ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
@@ -279,8 +282,9 @@ imInsertEbBody ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   EndorserBlock ->
-  m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+  [LocalFill] ->
+  m (CompletedEbs, [TxOffset])
+imInsertEbBody stateVar notificationChan point eb fills = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
       ebBytesSize = encodeEndorserBlockSize eb
   when (null items) $
@@ -311,6 +315,10 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
+    filled <- fillLocally <$> readTVar stateVar
+    unless (IntMap.null filled) $
+      modifyTVar stateVar $ \s ->
+        s{imEbTxBytes = Map.insertWith IntMap.union (pointEbHash point) filled (imEbTxBytes s)}
     writeTChan notificationChan $ AcquiredEb point ebBytesSize
     -- If every tx referenced by this body is already present, the closure
     -- is complete the moment the body lands — no subsequent
@@ -321,13 +329,39 @@ imInsertEbBody stateVar notificationChan point eb = do
     state <- readTVar stateVar
     let allTxsPresent = hashCompleteIn state (pointEbHash point)
         alreadyNotified = Set.member point (imCompletedEbs state)
-    if allTxsPresent && not alreadyNotified
-      then do
-        modifyTVar stateVar $ \s ->
-          s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
-        pure [point]
-      else pure []
+    completed <-
+      if allTxsPresent && not alreadyNotified
+        then do
+          modifyTVar stateVar $ \s ->
+            s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+          writeTChan notificationChan (AcquiredEbTxs point)
+          pure [point]
+        else pure []
+    pure (completed, IntMap.keys filled)
+ where
+  -- Mirrors the SQLite backend: a fill lands only on an offset the body
+  -- declared and has no bytes for yet, and only from a source holding bytes of
+  -- the declared size for the tx its body lists there, which must be the tx
+  -- this body lists.
+  fillLocally s =
+    Foldable.foldl'
+      ( \acc (off, MkTxLocation srcHash srcOff) ->
+          case wanted s off of
+            Just e
+              | not (IntMap.member off acc)
+              , Just srcEntry <- IntMap.lookup srcOff =<< Map.lookup srcHash (imEbBodies s)
+              , eteTxHash srcEntry == eteTxHash e
+              , Just bytes <- IntMap.lookup srcOff (volatileTxBytes s srcHash)
+              , fromIntegral (BS.length bytes) == eteTxBytesSize e ->
+                  IntMap.insert off bytes acc
+            _ -> acc
+      )
+      IntMap.empty
+      fills
+  -- The entry the body declares at this offset, if it has no bytes yet.
+  wanted s off = do
+    e <- IntMap.lookup off =<< Map.lookup (pointEbHash point) (imEbBodies s)
+    if IntMap.member off (volatileTxBytes s (pointEbHash point)) then Nothing else Just e
 
 -- | Whether every offset of this EB body has its bytes.
 hashCompleteIn :: InMemoryLeiosDb -> EndorserBlockHash -> Bool

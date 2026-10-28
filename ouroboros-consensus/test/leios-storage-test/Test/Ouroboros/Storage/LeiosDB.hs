@@ -27,7 +27,7 @@ import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
-import Data.List (nub, sortOn)
+import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , encodeEndorserBlockSize
   , endorserBlockReferences
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
   , TraceLeiosDb (..)
   , newLeiosDBInMemory
@@ -149,7 +151,11 @@ rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
 rwInsertEbPoint rw point sz = void $ await =<< writeEbPoint (rwWriter rw) point sz
 
 rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO CompletedEbs
-rwInsertEbBody rw point eb = await =<< writeEbBody (rwWriter rw) point eb
+rwInsertEbBody rw point eb = fst <$> rwInsertEbBodyFilling rw point eb []
+
+rwInsertEbBodyFilling ::
+  RW -> LeiosPoint -> EndorserBlock -> [LocalFill] -> IO (CompletedEbs, [TxOffset])
+rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO CompletedEbs
 rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
@@ -224,6 +230,15 @@ mkTestGroups impl =
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
       , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
+      ]
+  , testGroup
+      "local fills"
+      [ testCase "a body fills a tx from another endorser block's bytes" $
+          withFreshDb impl test_fillFromAnotherEb
+      , testCase "a fill from a source without the bytes fills nothing" $
+          withFreshDb impl test_fillWithoutSourceBytes
+      , testCase "a body whose fills complete its closure completes it" $
+          withFreshDb impl test_fillCompletesClosure
       ]
   , testGroup
       "notifications"
@@ -764,6 +779,70 @@ test_malformedTxWritesDropped db = do
     completed <- rwInsertTxs con point [(1, txBytesFor eb 1)]
     completed @?= [point]
 
+-- | Two endorser blocks that both reference tx 1: 'mkTestEb' 2, and one that
+-- references it at offset 0, then tx 7.
+fillFixtures :: (LeiosPoint, EndorserBlock, LeiosPoint, EndorserBlock)
+fillFixtures =
+  ( mkTestPoint (SlotNo 1) 1
+  , mkTestEb 2
+  , mkTestPoint (SlotNo 2) 2
+  , mkEndorserBlock [(mkTestTxHash 1, 101), (mkTestTxHash 7, 107)]
+  )
+
+test_fillFromAnotherEb :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherEb db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    rwInsertEbPoint con pointA (encodeEndorserBlockSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    void $ rwInsertTxs con pointA (allTxsFor ebA)
+    rwInsertEbPoint con pointB (encodeEndorserBlockSize ebB)
+    -- The second fill's source lists another tx at its offset.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation (pointEbHash pointA) 1)
+        , (1, MkTxLocation (pointEbHash pointA) 0)
+        ]
+    result @?= ([], [0])
+    retrieved <- rwBatchRetrieveTxs con (pointEbHash pointB) [0, 1]
+    [bytes | (_, _, bytes) <- retrieved] @?= [Just (txBytesFor ebA 1), Nothing]
+    completed <- rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    completed @?= [pointB]
+
+test_fillWithoutSourceBytes :: LeiosDbHandle IO -> IO ()
+test_fillWithoutSourceBytes db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    rwInsertEbPoint con pointA (encodeEndorserBlockSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    rwInsertEbPoint con pointB (encodeEndorserBlockSize ebB)
+    -- The first source holds the body but not its txs; the second is unknown.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation (pointEbHash pointA) 1)
+        , (0, MkTxLocation (mkTestEbHash 9) 0)
+        ]
+    result @?= ([], [])
+
+test_fillCompletesClosure :: LeiosDbHandle IO -> IO ()
+test_fillCompletesClosure db = do
+  let (pointA, ebA, _, _) = fillFixtures
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkEndorserBlock [(mkTestTxHash 1, 101)]
+  withRW db $ \con -> do
+    rwInsertEbPoint con pointA (encodeEndorserBlockSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    void $ rwInsertTxs con pointA (allTxsFor ebA)
+    rwInsertEbPoint con pointB (encodeEndorserBlockSize ebB)
+    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation (pointEbHash pointA) 1)]
+    result @?= ([pointB], [0])
+
 -- | Every notification queued on the channel, in order.
 drainChan :: StrictTChan IO LeiosEbNotification -> IO [LeiosEbNotification]
 drainChan chan = go []
@@ -1069,7 +1148,7 @@ test_closeWithPinnedEb =
 -- blocks become immutable.
 data Op
   = OpPoint LeiosPoint
-  | OpBody LeiosPoint
+  | OpBody LeiosPoint [LocalFill]
   | OpTxs LeiosPoint [TxOffset]
   | OpPromote EndorserBlockHash
   | OpGc SlotNo
@@ -1105,7 +1184,8 @@ prop_implementationsAgree =
         pure $
           tabulate "endorser blocks pinned" [bucket nPinned] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
-              inMemory === sqlite
+              tabulate "local fills landed" [bucket (sum (map (length . snd) (fst inMemory)))] $
+                inMemory === sqlite
  where
   bucket n = if n >= 3 then "3+" else show n
 
@@ -1129,10 +1209,27 @@ genOps bodies = listOf genOp
  where
   genSlot = SlotNo . fromIntegral <$> chooseInt (1, 4)
   genPointOf = MkLeiosPoint <$> genSlot <*> elements (Map.keys bodies)
+  -- Mostly from a source that lists the same tx, which is the only kind that
+  -- can land; otherwise from anywhere.
+  genFill point =
+    frequency $
+      (1, (,) <$> chooseInt (0, 4) <*> (MkTxLocation <$> elements (Map.keys bodies) <*> chooseInt (0, 4)))
+        : [ (3, elements matching)
+          | let indices = snd (bodies Map.! pointEbHash point)
+                matching =
+                  [ (dstOff, MkTxLocation src srcOff)
+                  | (dstOff, i) <- zip [0 ..] indices
+                  , (src, (_, srcIndices)) <- Map.toList bodies
+                  , src /= pointEbHash point
+                  , (srcOff, j) <- zip [0 ..] srcIndices
+                  , i == j
+                  ]
+          , not (null matching)
+          ]
   genOp =
     frequency
       [ (2, OpPoint <$> genPointOf)
-      , (2, OpBody <$> genPointOf)
+      , (2, genPointOf >>= \point -> OpBody point <$> listOf (genFill point))
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> elements (Map.keys bodies))
       , (1, OpGc . (+ 1) <$> genSlot)
@@ -1168,7 +1265,7 @@ observe ::
   [Op] ->
   IO
     ( (Int, Int)
-    , ( [CompletedEbs]
+    , ( [(CompletedEbs, [TxOffset])]
       , [ ( [(TxHash, BytesSize)]
           , Maybe [(TxHash, BS.ByteString)]
           , [(Int, TxHash, Maybe BS.ByteString)]
@@ -1191,11 +1288,12 @@ observe db settle bodies ops = withRW db $ \rw -> do
       rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
       settle
       go rw (point : points) bodied pinned nEvicted rest
-    OpBody point
+    OpBody point fills
       | point `elem` points && point `notElem` bodied -> do
-          done <- rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
+          (done, filled) <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
           settle
-          fmap (sortOn show done :) <$> go rw points (point : bodied) pinned nEvicted rest
+          fmap ((sortOn show done, sort filled) :)
+            <$> go rw points (point : bodied) pinned nEvicted rest
       | otherwise -> go rw points bodied pinned nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
@@ -1207,7 +1305,7 @@ observe db settle bodies ops = withRW db $ \rw -> do
           | offset <- offsets
           ]
       settle
-      fmap (sortOn show done :) <$> go rw points bodied pinned nEvicted rest
+      fmap ((sortOn show done, []) :) <$> go rw points bodied pinned nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` pinned] of
       point : _ -> do
         complete <- isJust <$> rwLookupEbClosure rw ebHash

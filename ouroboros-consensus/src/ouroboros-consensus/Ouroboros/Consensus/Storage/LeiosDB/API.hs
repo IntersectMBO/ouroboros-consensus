@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , CompletedEbs
+  , LocalFill
   , TxOffset
   ) where
 
@@ -37,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint
   , TxHash
+  , TxLocation
   , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
@@ -118,11 +120,18 @@ data LeiosDbWriter m = LeiosDbWriter
   -- holds the EB's body, send 'AcquiredEb' for it, and 'AcquiredEbTxs' too if
   -- the DB holds every tx, as 'LeiosEbNotification' requires. Nothing in the
   -- node calls 'writeEbPoint' yet.
-  , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
+  , writeEbBody ::
+      HasCallStack =>
+      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
+  -- ^ Persist an EB body, and fill what it can from local bytes: each
+  -- 'LocalFill' pairs an offset in this body with the 'TxLocation' of another
+  -- EB durably holding the same tx, copied in the same transaction. Returns any
+  -- EBs whose closure this completed and the offsets that actually filled: a
+  -- fill whose source does not hold the tx this body lists at its offset fills
+  -- nothing, and that tx stays fetchable.
   --
-  -- The returned EB is only used for tracing and too broad: it can actually only
-  -- be this same EB which got completed.
+  -- The returned EBs are only used for tracing and too broad: they can actually
+  -- only be this same EB which got completed.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
@@ -162,6 +171,10 @@ awaitAll = traverse_ await
 
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
+
+-- | A cross-EB fill: fill the EB's tx at 'TxOffset' from the tx's durable
+-- 'TxLocation' in another EB. See 'writeEbBody'.
+type LocalFill = (TxOffset, TxLocation)
 
 -- | What the DB tells its subscribers as it acquires EBs.
 --

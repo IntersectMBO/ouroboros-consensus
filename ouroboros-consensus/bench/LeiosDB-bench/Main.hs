@@ -338,7 +338,7 @@ writeBody :: LeiosDbWriter IO -> LeiosPoint -> BenchEb -> Record -> IO ()
 writeBody w point eb@BenchEb{beEb} record =
   timedStep eb FetchBody record $ do
     pointWritten <- writeEbPoint w point (encodeEndorserBlockSize beEb)
-    bodyWritten <- writeEbBody w point beEb
+    bodyWritten <- writeEbBody w point beEb []
     awaitAll [pointWritten, void bodyWritten]
 
 -- | Write a chunk of an EB's Txs, as the fetch logic does on receiving it.
