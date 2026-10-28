@@ -11,6 +11,7 @@ import qualified Test.Consensus.Leios.ChainDB (tests)
 import qualified Test.Consensus.Leios.LeiosFetch (tests)
 import qualified Test.Consensus.Leios.LeiosNotify (tests)
 import qualified Test.Consensus.Leios.Relay (tests)
+import qualified Test.Consensus.Leios.TxCache (tests)
 import qualified Test.Consensus.Leios.ValidClaims (tests)
 import qualified Test.Consensus.Leios.VoteState (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
@@ -51,4 +52,5 @@ tests =
     , Test.Consensus.Leios.LeiosNotify.tests
     , Test.Consensus.Leios.Relay.tests
     , Test.Consensus.Leios.VoteState.tests
+    , Test.Consensus.Leios.TxCache.tests
     ]
