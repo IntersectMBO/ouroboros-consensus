@@ -47,10 +47,12 @@ import Cardano.Crypto.Leios
   )
 import Control.Monad (forever, when)
 import Control.Tracer (Tracer, traceWith)
-import Data.Either (isRight)
+import Data.Bifunctor (first)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import qualified Data.Text as Text
+import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -70,6 +72,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
+  , InvalidVoteReason (..)
   , VoteRelayWindow (..)
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -105,14 +108,17 @@ newVoteState tracer' announceState' notifyLog =
     <*> pure notifyLog
     <*> pure tracer'
 
--- | What the node's 'VoteState' traces.
+-- | What the node's 'VoteState' traces, for each vote it adds or does not, so
+-- these are frequent. What 'addVote' did with a vote is up to its caller to
+-- trace.
 data TraceLeiosVoteState
-  = -- | The node verified the signature of a vote, and has yet to add it.
-    TraceLeiosVoteVerified !LeiosVote
-  | -- | The node had a vote only after its deadline, so it neither keeps nor
-    -- relays it. Many of these mean the diffusion period is too short for the
-    -- network, or that the node verifies votes too slowly.
-    TraceLeiosVoteArrivedTooLate !LeiosVote
+  = -- | The node starts to add a vote, and to check whether it should.
+    TraceLeiosVoteAdding !LeiosVote
+  | -- | The vote arrived before its window opened, so the node waits this long
+    -- before adding it.
+    TraceLeiosVoteAwaitingWindow !LeiosVote !NominalDiffTime
+  | -- | The node validated a vote, its seat and signature, and has yet to add it.
+    TraceLeiosVoteValidated !LeiosVote
   deriving Show
 
 -- | What 'addVote' did with a vote.
@@ -125,7 +131,7 @@ data AddVoteResult
     NotAnnounced
   | -- | Its seat has no key in the committee, or its signature does not verify
     -- under it.
-    VoteInvalid
+    VoteInvalid !InvalidVoteReason
   | -- | The node keeps the vote and relays it.
     Added
   deriving stock (Eq, Show)
@@ -142,12 +148,15 @@ addVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   VoteState m blk -> SystemTime m -> AcceptedVote -> m AddVoteResult
 addVote st systemTime accepted = do
+  traceWith (tracer st) (TraceLeiosVoteAdding acceptedVote)
   received <- systemTimeCurrent systemTime
   -- Wait for the window of a vote that 'checkLeiosVotes' accepted early.
   -- NOTE: 'checkLeiosVotes' just rejected votes earlier than the
   -- clock skew, so this waits at most 'InFutureCheck.ClockSkew'.
-  when (received < relayFrom voteRelayWindow) $
-    threadDelay (nominalDelay $ relayFrom voteRelayWindow `diffRelTime` received)
+  when (received < relayFrom voteRelayWindow) $ do
+    let early = relayFrom voteRelayWindow `diffRelTime` received
+    traceWith (tracer st) (TraceLeiosVoteAwaitingWindow acceptedVote early)
+    threadDelay (nominalDelay early)
   seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
   -- NOTE: The client only checked that its peer announced it, but the node
   -- does not relay a third announcement of an election, nor one of a stale
@@ -155,33 +164,30 @@ addVote st systemTime accepted = do
   announced <-
     atomically $
       hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
-  result <-
-    if
-      | seen -> pure AlreadyKnown
-      | received > relayUntil voteRelayWindow -> pure ArrivedTooLate
-      | not announced -> pure NotAnnounced
-      | not (validVote voteCommittee acceptedVote) -> pure VoteInvalid
-      | otherwise -> do
-          traceWith (tracer st) (TraceLeiosVoteVerified acceptedVote)
-          now <- systemTimeCurrent systemTime
-          atomically $ do
-            MkVotes{votesPrunedAt} <- readVotes st
-            seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
-            if
-              -- Another peer may have delivered the same vote meanwhile.
-              | seenMeanwhile -> pure AlreadyKnown
-              -- The pruner may have forgotten its election slot already, and
-              -- with it whether the node relayed the vote, if 'now' is stale.
-              | now > relayUntil voteRelayWindow || relayUntil voteRelayWindow < votesPrunedAt ->
-                  pure ArrivedTooLate
-              | otherwise -> do
-                  recordVote st accepted
-                  appendNotifyLog (relayLog st) $
-                    MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
-                  pure Added
-  when (result == ArrivedTooLate) $
-    traceWith (tracer st) (TraceLeiosVoteArrivedTooLate acceptedVote)
-  pure result
+  if
+    | seen -> pure AlreadyKnown
+    | received > relayUntil voteRelayWindow -> pure ArrivedTooLate
+    | not announced -> pure NotAnnounced
+    -- NOTE: Verifying a signature is expensive, so this comes last.
+    | Left reason <- validateVote voteCommittee acceptedVote -> pure (VoteInvalid reason)
+    | otherwise -> do
+        traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
+        now <- systemTimeCurrent systemTime
+        atomically $ do
+          MkVotes{votesPrunedAt} <- readVotes st
+          seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
+          if
+            -- Another peer may have delivered the same vote meanwhile.
+            | seenMeanwhile -> pure AlreadyKnown
+            -- The pruner may have forgotten its election slot already, and
+            -- with it whether the node relayed the vote, if 'now' is stale.
+            | now > relayUntil voteRelayWindow || relayUntil voteRelayWindow < votesPrunedAt ->
+                pure ArrivedTooLate
+            | otherwise -> do
+                recordVote st accepted
+                appendNotifyLog (relayLog st) $
+                  MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
+                pure Added
  where
   MkAcceptedVote
     { acceptedVote
@@ -191,13 +197,15 @@ addVote st systemTime accepted = do
     } = accepted
 
 -- | Whether the vote's seat has a key in the committee, and the signature
--- verifies under it.
-validVote :: LeiosCommittee -> LeiosVote -> Bool
-validVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
+-- verifies under it, or why not.
+validateVote :: LeiosCommittee -> LeiosVote -> Either InvalidVoteReason ()
+validateVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
   case resolveLeiosSeat committee voteSeatId of
     Just LeiosSeat{seatVKey = SJust vk} ->
-      isRight $ verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
-    _ -> False
+      first (BadSignature . Text.pack) $
+        verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
+    Just LeiosSeat{seatVKey = SNothing} -> Left SeatHasNoKey
+    Nothing -> Left SeatNotResolvable
 
 {-------------------------------------------------------------------------------
   The votes kept

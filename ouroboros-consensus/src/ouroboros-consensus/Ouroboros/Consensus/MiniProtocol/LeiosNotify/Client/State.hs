@@ -14,6 +14,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidAnnouncement (..)
   , ExnLeiosNotifyInvalidVotes (..)
+  , InvalidVoteReason (..)
   , AcceptedVote (..)
   , checkLeiosVotes
   , VoteRelayWindow (..)
@@ -39,6 +40,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -362,17 +364,23 @@ data ExnLeiosNotifyInvalidVotes
       !RankingBlockHash
       -- | the election slot
       !SlotNo
-  | -- | A vote whose seat has no key in the committee, or whose signature does
-    -- not verify under it, as the node's 'VoteState' finds, and only for a
-    -- vote it does not have yet.
+  | -- | An accepted vote turned out to be invalid.
     ExnLeiosInvalidVote
-      -- | The announcing block.
-      !RankingBlockHash
-      -- | The seat.
-      !LeiosSeatId
+      !AcceptedVote
+      !InvalidVoteReason
   deriving Show
 
 instance Exception ExnLeiosNotifyInvalidVotes
+
+-- | Why a vote is invalid.
+data InvalidVoteReason
+  = -- | Its seat is not in the election's committee.
+    SeatNotResolvable
+  | -- | Its seat is in the election's committee, but holds no key.
+    SeatHasNoKey
+  | -- | Its signature does not verify under its seat's key.
+    BadSignature !Text
+  deriving stock (Eq, Show)
 
 -- | A vote a client accepted from its peer, with what the node's 'VoteState'
 -- needs to judge and relay it.
@@ -384,6 +392,7 @@ data AcceptedVote = MkAcceptedVote
   , voteRelayWindow :: !VoteRelayWindow
   -- ^ See 'leiosVoteRelayWindow'.
   }
+  deriving Show
 
 -- | When a vote is worth relaying.
 data VoteRelayWindow = MkVoteRelayWindow

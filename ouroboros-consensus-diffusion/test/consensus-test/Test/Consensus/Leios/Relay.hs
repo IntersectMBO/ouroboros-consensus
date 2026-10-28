@@ -680,8 +680,8 @@ withNode (VerifyingTime verifying) body = do
   tracers =
     nullTracers
       { leiosVoteStateTracer = mkTracer $ \case
-          TraceLeiosVoteVerified _ -> threadDelay verifying
-          TraceLeiosVoteArrivedTooLate _ -> pure ()
+          TraceLeiosVoteValidated _ -> threadDelay verifying
+          _ -> pure ()
       }
 
 k :: SecurityParam

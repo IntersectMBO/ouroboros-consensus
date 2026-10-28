@@ -146,11 +146,11 @@ leiosNotifyClient
             for_ accepted $ \vote@MkAcceptedVote{acceptedVote} ->
               addVote voteState systemTime vote >>= \case
                 Added ->
-                  traceWith tracer (TraceLeiosNotifyClientVoteAdded acceptedVote)
-                VoteInvalid ->
-                  throwIO $
-                    ExnLeiosInvalidVote (voteAnnouncingRbHash acceptedVote) (voteSeatId acceptedVote)
-                ArrivedTooLate -> pure ()
+                  traceWith tracer $ TraceLeiosNotifyClientVoteAdded acceptedVote
+                VoteInvalid reason ->
+                  throwIO $ ExnLeiosInvalidVote vote reason
+                ArrivedTooLate ->
+                  traceWith tracer $ TraceLeiosNotifyClientVoteArrivedTooLate acceptedVote
                 AlreadyKnown -> pure ()
                 NotAnnounced -> pure ()
           MsgCanceled -> pure ()
