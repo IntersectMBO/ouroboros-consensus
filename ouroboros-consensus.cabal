@@ -265,6 +265,7 @@ library
     Ouroboros.Consensus.Peras.Void
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
+    Ouroboros.Consensus.Peras.Vote.Forging
     Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
@@ -1642,6 +1643,7 @@ library cardano
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
+    Ouroboros.Consensus.Cardano.Peras
     Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
