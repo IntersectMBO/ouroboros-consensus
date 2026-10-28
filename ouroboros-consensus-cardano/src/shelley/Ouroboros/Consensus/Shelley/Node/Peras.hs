@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,20 +15,36 @@
 -- NOTE: this module exists solely because the orphan module
 -- 'Ouroboros.Consensus.Shelley.Node.Serialisation' needs some of these
 -- instances, but defining them there would be too confusing.
-module Ouroboros.Consensus.Shelley.Node.Peras () where
+module Ouroboros.Consensus.Shelley.Node.Peras
+  ( -- * Exported for testing purposes only
+    toOpaqueLedgerPerasCert
+  , fromOpaqueLedgerPerasCert
+  ) where
 
-import Cardano.Binary (serialize)
+import Cardano.Binary (Decoder, Encoding, FromCBOR (..), ToCBOR (..), serialize)
 import Cardano.Ledger.Api
 import Cardano.Ledger.BaseTypes (Nonce (..))
+import qualified Cardano.Ledger.Binary as CBOR
+import qualified Cardano.Ledger.Dijkstra.BlockBody as SL
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (when)
+import Data.Array.Byte (ByteArray)
+import Data.Bifunctor (Bifunctor (..))
+import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Data.ByteString.Short as ShortByteString
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Measure as Measure
+import Data.MemPack.Buffer
+  ( byteArrayFromShortByteString
+  , byteArrayToShortByteString
+  )
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
-import Lens.Micro ((^.))
+import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , ValidatedPerasCert (..)
@@ -62,6 +79,9 @@ import Ouroboros.Consensus.Peras.Context
   , mkBoundedPerasEpochContextWith
   )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+  ( unsafePerasBLSPrivateKeyFromEnv
+  )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Peras.Params
   ( PerasParams
@@ -71,13 +91,15 @@ import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Protocol (PerasProtocol (..))
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
-import Ouroboros.Consensus.Protocol.PolyPraos
-  ( PolyPraosState (praosStateEpochNonce)
-  )
+import Ouroboros.Consensus.Protocol.PolyPraos (PolyPraosState (..))
 import qualified Ouroboros.Consensus.Protocol.PolyPraos as PolyPraos
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
-import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock (..))
+import Ouroboros.Consensus.Shelley.Ledger.Block
+  ( LedgerPerasCertError
+  , ShelleyBlock (..)
+  , ShelleyPerasCertCompatibleWithLedger (..)
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , Ticked (..)
@@ -401,4 +423,103 @@ instance
         V1.PerasCertTooLargeError sizeUpperBound dijkstraPerasMaxCertSize
     pure cert
   verifyPerasCert = defaultVerifyPerasCert
-  getPerasCertInBlock _ = Right Nothing
+  getPerasCertInBlock blk =
+    bimap V1.PerasTemporaryCertInBlockError id
+      . extractPerasCertFromShelleyBlockBody
+      . SL.blockBody
+      . shelleyBlockRaw
+      $ blk
+  readPerasPrivateKeyFromEnv _ =
+    unsafePerasBLSPrivateKeyFromEnv
+
+{-------------------------------------------------------------------------------
+  ShelleyPerasCertCompatibleWithLedger
+-------------------------------------------------------------------------------}
+
+-- NOTE: these instances will be removed once we have a proper type for Peras
+-- certificates in the ledger.
+
+instance ShelleyPerasCertCompatibleWithLedger proto ShelleyEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance ShelleyPerasCertCompatibleWithLedger proto AllegraEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance ShelleyPerasCertCompatibleWithLedger proto MaryEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance ShelleyPerasCertCompatibleWithLedger proto AlonzoEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance ShelleyPerasCertCompatibleWithLedger proto BabbageEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance ShelleyPerasCertCompatibleWithLedger proto ConwayEra where
+  extractPerasCertFromShelleyBlockBody _ = Right Nothing
+  injectPerasCertIntoShelleyBlockBody _ = id
+
+instance
+  Typeable proto =>
+  ShelleyPerasCertCompatibleWithLedger proto DijkstraEra
+  where
+  extractPerasCertFromShelleyBlockBody blockBody =
+    case blockBody ^. SL.perasCertBlockBodyL of
+      SNothing ->
+        Right Nothing
+      SJust ledgerCert ->
+        case fromOpaqueLedgerPerasCert ledgerCert of
+          Left err -> Left err
+          Right cert -> Right (Just cert)
+
+  injectPerasCertIntoShelleyBlockBody cert =
+    SL.perasCertBlockBodyL .~ SJust (toOpaqueLedgerPerasCert cert)
+
+toOpaqueLedgerPerasCert ::
+  Typeable blk =>
+  V1.PerasCert blk ->
+  SL.PerasCert
+toOpaqueLedgerPerasCert =
+  SL.PerasCert . toByteArray . toCBOR
+ where
+  toByteArray :: Encoding -> ByteArray
+  toByteArray =
+    byteArrayFromShortByteString
+      . ShortByteString.toShort
+      . CBOR.toStrictByteString
+
+fromOpaqueLedgerPerasCert ::
+  Typeable blk =>
+  SL.PerasCert ->
+  Either LedgerPerasCertError (V1.PerasCert blk)
+fromOpaqueLedgerPerasCert (SL.PerasCert byteArray) =
+  fromByteArray fromCBOR byteArray
+ where
+  fromByteArray ::
+    (forall s. Decoder s (V1.PerasCert blk)) ->
+    ByteArray ->
+    Either LedgerPerasCertError (V1.PerasCert blk)
+  fromByteArray decoder =
+    handleParseErrors
+      . CBOR.deserialiseFromBytes decoder
+      . LazyByteString.fromStrict
+      . ShortByteString.fromShort
+      . byteArrayToShortByteString
+
+  handleParseErrors ::
+    Either CBOR.DeserialiseFailure (ByteString, a) ->
+    Either LedgerPerasCertError a
+  handleParseErrors = \case
+    Left err -> failure err
+    Right (trailing, a)
+      | not (LazyByteString.null trailing) -> failure "trailing bytes"
+      | otherwise -> pure a
+   where
+    failure err =
+      Left $
+        "Failed to deserialize opaque Peras certificate from byte array: "
+          <> show err

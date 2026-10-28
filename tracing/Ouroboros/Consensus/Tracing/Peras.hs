@@ -54,6 +54,16 @@ instance
       , "limit" .= unPerasCertSize limit
       , "actual" .= unPerasCertSize actual
       ]
+  forMachine _dtal (V1.PerasTemporaryPublicKeyHackError e) =
+    mconcat
+      [ "kind" .= String "PerasTemporaryPublicKeyHackError"
+      , "message" .= e
+      ]
+  forMachine _dtal (V1.PerasTemporaryCertInBlockError e) =
+    mconcat
+      [ "kind" .= String "PerasTemporaryCertInBlockError"
+      , "message" .= e
+      ]
 
 instance LogFormatting PerasConversionError where
   forMachine _dtal (EveryoneVotesButFoundNonPersistentVoterInVote seatIndex) =

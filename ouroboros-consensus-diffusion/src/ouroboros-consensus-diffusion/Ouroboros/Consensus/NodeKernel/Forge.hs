@@ -68,13 +68,16 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  -- | Check whether a Peras cert should be included. This is called only
+  -- when we are actually forging a block.
+  (SlotNo -> m (Maybe (PerasCert blk))) ->
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
   -- block and the endorser block that it announces.
   (Header blk -> EndorserBlock -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging includePerasCert onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -119,6 +122,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
+        mbPerasCert <- lift $ includePerasCert currentSlot
+
         selectedTxs <-
           getTransactionsToForge
             cfg
@@ -126,13 +131,13 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
             currentSlot
             tickedLedgerState
             forker
-            Nothing -- NOTE: no Peras cert to include for now
+            mbPerasCert
         let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
                 , Block.fbCurrentBlockNo = bcBlockNo
                 , Block.fbCurrentSlotNo = currentSlot
-                , Block.fbPerasCert = Nothing -- No PerasCert for now
+                , Block.fbPerasCert = mbPerasCert
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
                 , Block.fbTxs = rankingBlockTxs selectedTxs
                 , Block.fbEbTxs = endorserBlockTxs selectedTxs
