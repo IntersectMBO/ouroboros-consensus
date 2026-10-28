@@ -350,6 +350,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+            , getLeiosCertifiedEbs = getEnvSTM h Query.getLeiosCertifiedEbs
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
             , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter

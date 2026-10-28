@@ -112,6 +112,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol
   , trivialLeiosLedgerView
   )
+import Ouroboros.Consensus.Leios.Types (ElectionId, EndorserBlockHash)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision
   , PerasCertInclusionView
@@ -470,6 +471,10 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , getLeiosCertifiedEbs :: STM m (Map ElectionId EndorserBlockHash)
+  -- ^ The endorser block each election has had certified, among those whose
+  -- announcing block is not older than the immutable tip, as far as the
+  -- certificates ChainSel has verified tell.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.

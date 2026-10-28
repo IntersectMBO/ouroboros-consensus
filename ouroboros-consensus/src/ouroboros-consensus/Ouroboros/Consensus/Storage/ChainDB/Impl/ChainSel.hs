@@ -1516,7 +1516,7 @@ checkLeiosCert ::
   StrictMaybe LeiosLedgerView ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
+checkLeiosCert CDB{cdbLeiosValidClaims, cdbVolatileDB} predecessorSlot leiosView b =
   case blockLeiosCert b of
     Nothing -> pure $ Right ()
     Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
@@ -1528,7 +1528,15 @@ checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
           | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
               Left rejection -> pure $ Left rejection
               Right () -> do
-                atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim)
+                -- What the announcing block announced, so that LeiosFetch can
+                -- fetch the certified endorser block.
+                atomically $ do
+                  lookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
+                  let announcement = case blockPrevHash b of
+                        GenesisHash -> SNothing
+                        BlockHash prevHash ->
+                          maybe SNothing (VolatileDB.lbiAnnouncement . VolatileDB.biLeios) (lookupBlockInfo prevHash)
+                  modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim announcement)
                 pure $ Right ()
 
 {-------------------------------------------------------------------------------

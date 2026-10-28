@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , recordLeiosOffer
   , onNewLeiosAnnouncement
   , leiosFetchDecisionLoop
+  , leiosFetchFocuser
   , leiosFetchPruner
   ) where
 
@@ -61,6 +62,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , PeerOffer
   , ebStateHasBody
+  , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
@@ -306,6 +308,34 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 
   loopInterval :: DiffTime
   loopInterval = 0.5
+
+-- | Move each election's focus onto the endorser block a verified certificate
+-- certifies, as ChainSel verifies such certificates.
+--
+-- This is how a node that only saw some other announcement for the election,
+-- or none, because the announcing block has been on its selection since before
+-- it started, comes to fetch the certified one. Each iteration compares the
+-- certified endorser blocks against the ones it last saw, so a certificate
+-- verified after the offer arrived still moves the focus.
+leiosFetchFocuser ::
+  IOLike m =>
+  ChainDB m blk ->
+  LeiosFetchKernel m peer ->
+  m Void
+leiosFetchFocuser chainDB kernel = go Map.empty
+ where
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
+
+  go seen = do
+    certified <- atomically $ do
+      certified <- ChainDB.getLeiosCertifiedEbs chainDB
+      if certified == seen then retry else pure certified
+    let arrived =
+          Map.differenceWith (\new old -> if new == old then Nothing else Just new) certified seen
+    modifyMVar_ lfcOutstanding $ \outstanding ->
+      pure $! Map.foldlWithKey' (\acc elId ebHash -> focusCertifiedEb elId ebHash acc) outstanding arrived
+    void $ tryPutMVar lfcReady ()
+    go certified
 
 -- | Prune the node's LeiosFetch state, the peers' offers, and the LeiosTxCache
 -- each time the immutable tip's slot advances.

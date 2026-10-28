@@ -90,6 +90,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchSt
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , leiosFetchDecisionLoop
+  , leiosFetchFocuser
   , leiosFetchPruner
   , newLeiosFetchKernel
   )
@@ -471,6 +472,9 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchPruner" $
         leiosFetchPruner chainDB leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchFocuser" $
+        leiosFetchFocuser chainDB leiosFetchKernel
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
