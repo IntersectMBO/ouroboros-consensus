@@ -87,25 +87,30 @@ tests =
     [ testGroup
         "the codec accepts either CBOR encoding of a list or map"
         [ testCase "definite message, indefinite txs" $
-            decodeBlockTxs (definite [txsKey, indefinite twoTxs]) >>= (@?= Just [txA, txB])
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (definite [txsKey, indefinite twoTxs])
+              >>= (@?= Just [txA, txB])
         , testCase "indefinite message, definite txs" $
-            decodeBlockTxs (indefinite [txsKey, definite twoTxs]) >>= (@?= Just [txA, txB])
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (indefinite [txsKey, definite twoTxs])
+              >>= (@?= Just [txA, txB])
         , testCase "indefinite message, indefinite txs" $
-            decodeBlockTxs (indefinite [txsKey, indefinite twoTxs]) >>= (@?= Just [txA, txB])
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (indefinite [txsKey, indefinite twoTxs])
+              >>= (@?= Just [txA, txB])
         , testCase "rejects indefinite txs past the bound" $
-            decodeBlockTxs (definite [txsKey, indefinite (twoTxs <> [encodeLeiosTx txA])])
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec
+              (definite [txsKey, indefinite (twoTxs <> [encodeLeiosTx txA])])
               >>= (@?= Nothing)
         , testCase "rejects an indefinite message with an extra field" $
-            decodeBlockTxs (indefinite [txsKey, definite twoTxs, CBOR.encodeWord 0])
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (indefinite [txsKey, definite twoTxs, CBOR.encodeWord 0])
               >>= (@?= Nothing)
         , testCase "an indefinite point" $
-            decodeBlockRequest (definite [CBOR.encodeWord 1, snd onePoint])
+            decodeMsgLeiosBlockRequestViaLeiosFetchCodec (definite [CBOR.encodeWord 1, snd onePoint])
               >>= (@?= Just (fst onePoint))
         , testCase "a definite endorser block" $
-            decodeBlock (definite [CBOR.encodeWord 2, snd oneRefEb]) >>= (@?= Just (fst oneRefEb))
+            decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, snd oneRefEb])
+              >>= (@?= Just (fst oneRefEb))
         , testCase "keeps the bytes of an indefinite endorser block" $ do
             let eb = indefiniteMap [reference (BS.replicate 32 7)]
-            decoded <- decodeBlock (definite [CBOR.encodeWord 2, eb])
+            decoded <- decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, eb])
             fmap (CBOR.toStrictByteString . encodeEndorserBlock) decoded
               @?= Just (CBOR.toStrictByteString eb)
             -- The same reference as 'oneRefEb', but other bytes.
@@ -115,32 +120,39 @@ tests =
             "slices exactly the bytes of an endorser block out of its MsgLeiosBlock"
             prop_slicesEndorserBlockFromMessage
         , testCase "rejects an empty endorser block" $
-            decodeBlock (definite [CBOR.encodeWord 2, definiteMap []]) >>= (@?= Nothing)
+            decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, definiteMap []])
+              >>= (@?= Nothing)
         , testCase "rejects an endorser block naming a transaction twice" $
-            decodeBlock
+            decodeMsgLeiosBlockViaLeiosFetchCodec
               (definite [CBOR.encodeWord 2, definiteMap (replicate 2 (reference (BS.replicate 32 7)))])
               >>= (@?= Nothing)
         , testCase "a definite bitmaps map" $
-            decodeBlockTxsRequest (definite [txsRequestKey, somePoint, definiteMap [bitmap0]])
+            decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
+              (definite [txsRequestKey, somePoint, definiteMap [bitmap0]])
               >>= (@?= Just (fst onePoint, [(0, 1)]))
         , testCase "an indefinite bitmaps map" $
-            decodeBlockTxsRequest (definite [txsRequestKey, somePoint, indefiniteMap [bitmap0]])
+            decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
+              (definite [txsRequestKey, somePoint, indefiniteMap [bitmap0]])
               >>= (@?= Just (fst onePoint, [(0, 1)]))
         , testCase "rejects indefinite bitmaps past the bound" $
-            decodeBlockTxsRequest
+            decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
               (definite [txsRequestKey, somePoint, indefiniteMap [bitmap0, bitmap1]])
               >>= (@?= Nothing)
         ]
     , testGroup
         "the codec refuses a hash that is not 32 bytes"
         [ testCase "a tx hash of 31 bytes" $
-            decodeBlock (definite [CBOR.encodeWord 2, ebReferencing 31]) >>= (@?= Nothing)
+            decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, ebReferencing 31])
+              >>= (@?= Nothing)
         , testCase "a tx hash of 33 bytes" $
-            decodeBlock (definite [CBOR.encodeWord 2, ebReferencing 33]) >>= (@?= Nothing)
+            decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, ebReferencing 33])
+              >>= (@?= Nothing)
         , testCase "an endorser block hash of 31 bytes" $
-            decodeBlockRequest (definite [CBOR.encodeWord 1, pointOf 31]) >>= (@?= Nothing)
+            decodeMsgLeiosBlockRequestViaLeiosFetchCodec (definite [CBOR.encodeWord 1, pointOf 31])
+              >>= (@?= Nothing)
         , testCase "an endorser block hash of 33 bytes" $
-            decodeBlockRequest (definite [CBOR.encodeWord 1, pointOf 33]) >>= (@?= Nothing)
+            decodeMsgLeiosBlockRequestViaLeiosFetchCodec (definite [CBOR.encodeWord 1, pointOf 33])
+              >>= (@?= Nothing)
         ]
     , testGroup
         "the byte limit admits a MsgLeiosBlock of the largest endorser block"
@@ -153,7 +165,7 @@ tests =
         BS.length (CBOR.toStrictByteString eb) @?= maxSize + 1
         -- Its message fits the byte limit, so only the codec can reject it.
         assertFitsByteLimit msg
-        decodeBlock msg >>= (@?= Nothing)
+        decodeMsgLeiosBlockViaLeiosFetchCodec msg >>= (@?= Nothing)
     ]
 
 -- | The codec accepts a 'MsgLeiosBlock' of an endorser block of
@@ -162,7 +174,7 @@ tests =
 fitsByteLimit :: ([CBOR.Encoding] -> CBOR.Encoding) -> Assertion
 fitsByteLimit list = do
   BS.length (CBOR.toStrictByteString eb) @?= maxSize
-  decoded <- decodeBlock msg
+  decoded <- decodeMsgLeiosBlockViaLeiosFetchCodec msg
   assertBool "the codec rejects the message" (isJust decoded)
   assertFitsByteLimit msg
  where
@@ -213,7 +225,7 @@ prop_slicesEndorserBlockFromMessage :: Property
 prop_slicesEndorserBlockFromMessage =
   forAllShrink genMsgRecipe shrinkMsgRecipe $ \recipe@(MsgRecipe _ _ ebRecipe) -> ioProperty $ do
     let bytes = ebRecipeBytes ebRecipe
-    decoded <- decodeBlock (CBOR.encodePreEncoded (msgRecipeBytes recipe))
+    decoded <- decodeMsgLeiosBlockViaLeiosFetchCodec (CBOR.encodePreEncoded (msgRecipeBytes recipe))
     pure $ case decoded of
       Nothing -> counterexample "the codec rejects the message" False
       Just eb ->
@@ -380,13 +392,13 @@ headBytes major width n = case width of
       (major `shiftL` 5 .|. info) : [fromIntegral (n `shiftR` (8 * i)) | i <- [len - 1, len - 2 .. 0]]
 
 -- | Decode a message with a codec that admits at most two txs.
-decodeMsg ::
+decodeViaLeiosFetchCodec ::
   forall (st :: LeiosFetch LeiosPoint EndorserBlock LeiosTx).
   ActiveState st =>
   StateToken st ->
   CBOR.Encoding ->
   IO (Maybe (SomeMessage st))
-decodeMsg stok enc = do
+decodeViaLeiosFetchCodec stok enc = do
   step <- decode codec stok
   either (const Nothing) (Just . (`runAnnotator` bytes)) <$> runDecoder [bytes] step
  where
@@ -404,24 +416,28 @@ decodeMsg stok enc = do
       encodeLeiosTx
       decodeLeiosTx
 
-decodeBlockTxs :: CBOR.Encoding -> IO (Maybe [LeiosTx])
-decodeBlockTxs enc =
-  decodeMsg SingBlockTxs enc <&> fmap (\case SomeMessage (MsgLeiosBlockTxs txs) -> V.toList txs)
+decodeMsgLeiosBlockTxsViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe [LeiosTx])
+decodeMsgLeiosBlockTxsViaLeiosFetchCodec enc =
+  decodeViaLeiosFetchCodec SingBlockTxs enc
+    <&> fmap (\case SomeMessage (MsgLeiosBlockTxs txs) -> V.toList txs)
 
-decodeBlock :: CBOR.Encoding -> IO (Maybe EndorserBlock)
-decodeBlock enc = decodeMsg SingBlock enc <&> fmap (\case SomeMessage (MsgLeiosBlock eb) -> eb)
+decodeMsgLeiosBlockViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe EndorserBlock)
+decodeMsgLeiosBlockViaLeiosFetchCodec enc =
+  decodeViaLeiosFetchCodec SingBlock enc
+    <&> fmap (\case SomeMessage (MsgLeiosBlock eb) -> eb)
 
 -- | Decode a 'MsgLeiosBlockTxsRequest'. The codec's bound of two txs admits one
 -- bitmap entry.
-decodeBlockTxsRequest :: CBOR.Encoding -> IO (Maybe (LeiosPoint, TxBitmaps))
-decodeBlockTxsRequest enc =
-  decodeMsg SingIdle enc <&> \case
+decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec ::
+  CBOR.Encoding -> IO (Maybe (LeiosPoint, TxBitmaps))
+decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec enc =
+  decodeViaLeiosFetchCodec SingIdle enc <&> \case
     Just (SomeMessage (MsgLeiosBlockTxsRequest p bitmaps)) -> Just (p, bitmaps)
     _ -> Nothing
 
-decodeBlockRequest :: CBOR.Encoding -> IO (Maybe LeiosPoint)
-decodeBlockRequest enc =
-  decodeMsg SingIdle enc <&> \case
+decodeMsgLeiosBlockRequestViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe LeiosPoint)
+decodeMsgLeiosBlockRequestViaLeiosFetchCodec enc =
+  decodeViaLeiosFetchCodec SingIdle enc <&> \case
     Just (SomeMessage (MsgLeiosBlockRequest p)) -> Just p
     _ -> Nothing
 
