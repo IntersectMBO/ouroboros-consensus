@@ -304,7 +304,7 @@ type TxOffset = Int
 -- the references.
 data ForgedLeiosEb = ForgedLeiosEb
   { forgedEbBody :: !EndorserBlock
-  , forgedEbTxs :: ![ByteString]
+  , forgedEbTxs :: !(NonEmpty ByteString)
   -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
   -- same order.
   }
@@ -317,7 +317,7 @@ forgeLeiosEb :: NonEmpty ByteString -> ForgedLeiosEb
 forgeLeiosEb txBytes =
   ForgedLeiosEb
     { forgedEbBody = endorserBlockFromTxBytes txBytes
-    , forgedEbTxs = toList txBytes
+    , forgedEbTxs = txBytes
     }
 
 -- | The hash ranking blocks announce for the endorser block: that of its

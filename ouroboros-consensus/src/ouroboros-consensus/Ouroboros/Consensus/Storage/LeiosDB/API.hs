@@ -30,7 +30,7 @@ import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
-import Data.Foldable (traverse_)
+import Data.Foldable (toList, traverse_)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
@@ -202,7 +202,7 @@ storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedLeiosEb -> m ()
 storeForgedEb writer slot forgedEb = do
   _ <- writeEbPoint writer point (encodeEndorserBlockSize body)
   _ <- writeEbBody writer point body
-  void $ writeTxs writer point (zip [0 ..] (forgedEbTxs forgedEb))
+  void $ writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
  where
   body = forgedEbBody forgedEb
   point = MkLeiosPoint slot (endorserBlockHash body)
