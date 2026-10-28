@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -10,6 +11,8 @@ module Ouroboros.Consensus.Leios.TxCache.API
 
     -- * Body payloads
   , ReferencesTxsByHash (..)
+  , PackedTxReferences
+  , packTxReferences
 
     -- * Shared refcount \/ body state
   , RefCount (..)
@@ -35,16 +38,21 @@ module Ouroboros.Consensus.Leios.TxCache.API
   , bucketTxArrival
   ) where
 
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytesShort)
 import Cardano.Slotting.Slot (SlotNo)
+import Data.Bits (shiftL, shiftR, (.|.))
+import qualified Data.ByteString.Short as SBS
 import Data.Set (Set)
 import Data.Word (Word8)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
+  , EndorserBlock
   , EndorserBlockHash
   , RankingBlockHash
   , TxHash
   , TxLocation
   , TxOffset
+  , endorserBlockReferences
   , maxTxsPerEndorserBlock
   )
 
@@ -132,6 +140,33 @@ data LeiosTxCache m a v b = LeiosTxCache
 -- tx's offset from its position in the fold.
 class ReferencesTxsByHash b where
   foldTxReferences :: (r -> TxHash -> BytesSize -> r) -> r -> b -> r
+
+-- | The node's body payload: each referenced tx's hash and size, packed, in
+-- body order, at 36 bytes per tx. The cache retains up to
+-- 'maxAnnouncementCount' bodies, so a decoded 'EndorserBlock' would cost
+-- several times more.
+newtype PackedTxReferences = MkPackedTxReferences SBS.ShortByteString
+
+packTxReferences :: EndorserBlock -> PackedTxReferences
+packTxReferences eb =
+  MkPackedTxReferences $
+    mconcat
+      [ hashToBytesShort txHash <> SBS.pack [fromIntegral (size `shiftR` (8 * i)) | i <- [3, 2, 1, 0]]
+      | (txHash, size) <- endorserBlockReferences eb
+      ]
+
+instance ReferencesTxsByHash PackedTxReferences where
+  foldTxReferences f z (MkPackedTxReferences sbs) = go z 0
+   where
+    go !acc off
+      | off + entryBytes > SBS.length sbs = acc
+      | otherwise =
+          go
+            (f acc (UnsafeHash (SBS.take 32 (SBS.drop off sbs))) (sizeAt (off + 32)))
+            (off + entryBytes)
+    sizeAt off =
+      foldl (\w i -> w `shiftL` 8 .|. fromIntegral (SBS.index sbs (off + i))) 0 [0 .. 3]
+    entryBytes = 36
 
 -- | The maximum number of EB announcements retained. Inserting past it evicts
 -- the oldest, cascading through the body and tx refcounts.
