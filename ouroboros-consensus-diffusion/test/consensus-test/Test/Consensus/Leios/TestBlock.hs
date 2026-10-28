@@ -56,6 +56,7 @@ module Test.Consensus.Leios.TestBlock
     -- * Protocol
   , LeiosTestInvalidHeader (..)
   , LeiosTestProtocol
+  , latestAnnouncement
 
     -- * Node configuration
   , BlockConfig (..)
@@ -90,6 +91,7 @@ import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import qualified Data.Measure as Measure
 import Data.String (fromString)
 import Data.Time.Clock (UTCTime (..))
@@ -342,6 +344,24 @@ setCounterBelowImmTips = onHeader $ \hdr -> hdr{lthCounter = HeaderCounterBelowI
 -- test has not marked it invalid.
 data LeiosTestProtocol
 
+-- | The announcement the latest header carried, which the next header may
+-- certify.
+newtype LeiosTestChainDepState = LeiosTestChainDepState (StrictMaybe LeiosAnnouncement)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance Serialise LeiosTestChainDepState where
+  encode (LeiosTestChainDepState mbAnn) =
+    encodeMaybe encodeLeiosAnnouncement (strictMaybeToMaybe mbAnn)
+  decode = LeiosTestChainDepState . maybeToStrictMaybe <$> decodeMaybe decodeLeiosAnnouncement
+
+newtype instance Ticked LeiosTestChainDepState
+  = TickedLeiosTestChainDepState LeiosTestChainDepState
+
+instance ChainDepStateSupportsPeras LeiosTestChainDepState
+
+instance ChainDepStateSupportsPeras (Ticked LeiosTestChainDepState)
+
 data LeiosTestInvalidHeader = LeiosTestInvalidHeader
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -353,7 +373,7 @@ data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
   deriving anyclass NoThunks
 
 instance ConsensusProtocol LeiosTestProtocol where
-  type ChainDepState LeiosTestProtocol = ()
+  type ChainDepState LeiosTestProtocol = LeiosTestChainDepState
   type IsLeader LeiosTestProtocol = ()
   type CanBeLeader LeiosTestProtocol = ()
   type LedgerView LeiosTestProtocol = LeiosLedgerView
@@ -365,9 +385,9 @@ instance ConsensusProtocol LeiosTestProtocol where
   -- Every node leads in every slot; the test itself decides what gets minted.
   checkIsLeader _ _ _ _ = Just ()
 
-  tickChainDepState _ _ _ () = TickedTrivial
-  updateChainDepState _ hdr _ _ = checkValidity hdr
-  reupdateChainDepState _ _ _ _ = ()
+  tickChainDepState _ _ _ = TickedLeiosTestChainDepState
+  updateChainDepState _ hdr _ _ = latestAnnouncement hdr <$ checkValidity hdr
+  reupdateChainDepState _ hdr _ _ = latestAnnouncement hdr
 
 instance LeiosProtocol LeiosTestProtocol where
   getLeiosAnnouncement _proxy hdr =
@@ -386,7 +406,16 @@ instance LeiosProtocol LeiosTestProtocol where
     pure $ case lthCounter hdr of
       HeaderCounterNotBelowImmTips -> FreshOCIN
       HeaderCounterBelowImmTips -> StaleOCIN
+  getCertifiableLeiosAnnouncement _proxy (LeiosTestChainDepState mbAnn) =
+    strictMaybeToMaybe mbAnn
   getLeiosLedgerView _proxy = Just
+
+-- | The chain-dependent state as of this header
+latestAnnouncement :: Header LeiosTestBlock -> LeiosTestChainDepState
+latestAnnouncement =
+  LeiosTestChainDepState
+    . maybeToStrictMaybe
+    . getLeiosAnnouncement (Proxy @LeiosTestProtocol)
 
 instance PerasProtocol LeiosTestProtocol where
   getPerasLedgerView = defaultGetPerasLedgerView
@@ -503,7 +532,7 @@ leiosTestInitExtLedger cfg =
     }
  where
   ledgerState = LeiosTestLedger GenesisPoint
-  headerState = genesisHeaderState ()
+  headerState = genesisHeaderState (LeiosTestChainDepState SNothing)
 
 type instance TxIn LeiosTestBlock = Void
 type instance TxOut LeiosTestBlock = Void
@@ -775,8 +804,8 @@ instance DecodeDisk LeiosTestBlock (LedgerState LeiosTestBlock EmptyMK)
 instance EncodeDiskDep (NestedCtxt Header) LeiosTestBlock
 instance DecodeDiskDep (NestedCtxt Header) LeiosTestBlock
 
-instance EncodeDisk LeiosTestBlock ()
-instance DecodeDisk LeiosTestBlock ()
+instance EncodeDisk LeiosTestBlock LeiosTestChainDepState
+instance DecodeDisk LeiosTestBlock LeiosTestChainDepState
 
 instance SerialiseDiskConstraints LeiosTestBlock
 

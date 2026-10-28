@@ -39,7 +39,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( maxAnnouncementAgeRecv
+  ( LeiosAnnouncementAgeLimits (..)
+  , defaultLeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -267,10 +268,13 @@ tests =
         runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
     , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
         runSimOrThrow (timeout 100 nodeServerExcessive) @?= Just (ExcessiveOutcome Disconnected)
-    , testCase "the node runs LeiosNotify from NodeToNodeV_16 on" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_16)) @?= Just (True, True)
-    , testCase "the node does not run LeiosNotify before NodeToNodeV_16" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_15)) @?= Just (False, False)
+    , testCase "the node runs LeiosNotify from NodeToNodeV_16 on, and not before" $
+        for_ [minBound .. maxBound] $ \ntnVersion ->
+          let runs = ntnVersion >= NodeToNodeV_16
+           in assertEqual
+                (show ntnVersion)
+                (Just (runs, runs))
+                (runSimOrThrow (timeout 100 (nodeRunsLeiosNotify ntnVersion)))
     ]
 
 -- | The node's LeiosNotify client on the connection.
@@ -380,7 +384,8 @@ runNodeClientAgainst node next target = do
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
           , epLeiosNotifyClient = Nothing
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
@@ -437,7 +442,7 @@ nodeClientAgainstAnnouncements blks = withNode $ \node -> do
 -- | The announcement arrives long after its slot: the peer connects only then.
 nodeClientTooOld :: IOSim s NodeClientOutcome
 nodeClientTooOld = withNode $ \node -> do
-  threadDelay (realToFrac maxAnnouncementAgeRecv + 100)
+  threadDelay (realToFrac (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits) + 100)
   queue <- newTQueueIO
   atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
   runNodeClientAgainst node (readTQueue queue) (leiosNotifyPipelineDepth + 1)
@@ -450,7 +455,8 @@ nodeClientGated = withNodeForecastingOnly 5 $ \node -> do
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests retry
           , epLeiosNotifyClient = Nothing
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
@@ -470,9 +476,11 @@ nodePrunesClientState = withNodeCommittee committee 100000 $ \node -> do
   queue <- newTQueueIO
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests (readTQueue queue)
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer node
+          , -- The node requests what the peer offers.
+            epLeiosFetchServer = silentLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withAsync
@@ -615,7 +623,8 @@ nodeServerCancels = withNode $ \node -> do
   let codec' = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer codec' requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient = Just $ runPipelinedClient codec' replies 3 stop
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
@@ -638,7 +647,8 @@ nodeServerExcessive = withNode $ \node -> do
   let codec' = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer codec' requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient =
               Just $ runPipelinedClient codec' replies (leiosNotifyPipelineDepth + 1) stop
           , epLeiosFetchServer = refusingLeiosFetchServer node

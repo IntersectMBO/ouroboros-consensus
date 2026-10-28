@@ -13,8 +13,10 @@ module Ouroboros.Consensus.Leios.Protocol
   , decodeLeiosAnnouncement
   , encodeLeiosAnnouncement
   , LeiosLedgerView (..)
+  , leiosEbBounds
   , LeiosProtocol (..)
   , OCINStaleness (..)
+  , defaultGetCertifiableLeiosAnnouncement
   , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
@@ -36,7 +38,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (BlockProtocol, SlotNo)
-import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
+import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash, LeiosEbBounds (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked (Ticked)
 
@@ -49,10 +51,12 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size
   --
-  -- TODO Nothing reads it yet. A certifying ranking block's ChainSync
-  -- @MsgRollForward@ will be interpreted as an offer of the endorser block it
-  -- certifies, of this size, and Leios voting will confirm that the size is
-  -- accurate.
+  -- LeiosFetch takes a certifying ranking block's ChainSync @MsgRollForward@
+  -- as an offer of the endorser block it certifies, at this size.
+  --
+  -- TODO Leios voting will confirm that the size is accurate. Until then, if
+  -- it is not, a peer that serves the endorser block at its true size loses its
+  -- connection, though the node keeps the bytes.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -90,6 +94,9 @@ data LeiosLedgerView = MkLeiosLedgerView
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
+leiosEbBounds :: LeiosLedgerView -> LeiosEbBounds
+leiosEbBounds llv = MkLeiosEbBounds (llvMaxEbBodySize llv) (llvMaxEbTxsSize llv)
+
 -- | Whether an announcement's operational certificate issue number (OCIN) is
 -- at least the one our immutable tip records for its issuer.
 --
@@ -105,6 +112,14 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- | Whether the block whose header has this view contains a Leios
   -- certificate, which certifies the endorser block its predecessor announced.
   getContainsLeiosCert :: proxy p -> ValidateView p -> Bool
+
+  -- | The announcement that a header extending a chain with this state may
+  -- certify, if any.
+  --
+  -- A valid header that contains a Leios certificate certifies exactly this
+  -- announcement. Ticking the state can still rule it out, at an epoch
+  -- boundary for example.
+  getCertifiableLeiosAnnouncement :: proxy p -> ChainDepState p -> Maybe LeiosAnnouncement
 
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to
@@ -134,6 +149,11 @@ defaultGetLeiosAnnouncement _proxy _view = Nothing
 -- certificate.
 defaultGetContainsLeiosCert :: proxy p -> ValidateView p -> Bool
 defaultGetContainsLeiosCert _proxy _view = False
+
+-- | 'getCertifiableLeiosAnnouncement' for a protocol whose headers never carry
+-- an announcement.
+defaultGetCertifiableLeiosAnnouncement :: proxy p -> ChainDepState p -> Maybe LeiosAnnouncement
+defaultGetCertifiableLeiosAnnouncement _proxy _st = Nothing
 
 -- | 'validateLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement, which is therefore never called.

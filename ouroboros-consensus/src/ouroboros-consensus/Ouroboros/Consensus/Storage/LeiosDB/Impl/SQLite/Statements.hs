@@ -13,9 +13,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , ImmStmts (..)
   , prepareImmStmts
   , finalizeImmStmts
-  , GcStmts (..)
-  , prepareGcStmts
-  , finalizeGcStmts
   , CopierStmts (..)
   , prepareCopierStmts
   , finalizeCopierStmts
@@ -76,51 +73,31 @@ finalizeCopierStmts CopierStmts{..} = do
   dbFinalize ccInsertEbTxs
   dbFinalize ccInsertEbTxBytes
 
--- | The GC tick's prepared statements, prepared once on the writer's
--- volatile connection.
-data GcStmts = GcStmts
-  { gsHasWork :: !DB.Statement
-  -- ^ 'sql_gc_has_work'
-  , gsMarkEbForGC :: !DB.Statement
-  -- ^ 'sql_gc_mark'
-  }
-
-prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
-prepareGcStmts db = preparingStmts db $ \prep -> do
-  gsHasWork <- prep sql_gc_has_work
-  gsMarkEbForGC <- prep sql_gc_mark
-  pure GcStmts{..}
-
-finalizeGcStmts :: GcStmts -> IO ()
-finalizeGcStmts GcStmts{..} = do
-  dbFinalize gsHasWork
-  dbFinalize gsMarkEbForGC
-
 -- | The sweep statements, prepared on the writer's volatile connection;
 -- lifecycle mirrors 'CopierStmts'.
 data SweeperStmts = SweeperStmts
-  { swPickMarked :: !DB.Statement
-  -- ^ 'sql_sweep_pick_marked'
+  { swPick :: !DB.Statement
+  -- ^ 'sql_sweep_pick'
   , swEvictEbTxBytes :: !DB.Statement
   -- ^ 'sql_gc_ebTxBytes'
   , swEvictEbTxs :: !DB.Statement
   -- ^ 'sql_gc_ebTxs'
   , swEvictEbs :: !DB.Statement
-  -- ^ 'sql_gc_ebs_by_hash'
+  -- ^ 'sql_gc_ebs'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
-  swPickMarked <- prep sql_sweep_pick_marked
+  swPick <- prep sql_sweep_pick
   swEvictEbTxBytes <- prep sql_gc_ebTxBytes
   swEvictEbTxs <- prep sql_gc_ebTxs
-  swEvictEbs <- prep sql_gc_ebs_by_hash
+  swEvictEbs <- prep sql_gc_ebs
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
-  dbFinalize swPickMarked
+  dbFinalize swPick
   dbFinalize swEvictEbTxBytes
   dbFinalize swEvictEbTxs
   dbFinalize swEvictEbs
@@ -134,8 +111,10 @@ data VolStmts = VolStmts
   , stPreallocEbTxBytes :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
   , stFillEbTxBytes :: !DB.Statement
+  , stFillEbTxBytesLocally :: !DB.Statement
+  , stHeldOffsets :: !DB.Statement
+  , stDeclaredTxSize :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
-  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -143,14 +122,13 @@ data VolStmts = VolStmts
 
 -- | Prepared statements of the fallback reads into the immutable partition.
 -- The partitions share one schema, so these are the volatile SQL strings
--- prepared against the immutable connection (plus the presence probe).
+-- prepared against the immutable connection.
 -- Lifecycle mirrors 'VolStmts': prepared at open time, finalized in 'close'
 -- before their connection.
 data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
   , immStLookupEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
-  , immStFilterPresent :: !DB.Statement
   }
 
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
@@ -158,7 +136,6 @@ prepareImmStmts db = preparingStmts db $ \prep -> do
   immStLookupEbBody <- prep sql_lookup_ebBodies
   immStLookupEbClosure <- prep sql_lookup_eb_closure
   immStBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
-  immStFilterPresent <- prep sql_imm_filter_present
   pure ImmStmts{..}
 
 -- | Same use-after-free discipline as 'finalizeVolStmts'.
@@ -167,7 +144,6 @@ finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
   dbFinalize immStLookupEbClosure
   dbFinalize immStBatchRetrieveTxs
-  dbFinalize immStFilterPresent
 
 -- | Prepare every statement 'VolStmts' names. Order is not observable.
 prepareVolStmts :: DB.Database -> IO VolStmts
@@ -179,8 +155,10 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
   stInitMissingCount <- prep sql_init_missing_tx_count
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
+  stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
+  stHeldOffsets <- prep sql_held_offsets
+  stDeclaredTxSize <- prep sql_declared_tx_size
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stMarkPointNotified <- prep sql_mark_point_notified
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
   stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
@@ -197,8 +175,10 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stPreallocEbTxBytes
   dbFinalize stInitMissingCount
   dbFinalize stFillEbTxBytes
+  dbFinalize stFillEbTxBytesLocally
+  dbFinalize stHeldOffsets
+  dbFinalize stDeclaredTxSize
   dbFinalize stDecrMissingCount
-  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince

@@ -22,19 +22,16 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ) where
 
 import Cardano.Prelude (forM_, when)
+import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
-  ( StrictTChan
-  , StrictTVar
+  ( StrictTVar
   , check
-  , dupTChan
   , isEmptyTBQueue
-  , newBroadcastTChan
   , newTBQueueIO
   , newTVarIO
   , putTMVar
   , readTVarIO
   , tryReadTBQueue
-  , writeTChan
   , writeTVar
   )
 import Control.Exception
@@ -66,7 +63,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -139,7 +135,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   -- create .db files
   initialiseLeiosDbFiles volLeiosDbPath immLeiosDbPath
-  notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
@@ -156,7 +151,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       registry
       tracer
       statsVar
-      notificationChan
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
@@ -175,7 +169,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       { closeLeiosDbHandle = close samplerThread copierThread writeQueue
       , openReader = implOpenReader statsVar
       , openWriter = implOpenWriter writeQueue
-      , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , garbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
       , leiosDbSampleStats = readTVarIO statsVar
@@ -222,8 +215,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           closeWriter = void . await =<< submitJob writeQueue Flush
-        , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
+        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
@@ -246,7 +238,6 @@ data WriterConns = WriterConns
   , wcImmDb :: !DB.Database
   , wcConn :: !Conn
   , wcSweeperConn :: !SweeperConn
-  , wcGcStmts :: !GcStmts
   , wcPinStmt :: !DB.Statement
   -- ^ 'sql_pin_eb'
   , wcMarkCopiedStmt :: !DB.Statement
@@ -269,19 +260,17 @@ withWriterConns tracer statsVar volPath immPath k =
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
       bracket (mkConn tracer statsVar volDb immDb) finalizeConnStmts $ \conn ->
         bracket (prepareSweeperStmts volDb) finalizeSweeperStmts $ \sweeperStmts ->
-          bracket (prepareGcStmts volDb) finalizeGcStmts $ \gcStmts ->
-            withStmt volDb sql_pin_eb $ \pinStmt ->
-              withStmt volDb sql_mark_as_copied $ \markCopiedStmt ->
-                k
-                  WriterConns
-                    { wcVolDb = volDb
-                    , wcImmDb = immDb
-                    , wcConn = conn
-                    , wcSweeperConn = SweeperConn volDb sweeperStmts
-                    , wcGcStmts = gcStmts
-                    , wcPinStmt = pinStmt
-                    , wcMarkCopiedStmt = markCopiedStmt
-                    }
+          withStmt volDb sql_pin_eb $ \pinStmt ->
+            withStmt volDb sql_mark_as_copied $ \markCopiedStmt ->
+              k
+                WriterConns
+                  { wcVolDb = volDb
+                  , wcImmDb = immDb
+                  , wcConn = conn
+                  , wcSweeperConn = SweeperConn volDb sweeperStmts
+                  , wcPinStmt = pinStmt
+                  , wcMarkCopiedStmt = markCopiedStmt
+                  }
 
 -- | Start the worker draining the write queue. The worker opens the write
 -- connections itself, on its own thread ('withWriterConns'), and closes them
@@ -294,29 +283,25 @@ startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
-  StrictTChan IO LeiosEbNotification ->
   Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar gcBatchSize volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  let notify = atomically . writeTChan notificationChan
-
-      worker :: WriterConns -> IO ()
+  let worker :: WriterConns -> IO ()
       worker
         WriterConns
           { wcVolDb = volDb
           , wcImmDb = immDb
           , wcConn = conn
           , wcSweeperConn = sweeperConn
-          , wcGcStmts = gcStmts
           , wcPinStmt = pinStmt
           , wcMarkCopiedStmt = markCopiedStmt
-          } = serve 0 (Just 0)
+          } = serve 0 (SlotNo 0) Nothing
          where
           -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
           -- and maintenance jobs.
@@ -324,12 +309,12 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
           -- between is the time to do maintenance. But a burst can go on for as
           -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
           --
-          -- The second argument is the state of the GC sweep pass: 'Nothing'
-          -- when no sweep is in progress; 'Just' the EBs evicted so far while a
-          -- pass is in progress. It starts as 'Just', to continue a sweep pass
-          -- potentially interrupted by a node restart.
-          serve :: Int -> Maybe Int -> IO ()
-          serve served sweep = do
+          -- The second argument is the GC frontier: the sweep evicts the
+          -- points older than it that are not pinned. The third is the state
+          -- of the GC sweep pass: 'Nothing' when no sweep is in progress;
+          -- 'Just' the EBs evicted so far while a pass is in progress.
+          serve :: Int -> SlotNo -> Maybe Int -> IO ()
+          serve served frontier sweep = do
             mJob <-
               if served >= maxJobsBetweenMaintenance
                 then
@@ -345,15 +330,16 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
                 traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
                 case next of
                   Stop -> pure ()
-                  Continue -> serve (served + 1) sweep
-                  ContinueAndSweep -> serve (served + 1) (Just (fromMaybe 0 sweep))
+                  Continue -> serve (served + 1) frontier sweep
+                  ContinueAndSweepBefore slot ->
+                    serve (served + 1) (max frontier slot) (Just (fromMaybe 0 sweep))
               -- do maintenance
               Nothing -> do
-                sweep' <- stepMaintenance sweep
+                sweep' <- stepMaintenance frontier sweep
                 case sweep' of
                   Nothing -> blockUntilJob
                   Just _ -> pure ()
-                serve 0 sweep'
+                serve 0 frontier sweep'
 
           runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
@@ -363,39 +349,37 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
               -- outcome of that close to this job's awaiter.
               writeIORef shutdownVar (Just resultVar)
               pure Stop
-            WriteEbPoint point size resultVar ->
-              publish resultVar (sqlInsertEbPoint conn point size) >> pure Continue
-            WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure Continue
+            WriteEbBody point eb fills resultVar ->
+              publish resultVar (sqlInsertEbBody tracer conn point eb fills) >> pure Continue
             WriteTxs point txs resultVar ->
-              publish resultVar (sqlInsertTxs tracer conn notify point txs) >> pure Continue
+              publish resultVar (sqlInsertTxs tracer conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
-            PinEb ebHashes resultVar -> do
+            PinEb points resultVar -> do
               -- One transaction for the batch: the submitter awaits this while
-              -- holding the ImmutableDB write lock, so a round-trip per EB throttles
-              -- block immutalisation to this queue's drain rate.
+              -- holding the ImmutableDB write lock, so a round-trip per point
+              -- throttles block immutalisation to this queue's drain rate.
               publish resultVar $
                 dbWithWriteTransactionRaw volDb $
-                  forM_ ebHashes $ \ebHash ->
+                  forM_ points $ \point ->
                     useStmt pinStmt $ do
-                      dbBindHash pinStmt 1 ebHash
+                      dbBindPoint pinStmt point
                       dbStep1Safe pinStmt
               pure Continue
-            MarkCopied ebHashes resultVar -> do
-              -- One transaction for the batch: the mark is what makes a copied EB
-              -- evictable, and under sync it otherwise costs a queue round-trip
-              -- per EB behind a saturated insert FIFO.
+            MarkCopied points resultVar -> do
+              -- One transaction for the batch: the mark is what makes a copied
+              -- point evictable, and under sync it otherwise costs a queue
+              -- round-trip per point behind a saturated insert FIFO.
               publish resultVar $
                 dbWithWriteTransactionRaw volDb $
-                  forM_ ebHashes $ \ebHash ->
+                  forM_ points $ \point ->
                     useStmt markCopiedStmt $ do
-                      dbBindHash markCopiedStmt 1 ebHash
+                      dbBindPoint markCopiedStmt point
                       dbStep1Safe markCopiedStmt
               pure Continue
-            GcMark slot resultVar -> do
-              nEbsMarked <- publish resultVar (gcMark volDb gcStmts slot)
-              pure $ if nEbsMarked > 0 then ContinueAndSweep else Continue
+            GarbageCollect slot resultVar -> do
+              publish resultVar (pure ())
+              pure (ContinueAndSweepBefore slot)
 
           -- Nothing queued and no sweep outstanding: wait for a job.
           blockUntilJob = IO.atomically $ do
@@ -408,8 +392,8 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
           -- bring the work back. Hence 'catch' rather than 'bracket': the
           -- exception must stop here, not take the writer down, and the
           -- cleanup is for failure only.
-          stepMaintenance :: Maybe Int -> IO (Maybe Int)
-          stepMaintenance sweep =
+          stepMaintenance :: SlotNo -> Maybe Int -> IO (Maybe Int)
+          stepMaintenance frontier sweep =
             step `catch` \(e :: LeiosDbException) -> do
               _ <- DB.exec volDb "ROLLBACK"
               _ <- DB.exec immDb "ROLLBACK"
@@ -420,7 +404,7 @@ startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPat
               case sweep of
                 Nothing -> pure Nothing
                 Just nEbs -> do
-                  evicted <- sweepEbBatch sweeperConn gcBatchSize
+                  evicted <- sweepEbBatch sweeperConn frontier gcBatchSize
                   if evicted == 0
                     then do
                       when (nEbs > 0) $ do
@@ -475,5 +459,6 @@ data WhetherContinueServing
     Stop
   | -- | Keep serving.
     Continue
-  | -- | Keep serving, and start a GC sweep pass or extend the one in progress.
-    ContinueAndSweep
+  | -- | Keep serving, raise the GC frontier to this slot, and start a GC sweep
+    -- pass or extend the one in progress.
+    ContinueAndSweepBefore !SlotNo

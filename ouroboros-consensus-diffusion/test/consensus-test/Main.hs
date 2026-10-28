@@ -6,12 +6,13 @@ import qualified Test.Consensus.GSM (tests)
 import qualified Test.Consensus.Genesis.TestSuite.SmallKey.Tests (tests)
 import qualified Test.Consensus.Genesis.Tests (tests)
 import qualified Test.Consensus.HardFork.Combinator (tests)
+import qualified Test.Consensus.Leios.AcquiredEbs (tests)
 import qualified Test.Consensus.Leios.Cert (tests)
 import qualified Test.Consensus.Leios.ChainDB (tests)
-import qualified Test.Consensus.Leios.Forge (tests)
 import qualified Test.Consensus.Leios.LeiosFetch (tests)
 import qualified Test.Consensus.Leios.LeiosNotify (tests)
 import qualified Test.Consensus.Leios.Relay (tests)
+import qualified Test.Consensus.Leios.TxCache (tests)
 import qualified Test.Consensus.Leios.ValidClaims (tests)
 import qualified Test.Consensus.Leios.VoteState (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
@@ -47,10 +48,11 @@ tests =
     , Test.Consensus.Genesis.TestSuite.SmallKey.Tests.tests
     , Test.Consensus.Leios.Cert.tests
     , Test.Consensus.Leios.ValidClaims.tests
+    , Test.Consensus.Leios.AcquiredEbs.tests
     , Test.Consensus.Leios.ChainDB.tests
-    , Test.Consensus.Leios.Forge.tests
     , Test.Consensus.Leios.LeiosFetch.tests
     , Test.Consensus.Leios.LeiosNotify.tests
     , Test.Consensus.Leios.Relay.tests
     , Test.Consensus.Leios.VoteState.tests
+    , Test.Consensus.Leios.TxCache.tests
     ]

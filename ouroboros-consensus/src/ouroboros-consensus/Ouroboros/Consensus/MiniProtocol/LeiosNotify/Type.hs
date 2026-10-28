@@ -209,6 +209,15 @@ byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
   SingQuit -> smallByteLimit
   st@SingDone -> notActiveState st
 
+-- | A server answers a request only once it has something to say, so 'StBusy'
+-- has no limit.
+--
+-- Once the client sends 'MsgQuit', an honest server answers each outstanding
+-- request at once, with 'MsgCanceled'. A limit per state cannot tell that the
+-- client has quit, so it cannot enforce that. The diffusion layer does instead:
+-- when it demotes a peer, it gives the peer's hot mini-protocols, LeiosNotify
+-- among them, @deactivateTimeout@ (300 seconds) to finish, and then closes the
+-- connection.
 timeLimitsLeiosNotify ::
   ProtocolTimeLimits (LeiosNotify point announcement vote)
 timeLimitsLeiosNotify = ProtocolTimeLimits $ \case

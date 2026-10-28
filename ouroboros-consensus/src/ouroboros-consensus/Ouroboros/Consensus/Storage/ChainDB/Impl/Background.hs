@@ -67,6 +67,7 @@ import Ouroboros.Consensus.Config (configBlock)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosProtocol (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -88,7 +89,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosEbNotification (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..))
 import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
@@ -117,7 +118,7 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | The LeiosDB's next notification, subscribed to before seeding
+  -- | The next Leios acquisition, subscribed to before seeding
   -- 'cdbAcquiredLeiosEbs', so that none is missed in between.
   STM m LeiosEbNotification ->
   m ()
@@ -164,7 +165,7 @@ launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
 
--- | Grow 'cdbAcquiredLeiosEbs' from the LeiosDB's notifications, and enqueue a
+-- | Grow 'cdbAcquiredLeiosEbs' from the node's Leios acquisitions, and enqueue a
 -- reprocess of the blocks parked on each endorser block the first time its
 -- closure is acquired.
 leiosAcquiredEbsRunner ::
@@ -176,8 +177,11 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
       AcquiredEbTxs point -> do
         novel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs
-          writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
-          pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
+          let acquired' = insertAcquiredLeiosEb point acquired
+          writeTVar cdbAcquiredLeiosEbs acquired'
+          pure $
+            not (isAcquiredLeiosEb point acquired)
+              && isAcquiredLeiosEb point acquired'
         -- The set has already grown, so ChainSel sees the closure even while
         -- this enqueue blocks on a full queue.
         when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)

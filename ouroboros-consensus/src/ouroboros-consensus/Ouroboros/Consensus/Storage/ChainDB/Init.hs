@@ -36,7 +36,7 @@ fromFull db =
   InitChainDB
     { addTheFirstEbb =
         -- The first block's predecessor is genesis, and Byron has no Leios.
-        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment Origin SNothing
+        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment Origin SNothing SNothing
     , getCurrentLedger =
         atomically $ ledgerState <$> ChainDB.getCurrentLedger db
     }

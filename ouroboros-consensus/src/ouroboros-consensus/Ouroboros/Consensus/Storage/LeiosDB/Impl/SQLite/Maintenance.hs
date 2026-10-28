@@ -13,9 +13,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
     sqlPromoteToImmutable
   , startCopier
 
-    -- * GC mark
+    -- * GC
   , sqlGarbageCollect
-  , gcMark
 
     -- * GC sweep
   , SweeperConn (..)
@@ -42,7 +41,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTVar
   )
-import Control.Monad (filterM, forever, unless, void)
+import Control.Monad (filterM, forM_, forever, unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -60,8 +59,7 @@ import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlockHash
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -89,12 +87,12 @@ import System.Directory (doesFileExist, getFileSize)
 -- * Copying EBs to the immutable partition
 
 -- | Implements 'leiosDbPromoteToImmutable':
---   - synchronously pin the EB rows in the volatile partition for promotion (@status@ 0 -> 1),
+--   - synchronously pin the points' rows in the volatile partition for promotion (@status@ 0 -> 1),
 --     through the writer ('PinEb');
 --   - ring the copier's doorbell.
 sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> [LeiosPoint] -> IO ()
 sqlPromoteToImmutable writeQueue copierDoorbell points = unless (null points) $ do
-  await =<< submitJob writeQueue (PinEb [pointEbHash p | p <- points])
+  await =<< submitJob writeQueue (PinEb points)
   -- notify the copier thread that there's work to be done
   atomically $ writeTVar copierDoorbell True
 
@@ -106,21 +104,21 @@ data CopierConn = CopierConn
   -- ^ Precompiled statements used by the copier.
   }
 
--- | Copy one pinned EB's closure into the immutable partition. 'True' when
+-- | Copy one pinned point's closure into the immutable partition. 'True' when
 -- it landed, so the caller may have its volatile rows marked as copied.
 copyEbToImmutable ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   CopierConn ->
-  EndorserBlockHash ->
+  LeiosPoint ->
   IO Bool
-copyEbToImmutable tracer statsVar conn ebHash =
+copyEbToImmutable tracer statsVar conn point =
   appendToImmutable >>= \case
     Nothing -> do
-      -- EB is not ready to be copied
+      -- the point is not ready to be copied
       traceWith tracer $
         TraceLeiosDbCopyError
-          (show ebHash)
+          (show point)
           "pinned EB has no complete closure in the volatile partition"
       pure False
     Just _copiedTxs -> do
@@ -143,7 +141,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       -- Still check if it is, as a defensive programming measure, as it's very cheap.
       (bodyCount, closureCount) <-
         useStmt ccCompleteness $ do
-          dbBindHash ccCompleteness 1 ebHash
+          dbBindPoint ccCompleteness point
           -- step the first time, expecting a single result row
           dbStepSafe ccCompleteness >>= \case
             DB.Done ->
@@ -171,16 +169,16 @@ copyEbToImmutable tracer statsVar conn ebHash =
           --
           -- copy the EB
           useStmt ccInsertEb $ do
-            dbBindHash ccInsertEb 1 ebHash
+            dbBindPoint ccInsertEb point
             dbStep1Safe ccInsertEb
           -- copy the eb-to-transactions mapping
           useStmt ccInsertEbTxs $ do
-            dbBindHash ccInsertEbTxs 1 ebHash
+            dbBindPoint ccInsertEbTxs point
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the tx bytes
           useStmt ccInsertEbTxBytes $ do
-            dbBindHash ccInsertEbTxBytes 1 ebHash
+            dbBindPoint ccInsertEbTxBytes point
             dbStep1Safe ccInsertEbTxBytes
           pure (Just nTxs)
 
@@ -222,26 +220,26 @@ startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
               dbStepSafe nextPinnedStmt >>= \case
                 DB.Done -> pure (reverse acc)
                 DB.Row -> do
-                  h <- dbColumnHash nextPinnedStmt 0
-                  rows (h : acc)
+                  point <- dbColumnPoint nextPinnedStmt 0
+                  rows (point : acc)
          in rows []
 
     -- 'True' when the EB is in the immutable partition and its pin can be
     -- retired. The EB stays pinned either way, so it is still next to copy.
     -- Backing off is what keeps a closure that never completes -- or a
     -- partition that keeps refusing the write -- from spinning here.
-    copyOne ebHash =
-      copyEbToImmutable tracer statsVar copierConn ebHash
+    copyOne point =
+      copyEbToImmutable tracer statsVar copierConn point
         `catch` \(e :: LeiosDbException) -> do
           _ <- DB.exec ccDb "ROLLBACK"
-          traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
+          traceWith tracer $ TraceLeiosDbCopyError (show point) (displayException e)
           pure False
 
     -- One 'MarkCopied' for the batch: the mark is what makes a copied EB
     -- evictable, and under sync a queue round-trip per EB queues behind
     -- saturated inserts.
-    copyBatch ebHashes = do
-      copied <- filterM copyOne ebHashes
+    copyBatch points = do
+      copied <- filterM copyOne points
       if null copied
         then threadDelay copyRetryMicros
         else void . await =<< submitJob writeQueue (MarkCopied copied)
@@ -270,45 +268,18 @@ copyBatchSize = 32
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the MARK phase of GC mark-and-sweep,
--- as a 'GcMark' job on the writer (see 'gcMark').
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': a
+-- 'GarbageCollect' job that raises the writer's GC frontier. The writer then
+-- evicts what is older one batch per turn ('sweepEbBatch'), so an insert waits
+-- for a batch at most.
+--
+-- The frontier lives only in the writer, so after a restart what an
+-- interrupted sweep left waits for the next call.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
-  void . await =<< submitJob writeQueue (GcMark gcSlot)
+  await =<< submitJob writeQueue (GarbageCollect gcSlot)
 
--- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
--- hash all of whose announcements are older than the given slot and not
--- pinned (@status = 1@). Returns the number of 'ebs' rows marked.
---
--- Runs on the writer. It does not do much work, but rather primes the state
--- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
--- marked EBs one batch per turn, so an insert waits for a batch at most.
-gcMark ::
-  HasCallStack =>
-  DB.Database ->
-  GcStmts ->
-  SlotNo ->
-  IO Int
-gcMark db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
-  -- check if GC has any work to do
-  hasWork <-
-    useStmt gsHasWork $ do
-      dbBindInt64 gsHasWork 1 slot
-      (/= 0) <$> readSingleInt64 gsHasWork
-  if hasWork
-    then
-      -- mark EBs that are ready to be garbage collected
-      dbWithWriteTransactionRaw db $ do
-        useStmt gsMarkEbForGC $ do
-          dbBindInt64 gsMarkEbForGC 1 slot
-          dbStep1Safe gsMarkEbForGC
-        DB.changes db
-    else pure 0
- where
-  slot = fromIntegral (unSlotNo gcSlot)
-
--- * Sweeping GC-marked rows out of the volatile partition
+-- * Sweeping old points out of the volatile partition
 
 -- | The sweeper's connection and its prepared statements.
 data SweeperConn = SweeperConn
@@ -318,30 +289,33 @@ data SweeperConn = SweeperConn
   -- ^ Precompiled statements used by the sweeper.
   }
 
--- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
--- EBs, with their body and tx bytes -- three range deletes on the EBs' hashes.
--- Returns the number of evicted 'ebs' rows. Runs on the writer.
-sweepEbBatch :: SweeperConn -> Int64 -> IO Int
-sweepEbBatch conn batchSize = do
+-- | One sweep transaction: evict up to the given number of the points older
+-- than the GC frontier that are not pinned, with their bodies and tx bytes --
+-- three range deletes per point. Returns the number of evicted 'ebs' rows.
+-- Runs on the writer.
+sweepEbBatch :: SweeperConn -> SlotNo -> Int64 -> IO Int
+sweepEbBatch conn frontier batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
+      SweeperStmts{swPick, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
-    -- check if any EBs are ready to be evicted
-    evictableEbs <- useStmt swPickMarked $ do
+    evictable <- useStmt swPick $ do
+      dbBindInt64 swPick 1 (fromIntegral (unSlotNo frontier))
       -- batchSize will never be negative, but we handle a negative batch size
       -- gracefully here with a negative LIMIT, which means no limit in SQLite.
-      dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
-      collectBlobs swPickMarked
-    -- evict EBs if any are ready to be GCed
-    if null evictableEbs
-      then pure 0
-      else do
-        let evictableEbsJson = jsonHexArray evictableEbs
-        execJson swEvictEbTxBytes evictableEbsJson
-        execJson swEvictEbTxs evictableEbsJson
-        -- last, so 'DB.changes' counts the evicted 'ebs' rows
-        execJson swEvictEbs evictableEbsJson
-        DB.changes swDb
+      dbBindInt64 swPick 2 (if batchSize <= 0 then -1 else batchSize)
+      let loop acc =
+            dbStepSafe swPick >>= \case
+              DB.Done -> pure (reverse acc)
+              DB.Row -> do
+                point <- dbColumnPoint swPick 0
+                loop (point : acc)
+      loop []
+    forM_ evictable $ \point ->
+      forM_ [swEvictEbTxBytes, swEvictEbTxs, swEvictEbs] $ \stmt ->
+        useStmt stmt $ do
+          dbBindPoint stmt point
+          dbStep1Safe stmt
+    pure (length evictable)
 
 -- * Stats
 

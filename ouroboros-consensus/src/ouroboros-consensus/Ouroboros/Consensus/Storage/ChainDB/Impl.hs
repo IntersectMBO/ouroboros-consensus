@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -93,8 +92,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
-  , LeiosDbReader (..)
+  ( LeiosDbReader (..)
   , withReader
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -243,7 +241,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Subscribe before seeding, so that no closure acquired in between is
     -- missed. The seed is every closure the LeiosDB holds that a block the
     -- initial chain selection could select may certify.
-    nextLeiosEbNotification <- readTChan <$> subscribeEbNotifications leiosDb
+    nextLeiosEbNotification <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
@@ -324,9 +322,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = \punish predecessorSlot leiosView blk ->
+            { addBlockAsync = \punish predecessorSlot leiosView certified blk ->
                 getEnv h $ \cdb ->
-                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView blk
+                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView certified blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
@@ -352,6 +350,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+            , getLeiosCertifiedEbs = getEnvSTM h Query.getLeiosCertifiedEbs
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
             , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter

@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , emptyLeiosValidClaims
   , insertLeiosValidClaim
   , isLeiosValidClaim
+  , leiosCertifiedEbs
   , pruneLeiosValidClaims
   ) where
 
@@ -35,7 +36,7 @@ import Control.Monad (guard)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
@@ -49,7 +50,8 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol (..)
   )
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlockHash
+  ( ElectionId (..)
+  , EndorserBlockHash
   , LeiosPoint (..)
   , RankingBlockHash
   )
@@ -72,8 +74,7 @@ leiosBlockInfo ::
 leiosBlockInfo bcfg blk =
   LeiosBlockInfo
     { lbiHasCert = getContainsLeiosCert p view
-    , lbiAnnouncedEb =
-        maybeToStrictMaybe $ announcementEbHash <$> getLeiosAnnouncement p view
+    , lbiAnnouncement = maybeToStrictMaybe $ getLeiosAnnouncement p view
     }
  where
   p = Proxy @(BlockProtocol blk)
@@ -83,59 +84,39 @@ leiosBlockInfo bcfg blk =
   Acquired closures
 -------------------------------------------------------------------------------}
 
--- | The endorser blocks whose closure the LeiosDB holds, each with the slot of
--- its youngest focus (see @LeiosEbNotification@).
---
--- That slot is the youngest slot of any 'LeiosPoint' in an @AcquiredEbTxs@
--- notification for the endorser block, since the LeiosDB sends that
--- notification at every focus not older than the ImmutableDB tip.
---
--- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
--- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.
-data AcquiredLeiosEbs = UnsafeAcquiredLeiosEbs
-  { aleYoungestSlot :: !(Map EndorserBlockHash SlotNo)
-  , aleBySlot :: !(Map SlotNo (NESet EndorserBlockHash))
-  -- ^ The inverse of 'aleYoungestSlot', so that pruning costs only what it
-  -- prunes.
+-- | The endorser block points whose closure the LeiosDB holds: those of the
+-- @AcquiredEbTxs@ notifications (see @LeiosEbNotification@).
+data AcquiredLeiosEbs = MkAcquiredLeiosEbs
+  { alePoints :: !(Set LeiosPoint)
+  , alePrunedSlot :: !SlotNo
+  -- ^ The slot this has most recently been pruned to, so that a notification
+  -- that arrives after the pruning cannot undo it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 mkAcquiredLeiosEbs :: [LeiosPoint] -> AcquiredLeiosEbs
 mkAcquiredLeiosEbs =
-  List.foldl' (flip insertAcquiredLeiosEb) (UnsafeAcquiredLeiosEbs Map.empty Map.empty)
+  List.foldl'
+    (flip insertAcquiredLeiosEb)
+    (MkAcquiredLeiosEbs Set.empty (SlotNo 0))
 
--- | Record that the endorser block's closure is acquired, and that the given
--- point announces it.
+-- | Record that the closure of the endorser block at this point is acquired,
+-- unless the point is older than what has been pruned.
 insertAcquiredLeiosEb :: LeiosPoint -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredLeiosEbs youngest bySlot) =
-  case Map.lookup ebHash youngest of
-    Nothing -> record bySlot
-    Just prevSlot
-      | slot <= prevSlot -> acquired
-      | otherwise -> record (Map.update (NESet.nonEmptySet . NESet.delete ebHash) prevSlot bySlot)
- where
-  record bySlot' =
-    UnsafeAcquiredLeiosEbs
-      (Map.insert ebHash slot youngest)
-      (Map.insertWith NESet.union slot (NESet.singleton ebHash) bySlot')
+insertAcquiredLeiosEb point acquired@(MkAcquiredLeiosEbs points prunedSlot)
+  | pointSlotNo point < prunedSlot = acquired
+  | otherwise = MkAcquiredLeiosEbs (Set.insert point points) prunedSlot
 
-isAcquiredLeiosEb :: EndorserBlockHash -> AcquiredLeiosEbs -> Bool
-isAcquiredLeiosEb ebHash = Map.member ebHash . aleYoungestSlot
+isAcquiredLeiosEb :: LeiosPoint -> AcquiredLeiosEbs -> Bool
+isAcquiredLeiosEb point = Set.member point . alePoints
 
--- | Forget every endorser block all of whose foci are older than the slot. A
--- block that ChainSel has yet to select can then certify it only at another
--- announcement, and verifying that certificate makes the announcement a focus,
--- which records the endorser block here again.
---
--- See 'AcquiredLeiosEbs' for why its slots are the youngest foci.
+-- | Forget every point older than the slot.
 pruneAcquiredLeiosEbs :: SlotNo -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot) =
-  UnsafeAcquiredLeiosEbs
-    (youngest `Map.withoutKeys` foldMap NESet.toSet pruned)
-    kept
- where
-  (pruned, kept) = Map.spanAntitone (< slot) bySlot
+pruneAcquiredLeiosEbs slot (MkAcquiredLeiosEbs points prunedSlot) =
+  MkAcquiredLeiosEbs
+    (Set.dropWhileAntitone ((< slot) . pointSlotNo) points)
+    (max slot prunedSlot)
 
 {-------------------------------------------------------------------------------
   Parking
@@ -153,18 +134,20 @@ isParkedCertRB ::
   Bool
 isParkedCertRB acquired lookupBlockInfo info
   | not (lbiHasCert (biLeios info)) = False
-  | otherwise = case certifiedEb of
-      Just ebHash -> not (isAcquiredLeiosEb ebHash acquired)
+  | otherwise = case certified of
+      Just point -> not (isAcquiredLeiosEb point acquired)
       -- Either the VolatileDB lacks the predecessor, so the block cannot
       -- be selected before it arrives anyway, or the predecessor (perhaps
       -- genesis) announces nothing, so the block can never be valid and
       -- staying parked for good is harmless.
       Nothing -> True
  where
-  certifiedEb = case biPrevHash info of
+  certified = case biPrevHash info of
     GenesisHash -> Nothing
-    BlockHash prevHash ->
-      lookupBlockInfo prevHash >>= strictMaybeToMaybe . lbiAnnouncedEb . biLeios
+    BlockHash prevHash -> do
+      prev <- lookupBlockInfo prevHash
+      announcement <- strictMaybeToMaybe (lbiAnnouncement (biLeios prev))
+      pure $ MkLeiosPoint (biSlotNo prev) (announcementEbHash announcement)
 
 -- | Hide parked blocks ('isParkedCertRB') from a @getBlockInfo@. The given one
 -- must be the VolatileDB's own, so that it still finds every predecessor.
@@ -198,29 +181,46 @@ ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
 --
 -- A block containing a certificate claims that the endorser block its
 -- predecessor announced is certified. The claims that valid certificates have
--- established are how LeiosFetch will learn which endorser blocks are
--- certified, for its Recovery Path; that part is not ported yet. Meanwhile, a
--- block making an already established claim need not have its certificate
--- verified.
+-- established are how LeiosFetch learns which endorser blocks are certified,
+-- for its Recovery Path. A block making an already established claim need not
+-- have its certificate verified.
 data LeiosValidClaims = LeiosValidClaims
   { lvcSlot :: !(Map RankingBlockHash SlotNo)
   , lvcBySlot :: !(Map SlotNo (NESet RankingBlockHash))
   -- ^ The inverse of 'lvcSlot', so that pruning costs only what it prunes.
+  , lvcCertified :: !(Map ElectionId EndorserBlockHash)
+  -- ^ The endorser block certified in each election whose claim was
+  -- established with its announcement known.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyLeiosValidClaims :: LeiosValidClaims
-emptyLeiosValidClaims = LeiosValidClaims Map.empty Map.empty
+emptyLeiosValidClaims = LeiosValidClaims Map.empty Map.empty Map.empty
 
--- | Record that some valid certificate established the claim.
-insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> LeiosValidClaims
-insertLeiosValidClaim (LeiosClaim slot rbHash) claims@(LeiosValidClaims slots bySlot)
+-- | Record that some valid certificate established the claim, whose announcing
+-- block made this announcement, if known.
+insertLeiosValidClaim ::
+  LeiosClaim -> StrictMaybe LeiosAnnouncement -> LeiosValidClaims -> LeiosValidClaims
+insertLeiosValidClaim (LeiosClaim slot rbHash) mbAnnouncement claims@(LeiosValidClaims slots bySlot certified)
   | Map.member rbHash slots = claims
   | otherwise =
       LeiosValidClaims
         (Map.insert rbHash slot slots)
         (Map.insertWith NESet.union slot (NESet.singleton rbHash) bySlot)
+        ( case mbAnnouncement of
+            SNothing -> certified
+            SJust ann ->
+              Map.insert
+                (ElectionId slot (announcementElectee ann))
+                (announcementEbHash ann)
+                certified
+        )
+
+-- | The endorser block each election has had certified, as far as the
+-- established claims tell.
+leiosCertifiedEbs :: LeiosValidClaims -> Map ElectionId EndorserBlockHash
+leiosCertifiedEbs = lvcCertified
 
 isLeiosValidClaim :: RankingBlockHash -> LeiosValidClaims -> Bool
 isLeiosValidClaim rbHash = Map.member rbHash . lvcSlot
@@ -229,9 +229,11 @@ isLeiosValidClaim rbHash = Map.member rbHash . lvcSlot
 -- immutable tip has passed it, no block that ChainSel has yet to select can
 -- make the claim.
 pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
-pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot) =
+pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot certified) =
   LeiosValidClaims
     (slots `Map.withoutKeys` foldMap NESet.toSet pruned)
     kept
+    -- 'ElectionId' orders by slot first.
+    (Map.dropWhileAntitone ((< slot) . electionSlot) certified)
  where
   (pruned, kept) = Map.spanAntitone (< slot) bySlot

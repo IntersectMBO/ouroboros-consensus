@@ -116,12 +116,17 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( LeiosAnnouncementAgeLimits
+  , defaultLeiosAnnouncementAgeLimits
+  )
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.DbLock
@@ -397,6 +402,10 @@ data StdRunNodeArgs m blk
   -- ^ Determine whether to use the system default mempool capacity or explicitly set
   -- capacity of the mempool.
   , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , srnLeiosAnnouncementAgeLimits :: Maybe LeiosAnnouncementAgeLimits
+  -- ^ Overrides 'defaultLeiosAnnouncementAgeLimits', how old an announcement
+  -- the node relays or accepts. A network whose immutable tip is only minutes
+  -- old, such as a test network, has to set its own, smaller limits.
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
@@ -547,6 +556,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckSnapshotPolicyArgs (configSecurityParam cfg) snapshotPolicyArgs) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
+          -- Where the node announces what it acquires, to the ChainDB among
+          -- others.
+          leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -557,6 +569,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               snapshotDelayRng
               llrnLdbFlavorArgs
               leiosDB
+              leiosAcquisitions
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -611,6 +624,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   historicityCheck
                   chainDB
                   leiosDB
+                  leiosAcquisitions
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
@@ -974,12 +988,14 @@ openChainDB ::
   LedgerDbBackendArgs m blk ->
   -- | The node's LeiosDB
   LeiosDbHandle m ->
+  -- | The node's Leios acquisitions
+  LeiosAcquisitions m ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leiosAcquisitions defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -993,6 +1009,7 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB defA
             delayRng
             flavorArgs
             leiosDB
+            (subscribeLeiosAcquisitions leiosAcquisitions)
             defArgs
    in (,args) <$> ChainDB.openDB args
 
@@ -1012,6 +1029,7 @@ mkNodeKernelArgs ::
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   LeiosDbHandle m ->
+  LeiosAcquisitions m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
@@ -1036,6 +1054,7 @@ mkNodeKernelArgs
   chainSyncHistoricityCheck
   chainDB
   leiosDB
+  leiosAcquisitions
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
@@ -1047,7 +1066,7 @@ mkNodeKernelArgs
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, _) = splitGen rng'
+          (psRng, lfRng) = splitGen rng'
       return
         NodeKernelArgs
           { tracers
@@ -1078,6 +1097,9 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , leiosAcquisitions
+          , leiosFetchRng = lfRng
+          , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
@@ -1264,6 +1286,7 @@ stdLowLevelRunNodeArgsIO
     llrnCustomiseNodeKernelArgs =
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
+        . modifyLeiosAnnouncementAgeLimits
      where
       modifyBlockFetchConfiguration =
         maybe
@@ -1279,6 +1302,11 @@ stdLowLevelRunNodeArgsIO
           id
           (\mc nka -> nka{mempoolCapacityOverride = mc})
           srnMaybeMempoolCapacityOverride
+      modifyLeiosAnnouncementAgeLimits =
+        maybe
+          id
+          (\limits nka -> nka{leiosAnnouncementAgeLimits = limits})
+          srnLeiosAnnouncementAgeLimits
 
     -- Limit the node version unless srnEnableInDevelopmentVersions is set
     limitToLatestReleasedVersion ::

@@ -2,18 +2,82 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | How the node's LeiosFetch server's events are logged.
+-- | How the node's LeiosFetch client's and server's events are logged.
 module Ouroboros.Consensus.Tracing.LeiosFetch () where
 
 import Cardano.Crypto.Hash (hashToStringAsHex)
 import Cardano.Logging
 import Control.Exception (displayException)
 import Data.Aeson (Value (String), (.=))
+import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo (..))
+import Ouroboros.Consensus.Leios.TxCache.API (FetchArrivalBytes (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( TraceLeiosFetchClientEvent (..)
+  , TraceLeiosFetchServerEvent (..)
+  )
+
+instance LogFormatting TraceLeiosFetchClientEvent where
+  forMachine _dtal = \case
+    TraceLeiosFetchClientBlockArrived point arrival ->
+      mconcat ["kind" .= String "BlockArrived", pointFields point, arrivalFields arrival]
+    TraceLeiosFetchClientTxsArrived point arrival ->
+      mconcat ["kind" .= String "TxsArrived", pointFields point, arrivalFields arrival]
+    TraceLeiosFetchClientBlockAcquired point age ->
+      mconcat ["kind" .= String "BlockAcquired", pointFields point, "age" .= age]
+    TraceLeiosFetchClientBlockTxsAcquired point age ->
+      mconcat ["kind" .= String "BlockTxsAcquired", pointFields point, "age" .= age]
+   where
+    arrivalFields (MkFetchArrivalBytes invalid evicted good extra) =
+      mconcat
+        ["invalidBytes" .= invalid, "evictedBytes" .= evicted, "goodBytes" .= good, "extraBytes" .= extra]
+
+  forHuman = \case
+    TraceLeiosFetchClientBlockArrived point _ -> "Endorser block " <> pretty point <> " arrived"
+    TraceLeiosFetchClientTxsArrived point _ -> "Transactions of endorser block " <> pretty point <> " arrived"
+    TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
+    TraceLeiosFetchClientBlockTxsAcquired point _ ->
+      "Acquired the transactions of endorser block " <> pretty point
+   where
+    pretty = Text.pack . prettyLeiosPoint
+
+instance MetaTrace TraceLeiosFetchClientEvent where
+  namespaceFor = \case
+    TraceLeiosFetchClientBlockArrived{} -> Namespace [] ["BlockArrived"]
+    TraceLeiosFetchClientTxsArrived{} -> Namespace [] ["TxsArrived"]
+    TraceLeiosFetchClientBlockAcquired{} -> Namespace [] ["BlockAcquired"]
+    TraceLeiosFetchClientBlockTxsAcquired{} -> Namespace [] ["BlockTxsAcquired"]
+
+  severityFor (Namespace _ ["BlockArrived"]) _ = Just Debug
+  severityFor (Namespace _ ["TxsArrived"]) _ = Just Debug
+  severityFor (Namespace _ ["BlockAcquired"]) _ = Just Info
+  severityFor (Namespace _ ["BlockTxsAcquired"]) _ = Just Info
+  severityFor _ _ = Nothing
+
+  documentFor (Namespace _ ["BlockArrived"]) =
+    Just "An endorser block arrived, its bytes classified by whether the node needed them."
+  documentFor (Namespace _ ["TxsArrived"]) =
+    Just
+      "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them."
+  documentFor (Namespace _ ["BlockAcquired"]) =
+    Just "The node durably holds an endorser block it fetched."
+  documentFor (Namespace _ ["BlockTxsAcquired"]) =
+    Just "The node durably holds all the transactions of an endorser block it fetched."
+  documentFor _ = Nothing
+
+  allNamespaces =
+    [ Namespace [] ["BlockArrived"]
+    , Namespace [] ["TxsArrived"]
+    , Namespace [] ["BlockAcquired"]
+    , Namespace [] ["BlockTxsAcquired"]
+    ]
+
+pointFields :: LeiosPoint -> Aeson.Object
+pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
+  mconcat ["slot" .= slot, "ebHash" .= String (Text.pack (hashToStringAsHex ebHash))]
 
 -- The exceptions these events carry disconnect only the client, not the whole
 -- node, so their fields are rendered for structured logging, rather than left
@@ -22,8 +86,8 @@ instance LogFormatting TraceLeiosFetchServerEvent where
   forMachine _dtal = \case
     TraceLeiosFetchServerBlockRequested point ->
       mconcat ["kind" .= String "BlockRequested", pointFields point]
-    TraceLeiosFetchServerBlockServed point txCount ->
-      mconcat ["kind" .= String "BlockServed", pointFields point, "txCount" .= txCount]
+    TraceLeiosFetchServerBlockServed point bytes ->
+      mconcat ["kind" .= String "BlockServed", pointFields point, "bytes" .= bytes]
     TraceLeiosFetchServerTxsRequested point txCount ->
       mconcat ["kind" .= String "TxsRequested", pointFields point, "txCount" .= txCount]
     TraceLeiosFetchServerTxsServed point txCount bytes ->
@@ -45,15 +109,12 @@ instance LogFormatting TraceLeiosFetchServerEvent where
         ]
     TraceLeiosFetchServerOpenReaderDbFailure err ->
       mconcat ["kind" .= String "OpenReaderDbFailure", "exception" .= err]
-   where
-    pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
-      mconcat ["slot" .= slot, "ebHash" .= String (Text.pack (hashToStringAsHex ebHash))]
 
   forHuman = \case
     TraceLeiosFetchServerBlockRequested point ->
       "Requested endorser block " <> pretty point
-    TraceLeiosFetchServerBlockServed point txCount ->
-      "Served endorser block " <> pretty point <> ", referencing " <> showT txCount <> " transactions"
+    TraceLeiosFetchServerBlockServed point bytes ->
+      "Served endorser block " <> pretty point <> ", of " <> showT bytes <> " bytes"
     TraceLeiosFetchServerTxsRequested point txCount ->
       "Requested " <> showT txCount <> " transactions of endorser block " <> pretty point
     TraceLeiosFetchServerTxsServed point txCount bytes ->
