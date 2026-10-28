@@ -22,7 +22,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header, PerasRoundNo)
-import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (Idling, idlingStart, idlingStop))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM (STM, atomically)
@@ -123,8 +122,8 @@ newObjectDiffusionInboundHandleCollection = do
 -- | Interface for the ObjectDiffusion client to its state allocated by
 -- 'bracketObjectDiffusionInbound'.
 data ObjectDiffusionInboundStateView objectId m = ObjectDiffusionInboundStateView
-  { odisvIdling :: !(Idling m)
-  -- ^ Actions that record whether the client has reached the server's current
+  { odisvSignalCaughtUp :: !(m ())
+  -- ^ Record that the client has reached the server's current
   -- object-ID front. See 'nextOutstandingRoundNumber'.
   , odisvSetNextOutstandingObjectId :: !(objectId -> m ())
   -- ^ Record the first outstanding ID, before downloading or processing it.
@@ -146,17 +145,9 @@ bracketObjectDiffusionInbound handles peer body = do
   bracket_ (acquireContext odiState) releaseContext
     . body
     $ ObjectDiffusionInboundStateView
-      { odisvIdling =
-          Idling
-            { idlingStart = updateState odiState $ \s ->
-                s{nextOutstandingRoundNumber = CaughtUp}
-            , idlingStop = updateState odiState $ \s ->
-                s
-                  { nextOutstandingRoundNumber = case nextOutstandingRoundNumber s of
-                      CaughtUp -> Uninitialized
-                      progress -> progress
-                  }
-            }
+      { odisvSignalCaughtUp =
+          updateState odiState $ \s ->
+              s{nextOutstandingRoundNumber = CaughtUp}
       , odisvSetNextOutstandingObjectId = \roundNo ->
           updateState odiState $ \s ->
             s{nextOutstandingRoundNumber = NextOutstandingRoundNumber roundNo}

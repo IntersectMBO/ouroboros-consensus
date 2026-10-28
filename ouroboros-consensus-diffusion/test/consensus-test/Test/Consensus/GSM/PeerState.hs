@@ -8,7 +8,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State hiding (CaughtUp)
-import Ouroboros.Consensus.MiniProtocol.Util.Idling
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.GSM.PeerState
 import Ouroboros.Consensus.Node.GsmState (GsmState (..))
@@ -36,7 +35,7 @@ tests =
     [ testCase "certificate registration, idling, activity and removal" $
         runSimOrThrow lifecycle @?= [False, False, True, False, True, False, True, False]
     , testCase "certificate progress is the source of its idling indication" $
-        runSimOrThrow progressIdling @?= [False, False, True, False, True, False]
+        runSimOrThrow progressIdling @?= [False, False, True, False, True]
     , testCase "certificate-first registration and connection-key isolation" $
         runSimOrThrow certificateFirst @?= [False, False, True, False]
     , testCase "ChainSync alone is sufficient only without negotiated Peras" $
@@ -96,11 +95,11 @@ lifecycle = do
   missing <- allIdle cs cert
   during <- bracketObjectDiffusionInbound cert 0 $ \view -> do
     registered <- allIdle cs cert
-    idlingStart (odisvIdling view)
+    odisvSignalCaughtUp view
     idle <- allIdle cs cert
-    idlingStop (odisvIdling view)
+    odisvSetNextOutstandingObjectId view 1
     active <- allIdle cs cert
-    idlingStart (odisvIdling view)
+    odisvSignalCaughtUp view
     idleAgain <- allIdle cs cert
     setChainSyncIdle handle False
     chainActive <- allIdle cs cert
@@ -120,21 +119,19 @@ progressIdling = do
     initial <- allIdle cs cert
     odisvSetNextOutstandingObjectId view 3
     outstanding <- allIdle cs cert
-    idlingStart (odisvIdling view)
+    odisvSignalCaughtUp view
     idle <- allIdle cs cert
     odisvSetNextOutstandingObjectId view 5
     active <- allIdle cs cert
-    idlingStart (odisvIdling view)
+    odisvSignalCaughtUp view
     idleAgain <- allIdle cs cert
-    idlingStop (odisvIdling view)
-    uninitialized <- allIdle cs cert
-    pure [initial, outstanding, idle, active, idleAgain, uninitialized]
+    pure [initial, outstanding, idle, active, idleAgain]
 
 certificateFirst :: IOSim s [Bool]
 certificateFirst = do
   (cs, cert) <- newHandles
   bracketObjectDiffusionInbound cert 0 $ \view -> do
-    idlingStart (odisvIdling view)
+    odisvSignalCaughtUp view
     noChain <- allIdle cs cert
     _ <- addChainSync cs 1 PerasSupported True
     wrongConnection <- allIdle cs cert
@@ -182,7 +179,7 @@ transition = do
     missing <- observe
     bracketObjectDiffusionInbound cert 0 $ \view -> do
       registered <- observe
-      idlingStart (odisvIdling view)
+      odisvSignalCaughtUp view
       caughtUp <- observe
       pure [missing, registered, caughtUp]
 
@@ -193,7 +190,7 @@ failureRemovesHandle = do
   result <-
     E.try
       ( bracketObjectDiffusionInbound cert 0 $ \view -> do
-          idlingStart (odisvIdling view)
+          odisvSignalCaughtUp view
           allIdle cs cert >>= (@?= True)
           E.throwIO (userError "certificate client failed")
       ) ::

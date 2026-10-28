@@ -41,10 +41,9 @@ import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundStateView (odisvIdling, odisvSetNextOutstandingObjectId)
+  ( ObjectDiffusionInboundStateView (odisvSignalCaughtUp, odisvSetNextOutstandingObjectId)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -550,14 +549,13 @@ objectDiffusionInbound
               (numToAckOnNextReq st)
               numIdsToRequest
               ( do
-                  Idling.idlingStart (odisvIdling stateView)
+                  odisvSignalCaughtUp stateView
                   traceWith tracer TraceObjectDiffusionInboundStartedIdling
               )
               ( \neCollectedIds ->
                   WithEffect $ do
                     -- The server supplied new object IDs, so the client is no
                     -- longer known to be caught up with this server.
-                    Idling.idlingStop (odisvIdling stateView)
                     traceWith tracer TraceObjectDiffusionInboundStoppedIdling
                     pure $
                       checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
