@@ -31,12 +31,15 @@ tests =
     "Forging"
     [ testCase
         "the node stores each endorser block that it forges, at the point that the header announces"
-        $ do
-          let ForgeOutcome{announcedEbs, storedPoints} = runSimOrThrow forgedEbs
-          assertBool "the node forged no block" (not (null announcedEbs))
-          sort storedPoints @?= sort [(announcedSlot eb, announcedHash eb) | eb <- announcedEbs]
-          map storedTxs announcedEbs @?= map (Just . forgedTxs) announcedEbs
+        unit_storesForgedEbs
     ]
+
+unit_storesForgedEbs :: Assertion
+unit_storesForgedEbs = do
+  let ForgeOutcome{announcedEbs, storedPoints} = runSimOrThrow forgedEbs
+  assertBool "the node forged no block" (not (null announcedEbs))
+  sort storedPoints @?= sort [(announcedSlot eb, announcedHash eb) | eb <- announcedEbs]
+  map storedTxs announcedEbs @?= map (Just . forgedTxs) announcedEbs
 
 -- | What the chain and the LeiosDB hold after the node forges.
 data ForgeOutcome = ForgeOutcome
