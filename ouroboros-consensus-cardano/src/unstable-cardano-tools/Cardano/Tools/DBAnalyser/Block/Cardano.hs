@@ -52,7 +52,7 @@ import qualified Data.Compact as Compact
 import Data.Functor.Identity (Identity, runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict
   ( StrictMaybe (..)
   , fromSMaybe
