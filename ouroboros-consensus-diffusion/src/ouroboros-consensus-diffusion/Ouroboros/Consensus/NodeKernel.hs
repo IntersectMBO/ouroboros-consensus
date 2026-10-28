@@ -107,9 +107,10 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
 import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionRulesDecision (..))
-import Ouroboros.Consensus.Peras.Context
-  ( forgePerasVoteIfEligibleWithHandle
-  , runQueryWithContextHandle
+import Ouroboros.Consensus.Peras.Context (runQueryWithContextHandle)
+import Ouroboros.Consensus.Peras.Vote.Forging
+  ( PerasVoteForging (..)
+  , mkPerasVoteForging
   )
 import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision (..))
 import Ouroboros.Consensus.Peras.Weight (weightBoostOfFragment)
@@ -209,6 +210,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Set block forging
   --
   -- When set with the empty list '[]' block forging will be disabled.
+  , setPerasVoteForging :: Maybe (PerasVoteForging m blk) -> m ()
+  -- ^ Set Peras vote forging.
+  --
+  -- When set with 'Nothing', Peras vote forging will be disabled.
   , getPeerSharingAPI :: PeerSharingAPI addrNTN StdGen m
   , getOutboundConnectionsState ::
       StrictTVar m OutboundConnectionsState
@@ -338,6 +343,8 @@ initNodeKernel
 
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
+    perasVoteForgingVar <- LazySTM.newTVarIO Nothing
+
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
@@ -510,6 +517,7 @@ initNodeKernel
                   (perasVoteForgingTracer tracers)
                   chainDB
                   systemTime
+                  perasVoteForgingVar
                   roundInfo
 
     return
@@ -526,6 +534,7 @@ initNodeKernel
         , getPeerSharingRegistry = peerSharingRegistry
         , getTracers = tracers
         , setBlockForging = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+        , setPerasVoteForging = \a -> atomically . LazySTM.writeTVar perasVoteForgingVar $! a
         , getPeerSharingAPI = peerSharingAPI
         , getOutboundConnectionsState =
             varOutboundConnectionsState
@@ -938,69 +947,66 @@ perasVoteForgingController ::
   Tracer m (TracePerasVoteForgingEvent blk) ->
   ChainDB m blk ->
   SystemTime m ->
+  LazySTM.TVar m (Maybe (PerasVoteForging m blk)) ->
   (PerasRoundNo, Word64) ->
   WithEarlyExit m ()
 perasVoteForgingController
   perasVoteForgingTracer
   chainDB
   systemTime
+  voteForgingVar
   (roundNo, slotInRound) = do
-    -- Get crypto data from environment variables
-    -- TODO: move the code outside of the vote forging controller once
-    -- they are properly obtained from the ledger/context.
-    poolId <- case readPerasPoolIdFromEnv (Proxy @blk) of
-      Left err -> do
-        lift $ traceWith perasVoteForgingTracer $ TracePerasVotingCantReadEnv err
-        exitEarly
-      Right poolId -> pure poolId
-
-    privateKey <- case readPerasPrivateKeyFromEnv (Proxy @blk) of
-      Left err -> do
-        lift $ traceWith perasVoteForgingTracer $ TracePerasVotingCantReadEnv err
-        exitEarly
-      Right privateKey -> pure privateKey
-
-    -- We run all 3 STM computations in a WriterT monad so that we can have proper logging,
-    -- while keeping everything in the same transaction. We also use MaybeT because there is
-    -- a natural abort/continue logic within the transaction. Unfortunately, we can't leverage
-    -- the outer WithEarlyExit monad, because we _always_ want to get the trace.
+    -- We run all 4 STM computations in a 'WriterT' monad so that we can have
+    -- proper logging, while keeping everything in the same transaction. We
+    -- also use 'MaybeT' because there is a natural abort/continue logic within
+    -- the transaction. Unfortunately, we can't leverage the outer
+    -- 'WithEarlyExit' monad, because we _always_ want to get the trace.
     (mbPerasVote, traceEvents) <-
       lift $ atomically $ runWriterT $ runMaybeT $ do
-        -- Is this the first slot in the round? If not, we don't forge a vote.
-        when (slotInRound /= 0) $ do
-          tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
-          hoistMaybe Nothing
-        -- Do the voting rules state that we should vote? And if so, for which block?
-        votingDecision <-
+        -- Read the current vote forging state. If we don't have one, we can't
+        -- forge a vote in this slot.
+        mbVoteForging <-
           lift . lift $
-            ChainDB.isPerasVotingAllowedWithHandle
-              (ChainDB.getPerasVotingViewHandle chainDB)
-              roundNo
-        case votingDecision of
-          Left err -> do
-            tell [TracePerasVotingViewError roundNo err]
+            LazySTM.readTVar voteForgingVar
+        case mbVoteForging of
+          Nothing -> do
+            tell [TracePerasVotingNoForgingCredentials roundNo]
             hoistMaybe Nothing
-          Right decision -> do
-            tell [TracePerasVotingRulesDecision roundNo decision]
-            case decision of
-              NoVote _evidence -> do
+          Just voteForging -> do
+            -- Is this the first slot in the round? If not, we don't forge a vote.
+            when (slotInRound /= 0) $ do
+              tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
+              hoistMaybe Nothing
+            -- Do the voting rules state that we should vote? And if so, for which block?
+            votingDecision <-
+              lift . lift $
+                ChainDB.isPerasVotingAllowedWithHandle
+                  (ChainDB.getPerasVotingViewHandle chainDB)
+                  roundNo
+            case votingDecision of
+              Left err -> do
+                tell [TracePerasVotingViewError roundNo err]
                 hoistMaybe Nothing
-              Vote _evidence candidateBlock -> do
-                -- Forge the vote if eligible in this round.
-                mbVote <-
-                  lift . lift $
-                    forgePerasVoteIfEligibleWithHandle
-                      (ChainDB.getPerasEpochContextResolverHandle chainDB)
-                      poolId
-                      privateKey
-                      roundNo
-                      candidateBlock
-                case mbVote of
-                  Nothing -> do
-                    tell [TracePerasVotingNotAVoterInRound roundNo]
+              Right decision -> do
+                tell [TracePerasVotingRulesDecision roundNo decision]
+                case decision of
+                  NoVote _evidence -> do
                     hoistMaybe Nothing
-                  Just vote ->
-                    pure vote
+                  Vote _evidence candidateBlock -> do
+                    -- Forge the vote if eligible in this round.
+                    mbVote <-
+                      lift . lift $
+                        forgeVoteIfEligible
+                          voteForging
+                          (ChainDB.getPerasEpochContextResolverHandle chainDB)
+                          roundNo
+                          candidateBlock
+                    case mbVote of
+                      Nothing -> do
+                        tell [TracePerasVotingNotAVoterInRound roundNo]
+                        hoistMaybe Nothing
+                      Just vote ->
+                        pure vote
 
     lift $ traverse_ (traceWith perasVoteForgingTracer) traceEvents
 
