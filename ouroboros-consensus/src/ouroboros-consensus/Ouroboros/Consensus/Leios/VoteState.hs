@@ -32,6 +32,8 @@ module Ouroboros.Consensus.Leios.VoteState
   , TraceLeiosVoteState (..)
   , AddVoteResult (..)
   , addVote
+  , ValidatedVote (..)
+  , validateVote
   , votePruner
 
     -- * Certificates
@@ -48,7 +50,6 @@ import Cardano.Crypto.DSIGN.Class (verifyDSIGN)
 import Cardano.Crypto.Leios
   ( AggregationError
   , LeiosCert
-  , LeiosCommittee
   , LeiosSeat (..)
   , LeiosSeatId
   , LeiosSignature
@@ -59,7 +60,6 @@ import Cardano.Crypto.Leios
   )
 import Control.Monad (forever, when)
 import Control.Tracer (Tracer, traceWith)
-import Data.Bifunctor (first)
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -200,16 +200,18 @@ addVote st systemTime accepted = do
       | received > voteUntil voteWindow -> pure (ArrivedTooLate, Nothing)
       | not announced -> pure (NotAnnounced, Nothing)
       | seen -> pure (AlreadyKnown, Nothing)
-      -- NOTE: Verifying a signature is expensive, so this comes last.
-      | Left reason <- validateVote voteCommittee acceptedVote -> pure (VoteInvalid reason, Nothing)
-      | otherwise -> do
-          traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
-          atomically $ do
-            recordVote st accepted >>= \case
-              Left notAdded -> pure (notAdded, Nothing)
-              Right quorum -> do
-                relayVote
-                pure (Added, quorum)
+      | otherwise ->
+          -- NOTE: Verifying a signature is expensive, so this comes last.
+          case validateVote accepted of
+            Left reason -> pure (VoteInvalid reason, Nothing)
+            Right validVote -> do
+              traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
+              atomically $ do
+                recordVote st validVote >>= \case
+                  Left notAdded -> pure (notAdded, Nothing)
+                  Right quorum -> do
+                    relayVote
+                    pure (Added, quorum)
   -- Aggregated outside the transaction, which reaches quorum only once.
   for_ quorum $ \signatures ->
     case aggregateLeiosCert voteCommittee signatures of
@@ -234,16 +236,46 @@ addVote st systemTime accepted = do
 
   rbHash = voteAnnouncingRbHash acceptedVote
 
--- | Whether the vote's seat has a key in the committee, and the signature
--- verifies under it, or why not.
-validateVote :: LeiosCommittee -> LeiosVote -> Either InvalidVoteReason ()
-validateVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
-  case resolveLeiosSeat committee voteSeatId of
-    Just LeiosSeat{seatVKey = SJust vk} ->
-      first (BadSignature . Text.pack) $
-        verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
-    Just LeiosSeat{seatVKey = SNothing} -> Left SeatHasNoKey
+-- | A vote whose seat has a key in the committee, and whose signature verifies
+-- under it.
+data ValidatedVote = MkValidatedVote
+  { validatedVote :: !LeiosVote
+  , validatedElectionSlot :: !SlotNo
+  , validatedSeatWeight :: !Weight
+  -- ^ The weight of the vote's seat.
+  , validatedQuorum :: !Weight
+  -- ^ See 'acceptedQuorum'.
+  , voteValidUntil :: !RelativeTime
+  -- ^ Until when the vote is relayed and considered valid.
+  }
+
+-- | Validate a vote against its election's committee, or say why it is invalid.
+validateVote :: AcceptedVote -> Either InvalidVoteReason ValidatedVote
+validateVote acceptedVote =
+  case resolveLeiosSeat voteCommittee voteSeatId of
     Nothing -> Left SeatNotResolvable
+    Just LeiosSeat{seatVKey = SNothing} -> Left SeatHasNoKey
+    Just LeiosSeat{seatVKey = SJust vk, seatWeight} ->
+      case verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature of
+        Left err -> Left . BadSignature $ Text.pack err
+        Right () -> Right $ mkValidated seatWeight
+ where
+  MkAcceptedVote
+    { acceptedVote = vote@MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature}
+    , voteElectionSlot
+    , voteCommittee
+    , acceptedQuorum
+    , voteWindow
+    } = acceptedVote
+
+  mkValidated seatWeight =
+    MkValidatedVote
+      { validatedVote = vote
+      , validatedElectionSlot = voteElectionSlot
+      , validatedSeatWeight = seatWeight
+      , validatedQuorum = acceptedQuorum
+      , voteValidUntil = voteUntil voteWindow
+      }
 
 {-------------------------------------------------------------------------------
   The votes kept
@@ -299,19 +331,19 @@ currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
 recordVote ::
   IOLike m =>
   VoteState m blk ->
-  AcceptedVote ->
+  ValidatedVote ->
   STM m (Either AddVoteResult (Maybe (Map LeiosSeatId LeiosSignature)))
-recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteCommittee, voteQuorum, voteWindow} = do
+recordVote st validatedVote = do
   vs <- readTVar (votes st)
-  let before = Map.lookup voteElectionSlot (votesBySlot vs)
+  let before = Map.lookup validatedElectionSlot (votesBySlot vs)
       after = maybe slotVotes' (keepFirst slotVotes') before
   if
-    | voteUntil voteWindow < votesPrunedAt vs -> pure (Left ArrivedTooLate)
-    | maybe False (Map.member (voteSeatId acceptedVote) . slotVotes) before -> pure (Left AlreadyKnown)
+    | voteValidUntil < votesPrunedAt vs -> pure (Left ArrivedTooLate)
+    | maybe False (Map.member (voteSeatId vote) . slotVotes) before -> pure (Left AlreadyKnown)
     | otherwise -> do
-        writeTVar (votes st) vs{votesBySlot = Map.insert voteElectionSlot after (votesBySlot vs)}
+        writeTVar (votes st) vs{votesBySlot = Map.insert validatedElectionSlot after (votesBySlot vs)}
         pure . Right $
-          if weightOf before < voteQuorum && voteQuorum <= weightOf (Just after)
+          if weightOf before < validatedQuorum && validatedQuorum <= weightOf (Just after)
             then
               Just $
                 Map.fromList
@@ -321,15 +353,21 @@ recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteCommittee, vote
                   ]
             else Nothing
  where
-  rbHash = voteAnnouncingRbHash acceptedVote
+  MkValidatedVote
+    { validatedVote = vote
+    , validatedElectionSlot
+    , validatedSeatWeight
+    , validatedQuorum
+    , voteValidUntil
+    } = validatedVote
+
+  rbHash = voteAnnouncingRbHash vote
 
   slotVotes' =
     MkSlotVotes
-      (voteUntil voteWindow)
-      (Map.singleton (voteSeatId acceptedVote) acceptedVote)
-      (Map.singleton rbHash seatWeight')
-
-  seatWeight' = maybe 0 seatWeight (resolveLeiosSeat voteCommittee (voteSeatId acceptedVote))
+      voteValidUntil
+      (Map.singleton (voteSeatId vote) vote)
+      (Map.singleton rbHash validatedSeatWeight)
 
   weightOf = maybe 0 (Map.findWithDefault 0 rbHash . slotWeights)
 

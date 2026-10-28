@@ -390,7 +390,7 @@ data AcceptedVote = MkAcceptedVote
   , voteElectionSlot :: !SlotNo
   , voteCommittee :: !LeiosCommittee
   -- ^ The committee of the election slot's ledger view.
-  , voteQuorum :: !Weight
+  , acceptedQuorum :: !Weight
   -- ^ The weight of the votes that certify an announcement in the election
   -- slot.
   , voteWindow :: !VoteWindow
