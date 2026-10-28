@@ -29,12 +29,14 @@ import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
-import Ouroboros.Consensus.Block (blockSlot)
+import Ouroboros.Consensus.Block (Header, blockSlot)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlock
+  ( BytesSize
+  , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , LeiosVote
   , TxHash
   , encodeEndorserBlockSize
   , endorserBlockHash
@@ -47,15 +49,27 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   , leiosFetchServerPeer
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
+  ( leiosNotifyClientPeerPipelined
+  , toLeiosNotifyClientPeerPipelined
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
   , leiosNotifyServerPeerLookahead
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
-  ( Message (MsgLeiosBlockAnnouncement, MsgLeiosBlockOffer, MsgLeiosBlockTxsOffer)
+  ( LeiosNotify
+  , Message
+    ( MsgCanceled
+    , MsgLeiosBlockAnnouncement
+    , MsgLeiosBlockOffer
+    , MsgLeiosBlockTxsOffer
+    , MsgLeiosVotes
+    )
   , byteLimitsLeiosNotify
   , timeLimitsLeiosNotify
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type as LN
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
 import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -66,6 +80,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import Ouroboros.Network.Channel (Channel)
+import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
@@ -102,9 +117,18 @@ tests =
         -- of the endorser block.
         runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100])))
           >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100]))))
-    , testCase "the node fetches an endorser block and its closure that its peer offers" $
-        runSimFinishing nodeFetchesOffered
-          >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
+    , testCase
+        "the node fetches an endorser block and its closure that its peer offers, and offers them on"
+        $ runSimFinishing nodeFetchesOffered
+          >>= ( @?=
+                  ( [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint]
+                  ,
+                    [ RelayedAnnouncement
+                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer fetchedPoint
+                    ]
+                  )
+              )
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
@@ -124,6 +148,14 @@ runSimFinishing sim = case runSimOrThrow (timeout 100 sim) of
 
 -- | What the node announced acquiring, comparably.
 data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
+  deriving (Eq, Show)
+
+-- | What the node relayed over LeiosNotify, comparably.
+data Relayed
+  = RelayedAnnouncement
+  | RelayedBlockOffer LeiosPoint BytesSize
+  | RelayedBlockTxsOffer LeiosPoint
+  | RelayedVotes
   deriving (Eq, Show)
 
 -- | The transactions of 'fetchedEb'.
@@ -147,10 +179,12 @@ fetchedPoint :: LeiosPoint
 fetchedPoint = MkLeiosPoint (blockSlot announcingFetched) (endorserBlockHash fetchedEb)
 
 -- | The peer announces 'fetchedEb', offers its body and its closure, and
--- serves both; the node's acquisitions, as it announces them.
-nodeFetchesOffered :: IOSim s [Acquired]
+-- serves both. The node's acquisitions, as it announces them, and the first
+-- three notifications it relays to the peer.
+nodeFetchesOffered :: IOSim s ([Acquired], [Relayed])
 nodeFetchesOffered = withNode $ \nut -> do
   next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  relayed <- newTVarIO []
   notifications <- newTQueueIO
   atomically $
     mapM_
@@ -174,7 +208,19 @@ nodeFetchesOffered = withNode $ \nut -> do
                   timeLimitsLeiosNotify
                   chan
                   server
-          , epLeiosNotifyClient = Nothing
+          , epLeiosNotifyClient = Just $ \chan ->
+              fst
+                <$> runPipelinedPeerWithLimits
+                  nullTracer
+                  (envLeiosNotifyCodec nut)
+                  (byteLimitsLeiosNotify (fromIntegral . BSL.length))
+                  timeLimitsLeiosNotify
+                  chan
+                  ( toLeiosNotifyClientPeerPipelined $
+                      leiosNotifyClientPeerPipelined
+                        (pure (Right 1))
+                        (pure (\msg -> atomically $ modifyTVar relayed (<> [relayedOf msg])))
+                  )
           , epLeiosFetchServer = \chan ->
               fst
                 <$> runAnnotatedPeer
@@ -184,11 +230,23 @@ nodeFetchesOffered = withNode $ \nut -> do
                   (leiosFetchServerPeer serveFetched)
           , epLeiosFetchClient = Nothing
           }
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
-    replicateM 2 $
-      atomically next <&> \case
-        AcquiredEb point _size -> AcquiredBody point
-        AcquiredEbTxs point -> AcquiredClosure point
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    acquired <-
+      replicateM 2 $
+        atomically next <&> \case
+          AcquiredEb point _size -> AcquiredBody point
+          AcquiredEbTxs point -> AcquiredClosure point
+    relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
+    pure (acquired, relays)
+
+relayedOf ::
+  Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle -> Relayed
+relayedOf = \case
+  MsgLeiosBlockAnnouncement _hdr -> RelayedAnnouncement
+  MsgLeiosBlockOffer point size -> RelayedBlockOffer point size
+  MsgLeiosBlockTxsOffer point -> RelayedBlockTxsOffer point
+  MsgLeiosVotes _votes -> RelayedVotes
+  MsgCanceled -> RelayedVotes
 
 -- | Serve 'fetchedEb' and its transactions.
 serveFetched :: Monad m => LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m

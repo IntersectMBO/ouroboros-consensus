@@ -216,6 +216,8 @@ leiosNotifyServer notifyLog = do
       -- One vote per message: the client pipelines its requests, so several
       -- messages cost about what several votes in one would.
       NotifyVote v -> MsgLeiosVotes (v :| [])
+      NotifyBlockOffer point size -> MsgLeiosBlockOffer point size
+      NotifyBlockTxsOffer point -> MsgLeiosBlockTxsOffer point
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.

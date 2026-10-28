@@ -65,6 +65,7 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
+  , leiosOfferRelay
   , newNotifyLog
   , notifyLogPruner
   )
@@ -475,6 +476,9 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchFocuser" $
         leiosFetchFocuser chainDB leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
+        leiosOfferRelay leiosAcquisitions leiosNotifyLog
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $

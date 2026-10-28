@@ -792,6 +792,8 @@ nameOf :: NotifyLog.Notification Blk -> Char
 nameOf = \case
   NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
   NotifyLog.NotifyAnnouncement _ -> '?'
+  NotifyLog.NotifyBlockOffer _ _ -> '?'
+  NotifyLog.NotifyBlockTxsOffer _ -> '?'
 
 -- | Every notification in the log.
 notifyLogNotifications :: NotifyLog (IOSim s) Blk -> STM (IOSim s) [NotifyLog.Notification Blk]
