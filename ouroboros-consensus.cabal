@@ -493,6 +493,7 @@ library tracing
     Ouroboros.Consensus.Tracing.KESInfo
     Ouroboros.Consensus.Tracing.LeiosDB
     Ouroboros.Consensus.Tracing.LeiosFetch
+    Ouroboros.Consensus.Tracing.LeiosNotify
     Ouroboros.Consensus.Tracing.Peras
 
   build-depends:
@@ -502,6 +503,7 @@ library tracing
     bech32,
     bytestring,
     cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-crypto-wrapper,
     cardano-data,
     cardano-ledger-allegra,
