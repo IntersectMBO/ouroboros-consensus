@@ -4,7 +4,6 @@
 module Test.Consensus.Leios.VoteState (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Control.Monad (forM)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Tracer (nullTracer)
@@ -20,14 +19,11 @@ import Ouroboros.Consensus.Leios.AnnounceState (newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog)
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..), RankingBlockHash (..))
 import Ouroboros.Consensus.Leios.VoteState
-  ( currentVotes
+  ( ValidatedVote (..)
+  , currentVotes
   , newVoteState
   , pruneVotes
   , recordVote
-  )
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
-  ( AcceptedVote (..)
-  , VoteWindow (..)
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Test.Consensus.Leios.LeiosNotify.Codec (signedVote)
@@ -69,7 +65,7 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
           _expired <- pruneVotes st at
           either (const Nothing) (const (Just (at, slot, voteSeatId vote)))
-            <$> recordVote st (accepted slot vote)
+            <$> recordVote st (validated slot vote)
         kept' <- atomically (currentVotes st)
         pure (kept', recorded')
       lastPruned = maximum (RelativeTime 0 : [at | (at, _, _) <- vs])
@@ -86,13 +82,13 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
       (flip Map.union)
       [(slot, Map.singleton (voteSeatId v) v) | (at, slot, v) <- vs, at <= voteUntilOf slot]
 
-  accepted slot vote =
-    MkAcceptedVote
-      { acceptedVote = vote
-      , voteElectionSlot = slot
-      , voteCommittee = emptyLeiosCommittee
-      , voteQuorum = 1
-      , voteWindow = MkVoteWindow (slotStart slot) (voteUntilOf slot)
+  validated slot vote =
+    MkValidatedVote
+      { validatedVote = vote
+      , validatedElectionSlot = slot
+      , validatedSeatWeight = 0
+      , validatedQuorum = 1
+      , voteValidUntil = voteUntilOf slot
       }
 
 -- | Votes arriving over time, each for an election slot that began at most two
