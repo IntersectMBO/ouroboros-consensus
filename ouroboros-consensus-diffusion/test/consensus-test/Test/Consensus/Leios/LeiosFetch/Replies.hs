@@ -28,6 +28,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.TxCache
   ( LeiosTxCache (..)
   , defaultLeiosTxCacheShift
@@ -62,7 +63,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
-  , LeiosEbNotification (..)
   , newLeiosDBInMemory
   )
 import Ouroboros.Consensus.Util.IOLike (modifyMVar)

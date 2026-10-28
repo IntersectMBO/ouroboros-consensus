@@ -202,6 +202,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
@@ -1046,7 +1047,7 @@ test-suite leios-storage-test
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:{si-timers, strict-stm},
+    io-classes:si-timers,
     ouroboros-consensus,
     QuickCheck,
     tasty,

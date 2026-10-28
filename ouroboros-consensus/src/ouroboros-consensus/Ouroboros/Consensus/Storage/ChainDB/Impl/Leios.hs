@@ -87,8 +87,8 @@ leiosBlockInfo bcfg blk =
 -- its youngest focus (see @LeiosEbNotification@).
 --
 -- That slot is the youngest slot of any 'LeiosPoint' in an @AcquiredEbTxs@
--- notification for the endorser block, since the LeiosDB sends that
--- notification at every focus not older than the ImmutableDB tip.
+-- notification for the endorser block, since that notification is sent at
+-- every focus not older than the ImmutableDB tip.
 --
 -- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
 -- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.

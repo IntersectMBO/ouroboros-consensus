@@ -41,6 +41,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   , diffRelTime
   )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LeiosTxCache (..)
   , PackedTxReferences
@@ -84,7 +85,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchClientE
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
-  , LeiosEbNotification (..)
   , Promise (..)
   )
 import Ouroboros.Consensus.Util.IOLike

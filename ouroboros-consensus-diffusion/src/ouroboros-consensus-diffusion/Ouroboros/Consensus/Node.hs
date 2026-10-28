@@ -116,6 +116,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -547,6 +548,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckSnapshotPolicyArgs (configSecurityParam cfg) snapshotPolicyArgs) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
+          -- Where the node announces what it acquires, to the ChainDB among
+          -- others.
+          leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -557,6 +561,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               snapshotDelayRng
               llrnLdbFlavorArgs
               leiosDB
+              leiosAcquisitions
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -974,12 +979,14 @@ openChainDB ::
   LedgerDbBackendArgs m blk ->
   -- | The node's LeiosDB
   LeiosDbHandle m ->
+  -- | The node's Leios acquisitions
+  LeiosAcquisitions m ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leiosAcquisitions defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -993,6 +1000,7 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB defA
             delayRng
             flavorArgs
             leiosDB
+            (subscribeLeiosAcquisitions leiosAcquisitions)
             defArgs
    in (,args) <$> ChainDB.openDB args
 

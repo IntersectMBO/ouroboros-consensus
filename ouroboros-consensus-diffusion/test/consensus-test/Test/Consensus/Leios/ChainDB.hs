@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Block
   , blockSlot
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
@@ -87,6 +88,8 @@ bodiesAfterGc = withNode $ \nut -> do
             [ (offset, BS.replicate (fromIntegral size) 0)
             | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
             ]
+  atomically $
+    mapM_ (announceLeiosAcquisition (nutLeiosAcquisitions nut) . AcquiredEbTxs) [pointA, pointB]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks nut chain
@@ -200,7 +203,7 @@ ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
 -- body but not its transactions. The tip of the selected chain before they
--- arrive, and after.
+-- arrive and the node announces their acquisition, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
 tipsAroundClosure = withNode $ \nut -> do
   let leiosDb = getLeiosDB (nutKernel nut)
@@ -222,6 +225,7 @@ tipsAroundClosure = withNode $ \nut -> do
           [ (offset, BS.replicate (fromIntegral size) 0)
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
+  atomically $ announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs pointA)
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)
