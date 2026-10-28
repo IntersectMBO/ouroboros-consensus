@@ -92,7 +92,13 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
-  ( LeiosFetchClientPeer
+  ( LeiosFetchClientPeerPipelined
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
+  ( LeiosFetchPeer
+  , onNewLeiosAnnouncement
+  , recordLeiosOffer
+  , withLeiosFetchPeer
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchServerPeer
@@ -332,6 +338,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
+      LeiosFetchPeer m ->
       StrictTVar m (LeiosNotifyPeerState blk) ->
       LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosNotifyServer ::
@@ -342,7 +349,8 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      LeiosFetchClientPeer LeiosPoint EndorserBlock LeiosTx m ()
+      LeiosFetchPeer m ->
+      LeiosFetchClientPeerPipelined LeiosPoint EndorserBlock LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
@@ -390,6 +398,7 @@ mkHandlers
     , getLeiosAnnounceState
     , getLeiosVoteState
     , getLeiosNotifyLog
+    , getLeiosFetchKernel
     }
   txSubmissionLogicVersion =
     Handlers
@@ -497,7 +506,7 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer ->
+      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars ->
           leiosNotifyClient
             (contramap (TraceLabelPeer peer) (Node.leiosNotifyClientTracer tracers))
             getTopLevelConfig
@@ -508,9 +517,12 @@ mkHandlers
             systemTime
             chainSyncFutureCheck
             maxClockSkew
+            (onNewLeiosAnnouncement getLeiosFetchKernel)
+            (recordLeiosOffer getLeiosFetchKernel peerVars)
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog
-      , hLeiosFetchClient = \_version controlMessageSTM _peer -> leiosFetchClient controlMessageSTM
+      , hLeiosFetchClient = \_version controlMessageSTM peer ->
+          leiosFetchClient getLeiosFetchKernel controlMessageSTM peer
       , hLeiosFetchServer = \_version peer reader ->
           leiosFetchServer
             (contramap (TraceLabelPeer peer) (Node.leiosFetchServerTracer tracers))
@@ -1354,18 +1366,20 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
       ((), trailing) <-
-        withLeiosNotifyClientState (getLeiosNotifyClientStates kernel) them $ \stateVar ->
-          runPipelinedPeerWithLimits
-            (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-            (cLeiosNotifyCodec (mkCodecs version))
-            blLeiosNotify
-            timeLimitsLeiosNotify
-            channel
-            (hLeiosNotifyClient version controlMessageSTM them stateVar)
+        withLeiosFetchPeer (getLeiosFetchKernel kernel) them isBigLedgerPeer $ \peerVars ->
+          withLeiosNotifyClientState (getLeiosNotifyClientStates kernel) them $ \stateVar ->
+            runPipelinedPeerWithLimits
+              (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+              (cLeiosNotifyCodec (mkCodecs version))
+              blLeiosNotify
+              timeLimitsLeiosNotify
+              channel
+              (hLeiosNotifyClient version controlMessageSTM them peerVars stateVar)
       return (NoInitiatorResult, trailing)
 
   aLeiosNotifyServer ::
@@ -1396,17 +1410,19 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosFetchClient"
       ((), trailing) <-
-        runAnnotatedPeerWithLimits
-          (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-          (cLeiosFetchCodec (mkCodecs version))
-          blLeiosFetch
-          timeLimitsLeiosFetch
-          channel
-          (hLeiosFetchClient version controlMessageSTM them)
+        withLeiosFetchPeer (getLeiosFetchKernel kernel) them isBigLedgerPeer $ \peerVars ->
+          runPipelinedAnnotatedPeerWithLimits
+            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+            (cLeiosFetchCodec (mkCodecs version))
+            blLeiosFetch
+            timeLimitsLeiosFetch
+            channel
+            (hLeiosFetchClient version controlMessageSTM them peerVars)
       return (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::

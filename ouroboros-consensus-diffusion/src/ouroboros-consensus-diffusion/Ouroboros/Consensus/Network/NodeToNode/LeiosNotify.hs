@@ -23,6 +23,7 @@ import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
@@ -44,9 +45,14 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+  ( PeerOffer (..)
+  , WhetherTxsClosureOffered (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancHeader)
+  , ValidAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -86,6 +92,10 @@ leiosNotifyClient ::
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> m ()) ->
+  -- | record an offer the peer made
+  (LeiosPoint -> PeerOffer -> m ()) ->
   ControlMessageSTM m ->
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
@@ -99,6 +109,8 @@ leiosNotifyClient
   systemTime
   chainSyncFutureCheck
   maxClockSkew
+  onNewAnnouncement
+  recordOffer
   controlMessageSTM
   stateVar =
     leiosNotifyClientPeerHandlingReplies
@@ -121,6 +133,7 @@ leiosNotifyClient
                       chainSyncFutureCheck
                       cfg
                       announceState
+                      onNewAnnouncement
                       immLedger
                       st
                       hdr
@@ -130,12 +143,14 @@ leiosNotifyClient
             atomically $ do
               pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
               writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-          MsgLeiosBlockOffer point claimed ->
+          MsgLeiosBlockOffer point claimed -> do
             atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate_ $ checkLeiosBlockOffer cfg immLedger point claimed
-          MsgLeiosBlockTxsOffer point ->
+            recordOffer point $ MkPeerOffer SNothing (SJust claimed) TxsClosureNotOffered
+          MsgLeiosBlockTxsOffer point -> do
             atomically $ checkAndUpdate_ $ checkLeiosClosureOffer point
+            recordOffer point $ MkPeerOffer SNothing SNothing TxsClosureOffered
           MsgLeiosVotes votes -> do
             now <- systemTimeCurrent systemTime
             accepted <- atomically $ do

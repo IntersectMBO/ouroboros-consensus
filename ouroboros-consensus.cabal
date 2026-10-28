@@ -234,6 +234,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type

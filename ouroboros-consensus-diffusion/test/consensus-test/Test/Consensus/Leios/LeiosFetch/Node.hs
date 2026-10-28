@@ -11,6 +11,7 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
+import Control.Monad (replicateM, void)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -19,23 +20,44 @@ import Data.Bits ((.|.))
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
+import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
+import Ouroboros.Consensus.Block (blockSlot)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
   , TxHash
   , encodeEndorserBlockSize
+  , endorserBlockHash
+  , hashLeiosTx
   , mkEndorserBlock
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+  ( ExnLeiosInvalidRequest (..)
+  , LeiosFetchRequestHandler (..)
+  , leiosFetchServerPeer
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+  ( WhetherExcessiveRequests (..)
+  , leiosNotifyServerPeerLookahead
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
+  ( Message (MsgLeiosBlockAnnouncement, MsgLeiosBlockOffer, MsgLeiosBlockTxsOffer)
+  , byteLimitsLeiosNotify
+  , timeLimitsLeiosNotify
+  )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
+import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -52,6 +74,11 @@ import Ouroboros.Network.Mux
   )
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
+import Test.Consensus.Leios.TestBlock
+  ( LeiosTestBlock (..)
+  , firstLeiosBlock
+  , setAnnouncement
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -75,6 +102,9 @@ tests =
         -- of the endorser block.
         runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100])))
           >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100]))))
+    , testCase "the node fetches an endorser block and its closure that its peer offers" $
+        runSimFinishing nodeFetchesOffered
+          >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
@@ -87,6 +117,85 @@ runSimFinishing :: (forall s. IOSim s a) -> IO a
 runSimFinishing sim = case runSimOrThrow (timeout 100 sim) of
   Nothing -> assertFailure "the simulation did not finish within 100 seconds"
   Just a -> pure a
+
+{-------------------------------------------------------------------------------
+  The node's client
+-------------------------------------------------------------------------------}
+
+-- | What the node announced acquiring, comparably.
+data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
+  deriving (Eq, Show)
+
+-- | The transactions of 'fetchedEb'.
+fetchedTxs :: V.Vector LeiosTx
+fetchedTxs = V.fromList [MkLeiosTx (BS.replicate 100 i) | i <- [1, 2, 3]]
+
+-- | The endorser block the peer announces, offers, and serves.
+fetchedEb :: EndorserBlock
+fetchedEb =
+  mkEndorserBlock
+    [(hashLeiosTx tx, fromIntegral (BS.length (leiosTxBytes tx))) | tx <- V.toList fetchedTxs]
+
+announcingFetched :: LeiosTestBlock
+announcingFetched =
+  setAnnouncement
+    (endorserBlockHash fetchedEb)
+    (encodeEndorserBlockSize fetchedEb)
+    (firstLeiosBlock 0)
+
+fetchedPoint :: LeiosPoint
+fetchedPoint = MkLeiosPoint (blockSlot announcingFetched) (endorserBlockHash fetchedEb)
+
+-- | The peer announces 'fetchedEb', offers its body and its closure, and
+-- serves both; the node's acquisitions, as it announces them.
+nodeFetchesOffered :: IOSim s [Acquired]
+nodeFetchesOffered = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  notifications <- newTQueueIO
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+      , MsgLeiosBlockTxsOffer fetchedPoint
+      ]
+  let envPeer =
+        EnvPeer
+          { epLeiosNotifyServer = \chan -> do
+              server <-
+                leiosNotifyServerPeerLookahead
+                  (pure NotExcessiveRequests)
+                  (readTQueue notifications)
+              void $
+                runLookaheadFixedSenderPeerWithLimits
+                  nullTracer
+                  (envLeiosNotifyCodec nut)
+                  (byteLimitsLeiosNotify (fromIntegral . BSL.length))
+                  timeLimitsLeiosNotify
+                  chan
+                  server
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = \chan ->
+              fst
+                <$> runAnnotatedPeer
+                  nullTracer
+                  (envLeiosFetchCodec nut)
+                  chan
+                  (leiosFetchServerPeer serveFetched)
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
+    replicateM 2 $
+      atomically next <&> \case
+        AcquiredEb point _size -> AcquiredBody point
+        AcquiredEbTxs point -> AcquiredClosure point
+
+-- | Serve 'fetchedEb' and its transactions.
+serveFetched :: Monad m => LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
+serveFetched = MkLeiosFetchRequestHandler $ \case
+  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock fetchedEb)
+  MsgLeiosBlockTxsRequest _point bitmaps ->
+    pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (fetchedTxs V.!?) (bitmapOffsets bitmaps)
 
 {-------------------------------------------------------------------------------
   The node's server

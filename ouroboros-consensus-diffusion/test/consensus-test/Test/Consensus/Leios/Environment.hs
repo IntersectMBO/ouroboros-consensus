@@ -27,6 +27,7 @@ module Test.Consensus.Leios.Environment
   , envLeiosFetchCodec
   , envLeiosNotifyCodec
   , refusingLeiosFetchServer
+  , silentLeiosFetchServer
   , withNodeVsEnvConnection
   ) where
 
@@ -371,6 +372,14 @@ envLeiosNotifyCodec nut = NTN.cLeiosNotifyCodec (envCodecs nut maxBound)
 
 envLeiosFetchCodec :: NodeUnderTest (IOSim s) -> LeiosFetchCodec s
 envLeiosFetchCodec nut = NTN.cLeiosFetchCodec (envCodecs nut maxBound)
+
+-- | A LeiosFetch server that never replies, as a peer that offers what it then
+-- does not serve.
+silentLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+silentLeiosFetchServer nut chan =
+  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer silent)
+ where
+  silent = MkLeiosFetchRequestHandler $ \_request -> atomically retry
 
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()

@@ -20,8 +20,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
-import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (foldM, forM_, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
@@ -92,14 +90,18 @@ import Ouroboros.Consensus.Util.IOLike
   , IOLike
   , STM
   , StrictMVar
+  , StrictTVar
   , async
   , atomically
   , link
   , modifyMVar
   , modifyMVar_
   , readMVar
+  , readTVar
+  , retry
   , throwIO
   , tryPutMVar
+  , writeTVar
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 
@@ -193,14 +195,14 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
       Continue -> next
    where
     next =
-      StrictSTM.readTVar reqsVar >>= \case
+      readTVar reqsVar >>= \case
         req Seq.:<| reqs -> do
-          StrictSTM.writeTVar reqsVar reqs
+          writeTVar reqsVar reqs
           pure $ Just $ Right $ toJob req
         Seq.Empty -> pure Nothing
 
   awaitStopOrRequest :: STM m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
-  awaitStopOrRequest = checkOrBlock >>= maybe StrictSTM.retry pure
+  awaitStopOrRequest = checkOrBlock >>= maybe retry pure
 
   -- Replies are processed right on the pipelined peer's collector thread:
   -- everything they touch is thread-safe.
@@ -285,7 +287,11 @@ processLeiosBlock ctx peer req eb = do
   void $ tryPutMVar lfcReady ()
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   forM_ fills $ \localFills -> do
-    -- TODO Remove this once the announcement path writes the point.
+    -- The LeiosDB writes a body only for a point it holds. The announcement
+    -- path writes the point, but not every endorser block fetched has had its
+    -- announcement processed by this node with this code.
+    --
+    -- TODO Remove this once that is so.
     pointWritten <- writeEbPoint lfcWriter point ebBytesSize
     bodyWritten <- writeEbBody lfcWriter point eb localFills
     -- Off this thread, but linked to it, so a failed write still brings the

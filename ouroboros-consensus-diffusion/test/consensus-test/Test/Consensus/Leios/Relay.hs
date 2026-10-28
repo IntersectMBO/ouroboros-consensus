@@ -39,7 +39,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTQueue
   )
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, void)
 import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -188,7 +188,9 @@ tests =
         down <-
           relayToOne
             0
-            [[announce someAnnouncingBlock, announce equivocation], [announceAt 1 thirdAnnouncement]]
+            -- The node's clients request nothing before 1s, so the third
+            -- comes later than that, to arrive after the other two.
+            [[announce someAnnouncingBlock, announce equivocation], [announceAt 2 thirdAnnouncement]]
         announcements down @?= map ltbHeader [someAnnouncingBlock, equivocation]
     , testCase "the node does not relay an announcement too old to relay" $ do
         -- connecting late, since a connection without KeepAlive times out
@@ -725,7 +727,7 @@ prunedWhileValidating = runSimOrThrow $ do
   notifyLog <- newNotifyLog
   st <- newAnnounceState notifyLog
   atomically $ pruneAnnounceState st (blockSlot someAnnouncingBlock + 1)
-  atomically $ onValidAnnouncement st valid
+  void $ atomically $ onValidAnnouncement st valid
   atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
  where
   valid =

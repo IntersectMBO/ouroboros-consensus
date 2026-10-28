@@ -472,7 +472,8 @@ nodePrunesClientState = withNodeCommittee committee 100000 $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , -- The node requests what the peer offers.
+            epLeiosFetchServer = silentLeiosFetchServer nut
           , epLeiosFetchClient = Nothing
           }
   withAsync

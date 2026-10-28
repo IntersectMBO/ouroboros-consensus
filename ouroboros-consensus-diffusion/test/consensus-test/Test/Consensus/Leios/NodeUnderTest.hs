@@ -316,6 +316,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
               leiosDB
+              leiosAcquisitions
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
