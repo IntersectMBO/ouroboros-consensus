@@ -58,6 +58,7 @@ import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, SlotNo)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
+  , diffRelTime
   )
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, hasAnnouncement)
 import Ouroboros.Consensus.Leios.NotifyLog
@@ -81,6 +82,7 @@ import Ouroboros.Consensus.Util.IOLike
   , newTVarIO
   , readTVar
   )
+import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | The node's votes, and where it learns which announcements it relays and
 -- relays the votes.
@@ -131,7 +133,7 @@ data AddVoteResult
 -- | Add a vote, if it is the first valid vote of its seat in its election, for
 -- an announcement the node relays, and the node has it by its deadline.
 --
--- The vote's window must have opened; see 'awaitVoteRelayWindow'.
+-- NOTE: This will wait until the vote's window is open.
 --
 -- The signature is verified between two transactions, so that a retry does
 -- not repeat a BLS verification. As verifying takes time, the second checks
@@ -141,6 +143,11 @@ addVote ::
   VoteState m blk -> SystemTime m -> AcceptedVote -> m AddVoteResult
 addVote st systemTime accepted = do
   received <- systemTimeCurrent systemTime
+  -- Wait for the window of a vote that 'checkLeiosVotes' accepted early.
+  -- NOTE: 'checkLeiosVotes' just rejected votes earlier than the
+  -- clock skew, so this waits at most 'InFutureCheck.ClockSkew'.
+  when (received < relayFrom voteRelayWindow) $
+    threadDelay (nominalDelay $ relayFrom voteRelayWindow `diffRelTime` received)
   seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
   -- NOTE: The client only checked that its peer announced it, but the node
   -- does not relay a third announcement of an election, nor one of a stale

@@ -143,10 +143,8 @@ leiosNotifyClient
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
-            for_ accepted $ \vote@MkAcceptedVote{acceptedVote} -> do
-              awaitVoteRelayWindow systemTime vote
+            for_ accepted $ \vote@MkAcceptedVote{acceptedVote} ->
               addVote voteState systemTime vote >>= \case
-                -- Traced only when added, not per duplicate arrival.
                 Added ->
                   traceWith tracer (TraceLeiosNotifyClientVoteAdded acceptedVote)
                 VoteInvalid ->
