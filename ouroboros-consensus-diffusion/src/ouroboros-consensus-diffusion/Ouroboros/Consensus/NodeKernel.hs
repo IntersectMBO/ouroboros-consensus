@@ -18,6 +18,7 @@ module Ouroboros.Consensus.NodeKernel
   , getMempoolWriter
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
+  , setPerasVoteForgingFromEnv -- Temporary hack
   , initNodeKernel
   , toConsensusMode
   ) where
@@ -1022,3 +1023,29 @@ perasVoteForgingController
       traverse_
         (traceWith perasVoteForgingTracer . TracePerasVotingAddCertChainSelOutcome roundNo)
         mbAddCertChainSelOutcome
+
+-- | Temporary hack to create a 'PerasVoteForging' from the pool ID and private
+-- key read from the environment variables.
+setPerasVoteForgingFromEnv ::
+  forall m addrNTN addrNTC blk.
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  NodeKernel m addrNTN addrNTC blk ->
+  m ()
+setPerasVoteForgingFromEnv kernel =
+  case ( readPerasPoolIdFromEnv (Proxy @blk)
+       , readPerasPrivateKeyFromEnv (Proxy @blk)
+       ) of
+    (Right poolId, Right privateKey) -> enableVoting poolId privateKey
+    (Left err, _) -> disableVoting err
+    (_, Left err) -> disableVoting err
+ where
+  enableVoting poolId privateKey = do
+    setPerasVoteForging kernel (Just (mkPerasVoteForging poolId privateKey))
+
+  disableVoting err = do
+    setPerasVoteForging kernel Nothing
+    traceWith
+      (perasVoteForgingTracer (getTracers kernel))
+      (TracePerasVotingCantReadEnv err)

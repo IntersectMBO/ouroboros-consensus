@@ -621,6 +621,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
+            setPerasVoteForgingFromEnv nodeKernel -- Temporary hack
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
