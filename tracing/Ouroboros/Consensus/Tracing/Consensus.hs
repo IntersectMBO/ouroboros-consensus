@@ -2964,6 +2964,11 @@ instance
   LogFormatting (TracePerasVoteForgingEvent blk)
   where
   forMachine _dtal = \case
+    TracePerasVotingNoForgingCredentials roundNo ->
+      mconcat
+        [ "kind" .= String "TracePerasVotingNoForgingCredentials"
+        , "round" .= unPerasRoundNo roundNo
+        ]
     TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound ->
       mconcat
         [ "kind" .= String "TracePerasVotingNoVoteAfterFirstSlotInRound"
@@ -3012,6 +3017,10 @@ instance
         ]
 
   forHuman = \case
+    TracePerasVotingNoForgingCredentials roundNo ->
+      "Not voting in Peras round "
+        <> showT (unPerasRoundNo roundNo)
+        <> ": no forging credentials available"
     TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound ->
       "Not voting in Peras round "
         <> showT (unPerasRoundNo roundNo)
@@ -3049,6 +3058,8 @@ instance
         <> showT err
 
 instance MetaTrace (TracePerasVoteForgingEvent blk) where
+  namespaceFor TracePerasVotingNoForgingCredentials{} =
+    Namespace [] ["NoForgingCredentials"]
   namespaceFor TracePerasVotingNoVoteAfterFirstSlotInRound{} =
     Namespace [] ["NoVoteAfterFirstSlotInRound"]
   namespaceFor TracePerasVotingNotAVoterInRound{} =
@@ -3066,6 +3077,7 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
   namespaceFor TracePerasVotingViewError{} =
     Namespace [] ["ViewError"]
 
+  severityFor (Namespace _ ["NoForgingCredentials"]) _ = Just Info
   severityFor (Namespace _ ["NoVoteAfterFirstSlotInRound"]) _ = Just Debug
   severityFor (Namespace _ ["NotAVoterInRound"]) _ = Just Debug
   severityFor (Namespace _ ["RulesDecision"]) _ = Just Info
@@ -3076,6 +3088,9 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
   severityFor (Namespace _ ["ViewError"]) _ = Just Error
   severityFor _ _ = Nothing
 
+  documentFor (Namespace _ ["NoForgingCredentials"]) =
+    Just
+      "This node has no credentials to forge a Peras vote in the current round."
   documentFor (Namespace _ ["NoVoteAfterFirstSlotInRound"]) =
     Just
       "Votes are only cast in the first slot of a Peras round, and this slot is not it."
@@ -3105,7 +3120,8 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
   documentFor _ = Nothing
 
   allNamespaces =
-    [ Namespace [] ["NoVoteAfterFirstSlotInRound"]
+    [ Namespace [] ["NoForgingCredentials"]
+    , Namespace [] ["NoVoteAfterFirstSlotInRound"]
     , Namespace [] ["NotAVoterInRound"]
     , Namespace [] ["RulesDecision"]
     , Namespace [] ["ForgedVote"]
