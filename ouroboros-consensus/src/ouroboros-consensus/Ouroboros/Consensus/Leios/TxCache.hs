@@ -15,7 +15,9 @@
 -- requirement that its index fits comfortably in-memory, even in a worst case.
 --
 -- This module is the umbrella: it re-exports the
--- "Ouroboros.Consensus.Leios.TxCache.API" interface and the handle factories.
+-- "Ouroboros.Consensus.Leios.TxCache.API" interface and the handle factories:
+-- 'newPureLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Reference" and
+-- 'newHashTableLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Optimized".
 --
 -- == Invariants
 --
@@ -61,12 +63,14 @@
 module Ouroboros.Consensus.Leios.TxCache
   ( module Ouroboros.Consensus.Leios.TxCache.API
   , newPureLeiosTxCache
+  , newHashTableLeiosTxCache
   , nullLeiosTxCache
   ) where
 
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Leios.TxCache.API
+import Ouroboros.Consensus.Leios.TxCache.Optimized (newHashTableLeiosTxCache)
 import qualified Ouroboros.Consensus.Leios.TxCache.Reference as Pure
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -74,7 +78,8 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 --
 -- The table shift only sizes 'ibsCacheLoad' reporting -- the pure index has no
 -- allocation of its own: pass what the production table is allocated with,
--- 'defaultLeiosTxCacheShift', unless comparing against a differently sized one.
+-- 'defaultLeiosTxCacheShift', unless comparing against a differently sized
+-- 'newHashTableLeiosTxCache'.
 newPureLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
   Int ->

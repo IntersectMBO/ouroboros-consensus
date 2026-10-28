@@ -208,6 +208,8 @@ library
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.TxCache
     Ouroboros.Consensus.Leios.TxCache.API
+    Ouroboros.Consensus.Leios.TxCache.Optimized
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Ouroboros.Consensus.Leios.TxCache.Reference
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
@@ -1052,6 +1054,32 @@ test-suite leios-storage-test
     time,
     unstable-consensus-testlib,
 
+-- Recompiles the LeiosTxCache's hash table and its test with GHC's
+-- array-primop bounds checking, so that an out-of-bounds access fails loudly
+-- instead of silently corrupting memory. It does not depend on the library, so
+-- that it compiles its own, checked copy of the module.
+test-suite leios-txcache-bounds-checked
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs:
+    ouroboros-consensus/test/leios-txcache-bounds-checked
+    ouroboros-consensus-diffusion/test/consensus-test
+    ouroboros-consensus/src/ouroboros-consensus
+
+  main-is: Main.hs
+  other-modules:
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
+
+  ghc-options: -fcheck-prim-bounds
+  build-depends:
+    base,
+    containers,
+    primitive,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+
 benchmark mempool-bench
   import: common-bench
   type: exitcode-stdio-1.0
@@ -1536,6 +1564,8 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
     Test.Consensus.Leios.TxCache
+    Test.Consensus.Leios.TxCache.Optimized
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Test.Consensus.Leios.TxCache.Reference
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState

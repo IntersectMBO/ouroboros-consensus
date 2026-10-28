@@ -42,6 +42,8 @@ module Ouroboros.Consensus.Leios.Types
   , EndorserBlock -- opaque
   , TxOffset
   , TxLocation (..)
+  , ProtVerParity (..)
+  , protVerParity
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , endorserBlockHash
@@ -72,13 +74,14 @@ import Cardano.Crypto.Hash
   )
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
   , EncCBOR (..)
   , FullByteString (..)
   , Version
+  , getVersion64
   , toPlainDecoder
   , toPlainEncoding
   )
@@ -303,6 +306,18 @@ type TxOffset = Int
 -- transaction is fetched.
 data TxLocation = MkTxLocation !EndorserBlockHash !TxOffset
   deriving stock (Eq, Show)
+
+-- | The protocol version a tx was validated under, modulo 2. A tx stays
+-- cached for less than an epoch, so it sees at most one version change, and the
+-- parity tells whether its validation still holds.
+data ProtVerParity = EvenProtVer | OddProtVer
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+protVerParity :: ProtVer -> ProtVerParity
+protVerParity pv
+  | even (getVersion64 (pvMajor pv)) = EvenProtVer
+  | otherwise = OddProtVer
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
