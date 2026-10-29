@@ -194,6 +194,7 @@ leiosNotifyServer notifyLog = do
         pure NotExcessiveRequests
 
   serveNext requests cursorVar = do
+    -- TODO: flush the log ahead cursor instead
     (n, cursor) <- nextNotifyLog notifyLog =<< readTVar cursorVar
     writeTVar cursorVar cursor
     modifyTVar requests (subtract 1)

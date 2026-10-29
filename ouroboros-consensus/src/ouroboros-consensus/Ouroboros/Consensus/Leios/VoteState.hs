@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
@@ -15,7 +16,7 @@
 --
 -- A vote is relayed only to be aggregated into a certificate, which the
 -- earliest block that can carry it needs in the first slot at or after the
--- vote's deadline, the end of its diffusion period ('relayUntil'). The node
+-- vote's deadline, the end of its diffusion period ('voteUntil'). The node
 -- neither keeps nor relays a vote it has only after its deadline. Such a vote
 -- could still complete a certificate for a later block, but a quorum that late
 -- is no evidence that the endorser block's data diffused in time, so the node
@@ -30,7 +31,6 @@ module Ouroboros.Consensus.Leios.VoteState
 
     -- * The votes kept
   , currentVotes
-  , seenOrForgottenVote
   , recordVote
   , pruneVotes
   ) where
@@ -63,7 +63,6 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, hasAnnouncement)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
-  , NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
   )
@@ -71,7 +70,7 @@ import Ouroboros.Consensus.Leios.Types (LeiosVote (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
   , InvalidVoteReason (..)
-  , VoteRelayWindow (..)
+  , VoteWindow (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -83,6 +82,7 @@ import Ouroboros.Consensus.Util.IOLike
   , modifyTVar
   , newTVarIO
   , readTVar
+  , writeTVar
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
 
@@ -122,7 +122,8 @@ data TraceLeiosVoteState
 
 -- | What 'addVote' did with a vote.
 data AddVoteResult
-  = -- | The node had it only after its deadline.
+  = -- | The node had it only after its deadline, or after it forgot its
+    -- election.
     ArrivedTooLate
   | -- | We already saw a vote of its seat in its election.
     AlreadyKnown
@@ -141,8 +142,9 @@ data AddVoteResult
 -- NOTE: This will wait until the vote's window is open.
 --
 -- The signature is verified between two transactions, so that a retry does
--- not repeat a BLS verification. As verifying takes time, the second checks
--- the deadline again.
+-- not repeat a BLS verification. As verifying takes time, 'recordVote' checks
+-- again whether the node has seen or forgotten the vote. The relay log stops
+-- relaying it after its deadline.
 addVote ::
   (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   VoteState m blk -> SystemTime m -> AcceptedVote -> m AddVoteResult
@@ -152,11 +154,11 @@ addVote st systemTime accepted = do
   -- Wait for the window of a vote that 'checkLeiosVotes' accepted early.
   -- NOTE: 'checkLeiosVotes' just rejected votes earlier than the
   -- clock skew, so this waits at most 'InFutureCheck.ClockSkew'.
-  let early = relayFrom voteRelayWindow `diffRelTime` received
+  let early = voteFrom voteWindow `diffRelTime` received
   when (early >= 0) $ do
     traceWith (tracer st) (TraceLeiosVoteAwaitingWindow acceptedVote early)
     threadDelay (nominalDelay early)
-  seen <- atomically $ seenOrForgottenVote st accepted
+  seen <- atomically $ hasSeenVote st accepted
   -- NOTE: The client only checked that its peer announced it, but the node
   -- does not relay a third announcement of an election, nor one of a stale
   -- OCIN, so it must not relay their votes either.
@@ -164,32 +166,31 @@ addVote st systemTime accepted = do
     atomically $
       hasAnnouncement (announceState st) voteElectionSlot (voteAnnouncingRbHash acceptedVote)
   if
-    | seen -> pure AlreadyKnown
-    | received > relayUntil voteRelayWindow -> pure ArrivedTooLate
+    | received > voteUntil voteWindow -> pure ArrivedTooLate
     | not announced -> pure NotAnnounced
+    | seen -> pure AlreadyKnown
     -- NOTE: Verifying a signature is expensive, so this comes last.
     | Left reason <- validateVote voteCommittee acceptedVote -> pure (VoteInvalid reason)
     | otherwise -> do
         traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
-        now <- systemTimeCurrent systemTime
         atomically $ do
-          -- Another peer may have delivered the same vote meanwhile, or the
-          -- pruner may have forgotten its election already
-          seenMeanwhile <- seenOrForgottenVote st accepted
-          if
-            | seenMeanwhile -> pure AlreadyKnown
-            | now > relayUntil voteRelayWindow -> pure ArrivedTooLate
-            | otherwise -> do
-                recordVote st accepted
-                appendNotifyLog (relayLog st) $
-                  MkNotifyEntry (relayUntil voteRelayWindow) (NotifyVote acceptedVote)
-                pure Added
+          recordVote st accepted >>= \case
+            Left notAdded -> pure notAdded
+            Right () -> do
+              relayVote
+              pure Added
  where
+  relayVote =
+    appendNotifyLog
+      (relayLog st)
+      (NotifyVote acceptedVote)
+      (voteUntil voteWindow)
+
   MkAcceptedVote
     { acceptedVote
     , voteElectionSlot
     , voteCommittee
-    , voteRelayWindow
+    , voteWindow
     } = accepted
 
 -- | Whether the vote's seat has a key in the committee, and the signature
@@ -226,24 +227,21 @@ data SlotVotes = MkSlotVotes
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
--- | Whether the node has a vote of this seat in this election, or may have had
--- one and forgotten it, because it pruned the votes past its deadline.
-seenOrForgottenVote ::
+-- | Whether the node has a vote of this seat in this election.
+hasSeenVote ::
   MonadSTM m =>
   VoteState m blk -> AcceptedVote -> STM m Bool
-seenOrForgottenVote st accepted = do
-  MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
+hasSeenVote st accepted = do
+  MkVotes{votesBySlot} <- readTVar (votes st)
   pure $
-    relayUntil voteRelayWindow < votesPrunedAt
-      || maybe
-        False
-        (Map.member voteSeatId . slotVotes)
-        (Map.lookup voteElectionSlot votesBySlot)
+    maybe
+      False
+      (Map.member voteSeatId . slotVotes)
+      (Map.lookup voteElectionSlot votesBySlot)
  where
   MkAcceptedVote
     { acceptedVote = MkLeiosVote{voteSeatId}
     , voteElectionSlot
-    , voteRelayWindow
     } = accepted
 
 -- | The votes the node keeps, by election slot and seat.
@@ -252,17 +250,26 @@ currentVotes ::
   VoteState m blk -> STM m (Map SlotNo (Map LeiosSeatId LeiosVote))
 currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
 
--- | Keep a vote the node has not seen yet.
+-- | Keep a vote the node has neither seen nor forgotten, as it was pruned past
+-- the vote's deadline already.
 recordVote ::
   IOLike m =>
-  VoteState m blk -> AcceptedVote -> STM m ()
-recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteRelayWindow} =
-  modifyTVar (votes st) $ \vs ->
-    vs{votesBySlot = Map.insertWith keepFirst voteElectionSlot slotVotes' (votesBySlot vs)}
+  VoteState m blk -> AcceptedVote -> STM m (Either AddVoteResult ())
+recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteWindow} = do
+  vs <- readTVar (votes st)
+  let before = Map.lookup voteElectionSlot (votesBySlot vs)
+  if
+    | voteUntil voteWindow < votesPrunedAt vs -> pure (Left ArrivedTooLate)
+    | maybe False (Map.member (voteSeatId acceptedVote) . slotVotes) before -> pure (Left AlreadyKnown)
+    | otherwise -> do
+        writeTVar
+          (votes st)
+          vs{votesBySlot = Map.insertWith keepFirst voteElectionSlot slotVotes' (votesBySlot vs)}
+        pure (Right ())
  where
   slotVotes' =
     MkSlotVotes
-      (relayUntil voteRelayWindow)
+      (voteUntil voteWindow)
       (Map.singleton (voteSeatId acceptedVote) acceptedVote)
 
   keepFirst new old = old{slotVotes = Map.union (slotVotes old) (slotVotes new)}
@@ -270,8 +277,7 @@ recordVote st MkAcceptedVote{acceptedVote, voteElectionSlot, voteRelayWindow} =
 -- | Forget the votes of every election slot whose deadline has passed at the
 -- given time.
 --
--- 'addVote' then finds any later copy of their votes 'ArrivedTooLate', before
--- it asks whether the node has seen it.
+-- 'recordVote' then finds any later copy of their votes 'ArrivedTooLate'.
 pruneVotes ::
   IOLike m =>
   VoteState m blk -> RelativeTime -> STM m ()

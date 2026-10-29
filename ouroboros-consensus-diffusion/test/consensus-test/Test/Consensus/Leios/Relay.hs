@@ -72,11 +72,11 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , pruneAnnounceState
   )
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( NotifyEntry (..)
-  , NotifyLog
+  ( NotifyLog
   , appendNotifyLog
   , newNotifyLog
   , nextNotifyLog
+  , notifyLogPruneCadence
   , notifyLogStart
   , pruneNotifyLog
   )
@@ -103,8 +103,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
-  ( VoteRelayWindow (..)
-  , leiosVoteRelayWindow
+  ( VoteWindow (..)
+  , leiosVoteWindow
   , voteLateGrace
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -162,6 +162,7 @@ import Test.QuickCheck
   , elements
   , forAllShow
   , frequency
+  , once
   , oneof
   , property
   , sublistOf
@@ -205,11 +206,16 @@ tests =
     , testCase "the node does not relay an announcement of an election pruned while validating it" $
         prunedWhileValidating @?= []
     , testCase "a vote is relayed no longer than its announcement, however long its diffusion period" $
-        relayUntil
-          (leiosVoteRelayWindow leiosLedgerView{llvDiffusionPeriod = Milliseconds32 1000000} (RelativeTime 1))
+        voteUntil
+          (leiosVoteWindow leiosLedgerView{llvDiffusionPeriod = Milliseconds32 1000000} (RelativeTime 1))
           @?= addRelTime maxAnnouncementAgeSend (RelativeTime 1)
     , testCase "the log prunes each notification once it is no longer worth relaying" $
         notifyLogAt [(9, 'a'), (300, 'b'), (5, 'c')] 6 @?= "ab"
+    , testCase "the log does not take a notification it was pruned past already" $
+        notifyLogPrunedAt 6 [(9, 'a'), (5, 'c'), (6, 'd')] @?= "ad"
+    , testProperty
+        "the log is pruned far more often than a downstream peer's grace"
+        prop_notifyLogPruneCadence
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -285,7 +291,7 @@ tests =
         (_, downs) <- relay 100 [votedFor0] [0, 90]
         map votes downs @?= [[voteOf someAnnouncingBlock 0], []]
     , testProperty
-        "the node relays the first valid vote of each seat it has by its deadline, and only what a peer accepts"
+        "the node relays the first valid vote of each seat it has by its deadline, no later than the log is pruned past it, and only what a peer accepts"
         $ forAllShow genVotingPeers showVotingPeers prop_relay
     ]
  where
@@ -380,11 +386,11 @@ prop_relay peers =
            | o <- outcomes
            , (at, NotifyVotes vs) <- poReceived o
            , v <- toList vs
-           , at > Time (deadlineOf (fst (electionSeat v)))
+           , at > Time (relayedUntilOf (fst (electionSeat v)))
            ]
         <> [ counterexample ("not relayed, though verified by its deadline: " <> show missed) $
                Set.null missed
-           , counterexample ("relayed, though verified only after its deadline: " <> show extra) $
+           , counterexample ("relayed, though verified only after the log was pruned past it: " <> show extra) $
                Set.null extra
            ]
  where
@@ -398,19 +404,20 @@ prop_relay peers =
   relayed = Set.fromList [electionSeat v | v <- votes down]
   allValid = verifiedBy (map (\(_, v) -> (0, v)))
   missed = Set.difference (verifiedBy latestFinish) relayed
-  extra = Set.difference relayed (verifiedBy earliestFinish)
+  extra = Set.difference relayed (verifiedBy' relayedUntilOf earliestFinish)
 
   -- Every election and seat of which the node verified some peer's valid vote
   -- by its deadline, if each verification finished as given. Its client of a
   -- peer verifies one vote after the other, so a vote waits for the ones the
   -- peer sent before it.
-  verifiedBy finish =
+  verifiedBy = verifiedBy' deadlineOf
+  verifiedBy' latest finish =
     Set.fromList
       [ electionSeat v
       | sends <- ups
       , (done, v) <- finish [(at, v) | (at, NotifyVotes vs) <- sends, v <- toList vs]
       , validVote v
-      , done <= deadlineOf (fst (electionSeat v))
+      , done <= latest (fst (electionSeat v))
       ]
 
   -- At the latest, the node verifies every vote, each taking the whole
@@ -441,14 +448,19 @@ prop_relay peers =
 deadlineOf :: SlotNo -> DiffTime
 deadlineOf = snd . windowOf
 
+-- | The latest the node may relay a vote of an election slot: until the log is
+-- pruned past its deadline.
+relayedUntilOf :: SlotNo -> DiffTime
+relayedUntilOf slot = deadlineOf slot + realToFrac notifyLogPruneCadence
+
 -- | When the window of the votes of an election slot opens, and their
 -- deadline.
 windowOf :: SlotNo -> (DiffTime, DiffTime)
 windowOf slot = (realToFrac opens, realToFrac deadline)
  where
-  MkVoteRelayWindow (RelativeTime opens) (RelativeTime deadline) =
+  MkVoteWindow (RelativeTime opens) (RelativeTime deadline) =
     -- One-second slots, the first starting when the run begins.
-    leiosVoteRelayWindow leiosLedgerView (RelativeTime (fromIntegral (unSlotNo slot)))
+    leiosVoteWindow leiosLedgerView (RelativeTime (fromIntegral (unSlotNo slot)))
 
 -- | Why an honest peer's client would disconnect the node for this stream, if
 -- it would: an announcement must be neither a repeat nor the third of its
@@ -731,17 +743,51 @@ notifyLogAt appends now = runSimOrThrow $ do
   notifyLog <- newNotifyLog @_ @Blk
   for_ appends $ \(expires, name) ->
     atomically $
-      appendNotifyLog notifyLog $
-        MkNotifyEntry
-          (RelativeTime expires)
-          (NotifyLog.NotifyVote (voteOf someAnnouncingBlock (seatOf name)))
+      appendNotifyLog
+        notifyLog
+        (NotifyLog.NotifyVote (voteOf someAnnouncingBlock (seatOf name)))
+        (RelativeTime expires)
   atomically $ pruneNotifyLog notifyLog (RelativeTime now)
   atomically $ map nameOf <$> notifyLogNotifications notifyLog
+
+-- | The log's notifications, of entries worth relaying until the given times,
+-- appended once it was pruned at the given time.
+notifyLogPrunedAt :: NominalDiffTime -> [(NominalDiffTime, Char)] -> String
+notifyLogPrunedAt now appends = runSimOrThrow $ do
+  notifyLog <- newNotifyLog @_ @Blk
+  atomically $ pruneNotifyLog notifyLog (RelativeTime now)
+  for_ appends $ \(expires, name) ->
+    atomically $
+      appendNotifyLog
+        notifyLog
+        (NotifyLog.NotifyVote (voteOf someAnnouncingBlock (seatOf name)))
+        (RelativeTime expires)
+  atomically $ map nameOf <$> notifyLogNotifications notifyLog
+
+-- | The node relays a notification at most 'notifyLogPruneCadence' after it is
+-- no longer worth relaying, which must leave a downstream peer's grace for
+-- transmission and queueing: 'voteLateGrace' for a vote, and the margin between
+-- 'maxAnnouncementAgeSend' and 'maxAnnouncementAgeRecv' for an announcement.
+prop_notifyLogPruneCadence :: Property
+prop_notifyLogPruneCadence =
+  once . conjoin $
+    [ counterexample "the vote grace" $
+        notifyLogPruneCadence `farBelow` voteLateGrace
+    , counterexample "the announcement grace" $
+        notifyLogPruneCadence `farBelow` (maxAnnouncementAgeRecv - maxAnnouncementAgeSend)
+    ]
  where
-  seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
-  nameOf = \case
-    NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
-    NotifyLog.NotifyAnnouncement _ -> '?'
+  farBelow a b = 10 * a <= b
+
+-- | The seat a name stands for in a log, 'a' for seat 0.
+seatOf :: Char -> Word16
+seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
+
+-- | The name of the seat of a vote in a log.
+nameOf :: NotifyLog.Notification Blk -> Char
+nameOf = \case
+  NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
+  NotifyLog.NotifyAnnouncement _ -> '?'
 
 -- | Every notification in the log.
 notifyLogNotifications :: NotifyLog (IOSim s) Blk -> STM (IOSim s) [NotifyLog.Notification Blk]

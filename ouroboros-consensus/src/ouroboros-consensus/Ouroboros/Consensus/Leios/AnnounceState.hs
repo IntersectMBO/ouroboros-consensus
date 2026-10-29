@@ -24,7 +24,6 @@ import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, 
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (addRelTime)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
-  , NotifyEntry (..)
   , NotifyLog
   , appendNotifyLog
   )
@@ -81,10 +80,10 @@ onValidAnnouncement st valid = do
       Right seen' -> do
         writeTVar announced seen'
         when (announcementAge <= maxAnnouncementAgeSend) $
-          appendNotifyLog relayLog $
-            MkNotifyEntry
-              (addRelTime maxAnnouncementAgeSend announcementOnset)
-              (NotifyAnnouncement announcingHeader)
+          appendNotifyLog
+            relayLog
+            (NotifyAnnouncement announcingHeader)
+            (addRelTime maxAnnouncementAgeSend announcementOnset)
  where
   electionId = ancElectionId announcingHeader
 

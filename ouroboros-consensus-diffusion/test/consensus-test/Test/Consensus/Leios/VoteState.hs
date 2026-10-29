@@ -24,11 +24,10 @@ import Ouroboros.Consensus.Leios.VoteState
   , newVoteState
   , pruneVotes
   , recordVote
-  , seenOrForgottenVote
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
-  , VoteRelayWindow (..)
+  , VoteWindow (..)
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Test.Consensus.Leios.LeiosNotify.Codec (signedVote)
@@ -57,11 +56,10 @@ tests =
         prop_keepsUnexpired
     ]
 
--- | Pruning when each vote arrives, and recording every vote the node has
--- neither seen nor forgotten, as 'addVote' does, keeps the first vote of
+-- | Pruning when each vote arrives, then recording it, keeps the first vote of
 -- each seat in exactly the elections whose deadline had not passed at the last
--- pruning, and never records a vote of one seat in one election twice, so the
--- node never relays it twice either.
+-- pruning, and never records a vote of one seat in one election twice, even
+-- once it pruned the election, so the node never relays it twice either.
 prop_keepsUnexpired :: Property
 prop_keepsUnexpired = forAll genVotes $ \vs ->
   let (kept, recorded) = runSimOrThrow $ do
@@ -70,10 +68,8 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         st <- newVoteState nullTracer announceState notifyLog
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
           pruneVotes st at
-          seen <- seenOrForgottenVote st (accepted slot vote)
-          if seen
-            then pure Nothing
-            else Just (at, slot, voteSeatId vote) <$ recordVote st (accepted slot vote)
+          either (const Nothing) (const (Just (at, slot, voteSeatId vote)))
+            <$> recordVote st (accepted slot vote)
         kept' <- atomically (currentVotes st)
         pure (kept', recorded')
       lastPruned = maximum (RelativeTime 0 : [at | (at, _, _) <- vs])
@@ -81,21 +77,21 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
    in conjoin
         [ counterexample "kept" $
             kept
-              === Map.filterWithKey (\slot _ -> lastPruned <= relayUntilOf slot) (firstVotes vs)
+              === Map.filterWithKey (\slot _ -> lastPruned <= voteUntilOf slot) (firstVotes vs)
         , counterexample "recorded twice" $ length elections === Set.size (Set.fromList elections)
         ]
  where
   firstVotes vs =
     Map.fromListWith
       (flip Map.union)
-      [(slot, Map.singleton (voteSeatId v) v) | (at, slot, v) <- vs, at <= relayUntilOf slot]
+      [(slot, Map.singleton (voteSeatId v) v) | (at, slot, v) <- vs, at <= voteUntilOf slot]
 
   accepted slot vote =
     MkAcceptedVote
       { acceptedVote = vote
       , voteElectionSlot = slot
       , voteCommittee = emptyLeiosCommittee
-      , voteRelayWindow = MkVoteRelayWindow (slotStart slot) (relayUntilOf slot)
+      , voteWindow = MkVoteWindow (slotStart slot) (voteUntilOf slot)
       }
 
 -- | Votes arriving over time, each for an election slot that began at most two
@@ -113,8 +109,8 @@ slotStart :: SlotNo -> RelativeTime
 slotStart (SlotNo s) = RelativeTime (fromIntegral s)
 
 -- | Votes are worth relaying for 'window' seconds after their slot began.
-relayUntilOf :: SlotNo -> RelativeTime
-relayUntilOf slot = addRelTime window (slotStart slot)
+voteUntilOf :: SlotNo -> RelativeTime
+voteUntilOf slot = addRelTime window (slotStart slot)
 
 window :: NominalDiffTime
 window = 10
