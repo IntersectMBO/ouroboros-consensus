@@ -265,6 +265,9 @@ data Cmd blk it flr
     PersistBlksThenGC
   | -- | Write a new 'LedgerDB' snapshot to disk and remove the oldest ones.
     UpdateLedgerSnapshots
+  | -- | Whether the VolatileDB contains the block at the tip of the
+    -- ImmutableDB, which the Chain DB must ensure.
+    VolatileDbHoldsImmutableTip
   | -- Corruption
     WipeVolatileDB
   deriving (Generic, Functor, Foldable, Traversable)
@@ -338,6 +341,7 @@ data Success blk it flr
   | MbChainUpdate (Maybe (ChainUpdate blk (AllComponents blk)))
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
+  | HoldsImmutableTip Bool
   | MbPerasRoundNo (Maybe PerasRoundNo)
   | PerasCertRes ChainDB.AddPerasCertChainSelOutcome
   | PerasVoteRes (ChainDB.AddPerasVoteResult blk, Maybe ChainDB.AddPerasCertChainSelOutcome)
@@ -512,6 +516,8 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
       -- TODO(geo2a): re-enable copying when the model has a notion of ledger state
       --              snapshots and can conditionally copy to ImmutableDB.
       ignore <$> intTryTakeSnapshot internal
+    VolatileDbHoldsImmutableTip ->
+      HoldsImmutableTip <$> atomically (intImmutableTipInVolatileDB internal)
     WipeVolatileDB -> Point <$> wipeVolatileDB st
  where
   mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -778,6 +784,7 @@ runPure cfg = \case
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
   UpdateLedgerSnapshots -> ok Unit $ update_ id
+  VolatileDbHoldsImmutableTip -> ok HoldsImmutableTip $ query (const True)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
@@ -1199,6 +1206,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
         (if empty then 1 else 10, return PersistBlks)
       , (if empty then 1 else 10, return PersistBlksThenGC)
       , (if empty then 1 else 10, return UpdateLedgerSnapshots)
+      , (if empty then 1 else 10, return VolatileDbHoldsImmutableTip)
       , (if empty then 1 else 10, return WipeVolatileDB)
       ]
  where

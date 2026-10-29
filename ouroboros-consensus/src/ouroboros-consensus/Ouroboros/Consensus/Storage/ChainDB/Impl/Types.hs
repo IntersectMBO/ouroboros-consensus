@@ -300,6 +300,13 @@ data ChainDbEnv m blk = CDB
   { cdbImmutableDB :: !(ImmutableDB m blk)
   , cdbImmutableDBLock :: !(RAWLock m ())
   , cdbVolatileDB :: !(VolatileDB m blk)
+  -- ^ INVARIANT: this contains the block at the tip of the ImmutableDB, if
+  -- any. So it contains the predecessor of every block ChainSel could select.
+  --
+  -- Opening the ChainDB copies that block here if it is missing, as it is
+  -- after a Mithril bootstrap, a db-truncater run or the loss of VolatileDB
+  -- files. The garbage collection removes only blocks from slots before the
+  -- ImmutableDB tip's.
   , cdbLedgerDB :: !(LedgerDB' m blk)
   , cdbChain :: !(StrictTVar m (InternalChain blk))
   -- ^ Contains the current chain fragment.
@@ -424,7 +431,7 @@ data Internal m blk = Internal
   -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
   -- returned. This can be used for a garbage collection on the VolatileDB.
   , intGarbageCollect :: SlotNo -> m ()
-  -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
+  -- ^ Perform garbage collection for blocks < the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()
   -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s), if
   -- the 'SnapshotPolicy' indicates so.
@@ -437,6 +444,8 @@ data Internal m blk = Internal
   -- thread.
   , intKillBgThreads :: StrictTVar m (m ())
   -- ^ A handle to kill the background threads.
+  , intImmutableTipInVolatileDB :: STM m Bool
+  -- ^ Whether the invariant on 'cdbVolatileDB' holds.
   }
 
 {-------------------------------------------------------------------------------

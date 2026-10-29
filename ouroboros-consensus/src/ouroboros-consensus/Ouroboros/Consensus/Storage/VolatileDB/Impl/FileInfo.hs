@@ -94,6 +94,8 @@ canGC ::
 canGC FileInfo{maxSlotNo} slot =
   case maxSlotNo of
     NoMaxSlotNo -> True
+    -- Strictly before, since the ChainDB collects at the slot of the
+    -- ImmutableDB's tip and must keep that block (see @cdbVolatileDB@).
     MaxSlotNo latest -> latest < slot
 
 -- | Has this file reached its maximum size?

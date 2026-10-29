@@ -40,7 +40,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
-import Control.Monad (void, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
@@ -48,6 +48,7 @@ import Control.ResourceRegistry
   , runWithTempRegistry
   )
 import Control.Tracer
+import Data.Foldable (for_)
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -188,6 +189,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     volatileDB <- VolatileDB.openDB argsVolatileDb
     maxSlot <- atomically $ VolatileDB.getMaxSlotNo volatileDB
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
+    -- Establish the invariant on 'cdbVolatileDB'.
+    for_ immutableDbTip $ \tip -> do
+      let tipPoint = ImmutableDB.tipToRealPoint tip
+      isMember <- atomically $ VolatileDB.getIsMember volatileDB
+      unless (isMember (realPointHash tipPoint)) $
+        VolatileDB.putBlock volatileDB
+          =<< ImmutableDB.getKnownBlockComponent immutableDB API.GetBlock tipPoint
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
     pure
@@ -386,6 +394,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 Background.tryServeSnapshotRequestNow e
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
+            , intImmutableTipInVolatileDB = getEnvSTM h $ \e -> do
+                tip <- ImmutableDB.getTip (cdbImmutableDB e)
+                isMember <- VolatileDB.getIsMember (cdbVolatileDB e)
+                pure $ all (isMember . realPointHash . ImmutableDB.tipToRealPoint) tip
             }
 
     traceWith tracer $
