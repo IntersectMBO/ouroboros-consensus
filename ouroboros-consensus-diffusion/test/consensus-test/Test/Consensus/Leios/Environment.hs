@@ -19,15 +19,19 @@
 -- - ChainSync, LeiosNotify and LeiosFetch with whatever the test gives it.
 module Test.Consensus.Leios.Environment
   ( ChainSyncStep (..)
+  , EnvChain
   , EnvPeer (..)
   , LeiosFetchCodec
   , LeiosNotifyCodec
   , NodeVsEnvConnection (..)
+  , chainSyncServerOf
   , envLeiosFetchCodec
   , envLeiosNotifyCodec
+  , newEnvChain
   , quietChainSyncServer
   , refusingLeiosFetchServer
   , scriptedChainSyncServer
+  , serveChain
   , silentLeiosFetchServer
   , withNodeVsEnvConnection
   ) where
@@ -59,6 +63,7 @@ import Ouroboros.Consensus.Block
   , Point
   , blockNo
   , blockSlot
+  , getHeader
   , headerHash
   , pattern BlockPoint
   , pattern GenesisPoint
@@ -87,6 +92,17 @@ import Ouroboros.Network.Context
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer, runPeer)
 import Ouroboros.Network.KeepAlive (keepAliveServer)
+import Ouroboros.Network.Mock.Chain (ChainUpdate (..))
+import qualified Ouroboros.Network.Mock.Chain as Chain
+import Ouroboros.Network.Mock.ProducerState
+  ( ChainProducerState (..)
+  , findFirstPoint
+  , followerInstruction
+  , initChainProducerState
+  , initFollower
+  , switchFork
+  , updateFollower
+  )
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolCb (..)
@@ -377,7 +393,65 @@ scriptedChainSyncServer steps = ChainSyncServer $ pure idle
     GenesisPoint -> True
     BlockPoint{} -> False
 
--- | The codecs the peer speaks, which are the node's.
+-- | A chain a peer serves over ChainSync, which the test can change while the
+-- peer serves it.
+newtype EnvChain m = EnvChain (Strict.StrictTVar m (ChainProducerState Blk))
+
+-- | A chain of these blocks, oldest first.
+newEnvChain :: [Blk] -> IOSim s (EnvChain (IOSim s))
+newEnvChain blks =
+  EnvChain <$> Strict.newTVarIO (initChainProducerState (Chain.fromOldestFirst blks))
+
+-- | Serve these blocks instead, oldest first. If they do not extend the old
+-- chain, the peer rolls the node back, as a real peer would.
+serveChain :: EnvChain (IOSim s) -> [Blk] -> IOSim s ()
+serveChain (EnvChain var) blks =
+  atomically $ Strict.modifyTVar var $ switchFork (Chain.fromOldestFirst blks)
+
+-- | A ChainSync server of the chain, which says nothing once the node holds
+-- all of it, until the chain changes.
+--
+-- A real peer would say that it has no more headers for now, and ChainSync
+-- jumping stops relying on a peer that says so. But the node gives the peer
+-- only 10 seconds to say something, so a test must change the chain within
+-- that time to keep the connection.
+chainSyncServerOf ::
+  EnvChain (IOSim s) -> ChainSyncServer (Header Blk) (Point Blk) (Tip Blk) (IOSim s) ()
+chainSyncServerOf (EnvChain var) = ChainSyncServer $ idle <$> newFollower
+ where
+  newFollower = atomically $ do
+    (cps, r) <- initFollower GenesisPoint <$> Strict.readTVar var
+    Strict.writeTVar var cps
+    pure r
+
+  idle r =
+    ServerStIdle
+      { recvMsgRequestNext = Left <$> atomically (nextUpdate r)
+      , recvMsgFindIntersect = \points -> atomically $ do
+          cps <- Strict.readTVar var
+          case findFirstPoint points cps of
+            Nothing -> pure $ SendMsgIntersectNotFound (tipOf cps) (next r)
+            Just point -> do
+              let cps' = updateFollower r point cps
+              Strict.writeTVar var cps'
+              pure $ SendMsgIntersectFound point (tipOf cps') (next r)
+      , recvMsgDoneClient = pure ()
+      }
+
+  next = ChainSyncServer . pure . idle
+
+  nextUpdate r = do
+    cps <- Strict.readTVar var
+    case followerInstruction r cps of
+      Nothing -> retry
+      Just (update, cps') -> do
+        Strict.writeTVar var cps'
+        pure $ case update of
+          AddBlock blk -> SendMsgRollForward (getHeader blk) (tipOf cps') (next r)
+          RollBack point -> SendMsgRollBackward point (tipOf cps') (next r)
+
+  tipOf = Chain.headTip . chainState
+
 -- | The node's codecs, at every mini-protocol's bytes.
 type NodeCodecs s =
   NTN.Codecs

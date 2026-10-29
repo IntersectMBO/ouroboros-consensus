@@ -33,6 +33,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , nodeVersionData
   , defaultNodeUnderTestConfig
   , maxEbBodySize
+  , withJumpingNode
   , withNode
   , withNodeCommittee
   , withNodeForecastingOnly
@@ -90,6 +91,10 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+  ( CSJConfig (..)
+  , CSJEnabledConfig (..)
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -104,7 +109,8 @@ import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis
-  ( disableGenesisConfig
+  ( GenesisConfig (..)
+  , disableGenesisConfig
   , mkGenesisNodeKernelArgs
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -154,6 +160,7 @@ data NodeUnderTestConfig = NodeUnderTestConfig
   , nutcLedgerConfig :: LeiosTestLedgerConfig
   , nutcRandomness :: StdGen
   -- ^ The root of all the test's randomness; see 'Seeds'.
+  , nutcCsjConfig :: CSJConfig
   }
 
 defaultNodeUnderTestConfig :: SecurityParam -> LeiosTestLedgerConfig -> NodeUnderTestConfig
@@ -162,6 +169,7 @@ defaultNodeUnderTestConfig nutcSecurityParam nutcLedgerConfig =
     { nutcSecurityParam
     , nutcLedgerConfig
     , nutcRandomness = mkStdGen 0
+    , nutcCsjConfig = CSJDisabled
     }
 
 -- | All the randomness of a Leios node-vs-environment test.
@@ -271,8 +279,10 @@ withNodeUnderTest ::
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
 withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
-  -- What a node with Genesis disabled, the default, runs with.
-  (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
+  -- What a node with Genesis disabled, the default, runs with, but for
+  -- ChainSync jumping, which the test chooses.
+  let genesisConfig = disableGenesisConfig{gcCSJConfig = nutcCsjConfig cfg}
+  (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs genesisConfig
   let seeds = nodeSeeds cfg
   leiosAcquisitions <- newLeiosAcquisitions
   -- The ChainDB and the node each get their own resource registry. The node's
@@ -320,15 +330,22 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
-              -- The node starts caught up, as one that was caught up when it
-              -- last shut down does, and never judges its selection too old, so
-              -- it stays caught up however far the simulated clock runs ahead of
-              -- the test's chain.
+              -- Without ChainSync jumping, the node starts caught up, as one
+              -- that was caught up when it last shut down does, and never judges
+              -- its selection too old, so it stays caught up however far the
+              -- simulated clock runs ahead of the test's chain.
+              --
+              -- ChainSync jumping ignores a peer that connects while the node is
+              -- caught up, so with it, the node instead starts syncing. It stays
+              -- so, since nothing tells it that it has the peers it needs to
+              -- leave.
               Nothing
               GSM.MarkerFileView
                 { GSM.touchMarkerFile = pure ()
                 , GSM.removeMarkerFile = pure ()
-                , GSM.hasMarkerFile = pure True
+                , GSM.hasMarkerFile = pure $ case nutcCsjConfig cfg of
+                    CSJDisabled -> True
+                    CSJEnabled{} -> False
                 }
               (pure DontUseBootstrapPeers)
               publicPeerSelectionStateVar
@@ -343,7 +360,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 (seedNodeToNodeApps seeds)
                 NTN.nullTracers
                 defaultChainSyncIdleTimeout
-                disableGenesisConfig
+                genesisConfig
                 defaultTxSubmissionLogicVersion
                 kernelArgs
                 kernel
@@ -370,6 +387,20 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNode = withNodeForecastingOnly 100000
+
+-- | 'withNode', with ChainSync jumping, of this many slots at a time.
+withJumpingNode :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withJumpingNode jumpSize body = do
+  nodeDBs <- emptyNodeDBs
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+      { nutcCsjConfig = CSJEnabled CSJEnabledConfig{csjcJumpSize = jumpSize}
+      }
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
 
 -- | A node whose ledger view forecasts this many slots past its immutable tip.
 withNodeForecastingOnly :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a

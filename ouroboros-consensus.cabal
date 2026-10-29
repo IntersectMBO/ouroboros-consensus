@@ -1636,7 +1636,7 @@ test-suite consensus-diffusion-test
     nonempty-containers,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
-    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
+    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols, protocols-tests-lib},
     pretty,
     QuickCheck,
     quickcheck-dynamic ^>=4,

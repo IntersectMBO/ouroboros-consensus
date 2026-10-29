@@ -15,7 +15,7 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (replicateM, void)
 import Control.Monad.Class.MonadThrow
-import Control.Monad.Class.MonadTimer.SI (timeout)
+import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import Data.Bits ((.|.))
@@ -53,7 +53,11 @@ import Ouroboros.Consensus.Leios.Types
   , mkEndorserBlock
   , toRankingBlockHash
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (ExnLeiosTwoCertificationClaims (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
+  ( ExnLeiosTwoCertificationClaims (..)
+  , LeiosFetchKernel (..)
+  , LeiosFetchPeer (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
   , LeiosFetchRequestHandler (..)
@@ -90,8 +94,10 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , Promise (..)
   , withWriter
   )
+import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Block (Tip (..))
 import Ouroboros.Network.Channel (Channel)
+import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
 import Ouroboros.Network.Mux
@@ -160,6 +166,8 @@ tests =
                     ]
                   )
               )
+    , testCase "the node takes a peer that jumps over a certifying header as offering what it certifies" $
+        runSimFinishing nodeRecordsJumperOffers >>= (@?= [True, True])
     , testCase
         "the node disconnects a peer that rolls forward certificates of two endorser blocks for one election"
         $ runSimFinishing nodeDisconnectsDoubleCertifier
@@ -306,6 +314,28 @@ nodeFetchesRolledForward = withNode $ \nut -> do
     relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
     pure (acquired, relays)
 
+-- | Two peers serve the chain of 'announcingFetched' and 'certifyingFetched' to
+-- a node that jumps one slot at a time. The first to connect leads the jumps,
+-- so the second jumps over 'certifyingFetched' instead of sending it. Whether
+-- the node takes each peer as offering 'fetchedEb', in the order they
+-- connected.
+--
+-- A jump reaches only the predecessor of the header the leader last sent, so
+-- the leader's chain then grows by a block.
+nodeRecordsJumperOffers :: IOSim s [Bool]
+nodeRecordsJumperOffers = withJumpingNode 1 $ \nut -> do
+  leaderChain <- newEnvChain [announcingFetched, certifyingFetched]
+  jumperChain <- newEnvChain longer
+  withNodeVsEnvConnection nut (PeerAddr 1) (servingChain nut leaderChain) $ \_conn -> do
+    threadDelay 3
+    withNodeVsEnvConnection nut (PeerAddr 2) (servingChain nut jumperChain) $ \_conn -> do
+      threadDelay 1
+      serveChain leaderChain longer
+      threadDelay 2
+      mapM (offersFetched nut) [PeerAddr 1, PeerAddr 2]
+ where
+  longer = [announcingFetched, certifyingFetched, successorLeiosBlock certifyingFetched]
+
 -- | The peer rolls forward the header that certifies 'fetchedEb', rolls back,
 -- and rolls forward one that certifies 'otherEbHash'. The two endorser blocks
 -- the node's ChainSync client failed for claiming, if it did.
@@ -388,6 +418,26 @@ servingFetched :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOS
 servingFetched nut chan =
   fst
     <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer serveFetched)
+
+-- | A peer that serves the chain over ChainSync, and says nothing over the Leios
+-- mini-protocols.
+servingChain :: NodeUnderTest (IOSim s) -> EnvChain (IOSim s) -> EnvPeer (IOSim s)
+servingChain nut chain =
+  EnvPeer
+    { epChainSyncServer = chainSyncServerOf chain
+    , epLeiosNotifyServer = \_chan -> atomically retry
+    , epLeiosNotifyClient = Nothing
+    , epLeiosFetchServer = silentLeiosFetchServer nut
+    , epLeiosFetchClient = Nothing
+    }
+
+-- | Whether the node takes the peer at the address as offering 'fetchedEb'.
+offersFetched :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s Bool
+offersFetched nut addr = IOLike.atomically $ do
+  peers <- IOLike.readTVar (lfkPeers (getLeiosFetchKernel (nutKernel nut)))
+  case [peer | (connId, peer) <- Map.toList peers, remoteAddress connId == addr] of
+    [] -> pure False
+    peer : _ -> Map.member fetchedPoint <$> IOLike.readTVar (lfpOfferings peer)
 
 relayedOf ::
   Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle -> Relayed
