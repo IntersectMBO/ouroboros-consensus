@@ -56,6 +56,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
+import Data.Foldable (for_)
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
@@ -97,6 +98,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchPeer
   , onNewLeiosAnnouncement
+  , recordLeiosCertOffer
+  , recordLeiosJumpOffers
   , recordLeiosOffer
   , withLeiosFetchPeer
   )
@@ -251,6 +254,9 @@ data Handlers m addr blk = Handlers
       ConnectionId addr ->
       IsBigLedgerPeer ->
       CsClient.DynamicEnv m blk ->
+      -- \| The peer's LeiosFetch state, if the version has the Leios
+      -- mini-protocols
+      Maybe (LeiosFetchPeer m) ->
       ChainSyncClientPipelined
         (Header blk)
         (Point blk)
@@ -402,7 +408,7 @@ mkHandlers
     }
   txSubmissionLogicVersion =
     Handlers
-      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
+      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv mbLeiosPeer ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv
               { CsClient.cfg = getTopLevelConfig
@@ -417,6 +423,12 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
+              , CsClient.leiosMsgRollForwardCallback = \hdr predState ->
+                  for_ mbLeiosPeer $ \peerVars ->
+                    recordLeiosCertOffer getTopLevelConfig getLeiosFetchKernel peerVars hdr predState
+              , CsClient.leiosJumpAcceptedCallback = \jumpInfo ->
+                  for_ mbLeiosPeer $ \peerVars ->
+                    recordLeiosJumpOffers getTopLevelConfig getLeiosFetchKernel peerVars jumpInfo
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -1018,7 +1030,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           lopBucketConfig
           csjConfig
           getDiffusionPipeliningSupport
-        $ \csState -> do
+        $ \csState -> withLeiosFetchPeerIfLeios $ \mbLeiosPeer -> do
           (r, trailing) <-
             runPipelinedPeerWithLimitsRnd
               (contramap (TraceLabelPeer them) tChainSyncTracer)
@@ -1041,7 +1053,14 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                   , CsClient.setLatestSlot = csvSetLatestSlot csState
                   , CsClient.jumping = csvJumping csState
                   }
+                mbLeiosPeer
           return (ChainSyncInitiatorResult r, trailing)
+     where
+      -- A peer offers endorser blocks only if it can serve them.
+      withLeiosFetchPeerIfLeios k
+        | versionHasLeios version =
+            withLeiosFetchPeer (getLeiosFetchKernel kernel) them isBigLedgerPeer (k . Just)
+        | otherwise = k Nothing
 
   aChainSyncServer ::
     NodeToNodeVersion ->
@@ -1568,6 +1587,10 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
           (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
       )
 
+-- | Whether the version has the Leios mini-protocols.
+versionHasLeios :: NodeToNodeVersion -> Bool
+versionHasLeios version = version >= NodeToNodeV_16
+
 -- | The Leios mini-protocols, to add to a node-to-node bundle, if the version
 -- has them.
 --
@@ -1580,7 +1603,7 @@ leiosProtocols ::
   RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
   OuroborosBundleWithExpandedCtx mode addr PeerTrustable b m a c
 leiosProtocols version runNotify runFetch
-  | version >= NodeToNodeV_16 =
+  | versionHasLeios version =
       mempty
         { withHot =
             WithHot [leiosNotifyMiniProtocol runNotify, leiosFetchMiniProtocol runFetch]

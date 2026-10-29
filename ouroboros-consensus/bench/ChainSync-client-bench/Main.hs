@@ -152,6 +152,8 @@ oneBenchRun
               pipelineDecisionLowHighMark 10 20
           , CSClient.getDiffusionPipeliningSupport =
               DiffusionPipeliningOn
+          , CSClient.leiosMsgRollForwardCallback = \_hdr _predState -> pure ()
+          , CSClient.leiosJumpAcceptedCallback = \_jumpInfo -> pure ()
           }
         CSClient.DynamicEnv
           { CSClient.version = maxBound :: NodeToNodeVersion

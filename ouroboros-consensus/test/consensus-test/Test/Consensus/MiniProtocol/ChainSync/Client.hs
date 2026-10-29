@@ -507,6 +507,8 @@ runChainSync
                   pipelineDecisionLowHighMark 10 20
               , getDiffusionPipeliningSupport =
                   diffusionPipelining
+              , leiosMsgRollForwardCallback = \_hdr _predState -> pure ()
+              , leiosJumpAcceptedCallback = \_jumpInfo -> pure ()
               }
             DynamicEnv
               { version = maxBound :: NodeToNodeVersion

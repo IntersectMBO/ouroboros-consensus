@@ -1,14 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests of the node's LeiosFetch client and server, over real connections,
 -- against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
+import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (replicateM, void)
@@ -29,11 +31,18 @@ import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
-import Ouroboros.Consensus.Block (Header, blockSlot)
+import Ouroboros.Consensus.Block
+  ( Header
+  , Proxy (..)
+  , blockHash
+  , blockSlot
+  , pattern GenesisPoint
+  )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
@@ -42,7 +51,9 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , hashLeiosTx
   , mkEndorserBlock
+  , toRankingBlockHash
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (ExnLeiosTwoCertificationClaims (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
   , LeiosFetchRequestHandler (..)
@@ -79,6 +90,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , Promise (..)
   , withWriter
   )
+import Ouroboros.Network.Block (Tip (..))
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
@@ -87,12 +99,16 @@ import Ouroboros.Network.Mux
   , TemperatureBundle (..)
   , WithProtocolTemperature (..)
   )
+import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
   ( LeiosTestBlock (..)
   , firstLeiosBlock
+  , forkLeiosBlock
   , setAnnouncement
+  , setLeiosCert
+  , successorLeiosBlock
   )
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -129,6 +145,13 @@ tests =
                     ]
                   )
               )
+    , testCase "the node fetches the endorser block a header its peer rolls forward certifies" $
+        runSimFinishing nodeFetchesCertified
+          >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
+    , testCase
+        "the node disconnects a peer that rolls forward certificates of two endorser blocks for one election"
+        $ runSimFinishing nodeDisconnectsDoubleCertifier
+          >>= (@?= Just (endorserBlockHash fetchedEb, otherEbHash))
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
@@ -178,6 +201,27 @@ announcingFetched =
 fetchedPoint :: LeiosPoint
 fetchedPoint = MkLeiosPoint (blockSlot announcingFetched) (endorserBlockHash fetchedEb)
 
+-- | The successor of 'announcingFetched', which certifies 'fetchedEb'.
+certifyingFetched :: LeiosTestBlock
+certifyingFetched = certifying announcingFetched
+
+-- | The successor of the block, containing a certificate of what it announced.
+certifying :: LeiosTestBlock -> LeiosTestBlock
+certifying announcing =
+  setLeiosCert
+    (certOf (toRankingBlockHash (Proxy @LeiosTestBlock) (blockHash announcing)) [0, 1, 2])
+    (successorLeiosBlock announcing)
+
+-- | Another endorser block, for the same election as 'fetchedEb'.
+otherEbHash :: EndorserBlockHash
+otherEbHash = UnsafeHash (SBS.replicate 32 3)
+
+-- | A sibling of 'announcingFetched' by the same issuer, which announces
+-- 'otherEbHash' instead.
+announcingOther :: LeiosTestBlock
+announcingOther =
+  setAnnouncement otherEbHash (encodeEndorserBlockSize fetchedEb) (forkLeiosBlock announcingFetched)
+
 -- | The peer announces 'fetchedEb', offers its body and its closure, and
 -- serves both. The node's acquisitions, as it announces them, and the first
 -- three notifications it relays to the peer.
@@ -195,19 +239,8 @@ nodeFetchesOffered = withNode $ \nut -> do
       ]
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = \chan -> do
-              server <-
-                leiosNotifyServerPeerLookahead
-                  (pure NotExcessiveRequests)
-                  (readTQueue notifications)
-              void $
-                runLookaheadFixedSenderPeerWithLimits
-                  nullTracer
-                  (envLeiosNotifyCodec nut)
-                  (byteLimitsLeiosNotify (fromIntegral . BSL.length))
-                  timeLimitsLeiosNotify
-                  chan
-                  server
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
           , epLeiosNotifyClient = Just $ \chan ->
               fst
                 <$> runPipelinedPeerWithLimits
@@ -221,23 +254,97 @@ nodeFetchesOffered = withNode $ \nut -> do
                         (pure (Right 1))
                         (pure (\msg -> atomically $ modifyTVar relayed (<> [relayedOf msg])))
                   )
-          , epLeiosFetchServer = \chan ->
-              fst
-                <$> runAnnotatedPeer
-                  nullTracer
-                  (envLeiosFetchCodec nut)
-                  chan
-                  (leiosFetchServerPeer serveFetched)
+          , epLeiosFetchServer = servingFetched nut
           , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
-    acquired <-
-      replicateM 2 $
-        atomically next <&> \case
-          AcquiredEb point _size -> AcquiredBody point
-          AcquiredEbTxs point -> AcquiredClosure point
+    acquired <- replicateM 2 $ acquiredOf <$> atomically next
     relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
     pure (acquired, relays)
+
+-- | The peer announces 'fetchedEb', which so takes its election's focus, and
+-- then offers nothing over LeiosNotify. It rolls forward the header that
+-- certifies it, and serves it. The node's acquisitions, as it announces them.
+nodeFetchesCertified :: IOSim s [Acquired]
+nodeFetchesCertified = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  notifications <- newTQueueIO
+  atomically $ writeTQueue notifications (MsgLeiosBlockAnnouncement (ltbHeader announcingFetched))
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer =
+              scriptedChainSyncServer $
+                SendRollForward . ltbHeader <$> [announcingFetched, certifyingFetched]
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
+    replicateM 2 $ acquiredOf <$> atomically next
+
+-- | The peer rolls forward the header that certifies 'fetchedEb', rolls back,
+-- and rolls forward one that certifies 'otherEbHash'. The two endorser blocks
+-- the node's ChainSync client failed for claiming, if it did.
+nodeDisconnectsDoubleCertifier :: IOSim s (Maybe (EndorserBlockHash, EndorserBlockHash))
+nodeDisconnectsDoubleCertifier = withNode $ \nut -> do
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer =
+              scriptedChainSyncServer
+                [ SendRollForward (ltbHeader announcingFetched)
+                , SendRollForward (ltbHeader certifyingFetched)
+                , SendRollBackward GenesisPoint TipGenesis
+                , SendRollForward (ltbHeader announcingOther)
+                , SendRollForward (ltbHeader (certifying announcingOther))
+                ]
+          , epLeiosNotifyServer = \_chan -> atomically retry
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = silentLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+    chainSync <-
+      maybe (throwIO $ userError "the node does not run a ChainSync client") pure $
+        Map.lookup chainSyncMiniProtocolNum (connNodeInitiators conn)
+    atomically chainSync <&> \case
+      Left e
+        | Just (ExnLeiosTwoCertificationClaims _elId claimed claimedAgain) <- fromException e ->
+            Just (claimed, claimedAgain)
+      _ -> Nothing
+
+acquiredOf :: LeiosEbNotification -> Acquired
+acquiredOf = \case
+  AcquiredEb point _size -> AcquiredBody point
+  AcquiredEbTxs point -> AcquiredClosure point
+
+-- | A LeiosNotify server that sends what the queue holds, as the node asks.
+feedingLeiosNotifyServer ::
+  NodeUnderTest (IOSim s) ->
+  StrictTQueue
+    (IOSim s)
+    (Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle) ->
+  Channel (IOSim s) ByteString ->
+  IOSim s ()
+feedingLeiosNotifyServer nut notifications chan = do
+  server <-
+    leiosNotifyServerPeerLookahead
+      (pure NotExcessiveRequests)
+      (readTQueue notifications)
+  void $
+    runLookaheadFixedSenderPeerWithLimits
+      nullTracer
+      (envLeiosNotifyCodec nut)
+      (byteLimitsLeiosNotify (fromIntegral . BSL.length))
+      timeLimitsLeiosNotify
+      chan
+      server
+
+-- | A LeiosFetch server that serves 'fetchedEb' and its transactions.
+servingFetched :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+servingFetched nut chan =
+  fst
+    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer serveFetched)
 
 relayedOf ::
   Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle -> Relayed
@@ -272,7 +379,8 @@ nodeServerAgainst client = withNode $ \nut -> do
   holdHeldEb nut
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = \_chan -> atomically retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = \_chan -> atomically retry
           , epLeiosNotifyClient = Nothing
           , epLeiosFetchServer = refusingLeiosFetchServer nut
           , epLeiosFetchClient = Just $ runEnvClient nut client

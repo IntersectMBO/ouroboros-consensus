@@ -14,19 +14,20 @@
 -- each of the node's initiators:
 --
 -- - KeepAlive and PeerSharing with the servers a node runs;
--- - ChainSync by finding the intersection at genesis and then never sending a
---   header;
 -- - BlockFetch and TxSubmission by never saying anything, which is all the node
 --   sees of a peer with nothing to offer;
--- - LeiosNotify and LeiosFetch with whatever the test gives it.
+-- - ChainSync, LeiosNotify and LeiosFetch with whatever the test gives it.
 module Test.Consensus.Leios.Environment
-  ( EnvPeer (..)
+  ( ChainSyncStep (..)
+  , EnvPeer (..)
   , LeiosFetchCodec
   , LeiosNotifyCodec
   , NodeVsEnvConnection (..)
   , envLeiosFetchCodec
   , envLeiosNotifyCodec
+  , quietChainSyncServer
   , refusingLeiosFetchServer
+  , scriptedChainSyncServer
   , silentLeiosFetchServer
   , withNodeVsEnvConnection
   ) where
@@ -53,7 +54,15 @@ import qualified Network.Mux as Mx
 import Network.Mux.Bearer.Queues (QueueChannel (..), queueChannelAsBearer)
 import Network.TypedProtocol.Codec (AnnotatedCodec, Codec)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Block (Header, Point, pattern BlockPoint, pattern GenesisPoint)
+import Ouroboros.Consensus.Block
+  ( Header
+  , Point
+  , blockNo
+  , blockSlot
+  , headerHash
+  , pattern BlockPoint
+  , pattern GenesisPoint
+  )
 import Ouroboros.Consensus.Config (configCodec)
 import Ouroboros.Consensus.Leios.Types (EndorserBlock, LeiosPoint, LeiosTx, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
@@ -99,6 +108,7 @@ import Ouroboros.Network.Protocol.ChainSync.Server
   ( ChainSyncServer (..)
   , ServerStIdle (..)
   , ServerStIntersect (..)
+  , ServerStNext (..)
   , chainSyncServerPeer
   )
 import Ouroboros.Network.Protocol.Handshake
@@ -126,7 +136,9 @@ type LeiosFetchCodec s =
 
 -- | What a peer runs for the Leios mini-protocols.
 data EnvPeer m = EnvPeer
-  { epLeiosNotifyServer :: Channel m ByteString -> m ()
+  { epChainSyncServer :: ChainSyncServer (Header Blk) (Point Blk) (Tip Blk) m ()
+  -- ^ Answers the node's ChainSync client.
+  , epLeiosNotifyServer :: Channel m ByteString -> m ()
   -- ^ Answers the node's client.
   , epLeiosNotifyClient :: Maybe (Channel m ByteString -> m ())
   -- ^ Talks to the node's server, if the test has the peer do so.
@@ -300,7 +312,11 @@ peerResponder ::
   IOSim s ((), Maybe ByteString)
 peerResponder codecs peerSharingAPI envPeer num chan
   | num == chainSyncMiniProtocolNum =
-      runPeer nullTracer (NTN.cChainSyncCodec codecs) chan (chainSyncServerPeer quietChainSyncServer)
+      runPeer
+        nullTracer
+        (NTN.cChainSyncCodec codecs)
+        chan
+        (chainSyncServerPeer (epChainSyncServer envPeer))
   | num == keepAliveMiniProtocolNum =
       runPeer nullTracer (NTN.cKeepAliveCodec codecs) chan (keepAliveServerPeer keepAliveServer)
   | num == peerSharingMiniProtocolNum =
@@ -323,16 +339,38 @@ peerResponder codecs peerSharingAPI envPeer num chan
 -- connection open longer than 135 seconds loses it. That is probably not what
 -- such a test intends, so it should serve a chain that grows instead.
 quietChainSyncServer :: ChainSyncServer (Header Blk) (Point Blk) (Tip Blk) (IOSim s) ()
-quietChainSyncServer = ChainSyncServer $ pure idle
+quietChainSyncServer = scriptedChainSyncServer []
+
+-- | What 'scriptedChainSyncServer' answers a request for the next update with.
+data ChainSyncStep
+  = -- | The header, which it reports as its tip.
+    SendRollForward (Header Blk)
+  | SendRollBackward (Point Blk) (Tip Blk)
+
+-- | A ChainSync server that finds the intersection at genesis, answers each
+-- request for the next update with the next step, and then never answers
+-- again.
+scriptedChainSyncServer ::
+  [ChainSyncStep] -> ChainSyncServer (Header Blk) (Point Blk) (Tip Blk) (IOSim s) ()
+scriptedChainSyncServer steps = ChainSyncServer $ pure idle
  where
   idle =
     ServerStIdle
-      { recvMsgRequestNext = pure $ Right $ atomically retry
+      { recvMsgRequestNext = pure $ case steps of
+          [] -> Right $ atomically retry
+          SendRollForward hdr : rest ->
+            Left $
+              SendMsgRollForward
+                hdr
+                (Tip (blockSlot hdr) (headerHash hdr) (blockNo hdr))
+                (scriptedChainSyncServer rest)
+          SendRollBackward point tip : rest ->
+            Left $ SendMsgRollBackward point tip (scriptedChainSyncServer rest)
       , recvMsgFindIntersect = \points ->
           pure $
             if any isGenesis points
-              then SendMsgIntersectFound GenesisPoint TipGenesis quietChainSyncServer
-              else SendMsgIntersectNotFound TipGenesis quietChainSyncServer
+              then SendMsgIntersectFound GenesisPoint TipGenesis (scriptedChainSyncServer steps)
+              else SendMsgIntersectNotFound TipGenesis (scriptedChainSyncServer steps)
       , recvMsgDoneClient = pure ()
       }
   isGenesis = \case
