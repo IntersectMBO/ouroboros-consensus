@@ -22,6 +22,8 @@ open import Ledger.Prelude
 ```
 -->
 
+<a id="fig:ts-types:ticknonce"></a>
+
 *Tick Nonce environments*
 
 ```agda
@@ -54,8 +56,6 @@ data
   _⊢_⇀⦇_,TICKN⦈_ : TickNonceEnv → TickNonceState → Bool → TickNonceState → Type
 ```
 
-<a id="fig:ts-types:ticknonce"></a>
-
 The signal to the transition rule $\mathsf{TICKN}$ is a marker indicating
 whether we are in a new epoch. If we are in a new epoch, we update the epoch
 nonce and the previous hash. Otherwise, we do nothing:
@@ -68,6 +68,8 @@ data _⊢_⇀⦇_,TICKN⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:ticknonce"></a>
+
 ```agda
   Not-New-Epoch :
     ────────────────────────────────
@@ -76,7 +78,5 @@ data _⊢_⇀⦇_,TICKN⦈_ where
     ────────────────────────────────
     ⟦ ηc , ηph ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ true ,TICKN⦈ ⟦ ηc ⋆ ηh , ηph ⟧ᵗˢ
 ```
-
-<a id="fig:ts-rules:ticknonce"></a>
 
 [Specification contents](../../SPECIFICATION.md)

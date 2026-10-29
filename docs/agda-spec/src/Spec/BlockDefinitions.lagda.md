@@ -24,6 +24,8 @@ record BlockStructure : Type₁ where
 ```
 -->
 
+<a id="fig:defs:blocks"></a>
+
 *Abstract types*
 
 ```agda
@@ -74,7 +76,7 @@ record BlockStructure : Type₁ where
       σ   : Sigˢ      -- cold key signature
   ```
 
-<a id="fig:defs:blocks"></a>
+<a id="fig:defs:block-header"></a>
 
 *Block Header Body*
 
@@ -124,8 +126,6 @@ record BlockStructure : Type₁ where
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
 ```
-
-<a id="fig:defs:block-header"></a>
 
 <!--
 ```agda

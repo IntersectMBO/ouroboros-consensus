@@ -39,6 +39,8 @@ open Ledger.Prelude.ℤ using (pos)
 ```
 -->
 
+<a id="fig:ts-types:prtcl"></a>
+
 *Protocol environments*
 
 ```agda
@@ -72,13 +74,10 @@ data
   _⊢_⇀⦇_,PRTCL⦈_ : PrtclEnv → PrtclState → BHeader → PrtclState → Type
 ```
 
-<a id="fig:ts-types:prtcl"></a>
+<a id="fig:ts-funs:prtcl"></a>
 
 *Protocol helper functions*
 
-<!--
-Keep the display below in sync with these checked declarations. Hidden proof code
-requires separate indentation but should not interrupt the displayed functions.
 ```agda
 hBLeader : BHBody → Certifiedℕ
 hBLeader bhb = serHashToℕ (hash (encode "L" ∥ encode vrfRes))
@@ -126,57 +125,6 @@ vrfChecks η₀ pd f bhb =
     hk = hash issuerVk
     seed = slotToSeed slot XOR nonceToSeed η₀
 ```
--->
-
-~~~agda
-hBLeader : BHBody → Certifiedℕ
-hBLeader bhb = serHashToℕ (hash (encode "L" ∥ encode vrfRes))
-  where open BHBody bhb
-
-hBNonce : BHBody → Nonce
-hBNonce bhb = serHashToNonce (hash (encode "N" ∥ encode vrfRes))
-  where open BHBody bhb
-
-lookupPoolDistr : PoolDistr → KeyHashˢ → Maybe (ℚ × KeyHashᵛ)
-lookupPoolDistr pd hk =
-  if hk ∈ dom (pd ˢ) then
-    just (lookupᵐ pd hk)
-  else
-    nothing
-
-checkLeaderVal : Certifiedℕ → InPosUnitInterval → ℚ → Type
-checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
-   if f ≡ 1ℚ then ⊤ else
-     λ{f≢1ℚ} →
-       let
-         p = pos certℕ ℚ./ (2 ^ 512)
-         q = 1ℚ ℚ.- p
-         p≢1ℚ  = ↥p<↧p⇒p≢1 {p} (n<m⇒↥[n/m]<↧[n/m] certℕprf)
-         1-f≥0 = p≤1⇒1-p≥0 f≤1
-         1-f≢0 = p≢1⇒1-p≢0 f≢1ℚ
-         instance
-           q≢0ℚ  = ℚ.≢-nonZero (p≢1⇒1-p≢0 p≢1ℚ)
-           1-f>0 = ℚ.positive (≤∧≢⇒< 1-f≥0 $ ≢-sym 1-f≢0)
-         c = ln (1ℚ ℚ.- f)
-       in
-         ℚ.1/ q ℚ.< exp ((ℚ.- σ) ℚ.* c)
-
-vrfChecks : Nonce → PoolDistr → InPosUnitInterval → BHBody → Type
-vrfChecks η₀ pd f bhb =
-  case lookupPoolDistr pd hk of
-    λ where
-      nothing            → ⊥
-      (just (σ , vrfHK)) →
-           vrfHK ≡ hash vrfVk
-         × verify vrfVk seed (vrfPrf , vrfRes)
-         × checkLeaderVal (hBLeader bhb) f σ
-  where
-    open BHBody bhb
-    hk = hash issuerVk
-    seed = slotToSeed slot XOR nonceToSeed η₀
-~~~
-
-<a id="fig:ts-funs:prtcl"></a>
 
 In "Protocol helper functions" we define a function `vrfChecks` which performs all the VRF related checks
 on a given block header body.
@@ -212,6 +160,8 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:prtcl"></a>
+
 ```agda
   Evolve-Prtcl :
     let 〖 bhb , σ 〗 = bh; open BHBody bhb
@@ -223,7 +173,5 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
     ────────────────────────────────
     ⟦ pd , η₀ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
 ```
-
-<a id="fig:ts-rules:prtcl"></a>
 
 [Specification contents](../../SPECIFICATION.md)

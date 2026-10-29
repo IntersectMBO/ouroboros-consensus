@@ -25,6 +25,8 @@ open import Ledger.Prelude
 ```
 -->
 
+<a id="fig:ts-types:tickf"></a>
+
 *Tick Forecast transitions*
 
 <!--
@@ -36,8 +38,6 @@ data
 ```agda
   _⊢_⇀⦇_,TICKF⦈_ : ⊤ → NewEpochState → Slot → NewEpochState → Type
 ```
-
-<a id="fig:ts-types:tickf"></a>
 
 The transition $\mathsf{TICKF}$ is shown below. Part of the upkeep
 is updating the genesis key delegation mapping according to the future delegation mapping using
@@ -54,6 +54,8 @@ data _⊢_⇀⦇_,TICKF⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:tickf"></a>
+
 ```agda
   Tick-Forecast :
     let forecast = adoptGenesisDelegs nes′ s
@@ -62,7 +64,5 @@ data _⊢_⇀⦇_,TICKF⦈_ where
     ────────────────────────────────
     _ ⊢ nes ⇀⦇ s ,TICKF⦈ forecast
 ```
-
-<a id="fig:ts-rules:tickf"></a>
 
 [Specification contents](../../SPECIFICATION.md)

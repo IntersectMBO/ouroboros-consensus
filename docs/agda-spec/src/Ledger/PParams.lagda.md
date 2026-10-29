@@ -24,9 +24,15 @@ private variable
 ```
 -->
 
+<a id="fig:protocol-parameter-defs"></a>
+
 ```agda
 ProtVer : Type
 ProtVer = ℕ × ℕ
+
+data pvCanFollow : ProtVer → ProtVer → Type where
+  canFollowMajor : pvCanFollow (m , n) (m + 1 , 0)
+  canFollowMinor : pvCanFollow (m , n) (m , n + 1)
 ```
 
 <!--
@@ -37,15 +43,10 @@ instance
 ```
 -->
 
-```agda
-data pvCanFollow : ProtVer → ProtVer → Type where
-  canFollowMajor : pvCanFollow (m , n) (m + 1 , 0)
-  canFollowMinor : pvCanFollow (m , n) (m , n + 1)
-```
-
 **Definitions related to protocol parameters**
-<a id="fig:protocol-parameter-defs"></a>
+<a id="fig:protocol-parameter-declarations"></a>
 
+<!--
 ```agda
 data PParamGroup : Type where
   NetworkGroup : PParamGroup
@@ -53,6 +54,7 @@ record PParams : Type where
 
   field
 ```
+-->
 
 *Network group*
 
@@ -71,24 +73,27 @@ record PParams : Type where
 ```
 
 **Protocol parameter definitions**
-<a id="fig:protocol-parameter-declarations"></a>
+<a id="fig:protocol-parameter-well-formedness"></a>
 
+<!--
+The display below omits the local open declaration. Keep it in sync with this code.
 ```agda
 positivePParams : PParams → List ℕ
 positivePParams pp = maxHeaderSize ∷ maxBlockSize ∷ []
-```
-
-<!--
-```agda
   where open PParams pp
-```
--->
-
-```agda
 
 paramsWellFormed : PParams → Type
 paramsWellFormed pp = 0 ∉ fromList (positivePParams pp)
 ```
+-->
+
+~~~agda
+positivePParams : PParams → List ℕ
+positivePParams pp = maxHeaderSize ∷ maxBlockSize ∷ []
+
+paramsWellFormed : PParams → Type
+paramsWellFormed pp = 0 ∉ fromList (positivePParams pp)
+~~~
 
 <!--
 ```agda
@@ -100,8 +105,6 @@ paramsWF-elim pp pwf 0 0∈ = ⊥-elim (pwf (to ∈-fromList 0∈))
 -->
 
 **Protocol parameter well-formedness**
-<a id="fig:protocol-parameter-well-formedness"></a>
-
 <!--
 ```agda
 instance

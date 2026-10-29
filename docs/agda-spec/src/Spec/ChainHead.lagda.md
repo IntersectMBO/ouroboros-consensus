@@ -50,6 +50,8 @@ open import Data.Product renaming (map₁ to ×-map₁)
 ```
 -->
 
+<a id="fig:ts-types:chainhead"></a>
+
 *Chain Head environments*
 
 ```agda
@@ -90,7 +92,7 @@ data
   _⊢_⇀⦇_,CHAINHEAD⦈_ : ChainHeadEnv → ChainHeadState → BHeader → ChainHeadState → Type
 ```
 
-<a id="fig:ts-types:chainhead"></a>
+<a id="fig:ts-funs:chainhead"></a>
 
 *Chain Head helper functions*
 
@@ -137,8 +139,6 @@ certChecks pp (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
   sℓ + certificationDelay pp ≤ s
 ```
 
-<a id="fig:ts-funs:chainhead"></a>
-
 The transition checks the following things
 (via the functions `chainChecks`, `prtlSeqChecks` and `certChecks`
 from "Chain Head helper functions"):
@@ -167,7 +167,10 @@ retain what it announced, which is why `LastAppliedBlock` carries an
 A certificate may only be included once $3 L_\text{hdr} + L_\text{vote} +
 L_\text{diff}$ has elapsed since the block that announced the endorser
 block (see [CIP-0164](https://cips.cardano.org/cip/CIP-164)), so that the endorser block has had time to reach the whole
-network. These three protocol parameters are wall-clock durations, so their sum is
+network. Here, $L_\text{hdr}$, $L_\text{vote}$, and $L_\text{diff}$ denote
+`leiosHeaderPeriod`, `leiosVotingPeriod`, and `leiosDiffusionPeriod`, respectively,
+as defined in [Protocol parameters](../Ledger/PParams.lagda.md#fig:protocol-parameter-declarations).
+These three protocol parameters are wall-clock durations, so their sum is
 converted to a number of slots by `slotsFromDuration`, using the genesis slot length
 and rounding up. A header that sets `certifiesEB` requires the corresponding body
 to carry a matching certificate. The ledger rules check this requirement, while
@@ -190,6 +193,8 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:chainhead"></a>
+
 ```agda
   Chain-Head :
     let 〖 bhb , _ 〗 = bh; open BHBody bhb
@@ -211,8 +216,6 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
     nes ⊢ ⟦ cs  , η₀  , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
           ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ
 ```
-
-<a id="fig:ts-rules:chainhead"></a>
 
 The transition rule $\mathsf{CHAINHEAD}$ is shown above and
 has the following predicate failures:
