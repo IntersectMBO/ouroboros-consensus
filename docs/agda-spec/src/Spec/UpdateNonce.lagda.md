@@ -21,6 +21,8 @@ open import Ledger.Prelude
 ```
 -->
 
+<a id="fig:ts-types:updnonce"></a>
+
 *Update Nonce environments*
 
 ```agda
@@ -52,8 +54,6 @@ data
   _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonceState → Slot → UpdateNonceState → Type
 ```
 
-<a id="fig:ts-types:updnonce"></a>
-
 The transition rule $\mathsf{UPDN}$ takes the slot `s` as signal and is shown below.
 There are two different cases for $\mathsf{UPDN}$: one where more than
 `RandomnessStabilisationWindow`[^pre-conway-stability-window] slots remain until
@@ -74,6 +74,8 @@ data _⊢_⇀⦇_,UPDN⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:updatenonce"></a>
+
 ```agda
   Update-Both :
     ∙ s + RandomnessStabilisationWindow < firstSlot (sucᵉ (epoch s))
@@ -85,8 +87,6 @@ data _⊢_⇀⦇_,UPDN⦈_ where
     ────────────────────────────────
     ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηc ⟧ᵘˢ
 ```
-
-<a id="fig:ts-rules:updatenonce"></a>
 
 [^pre-conway-stability-window]: Note that in pre-Conway eras `StabilityWindow` was used instead of `RandomnessStabilisationWindow`.
 

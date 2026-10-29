@@ -23,6 +23,8 @@ open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDelegatedStake)
 ```
 -->
 
+<a id="fig:interface:ledger"></a>
+
 <!--
 ```agda
 record LedgerInterface : Type₁ where
@@ -45,7 +47,5 @@ record LedgerInterface : Type₁ where
     ⦃ Computational-NEWEPOCH ⦄ : Computational _⊢_⇀⦇_,NEWEPOCH⦈_ String
 ```
 -->
-
-<a id="fig:interface:ledger"></a>
 
 [Specification contents](../../SPECIFICATION.md)

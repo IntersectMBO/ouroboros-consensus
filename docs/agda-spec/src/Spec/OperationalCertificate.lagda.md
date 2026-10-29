@@ -29,6 +29,8 @@ open import Ledger.Prelude
 ```
 -->
 
+<a id="fig:ts-types:ocert"></a>
+
 *Operational Certificate environments*
 
 ```agda
@@ -66,8 +68,6 @@ currentIssueNo stpools cs hk =
   else
     nothing
 ```
-
-<a id="fig:ts-types:ocert"></a>
 
 The transition rule $\mathsf{OCERT}$ is shown below. From the block
 header body `bhb` we first extract the following:
@@ -107,6 +107,8 @@ data _⊢_⇀⦇_,OCERT⦈_ where
 ```
 -->
 
+<a id="fig:ts-rules:ocert"></a>
+
 ```agda
   Update-OCert :
     let 〖 bhb , σ 〗 = bh; open BHBody bhb
@@ -123,8 +125,6 @@ data _⊢_⇀⦇_,OCERT⦈_ where
     ────────────────────────────────
     stpools ⊢ cs ⇀⦇ bh ,OCERT⦈ (❴ hk , n ❵ ∪ˡ cs)
 ```
-
-<a id="fig:ts-rules:ocert"></a>
 
 The $\mathsf{OCERT}$ rule has the following predicate failures:
 

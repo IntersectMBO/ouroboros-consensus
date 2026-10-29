@@ -16,6 +16,8 @@ _⁇⁴ = _⁇ ⁴
 ```
 -->
 
+<a id="fig:defs:serialization"></a>
+
 ## Serialization
 
 -- TODO: Add paragraph
@@ -50,8 +52,6 @@ record Serializer : Type₁ where
           ∀ {T : Type} (x : T) → decode (encode x) ≡ just x
 ```
 
-<a id="fig:defs:serialization"></a>
-
 ## Cryptographic Hashes
 
 -- TODO: Add paragraph and show only the relevant bits of the code below.
@@ -71,6 +71,8 @@ record HashableSet : Type₁ where
   field T : Type; ⦃ T-isHashable ⦄ : isHashableSet T
   open isHashableSet T-isHashable public
 ```
+
+<a id="fig:defs:pkscheme"></a>
 
 ## Public-Key Cryptography
 
@@ -108,7 +110,7 @@ isKeyPair : SKey → VKey → Type
 KeyPair = Σ[ sk ∈ SKey ] Σ[ vk ∈ VKey ] isKeyPair sk vk
 </code></pre>
 
-<a id="fig:defs:pkscheme"></a>
+<a id="fig:defs:dsigscheme"></a>
 
 ## Digital Signatures
 
@@ -156,7 +158,7 @@ record DSigScheme (srl : Serializer) : Type₁ where
 ```
 -->
 
-<a id="fig:defs:dsigscheme"></a>
+<a id="fig:defs:kesscheme"></a>
 
 ## Key-Evolving Signatures
 
@@ -205,7 +207,7 @@ record KESScheme (srl : Serializer) : Type₁ where
 ```
 -->
 
-<a id="fig:defs:kesscheme"></a>
+<a id="fig:defs:vrfscheme"></a>
 
 ## Verifiable Random Functions
 
@@ -254,8 +256,6 @@ record VRFScheme : Type₁ where
         ⦃ Show-Proof  ⦄ : Show Proof
 ```
 -->
-
-<a id="fig:defs:vrfscheme"></a>
 
 <!--
 ```agda

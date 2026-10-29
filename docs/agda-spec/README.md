@@ -68,14 +68,15 @@ make check
 
 This checks `src/Everything.agda`, including the formal specification, computation
 proofs, and Haskell interface. `make docs` runs the same check; there is no rendering
-step or LaTeX dependency. The Nix documentation artifact contains the Markdown
-specification and its supporting sources:
+step or LaTeX dependency. Alternatively, run the typecheck job from the repository
+root:
 
 ```bash
-nix build .#agda-spec.docs
+nix build .#agda-spec.typecheck
 ```
 
-Start with `result/SPECIFICATION.md` in that artifact.
+This job produces only a success marker; read the Markdown specification directly
+in the repository.
 
 ## Editing the specification
 
