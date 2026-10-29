@@ -25,6 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , ValidAnnouncement (..)
   , announcementValidity
   , announcingRbHash
+  , chainSyncAnnouncement
   , maxAnnouncementAgeRecv
   , maxAnnouncementAgeSend
   , mkAnnouncingHeader
@@ -36,6 +37,7 @@ import Control.Monad.Except (Except, ExceptT, liftEither, runExcept, throwError,
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (first)
 import Data.Time.Clock (NominalDiffTime)
+import Data.Traversable (for)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -323,6 +325,31 @@ announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
       , announcementAge = age
       , announcementStaleness = staleness
       }
+
+-- | The announcement a header carries, if any, once ChainSync has validated
+-- the header.
+--
+-- ChainSync validated it as an extension of the peer's chain, which checks all
+-- that 'announcementValidity' does and more. That chain extends the immutable
+-- tip, so the header's operational certificate is not revoked there either.
+chainSyncAnnouncement ::
+  (Monad m, BlockSupportsProtocol blk) =>
+  SystemTime m ->
+  TopLevelConfig blk ->
+  Header blk ->
+  -- | the onset of the header's slot
+  RelativeTime ->
+  m (Maybe (ValidAnnouncement blk))
+chainSyncAnnouncement systemTime cfg hdr onset =
+  for (mkAnnouncingHeader cfg hdr) $ \anc -> do
+    now <- systemTimeCurrent systemTime
+    pure
+      MkValidAnnouncement
+        { announcingHeader = anc
+        , announcementOnset = onset
+        , announcementAge = diffRelTime now onset
+        , announcementStaleness = FreshOCIN
+        }
 
 -- | A valid announcement, and what 'announcementValidity' learns about it.
 data ValidAnnouncement blk = MkValidAnnouncement

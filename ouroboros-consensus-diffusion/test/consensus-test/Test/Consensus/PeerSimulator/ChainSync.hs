@@ -123,7 +123,7 @@ basicChainSyncClient
           -- do not care about this in these tests.
           CSClient.historicityCheck = HistoricityCheck.noCheck
         , CSClient.getDiffusionPipeliningSupport = DiffusionPipeliningOn
-        , CSClient.leiosMsgRollForwardCallback = \_hdr _predState -> pure ()
+        , CSClient.leiosMsgRollForwardCallback = \_hdr _slotTime _predState -> pure ()
         , CSClient.leiosJumpAcceptedCallback = \_jumpInfo -> pure ()
         }
       CSClient.DynamicEnv

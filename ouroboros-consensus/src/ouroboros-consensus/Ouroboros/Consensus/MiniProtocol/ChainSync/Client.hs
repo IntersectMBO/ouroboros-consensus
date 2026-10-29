@@ -784,9 +784,9 @@ data ConfigEnv m blk = ConfigEnv
   , chainDbView :: ChainDbView m blk
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
-  , leiosMsgRollForwardCallback :: Header blk -> HeaderStateWithTime blk -> m ()
-  -- ^ Invoked on each valid 'MsgRollForward', with the header and the state as
-  -- of its predecessor.
+  , leiosMsgRollForwardCallback :: Header blk -> RelativeTime -> HeaderStateWithTime blk -> m ()
+  -- ^ Invoked on each valid 'MsgRollForward', with the header, the onset of its
+  -- slot, and the state as of its predecessor.
   , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
   -- ^ Invoked when this peer accepts a jump, with the dynamo's fragment that the
   -- jump carries.
@@ -1550,6 +1550,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
           -- at its predecessor.
           leiosMsgRollForwardCallback
             hdr
+            hdrSlotTime
             (HeaderStateHistory.current (theirHeaderStateHistory kis'))
 
           continueWithState kis''' $

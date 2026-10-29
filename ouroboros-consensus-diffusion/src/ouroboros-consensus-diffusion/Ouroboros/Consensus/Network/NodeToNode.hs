@@ -70,6 +70,10 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( WhetherNewAnnouncement (..)
+  , onValidAnnouncement
+  )
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint
@@ -115,6 +119,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , timeLimitsLeiosFetch
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client (LeiosNotifyClientPeerPipelined)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( chainSyncAnnouncement
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
   )
@@ -423,7 +430,15 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosMsgRollForwardCallback = \hdr predState ->
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime predState -> do
+                  -- The node accepts the announcement a valid header carries as
+                  -- it would one from a LeiosNotify peer.
+                  mbValid <- chainSyncAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime
+                  for_ mbValid $ \valid -> do
+                    whetherNew <- atomically $ onValidAnnouncement getLeiosAnnounceState valid
+                    case whetherNew of
+                      NewAnnouncement -> onNewLeiosAnnouncement getLeiosFetchKernel valid
+                      NotNewAnnouncement -> pure ()
                   for_ mbLeiosPeer $ \peerVars ->
                     recordLeiosCertOffer getTopLevelConfig getLeiosFetchKernel peerVars hdr predState
               , CsClient.leiosJumpAcceptedCallback = \jumpInfo ->

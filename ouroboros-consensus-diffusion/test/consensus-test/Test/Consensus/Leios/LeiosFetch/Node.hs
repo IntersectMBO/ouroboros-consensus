@@ -149,6 +149,18 @@ tests =
         runSimFinishing nodeFetchesCertified
           >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
     , testCase
+        "the node fetches an endorser block that headers its peer rolls forward announce and certify, and offers it on"
+        $ runSimFinishing nodeFetchesRolledForward
+          >>= ( @?=
+                  ( [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint]
+                  ,
+                    [ RelayedAnnouncement
+                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer fetchedPoint
+                    ]
+                  )
+              )
+    , testCase
         "the node disconnects a peer that rolls forward certificates of two endorser blocks for one election"
         $ runSimFinishing nodeDisconnectsDoubleCertifier
           >>= (@?= Just (endorserBlockHash fetchedEb, otherEbHash))
@@ -241,19 +253,7 @@ nodeFetchesOffered = withNode $ \nut -> do
         EnvPeer
           { epChainSyncServer = quietChainSyncServer
           , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just $ \chan ->
-              fst
-                <$> runPipelinedPeerWithLimits
-                  nullTracer
-                  (envLeiosNotifyCodec nut)
-                  (byteLimitsLeiosNotify (fromIntegral . BSL.length))
-                  timeLimitsLeiosNotify
-                  chan
-                  ( toLeiosNotifyClientPeerPipelined $
-                      leiosNotifyClientPeerPipelined
-                        (pure (Right 1))
-                        (pure (\msg -> atomically $ modifyTVar relayed (<> [relayedOf msg])))
-                  )
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
           , epLeiosFetchServer = servingFetched nut
           , epLeiosFetchClient = Nothing
           }
@@ -282,6 +282,29 @@ nodeFetchesCertified = withNode $ \nut -> do
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
     replicateM 2 $ acquiredOf <$> atomically next
+
+-- | The peer says nothing over LeiosNotify. It rolls forward the header that
+-- announces 'fetchedEb' and the one that certifies it, and serves it. The
+-- node's acquisitions, as it announces them, and the first three notifications
+-- it relays to the peer.
+nodeFetchesRolledForward :: IOSim s ([Acquired], [Relayed])
+nodeFetchesRolledForward = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  relayed <- newTVarIO []
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer =
+              scriptedChainSyncServer $
+                SendRollForward . ltbHeader <$> [announcingFetched, certifyingFetched]
+          , epLeiosNotifyServer = \_chan -> atomically retry
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    acquired <- replicateM 2 $ acquiredOf <$> atomically next
+    relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
+    pure (acquired, relays)
 
 -- | The peer rolls forward the header that certifies 'fetchedEb', rolls back,
 -- and rolls forward one that certifies 'otherEbHash'. The two endorser blocks
@@ -317,6 +340,26 @@ acquiredOf :: LeiosEbNotification -> Acquired
 acquiredOf = \case
   AcquiredEb point _size -> AcquiredBody point
   AcquiredEbTxs point -> AcquiredClosure point
+
+-- | A LeiosNotify client that records what the node relays.
+recordingLeiosNotifyClient ::
+  NodeUnderTest (IOSim s) ->
+  StrictTVar (IOSim s) [Relayed] ->
+  Channel (IOSim s) ByteString ->
+  IOSim s ()
+recordingLeiosNotifyClient nut relayed chan =
+  fst
+    <$> runPipelinedPeerWithLimits
+      nullTracer
+      (envLeiosNotifyCodec nut)
+      (byteLimitsLeiosNotify (fromIntegral . BSL.length))
+      timeLimitsLeiosNotify
+      chan
+      ( toLeiosNotifyClientPeerPipelined $
+          leiosNotifyClientPeerPipelined
+            (pure (Right 1))
+            (pure (\msg -> atomically $ modifyTVar relayed (<> [relayedOf msg])))
+      )
 
 -- | A LeiosNotify server that sends what the queue holds, as the node asks.
 feedingLeiosNotifyServer ::

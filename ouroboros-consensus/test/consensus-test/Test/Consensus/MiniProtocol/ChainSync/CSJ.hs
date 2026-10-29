@@ -182,7 +182,7 @@ runTest TestSetup = withRegistry $ \registry -> do
                 , historicityCheck = HistoricityCheck.noCheck
                 , mkPipelineDecision0 = pipelineDecisionLowHighMark 10 20
                 , getDiffusionPipeliningSupport = diffusionPipelining
-                , leiosMsgRollForwardCallback = \_hdr _predState -> pure ()
+                , leiosMsgRollForwardCallback = \_hdr _slotTime _predState -> pure ()
                 , leiosJumpAcceptedCallback = \_jumpInfo -> pure ()
                 }
               DynamicEnv
