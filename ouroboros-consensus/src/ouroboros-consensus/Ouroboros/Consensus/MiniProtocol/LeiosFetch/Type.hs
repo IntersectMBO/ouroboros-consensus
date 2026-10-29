@@ -197,15 +197,21 @@ deriving instance
 maxLeiosTxsRequestBytesSize :: Word32
 maxLeiosTxsRequestBytesSize = 500 * 1000
 
+-- | The limits assume that peers write the parts of a message that are not
+-- hashed, such as the framing around its payloads, in tight CBOR: each
+-- integer and length in its fewest bytes. The decoders accept wider ones too,
+-- but the limits do not make room for them.
 byteLimitsLeiosFetch ::
   (bytes -> Word) ->
   ProtocolSizeLimits (LeiosFetch point eb tx) bytes
 byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
-  -- A 'MsgLeiosBlock' adds two bytes to an endorser block. Bounding its
-  -- encoding by 'maxEndorserBlockBytesSize' also bounds its references by
-  -- 'maxTxsPerEndorserBlock'.
-  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 2
+  -- A 'MsgLeiosBlock' adds at most three bytes to an endorser block: the
+  -- header of a list of two items, the tag 2, and the closing marker if the
+  -- list is indefinite-length. 'decodeEndorserBlock' rejects an endorser block
+  -- larger than 'maxEndorserBlockBytesSize' only after decoding it, and this
+  -- limit keeps that work close to what the largest acceptable one costs.
+  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 3
   SingBlockTxs -> withMargin maxLeiosTxsRequestBytesSize
   st@SingDone -> notActiveState st
  where
@@ -312,20 +318,20 @@ decodeLeiosFetch ::
   CBOR.Decoder s (Int, Annotator ByteString st)
 decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
   case (stok, key) of
-    (SingIdle, 0) -> fields 1 $ return (plain MsgDone)
+    (SingIdle, 0) -> fields 1 $ return (dontNeedAnnotatorBytes MsgDone)
     (SingIdle, 1) -> fields 2 $ do
       p <- decodeP
-      return $ plain $ MsgLeiosBlockRequest p
+      return $ dontNeedAnnotatorBytes $ MsgLeiosBlockRequest p
     (SingBlock, 2) -> fields 2 $ do
       x <- decodeEb
       return $ Annotator $ SomeMessage . MsgLeiosBlock . x
     (SingIdle, 3) -> fields 3 $ do
       p <- decodeP
       bitmaps <- decodeBitmaps maxTxs
-      return $ plain $ MsgLeiosBlockTxsRequest p bitmaps
+      return $ dontNeedAnnotatorBytes $ MsgLeiosBlockTxsRequest p bitmaps
     (SingBlockTxs, 4) -> fields 2 $ do
       txs <- decodeListUpTo "MsgLeiosBlockTxs" maxTxs decodeTx
-      return $ plain $ MsgLeiosBlockTxs $ V.fromList txs
+      return $ dontNeedAnnotatorBytes $ MsgLeiosBlockTxs $ V.fromList txs
     (SingDone, _) -> notActiveState stok
     -- failures per protocol state
     (SingIdle, _) -> unexpected
@@ -336,11 +342,11 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
     Int -> CBOR.Decoder s (Annotator ByteString st) -> CBOR.Decoder s (Int, Annotator ByteString st)
   fields n = fmap ((,) n)
 
-  plain ::
+  dontNeedAnnotatorBytes ::
     forall st'.
     (StateTokenI st, StateTokenI st') =>
     Message (LeiosFetch point eb tx) st st' -> Annotator ByteString st
-  plain = Annotator . const . SomeMessage
+  dontNeedAnnotatorBytes = Annotator . const . SomeMessage
 
   unexpected :: forall a. CBOR.Decoder s a
   unexpected =

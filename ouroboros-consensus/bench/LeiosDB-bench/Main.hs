@@ -54,6 +54,7 @@ import Control.Concurrent.Async (async, cancel, wait)
 import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
+import Control.DeepSeq (force)
 import Control.Exception (evaluate)
 import Control.Monad (forM, forM_, forever, replicateM, void, when)
 import Control.Monad.Class.MonadTime.SI (Time, addTime, diffTime, getMonotonicTime)
@@ -67,7 +68,6 @@ import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort, sortOn)
-import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
@@ -79,7 +79,6 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxOffset
   , encodeEndorserBlockSize
-  , endorserBlockReferences
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -514,8 +513,7 @@ sleepUntil t = do
 -- | Generate the EB of the given index, fully evaluated.
 genBenchEb :: Int -> Bool -> IO BenchEb
 genBenchEb ebIdx measured = do
-  _ <-
-    evaluate $ List.foldl' (\n (h, _) -> n + BS.length (hashToBytes h)) 0 (endorserBlockReferences eb)
+  _ <- evaluate $ force eb
   _ <- evaluate $ sum [BS.length tx | batch <- batches, (_, tx) <- batch]
   pure
     BenchEb
