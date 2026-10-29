@@ -492,6 +492,8 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
     let (p1, p2) = hardForkMempoolEbReservation (Proxy @xs) eb
      in TxMeasure p1 p2
 
+  scaleEbCapacity _ = hardForkScaleEbCapacity (Proxy @xs)
+
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
   { arState :: Ticked LedgerState blk DiffMK

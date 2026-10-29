@@ -84,6 +84,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasurePhase1
   , TxMeasurePhase2
   , mempoolEbReservation
+  , scaleEbCapacity
   , txEbMeasure
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -280,6 +281,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) (TxMeasure p1 p2)
+
+  hardForkScaleEbCapacity _ = scaleEbCapacity (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra))
 
   hardForkMempoolEbReservation _ eb =
     let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) eb

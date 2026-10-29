@@ -1699,6 +1699,15 @@ data TraceLeiosKernel
       , appliedSteps :: Natural
       , appliedMem :: Natural
       , appliedRefScriptBytes :: Word32
+        }
+  | -- | The block after an announcement arrived, so the node took the vote
+    -- weight the announcement had collected. Only an announcement whose
+    -- certification was possible moves the endorser-block capacity scale.
+    TraceLeiosAdaptiveEb
+      { ebPoint :: LeiosPoint
+      , participation :: Double
+      , certifiable :: Bool
+      , ebCapacityScale :: Double
       }
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
@@ -2052,6 +2061,20 @@ traceLeiosKernelToObject = \case
         "voteIn" .= voteIn
       , "deadlineIn" .= deadlineIn
       ]
+  TraceLeiosAdaptiveEb
+    { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
+    , participation
+    , certifiable
+    , ebCapacityScale
+    } ->
+      mconcat
+        [ "kind" .= Aeson.String "LeiosAdaptiveEb"
+        , "ebHash" .= prettyEbHash ebHash
+        , "ebSlot" .= ebSlot
+        , "participation" .= participation
+        , "certifiable" .= certifiable
+        , "ebCapacityScale" .= ebCapacityScale
+        ]
   TraceLeiosEbValidated
     { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
     , reapplied
@@ -2196,6 +2219,7 @@ data LeiosKernelNS
   | LKNSNotVoted
   | LKNSVoteScheduled
   | LKNSEbValidated
+  | LKNSAdaptiveEb
   | LKNSDbException
   | LKNSDb
   | LKNSDbCopied
@@ -2229,6 +2253,7 @@ leiosKernelNSOf = \case
   TraceLeiosNotVoted{} -> LKNSNotVoted
   TraceLeiosVoteScheduled{} -> LKNSVoteScheduled
   TraceLeiosEbValidated{} -> LKNSEbValidated
+  TraceLeiosAdaptiveEb{} -> LKNSAdaptiveEb
   TraceLeiosDbException{} -> LKNSDbException
   -- The copier/sweeper events get their own namespaces under Db so their
   -- severity and frequency can be configured apart from the stats gauges.
@@ -2291,6 +2316,7 @@ leiosKernelNSInfo = \case
   LKNSNotVoted -> LeiosNSInfo ["NotVoted"] LSInfo []
   LKNSVoteScheduled -> LeiosNSInfo ["VoteScheduled"] LSInfo []
   LKNSEbValidated -> LeiosNSInfo ["EbValidated"] LSInfo []
+  LKNSAdaptiveEb -> LeiosNSInfo ["AdaptiveEb"] LSInfo []
   LKNSDbException -> LeiosNSInfo ["DbException"] LSError []
   -- Sampled on a timer by the node, so these gauges exist from node start.
   LKNSDb ->
@@ -2422,6 +2448,14 @@ traceLeiosKernelForHuman = \case
       <> showT voteIn
       <> ", deadline in "
       <> showT deadlineIn
+  TraceLeiosAdaptiveEb{ebPoint, participation, certifiable, ebCapacityScale} ->
+    "Leios adaptive EB: "
+      <> T.pack (show ebPoint)
+      <> " participation "
+      <> showT participation
+      <> (if certifiable then "" else " (not certifiable)")
+      <> ", capacity scale "
+      <> showT ebCapacityScale
   TraceLeiosEbValidated{ebPoint, reapplied, applied, duration} ->
     "Leios EB validated "
       <> T.pack (show ebPoint)

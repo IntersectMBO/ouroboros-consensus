@@ -558,6 +558,17 @@ class
     TxMeasure blk
   mempoolEbReservation _ = id
 
+  -- | Scale an endorser-block capacity by a factor in @[0, 1]@, rounding every
+  -- component down, so that a producer endorses less than the protocol allows.
+  --
+  -- The identity for blocks without endorser blocks, which forge none anyway.
+  scaleEbCapacity ::
+    proxy blk ->
+    Rational ->
+    TxEbMeasure blk ->
+    TxEbMeasure blk
+  scaleEbCapacity _ _ = id
+
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
 -- legibility/perspicuousness. We also do not need nor want subtraction.

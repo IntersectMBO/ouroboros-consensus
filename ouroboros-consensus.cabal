@@ -96,6 +96,7 @@ library
   import: common-lib
   hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
   exposed-modules:
+    LeiosAdaptiveEndorsements
     LeiosDemoLogic
     LeiosDemoLogic.Announcements
     LeiosDemoLogic.Announcements.ElBimap
@@ -880,6 +881,7 @@ test-suite consensus-test
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
+    Test.LeiosAdaptiveEndorsements
     Test.LeiosDemoLogic
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoLogic.Invariants
