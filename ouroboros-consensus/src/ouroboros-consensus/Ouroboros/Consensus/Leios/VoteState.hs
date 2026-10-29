@@ -29,12 +29,10 @@ module Ouroboros.Consensus.Leios.VoteState
   , votePruner
 
     -- * The votes kept
-  , Votes (..)
-  , SlotVotes (..)
-  , readVotes
+  , currentVotes
+  , seenOrForgottenVote
   , recordVote
   , pruneVotes
-  , seenVote
   ) where
 
 import Cardano.Crypto.DSIGN.Class (verifyDSIGN)
@@ -78,6 +76,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadDelay (threadDelay)
+  , MonadSTM
   , STM
   , StrictTVar
   , atomically
@@ -153,11 +152,11 @@ addVote st systemTime accepted = do
   -- Wait for the window of a vote that 'checkLeiosVotes' accepted early.
   -- NOTE: 'checkLeiosVotes' just rejected votes earlier than the
   -- clock skew, so this waits at most 'InFutureCheck.ClockSkew'.
-  when (received < relayFrom voteRelayWindow) $ do
-    let early = relayFrom voteRelayWindow `diffRelTime` received
+  let early = relayFrom voteRelayWindow `diffRelTime` received
+  when (early >= 0) $ do
     traceWith (tracer st) (TraceLeiosVoteAwaitingWindow acceptedVote early)
     threadDelay (nominalDelay early)
-  seen <- atomically $ seenVote st voteElectionSlot (voteSeatId acceptedVote)
+  seen <- atomically $ seenOrForgottenVote st accepted
   -- NOTE: The client only checked that its peer announced it, but the node
   -- does not relay a third announcement of an election, nor one of a stale
   -- OCIN, so it must not relay their votes either.
@@ -174,15 +173,12 @@ addVote st systemTime accepted = do
         traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
         now <- systemTimeCurrent systemTime
         atomically $ do
-          MkVotes{votesPrunedAt} <- readVotes st
-          seenMeanwhile <- seenVote st voteElectionSlot (voteSeatId acceptedVote)
+          -- Another peer may have delivered the same vote meanwhile, or the
+          -- pruner may have forgotten its election already
+          seenMeanwhile <- seenOrForgottenVote st accepted
           if
-            -- Another peer may have delivered the same vote meanwhile.
             | seenMeanwhile -> pure AlreadyKnown
-            -- The pruner may have forgotten its election slot already, and
-            -- with it whether the node relayed the vote, if 'now' is stale.
-            | now > relayUntil voteRelayWindow || relayUntil voteRelayWindow < votesPrunedAt ->
-                pure ArrivedTooLate
+            | now > relayUntil voteRelayWindow -> pure ArrivedTooLate
             | otherwise -> do
                 recordVote st accepted
                 appendNotifyLog (relayLog st) $
@@ -230,19 +226,33 @@ data SlotVotes = MkSlotVotes
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
-readVotes ::
-  IOLike m =>
-  VoteState m blk -> STM m Votes
-readVotes st = readTVar (votes st)
+-- | Whether the node has a vote of this seat in this election, or may have had
+-- one and forgotten it, because it pruned the votes past its deadline.
+seenOrForgottenVote ::
+  MonadSTM m =>
+  VoteState m blk -> AcceptedVote -> STM m Bool
+seenOrForgottenVote st accepted = do
+  MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
+  pure $
+    relayUntil voteRelayWindow < votesPrunedAt
+      || maybe
+        False
+        (Map.member voteSeatId . slotVotes)
+        (Map.lookup voteElectionSlot votesBySlot)
+ where
+  MkAcceptedVote
+    { acceptedVote = MkLeiosVote{voteSeatId}
+    , voteElectionSlot
+    , voteRelayWindow
+    } = accepted
 
--- | Whether the node has a vote of this seat in this election slot.
-seenVote ::
+-- | The votes the node keeps, by election slot and seat.
+currentVotes ::
   IOLike m =>
-  VoteState m blk -> SlotNo -> LeiosSeatId -> STM m Bool
-seenVote st slot seat =
-  maybe False (Map.member seat . slotVotes) . Map.lookup slot . votesBySlot <$> readVotes st
+  VoteState m blk -> STM m (Map SlotNo (Map LeiosSeatId LeiosVote))
+currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
 
--- | Keep a vote the node has not 'seenVote'.
+-- | Keep a vote the node has not seen yet.
 recordVote ::
   IOLike m =>
   VoteState m blk -> AcceptedVote -> STM m ()

@@ -20,13 +20,11 @@ import Ouroboros.Consensus.Leios.AnnounceState (newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog)
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..), RankingBlockHash (..))
 import Ouroboros.Consensus.Leios.VoteState
-  ( SlotVotes (..)
-  , Votes (..)
+  ( currentVotes
   , newVoteState
   , pruneVotes
-  , readVotes
   , recordVote
-  , seenVote
+  , seenOrForgottenVote
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
@@ -59,8 +57,8 @@ tests =
         prop_keepsUnexpired
     ]
 
--- | Pruning when each vote arrives, and recording every vote that has neither
--- passed its deadline nor been seen, as 'addVote' does, keeps the first vote of
+-- | Pruning when each vote arrives, and recording every vote the node has
+-- neither seen nor forgotten, as 'addVote' does, keeps the first vote of
 -- each seat in exactly the elections whose deadline had not passed at the last
 -- pruning, and never records a vote of one seat in one election twice, so the
 -- node never relays it twice either.
@@ -72,17 +70,17 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         st <- newVoteState nullTracer announceState notifyLog
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
           pruneVotes st at
-          seen <- seenVote st slot (voteSeatId vote)
-          if seen || at > relayUntilOf slot
+          seen <- seenOrForgottenVote st (accepted slot vote)
+          if seen
             then pure Nothing
             else Just (at, slot, voteSeatId vote) <$ recordVote st (accepted slot vote)
-        kept' <- atomically (readVotes st)
+        kept' <- atomically (currentVotes st)
         pure (kept', recorded')
       lastPruned = maximum (RelativeTime 0 : [at | (at, _, _) <- vs])
       elections = [(slot, seat) | (_, slot, seat) <- recorded]
    in conjoin
         [ counterexample "kept" $
-            Map.map slotVotes (votesBySlot kept)
+            kept
               === Map.filterWithKey (\slot _ -> lastPruned <= relayUntilOf slot) (firstVotes vs)
         , counterexample "recorded twice" $ length elections === Set.size (Set.fromList elections)
         ]
