@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , ignoreParkedCertRBSuc
   ) where
 
+import Control.Monad (guard)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -131,22 +132,19 @@ pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot) =
 isParkedCertRB ::
   AcquiredLeiosEbs ->
   (HeaderHash blk -> Maybe (BlockInfo blk)) ->
-  HeaderHash blk ->
+  BlockInfo blk ->
   Bool
-isParkedCertRB acquired lookupBlockInfo hash =
-  case lookupBlockInfo hash of
-    Nothing -> False
-    Just info
-      | not (lbiHasCert (biLeios info)) -> False
-      | otherwise -> case certifiedEb info of
-          Just ebHash -> not (isAcquiredLeiosEb ebHash acquired)
-          -- Either the VolatileDB lacks the predecessor, so the block cannot
-          -- be selected before it arrives anyway, or the predecessor (perhaps
-          -- genesis) announces nothing, so the block can never be valid and
-          -- staying parked for good is harmless.
-          Nothing -> True
+isParkedCertRB acquired lookupBlockInfo info
+  | not (lbiHasCert (biLeios info)) = False
+  | otherwise = case certifiedEb of
+      Just ebHash -> not (isAcquiredLeiosEb ebHash acquired)
+      -- Either the VolatileDB lacks the predecessor, so the block cannot
+      -- be selected before it arrives anyway, or the predecessor (perhaps
+      -- genesis) announces nothing, so the block can never be valid and
+      -- staying parked for good is harmless.
+      Nothing -> True
  where
-  certifiedEb info = case biPrevHash info of
+  certifiedEb = case biPrevHash info of
     GenesisHash -> Nothing
     BlockHash prevHash ->
       lookupBlockInfo prevHash >>= strictMaybeToMaybe . lbiAnnouncedEb . biLeios
@@ -157,9 +155,10 @@ ignoreParkedCertRB ::
   AcquiredLeiosEbs ->
   (HeaderHash blk -> Maybe (BlockInfo blk)) ->
   (HeaderHash blk -> Maybe (BlockInfo blk))
-ignoreParkedCertRB acquired lookupBlockInfo hash
-  | isParkedCertRB acquired lookupBlockInfo hash = Nothing
-  | otherwise = lookupBlockInfo hash
+ignoreParkedCertRB acquired lookupBlockInfo hash = do
+  info <- lookupBlockInfo hash
+  guard (not (isParkedCertRB acquired lookupBlockInfo info))
+  pure info
 
 -- | Hide parked blocks ('isParkedCertRB') from a @filterByPredecessor@. The
 -- given @getBlockInfo@ must be the VolatileDB's own.
@@ -169,4 +168,6 @@ ignoreParkedCertRBSuc ::
   (ChainHash blk -> Set (HeaderHash blk)) ->
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
-  Set.filter (not . isParkedCertRB acquired lookupBlockInfo) . succsOf
+  Set.filter (not . isParked) . succsOf
+ where
+  isParked = maybe False (isParkedCertRB acquired lookupBlockInfo) . lookupBlockInfo
