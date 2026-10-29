@@ -128,6 +128,7 @@ import Control.Tracer
 import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser)
+import Data.Functor ((<&>))
 import Data.Functor.Identity
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty)
@@ -913,6 +914,13 @@ data SnapshotRequest m = SnapshotRequest
 -- merely while it is waiting to be picked up. Hence at most one snapshot
 -- request is alive at any point in time.
 --
+-- Being occupied and holding the request are kept apart, though (see
+-- 'SnapshotQueueState'): once a server has picked the request up, the queue
+-- only records that it is busy. Otherwise the queue would keep the request
+-- reachable while its 'writeSnapshots' runs, and with it whatever that action
+-- evaluates on the way, such as the serialised snapshot that has already been
+-- written to disk.
+--
 -- Bounding it this way is not something the 'SnapshotPolicy' rate limit can do
 -- on its own: 'sscTimeSinceLast' is derived from the last /completed/ request,
 -- so it stays satisfied for the whole of a request's delay, and it can be
@@ -921,12 +929,23 @@ data SnapshotRequest m = SnapshotRequest
 -- during one delay would start another request, each pinning a ledger state
 -- and each writing a snapshot that 'trimSnapshots' then discards.
 data SnapshotRequestQueue m
-  = SnapshotRequestQueue !SnapshotDelayRange !(StrictMVar m (SnapshotRequest m))
+  = SnapshotRequestQueue !SnapshotDelayRange !(StrictTVar m (SnapshotQueueState m))
   deriving NoThunks via OnlyCheckWhnfNamed "SnapshotRequestQueue" (SnapshotRequestQueue m)
 
-newSnapshotRequestQueue :: MonadMVar m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
+-- | Where the (at most one) snapshot request is.
+--
+-- 'SnapshotRunning' deliberately carries no request: the server has taken it
+-- out of the queue, so the queue no longer keeps it reachable.
+data SnapshotQueueState m
+  = SnapshotQueueIdle
+  | SnapshotQueued !(SnapshotRequest m)
+  | SnapshotRunning
+
+newSnapshotRequestQueue :: MonadSTM m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
 newSnapshotRequestQueue delayRange =
-  SnapshotRequestQueue delayRange <$> uncheckedNewEmptyMVar
+  -- Unchecked, as a queued request holds an @m ()@, which 'NoThunks' cannot
+  -- look into.
+  SnapshotRequestQueue delayRange <$> uncheckedNewTVarM SnapshotQueueIdle
 
 -- | The range to draw the randomised delay before writing the snapshots from,
 -- see 'onDiskSnapshotDelayRange'.
@@ -943,38 +962,60 @@ snapshotQueueDelayRange (SnapshotRequestQueue delayRange _) = delayRange
 -- changed. It is meant to let a would-be producer skip the (not entirely
 -- cheap) work of assembling a request that 'tryEnqueueSnapshotRequest' would
 -- then drop anyway.
-snapshotRequestInFlight :: MonadMVar m => SnapshotRequestQueue m -> m Bool
-snapshotRequestInFlight (SnapshotRequestQueue _ var) = not <$> isEmptyMVar var
+snapshotRequestInFlight :: MonadSTM m => SnapshotRequestQueue m -> m Bool
+snapshotRequestInFlight (SnapshotRequestQueue _ var) =
+  readTVarIO var <&> \case
+    SnapshotQueueIdle -> False
+    _ -> True
 
 -- | Enqueue a request, unless one is already queued or being served.
 --
 -- Never blocks. Returns 'False' when the request was dropped, in which case
 -- the caller is responsible for releasing the resources it holds on to.
 tryEnqueueSnapshotRequest ::
-  MonadMVar m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
-tryEnqueueSnapshotRequest (SnapshotRequestQueue _ var) = tryPutMVar var
+  MonadSTM m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
+tryEnqueueSnapshotRequest (SnapshotRequestQueue _ var) req =
+  atomically $
+    readTVar var >>= \case
+      SnapshotQueueIdle -> True <$ writeTVar var (SnapshotQueued req)
+      _ -> pure False
 
 -- | Block until a request is enqueued, then serve it.
 --
 -- The queue is only freed once the given action has returned or thrown, so
--- that no further request is accepted while this one is being served.
+-- that no further request is accepted while this one is being served. It does
+-- not hold on to the request in the meantime, and neither does anything here:
+-- the request stays reachable only for as long as the given action needs it.
 withSnapshotRequest ::
-  (MonadMVar m, MonadThrow m) =>
+  (MonadSTM m, MonadMask m) =>
   SnapshotRequestQueue m ->
   (SnapshotRequest m -> m a) ->
   m a
-withSnapshotRequest (SnapshotRequestQueue _ var) =
-  bracket (readMVar var) (\_ -> takeMVar var)
+withSnapshotRequest (SnapshotRequestQueue _ var) serve =
+  mask $ \restore -> do
+    req <-
+      atomically $
+        readTVar var >>= \case
+          SnapshotQueued req -> req <$ writeTVar var SnapshotRunning
+          _ -> retry
+    restore (serve req) `finally` atomically (writeTVar var SnapshotQueueIdle)
 
 -- | Like 'withSnapshotRequest', but do nothing when no request is queued
 -- instead of waiting for one.
 tryWithSnapshotRequest ::
-  (MonadMVar m, MonadThrow m) =>
+  (MonadSTM m, MonadMask m) =>
   SnapshotRequestQueue m ->
   (SnapshotRequest m -> m ()) ->
   m ()
-tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
-  bracket (tryReadMVar var) (mapM_ (\_ -> takeMVar var)) (mapM_ f)
+tryWithSnapshotRequest (SnapshotRequestQueue _ var) serve =
+  mask $ \restore -> do
+    mreq <-
+      atomically $
+        readTVar var >>= \case
+          SnapshotQueued req -> Just req <$ writeTVar var SnapshotRunning
+          _ -> pure Nothing
+    forM_ mreq $ \req ->
+      restore (serve req) `finally` atomically (writeTVar var SnapshotQueueIdle)
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events
