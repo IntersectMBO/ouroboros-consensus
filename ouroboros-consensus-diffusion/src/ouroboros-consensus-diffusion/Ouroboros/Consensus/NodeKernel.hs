@@ -21,7 +21,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -37,6 +37,8 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
+import Control.Monad.Trans.Maybe (hoistMaybe, runMaybeT)
+import Control.Monad.Writer (runWriterT, tell)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -50,12 +52,16 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HF
+import Ouroboros.Consensus.HardFork.History.Qry (slotToPerasRoundNo')
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -98,6 +104,8 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionRulesDecision (..))
+import Ouroboros.Consensus.Peras.Context (runQueryWithContextHandle)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
@@ -504,6 +512,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
+  , featureFlags :: Set CardanoFeatureFlag
   }
 
 initInternalState ::
@@ -530,6 +539,7 @@ initInternalState
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
+    , featureFlags
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -603,6 +613,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
+              includePerasCert
               (\_ _ -> pure ())
               currentSlot
     )
@@ -614,6 +625,15 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
+
+  -- Decide if we need to include a Peras certificate in the block we are about
+  -- to forge. This is a no-op unless the Peras feature flag is enabled.
+  includePerasCert =
+    fmap join
+      . whenPerasFlagEnabled featureFlags
+      . perasCertInclusionCheck
+        (perasCertInclusionTracer tracers)
+        chainDB
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
@@ -741,3 +761,71 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+-- | Execute an action only if the Peras feature flag is enabled.
+--
+-- Returns the action's result wrapped in 'Just' if the Peras feature flag is
+-- enabled, otherwise returns 'Nothing'.
+whenPerasFlagEnabled ::
+  IOLike m =>
+  Set CardanoFeatureFlag ->
+  m a ->
+  m (Maybe a)
+whenPerasFlagEnabled featureFlags action =
+  if PerasFlag `Set.member` featureFlags
+    then Just <$> action
+    else pure Nothing
+
+-- | Decide if we need to include a Peras certificate in the block we are
+-- forging in the current slot.
+perasCertInclusionCheck ::
+  forall m blk.
+  ( IOLike m
+  , HasHardForkHistory blk
+  ) =>
+  Tracer m (TracePerasCertInclusionEvent blk) ->
+  ChainDB m blk ->
+  SlotNo ->
+  m (Maybe (PerasCert blk))
+perasCertInclusionCheck certInclusionTracer chainDB currentSlot = do
+  (mbPerasCert, traceEvents) <-
+    atomically $ runWriterT $ runMaybeT $ do
+      mbRoundInfo <-
+        lift . lift $
+          runQueryWithContextHandle
+            (ChainDB.getTimeResolutionContextHandle chainDB)
+            (slotToPerasRoundNo' currentSlot)
+      case mbRoundInfo of
+        Left pastHorizon -> do
+          tell [TracePerasCertInclusionPastHorizonException currentSlot (show pastHorizon)]
+          hoistMaybe Nothing
+        Right HF.NoPerasEnabled -> do
+          tell [TracePerasCertInclusionNotEnabledForRound currentSlot]
+          hoistMaybe Nothing
+        Right (HF.PerasEnabled (currentRoundNo, _slotsInRound)) -> do
+          certInclusionDecision <-
+            lift . lift $
+              ChainDB.needCertWithHandle
+                (ChainDB.getPerasCertInclusionViewHandle chainDB)
+                currentRoundNo
+          case certInclusionDecision of
+            Left err -> do
+              tell [TracePerasCertInclusionError currentSlot err]
+              hoistMaybe Nothing
+            Right Nothing -> do
+              tell [TracePerasCertInclusionNoCertToInclude currentSlot]
+              hoistMaybe Nothing
+            Right (Just decision) -> do
+              tell [TracePerasCertInclusionRulesDecision currentSlot currentRoundNo decision]
+              case decision of
+                DoNotIncludeCert _evidence ->
+                  hoistMaybe Nothing
+                IncludeCert _evidence cert ->
+                  pure $ vpcCert (forgetArrivalTime cert)
+
+  traverse_ (traceWith certInclusionTracer) traceEvents
+  pure mbPerasCert
