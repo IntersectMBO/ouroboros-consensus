@@ -155,6 +155,7 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
               -- The context may have advanced since these certificates were
               -- requested. Certificates that became too old need no validation
               -- or insertion, and receiving them must not penalize the peer.
+              -- We also ignore certs that have been already added to the DB.
               let needsProcessing cert =
                     let roundNo = getPerasCertRound cert
                      in Set.notMember roundNo alreadyInDb && classifyRound roundNo /= ObjectIdTooOld
