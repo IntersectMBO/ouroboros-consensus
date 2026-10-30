@@ -1,4 +1,4 @@
 module Everything where
 
-import Spec.PDF
+import Spec.Specification
 import Spec.Foreign.HSConsensus
