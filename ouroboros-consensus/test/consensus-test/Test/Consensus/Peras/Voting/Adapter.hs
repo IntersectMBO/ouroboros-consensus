@@ -8,6 +8,7 @@ module Test.Consensus.Peras.Voting.Adapter (tests) where
 import Data.Proxy (Proxy (..))
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.EveryoneVotes (EveryoneVotes)
+import Ouroboros.Consensus.Committee.Truncation (Truncation)
 import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
@@ -63,6 +64,14 @@ tests =
             (genPerasVote =<< frequency [(2, pure True), (1, pure False)])
             tabulatePerasVote
     , adjustQuickCheckTests (* 10) $
+        testProperty "Roundtrip for PerasVote via Truncation" $
+          prop_roundtrip_vote
+            (Proxy @(V1.PerasVote ()))
+            (Proxy @Truncation)
+            perasVoteIsPersistent
+            (genPerasVote =<< frequency [(2, pure True), (1, pure False)])
+            tabulatePerasVote
+    , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert via WFALS" $
           prop_roundtrip_cert
             (Proxy @(V1.PerasCert ()))
@@ -81,6 +90,14 @@ tests =
             perasCertContainsOnlyPersistentVotes
             -- Only sometimes generate certs with non-persistent votes to
             -- trigger conversion errors in a reasonable amount of tests
+            (genPerasCert =<< frequency [(2, pure False), (1, pure True)])
+            tabulatePerasCert
+    , adjustQuickCheckTests (* 10) $
+        testProperty "Roundtrip for PerasCert via Truncation" $
+          prop_roundtrip_cert
+            (Proxy @(V1.PerasCert ()))
+            (Proxy @Truncation)
+            perasCertContainsOnlyPersistentVotes
             (genPerasCert =<< frequency [(2, pure False), (1, pure True)])
             tabulatePerasCert
     ]

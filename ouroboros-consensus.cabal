@@ -119,6 +119,7 @@ library
     Ouroboros.Consensus.Committee.EveryoneVotes
     Ouroboros.Consensus.Committee.LS
     Ouroboros.Consensus.Committee.Types
+    Ouroboros.Consensus.Committee.Truncation
     Ouroboros.Consensus.Committee.WFA
     Ouroboros.Consensus.Committee.WFALS
     Ouroboros.Consensus.Config
@@ -806,6 +807,8 @@ test-suite consensus-test
     Test.Consensus.Committee.EveryoneVotes
     Test.Consensus.Committee.EveryoneVotes.Tests
     Test.Consensus.Committee.TestCrypto
+    Test.Consensus.Committee.Truncation
+    Test.Consensus.Committee.Truncation.Tests
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
     Test.Consensus.Committee.WFALS.Model

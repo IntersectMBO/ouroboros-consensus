@@ -40,6 +40,8 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   ( EveryoneVotes
   , Vote (..)
   )
+import Ouroboros.Consensus.Committee.Truncation (Truncation)
+import qualified Ouroboros.Consensus.Committee.Truncation as Truncation
 import Ouroboros.Consensus.Committee.WFALS (Vote (..), WFALS)
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
@@ -253,3 +255,30 @@ instance
         NonPersistentPerasVoteEligibilityProof _ ->
           Left $
             EveryoneVotesButFoundNonPersistentVoterInVote seatIndex'
+
+-- 'PerasVote's are compatible with 'Truncation' since its committee members
+-- have persistent eligibility proofs (subject to the Peras seat index bound).
+instance
+  PerasVoteCompatibleWithVotingCommittee
+    (PerasVote blk)
+    PerasBLSCrypto
+    Truncation
+  where
+  toPerasVote (Truncation.TruncationVote seatIndex electionId candidate sig) = do
+    perasSeatIndex <- toPerasSeatIndex seatIndex
+    pure $
+      PerasVote
+        { pvRoundNo = electionId
+        , pvBoostedBlock = candidate
+        , pvSeatIndex = perasSeatIndex
+        , pvEligibilityProof = PersistentPerasVoteEligibilityProof
+        , pvSignature = sig
+        }
+
+  fromPerasVote (PerasVote electionId candidate seatIndex proof sig) = do
+    let seatIndex' = fromPerasSeatIndex seatIndex
+    case proof of
+      PersistentPerasVoteEligibilityProof ->
+        pure $ Truncation.TruncationVote seatIndex' electionId candidate sig
+      NonPersistentPerasVoteEligibilityProof _ ->
+        Left $ EveryoneVotesButFoundNonPersistentVoterInVote seatIndex'

@@ -6,6 +6,7 @@ import qualified Test.Consensus.BlockchainTime.Simple (tests)
 import qualified Test.Consensus.Committee.Class (tests)
 import qualified Test.Consensus.Committee.EveryoneVotes (tests)
 import qualified Test.Consensus.Committee.TestCrypto (tests)
+import qualified Test.Consensus.Committee.Truncation (tests)
 import qualified Test.Consensus.Committee.WFALS (tests)
 import qualified Test.Consensus.HardFork.Forecast (tests)
 import qualified Test.Consensus.HardFork.History (tests)
@@ -52,6 +53,7 @@ tests =
         "Committee"
         [ Test.Consensus.Committee.WFALS.tests
         , Test.Consensus.Committee.EveryoneVotes.tests
+        , Test.Consensus.Committee.Truncation.tests
         , Test.Consensus.Committee.Class.tests
         , Test.Consensus.Committee.TestCrypto.tests
         ]

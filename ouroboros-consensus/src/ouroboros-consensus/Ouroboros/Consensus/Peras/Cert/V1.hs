@@ -60,6 +60,8 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   ( Cert (..)
   , EveryoneVotes
   )
+import Ouroboros.Consensus.Committee.Truncation (Truncation)
+import qualified Ouroboros.Consensus.Committee.Truncation as Truncation
 import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Committee.WFALS (Cert (..), WFALS)
 import Ouroboros.Consensus.Peras.Cert.Class (IsPerasCert (..))
@@ -411,6 +413,37 @@ instance
           Nothing
         nonPersistentSeats ->
           Just (NonEmpty.fromList nonPersistentSeats)
+
+-- 'PerasCert's are compatible with 'Truncation' since its committee voters
+-- have persistent eligibility proofs (subject to the Peras seat index bound).
+instance
+  PerasCertCompatibleWithVotingCommittee
+    (PerasCert blk)
+    PerasBLSCrypto
+    Truncation
+  where
+  toPerasCert (Truncation.TruncationCert electionId candidate voters sig) = do
+    voters' <- toPerasCertVoters (NEMap.fromSet (const Nothing) voters)
+    pure $
+      PerasCert
+        { pcRoundNo = electionId
+        , pcBoostedBlock = candidate
+        , pcVoters = voters'
+        , pcSignature = sig
+        }
+
+  fromPerasCert (PerasCert electionId candidate voters sig) = do
+    let voters' = fromPerasCertVoters voters
+    case nonPersistentVoters voters' of
+      Nothing ->
+        pure $ Truncation.TruncationCert electionId candidate (NEMap.keysSet voters') sig
+      Just seatIndices ->
+        Left (EveryoneVotesButFoundNonPersistentVotersInCert seatIndices)
+   where
+    nonPersistentVoters voters' =
+      case Map.keys (NEMap.filter isJust voters') of
+        [] -> Nothing
+        seatIndices -> Just (NonEmpty.fromList seatIndices)
 
 -- | A reasonably tight upper bound on the size of a Peras certificate.
 -- This upper bound is used to check, at aggregation time, that the certificate

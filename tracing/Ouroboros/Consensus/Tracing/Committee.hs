@@ -9,6 +9,8 @@ import Data.Aeson (Value (..), (.=))
 import Ouroboros.Consensus.Committee.Class (VotingCommitteeError)
 import Ouroboros.Consensus.Committee.EveryoneVotes (EveryoneVotes)
 import qualified Ouroboros.Consensus.Committee.EveryoneVotes as EveryoneVotes
+import Ouroboros.Consensus.Committee.Truncation (Truncation)
+import qualified Ouroboros.Consensus.Committee.Truncation as Truncation
 import Ouroboros.Consensus.Committee.Types (PoolId (..), TargetCommitteeSize (..))
 import Ouroboros.Consensus.Committee.WFA
   ( NumPoolsWithPositiveStake (..)
@@ -117,3 +119,23 @@ instance LogFormatting (VotingCommitteeError crypto EveryoneVotes) where
       [ "kind" .= String "CryptoError"
       , "message" .= msg
       ]
+
+instance LogFormatting (VotingCommitteeError crypto Truncation) where
+  forMachine _dtal (Truncation.WFAError e) =
+    mconcat ["kind" .= String "WFAError", forMachine _dtal e]
+  forMachine _dtal Truncation.ZeroCommitteeSize =
+    mconcat ["kind" .= String "ZeroCommitteeSize"]
+  forMachine _dtal (Truncation.MissingPoolId poolId) =
+    mconcat ["kind" .= String "MissingPoolId", "poolId" .= unPoolId poolId]
+  forMachine _dtal (Truncation.MissingSeatIndex seatIndex) =
+    mconcat ["kind" .= String "MissingSeatIndex", "seatIndex" .= unSeatIndex seatIndex]
+  forMachine _dtal (Truncation.NotACommitteeMember seatIndex) =
+    mconcat ["kind" .= String "NotACommitteeMember", "seatIndex" .= unSeatIndex seatIndex]
+  forMachine _dtal (Truncation.PoolHasNoStake seatIndex) =
+    mconcat ["kind" .= String "PoolHasNoStake", "seatIndex" .= unSeatIndex seatIndex]
+  forMachine _dtal (Truncation.InvalidVoteSignature msg) =
+    mconcat ["kind" .= String "InvalidVoteSignature", "message" .= msg]
+  forMachine _dtal (Truncation.InvalidCertSignature msg) =
+    mconcat ["kind" .= String "InvalidCertSignature", "message" .= msg]
+  forMachine _dtal (Truncation.CryptoError msg) =
+    mconcat ["kind" .= String "CryptoError", "message" .= msg]
