@@ -79,7 +79,7 @@ data ObjectPoolWriter objectId object m
   -- ^ Add a batch of objects to the objectPool.
   , opwHasObject :: STM m (objectId -> Bool)
   -- ^ Check if the object pool contains an object with the given id
-  , opwClassifyObjectId :: STM m (objectId -> ObjectIdRequestability)
+  , opwObjectIdRequestability :: STM m (objectId -> ObjectIdRequestability)
   -- ^ Classify advertised object IDs using a consistent snapshot of the local
   -- validation state. The inbound client requests IDs classified as
   -- 'ObjectIdRequestable', waits at the first 'ObjectIdTooNew', and skips IDs

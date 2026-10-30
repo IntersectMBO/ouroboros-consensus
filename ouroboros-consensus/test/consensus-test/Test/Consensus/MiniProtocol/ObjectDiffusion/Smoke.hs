@@ -166,7 +166,7 @@ makeObjectPoolWriter (SmokeObjectPool poolContentTvar) =
     , opwHasObject = do
         poolContent <- readTVar poolContentTvar
         pure $ \objectId -> any (\obj -> getSmokeObjectId obj == objectId) poolContent
-    , opwClassifyObjectId = pure $ const ObjectIdRequestable
+    , opwObjectIdRequestability = pure $ const ObjectIdRequestable
     }
 
 mkMockPoolInterfaces ::
@@ -384,7 +384,7 @@ prop_await_after_commit =
                 inboundObjects <- readTVar inboundObjectsVar
                 pure $ \objectId ->
                   any ((== objectId) . getSmokeObjectId) inboundObjects
-            , opwClassifyObjectId = pure $ const ObjectIdRequestable
+            , opwObjectIdRequestability = pure $ const ObjectIdRequestable
             }
         inbound =
           objectDiffusionInbound
@@ -607,7 +607,7 @@ prop_request_eligible_prefix =
         signalCaughtUp = atomically $ writeTVar awaitSeen True
         inboundWriter =
           (makeObjectPoolWriter inboundPool)
-            { opwClassifyObjectId = do
+            { opwObjectIdRequestability = do
                 upperBound <- readTVar requestableUpperBound
                 pure $ \(SmokeObjectId objectId) ->
                   if objectId < upperBound
@@ -774,7 +774,7 @@ prop_certificate_progress =
                   atomically $ writeTVar processingStarted True
                   atomically $ readTVar allowProcessing >>= check
                 opwAddObjects poolWriter objects
-            , opwClassifyObjectId = do
+            , opwObjectIdRequestability = do
                 upper <- readTVar upperBound
                 pure $ \(SmokeObjectId n) ->
                   if n < upper then ObjectIdRequestable else ObjectIdTooNew
@@ -890,7 +890,7 @@ prop_terminate_while_blocked =
           _ -> pure ()
         inboundWriter =
           (makeObjectPoolWriter inboundPool)
-            { opwClassifyObjectId = pure $ const ObjectIdTooNew
+            { opwObjectIdRequestability = pure $ const ObjectIdTooNew
             }
         inbound =
           objectDiffusionInbound
@@ -979,7 +979,7 @@ prop_skip_too_old_object_ids =
 
     let writer =
           (makeObjectPoolWriter inboundPool)
-            { opwClassifyObjectId = do
+            { opwObjectIdRequestability = do
                 advanced <- readTVar contextAdvanced
                 pure $ \(SmokeObjectId n) ->
                   if n < 3

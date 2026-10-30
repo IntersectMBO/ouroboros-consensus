@@ -151,7 +151,7 @@ data RequestablePrefix objectId = RequestablePrefix
 
 data RequestSelection objectId
   = RequestSelection !(RequestablePrefix objectId)
-  | RequestSelectionObsolete !objectId
+  | RequestSelectionTooOld !objectId
 
 objectDiffusionInbound ::
   forall objectId object m.
@@ -194,7 +194,7 @@ objectDiffusionInbound
       InboundSt objectId object ->
       STM m (RequestSelection objectId)
     selectObjectsToRequest !st = do
-      classifyObjectId <- opwClassifyObjectId
+      objectIdRequestability <- opwObjectIdRequestability
       let unrequestedInFifo =
             filter
               (`Set.member` canRequestNext st)
@@ -210,8 +210,8 @@ objectDiffusionInbound
                 }
           select requestablePrefix = \case
             [] -> finish requestablePrefix Nothing
-            objectId : objectIds -> case classifyObjectId objectId of
-              ObjectIdTooOld -> RequestSelectionObsolete objectId
+            objectId : objectIds -> case objectIdRequestability objectId of
+              ObjectIdTooOld -> RequestSelectionTooOld objectId
               ObjectIdRequestable -> select (objectId : requestablePrefix) objectIds
               ObjectIdTooNew -> finish requestablePrefix (Just objectId)
       pure $ select [] unrequestedInFifo
@@ -219,8 +219,8 @@ objectDiffusionInbound
     -- An ID may already be too old when advertised, or become so while we
     -- wait for a validation context. Neither is a protocol violation. Skip its
     -- download, but acknowledge it only when all earlier FIFO entries are done.
-    skipObsoleteObject :: InboundSt objectId object -> objectId -> InboundSt objectId object
-    skipObsoleteObject !st objectId =
+    skipTooOldObject :: InboundSt objectId object -> objectId -> InboundSt objectId object
+    skipTooOldObject !st objectId =
       let pendingObjects' = Map.insert objectId Nothing (pendingObjects st)
           (objectIdsToAck, outstandingFifo') =
             Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
@@ -322,8 +322,8 @@ objectDiffusionInbound
         _continue -> do
           requestSelection <- atomically $ selectObjectsToRequest st
           case (requestSelection, n) of
-            (RequestSelectionObsolete objectId, _) ->
-              pure $! checkState (skipObsoleteObject st objectId) & go n
+            (RequestSelectionTooOld objectId, _) ->
+              pure $! checkState (skipTooOldObject st objectId) & go n
             -- We didn't pipeline any requests, so there are no replies in flight
             -- (nothing to collect).
             (RequestSelection requestablePrefix, Zero)
@@ -383,7 +383,7 @@ objectDiffusionInbound
         timeoutWithControlMessage controlMessageSTM $ do
           requestSelection <- selectObjectsToRequest st
           case requestSelection of
-            RequestSelectionObsolete{} -> pure requestSelection
+            RequestSelectionTooOld{} -> pure requestSelection
             RequestSelection (RequestablePrefix selectedObjectIds _) -> do
               check $ not (null selectedObjectIds)
               pure requestSelection
@@ -392,8 +392,8 @@ objectDiffusionInbound
           traceWith tracer $
             TraceObjectDiffusionInboundRecvControlMessage Terminate
           pure $! terminateAfterDrain Zero
-        Just (RequestSelectionObsolete objectId) ->
-          pure $! checkState (skipObsoleteObject st objectId) & go Zero
+        Just (RequestSelectionTooOld objectId) ->
+          pure $! checkState (skipTooOldObject st objectId) & go Zero
         Just (RequestSelection requestablePrefix) -> do
           traceWith tracer $ TraceObjectDiffusionInboundUnblocked blockedId
           pure $!

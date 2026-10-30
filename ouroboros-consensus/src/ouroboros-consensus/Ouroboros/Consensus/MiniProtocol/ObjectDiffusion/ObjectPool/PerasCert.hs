@@ -131,7 +131,7 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
-    , opwClassifyObjectId = perasCertRequestability resolverHandle
+    , opwObjectIdRequestability = perasCertRequestability resolverHandle
     }
 
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
@@ -151,14 +151,14 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
             now <- systemTimeCurrent systemTime
             validatedCerts <- atomically $ do
               alreadyInDb <- ChainDB.getPerasCertIds chainDB
-              classifyRound <- perasCertRequestability resolverHandle
+              objectIdRequestability <- perasCertRequestability resolverHandle
               -- The context may have advanced since these certificates were
               -- requested. Certificates that became too old need no validation
               -- or insertion, and receiving them must not penalize the peer.
               -- We also ignore certs that have been already added to the DB.
               let needsProcessing cert =
                     let roundNo = getPerasCertRound cert
-                     in Set.notMember roundNo alreadyInDb && classifyRound roundNo /= ObjectIdTooOld
+                     in Set.notMember roundNo alreadyInDb && objectIdRequestability roundNo /= ObjectIdTooOld
               traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
             -- Some certs are invalid => reject the whole batch
             --
@@ -181,7 +181,7 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds
-        , opwClassifyObjectId = perasCertRequestability resolverHandle
+        , opwObjectIdRequestability = perasCertRequestability resolverHandle
         }
 
 -- | Classify certificate IDs against the epoch-context window. Certificates
