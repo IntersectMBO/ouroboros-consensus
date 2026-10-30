@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Leios.NotifyLog
 import Control.Monad (forever, unless)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
 import Data.Word (Word64)
@@ -77,15 +76,21 @@ data Notification blk
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)
 
+-- | A notification in the log, and until when it is worth relaying.
+data NotifyEntry blk = MkNotifyEntry
+  { entryExpires :: !RelativeTime
+  , entryNotification :: !(Notification blk)
+  }
+  deriving stock Generic
+
+deriving anyclass instance NoThunks (Header blk) => NoThunks (NotifyEntry blk)
+
 -- | The node's log of notifications to relay.
 data NotifyLog m blk = MkNotifyLog
-  { notifyEntries :: !(StrictTVar m (Map NotifyCursor (Notification blk)))
+  { notifyEntries :: !(StrictTVar m (Map NotifyCursor (NotifyEntry blk)))
   -- ^ Each notification, at the position it was appended at.
   , notifyEnd :: !(StrictTVar m NotifyCursor)
   -- ^ Where the next notification will be appended.
-  , notifyExpiry :: !(StrictTVar m (Map RelativeTime [NotifyCursor]))
-  -- ^ The position of each notification, by until when it is worth relaying,
-  -- so that pruning visits only what expires.
   , notifyPrunedAt :: !(StrictTVar m RelativeTime)
   -- ^ When the log was last pruned.
   }
@@ -105,7 +110,6 @@ newNotifyLog =
   MkNotifyLog
     <$> newTVarIO Map.empty
     <*> newTVarIO notifyLogStart
-    <*> newTVarIO Map.empty
     <*> newTVarIO (RelativeTime 0)
 
 -- | Append a notification worth relaying until the given time, unless the log
@@ -121,8 +125,7 @@ appendNotifyLog notifyLog n expires = do
   prunedAt <- readTVar (notifyPrunedAt notifyLog)
   unless (expires < prunedAt) $ do
     end <- readTVar (notifyEnd notifyLog)
-    modifyTVar (notifyEntries notifyLog) (Map.insert end n)
-    modifyTVar (notifyExpiry notifyLog) (Map.insertWith (<>) expires [end])
+    modifyTVar (notifyEntries notifyLog) (Map.insert end (MkNotifyEntry expires n))
     writeTVar (notifyEnd notifyLog) (succCursor end)
 
 -- | The first notification at or after the cursor, and the cursor just past
@@ -138,7 +141,7 @@ nextNotifyLog notifyLog cursor = do
   entries <- readTVar (notifyEntries notifyLog)
   case Map.lookupGE cursor entries of
     Nothing -> retry
-    Just (at, n) -> pure (n, succCursor at)
+    Just (at, entry) -> pure (entryNotification entry, succCursor at)
 
 -- | Prune every notification no longer worth relaying at the given time.
 --
@@ -147,11 +150,10 @@ nextNotifyLog notifyLog cursor = do
 pruneNotifyLog :: IOLike m => NotifyLog m blk -> RelativeTime -> STM m ()
 pruneNotifyLog notifyLog now = do
   modifyTVar (notifyPrunedAt notifyLog) (max now)
-  (expired, unexpired) <- Map.spanAntitone (< now) <$> readTVar (notifyExpiry notifyLog)
-  unless (Map.null expired) $ do
-    writeTVar (notifyExpiry notifyLog) unexpired
-    modifyTVar (notifyEntries notifyLog) $
-      (`Map.withoutKeys` Set.fromList (concat (Map.elems expired)))
+  entries <- readTVar (notifyEntries notifyLog)
+  let unexpired = Map.filter ((>= now) . entryExpires) entries
+  unless (Map.size unexpired == Map.size entries) $
+    writeTVar (notifyEntries notifyLog) unexpired
 
 succCursor :: NotifyCursor -> NotifyCursor
 succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
