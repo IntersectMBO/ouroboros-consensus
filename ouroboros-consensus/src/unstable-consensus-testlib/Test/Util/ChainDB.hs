@@ -160,6 +160,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsSnapshotDelayRNG = mkStdGen 0
+          , cdbsDelaySnapshots = pure True
           , cdbsLeiosDb = mcdbLeiosDb
           , -- These tests fetch no endorser block, so none is acquired.
             cdbsSubscribeLeiosAcquisitions = noLeiosAcquisitions
