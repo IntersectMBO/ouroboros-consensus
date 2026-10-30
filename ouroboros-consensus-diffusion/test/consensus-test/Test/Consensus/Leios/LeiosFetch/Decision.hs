@@ -25,7 +25,8 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosBlockRequest (..)
+  ( BodySource (..)
+  , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
@@ -172,7 +173,7 @@ test_bigLedgerPeerBudget = do
           (\o -> o{requestedBytesSizePerPeer = Map.singleton peerA used})
             -- the election fetching it, without which nothing is requested
             . focusElectionIfUnfocused (ElectionId (SlotNo 10) fixtureElectee) (eb 'a')
-            . acquireEbBody (eb 'a') jobPool
+            . acquireEbBody (eb 'a') (FetchedBody 1000) jobPool
             . recordMaxAnnouncementSlot (eb 'a') (SlotNo 10) SNothing
             $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
         (_o, reqs, _d) =

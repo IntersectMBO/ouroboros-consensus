@@ -64,7 +64,8 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( EbFetchState (..)
+  ( BodySource (..)
+  , EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -257,7 +258,7 @@ processLeiosBlock ctx peer req eb = do
           -- the pruning window forfeits this, costing one more body fetch from
           -- the next peer to serve it.
           pure
-            ( acquireEbBody ebHash Jobs.emptyLeiosJobPool cleaned
+            ( acquireEbBody ebHash OversizedBody Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
       | tooOld -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))
@@ -342,7 +343,8 @@ processLeiosBlock ctx peer req eb = do
             when (Jobs.nullLeiosJobPool jobPool) $
               lfcNotify $
                 AcquiredEbTxs acquiredPoint
-          pure (acquireEbBody ebHash jobPool outstanding, Just (acquiredPoint, onset))
+          pure
+            (acquireEbBody ebHash (FetchedBody ebBytesSize) jobPool outstanding, Just (acquiredPoint, onset))
         -- Pruned meanwhile, or another delivery of it settled first.
         _ -> pure (outstanding, Nothing)
     -- These bytes are durable now: advertise them as fill sources for later
@@ -382,7 +384,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- and writing a transaction again is harmless.
   outstanding0 <- readMVar lfcOutstanding
   let pendingJobs = case Map.lookup ebHash (ebState outstanding0) of
-        Just (MkEbState _slot _onset (BodyAcquired jobPool)) ->
+        Just (MkEbState _slot _onset (BodyAcquired _source jobPool)) ->
           Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         Just (MkEbState _slot _onset NoBody) -> IntMap.empty
         Nothing -> IntMap.empty
@@ -443,8 +445,8 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     completed <- modifyMVar lfcOutstanding $ \outstanding -> do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup ebHash (ebState outstanding), Map.lookup ebHash (ebState outstanding')) of
-        ( Just (MkEbState _ _ (BodyAcquired before))
-          , Just (MkEbState slot onset (BodyAcquired after))
+        ( Just (MkEbState _ _ (BodyAcquired _ before))
+          , Just (MkEbState slot onset (BodyAcquired _ after))
           )
             | not (Jobs.nullLeiosJobPool before)
             , Jobs.nullLeiosJobPool after -> do

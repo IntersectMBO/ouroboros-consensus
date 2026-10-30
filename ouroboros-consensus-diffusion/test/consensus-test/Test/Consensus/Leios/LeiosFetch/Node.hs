@@ -151,6 +151,47 @@ tests =
                     ]
                   )
               )
+    , testCase
+        "the node announces its acquisition again, and offers it there, when a later election focuses an endorser block it holds"
+        $ runSimFinishing nodeReacquiresHeld
+          >>= ( @?=
+                  (
+                    [ AcquiredBody fetchedPoint
+                    , AcquiredClosure fetchedPoint
+                    , AcquiredBody refocusedPoint
+                    , AcquiredClosure refocusedPoint
+                    ]
+                  ,
+                    [ RelayedAnnouncement
+                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer fetchedPoint
+                    , RelayedAnnouncement
+                    , RelayedBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer refocusedPoint
+                    ]
+                  )
+              )
+    , testCase
+        "the node announces its acquisition again, and offers it there, when a certificate focuses an endorser block it holds"
+        $ runSimFinishing nodeReacquiresCertified
+          >>= ( @?=
+                  (
+                    [ AcquiredBody fetchedPoint
+                    , AcquiredClosure fetchedPoint
+                    , AcquiredBody refocusedPoint
+                    , AcquiredClosure refocusedPoint
+                    ]
+                  ,
+                    [ RelayedAnnouncement
+                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer fetchedPoint
+                    , RelayedAnnouncement
+                    , RelayedAnnouncement
+                    , RelayedBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
+                    , RelayedBlockTxsOffer refocusedPoint
+                    ]
+                  )
+              )
     , testCase "the node fetches the endorser block a header its peer rolls forward certifies" $
         runSimFinishing nodeFetchesCertified
           >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
@@ -221,6 +262,24 @@ announcingFetched =
 fetchedPoint :: LeiosPoint
 fetchedPoint = MkLeiosPoint (blockSlot announcingFetched) (endorserBlockHash fetchedEb)
 
+-- | A later block, which announces 'fetchedEb' again, in an election of its
+-- own.
+reannouncingFetched :: LeiosTestBlock
+reannouncingFetched =
+  setAnnouncement
+    (endorserBlockHash fetchedEb)
+    (encodeEndorserBlockSize fetchedEb)
+    (successorLeiosBlock announcingFetched)
+
+refocusedPoint :: LeiosPoint
+refocusedPoint = MkLeiosPoint (blockSlot reannouncingFetched) (endorserBlockHash fetchedEb)
+
+-- | A sibling of 'reannouncingFetched' by the same issuer, which announces
+-- 'otherEbHash' instead.
+reannouncingOther :: LeiosTestBlock
+reannouncingOther =
+  setAnnouncement otherEbHash (encodeEndorserBlockSize fetchedEb) (forkLeiosBlock reannouncingFetched)
+
 -- | The successor of 'announcingFetched', which certifies 'fetchedEb'.
 certifyingFetched :: LeiosTestBlock
 certifyingFetched = certifying announcingFetched
@@ -269,6 +328,75 @@ nodeFetchesOffered = withNode $ \nut -> do
     acquired <- replicateM 2 $ acquiredOf <$> atomically next
     relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
     pure (acquired, relays)
+
+-- | 'nodeFetchesOffered', after which the peer announces 'fetchedEb' again, in
+-- 'reannouncingFetched', and offers nothing more. The node's acquisitions, as it
+-- announces them, and the first six notifications it relays to the peer.
+nodeReacquiresHeld :: IOSim s ([Acquired], [Relayed])
+nodeReacquiresHeld = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  relayed <- newTVarIO []
+  notifications <- newTQueueIO
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+      , MsgLeiosBlockTxsOffer fetchedPoint
+      ]
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    acquired <- replicateM 2 $ acquiredOf <$> atomically next
+    atomically $
+      writeTQueue notifications (MsgLeiosBlockAnnouncement (ltbHeader reannouncingFetched))
+    reacquired <- replicateM 2 $ acquiredOf <$> atomically next
+    relays <- atomically $ readTVar relayed >>= \rs -> take 6 rs <$ check (length rs >= 6)
+    pure (acquired <> reacquired, relays)
+
+-- | 'nodeFetchesOffered', after which the peer announces 'otherEbHash' and then
+-- 'fetchedEb' in a later election, so that the former takes its focus, and the
+-- node's ChainDB then verifies a certificate of the latter. The node's
+-- acquisitions, as it announces them, and the first seven notifications it
+-- relays to the peer.
+nodeReacquiresCertified :: IOSim s ([Acquired], [Relayed])
+nodeReacquiresCertified = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  relayed <- newTVarIO []
+  notifications <- newTQueueIO
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+      , MsgLeiosBlockTxsOffer fetchedPoint
+      ]
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    acquired <- replicateM 2 $ acquiredOf <$> atomically next
+    atomically $
+      mapM_
+        (writeTQueue notifications . MsgLeiosBlockAnnouncement . ltbHeader)
+        [reannouncingOther, reannouncingFetched]
+    -- The node relays an announcement only once it has taken it in.
+    atomically $ readTVar relayed >>= check . (>= 5) . length
+    addBlocks nut [announcingFetched, reannouncingFetched, certifying reannouncingFetched]
+    reacquired <- replicateM 2 $ acquiredOf <$> atomically next
+    relays <- atomically $ readTVar relayed >>= \rs -> take 7 rs <$ check (length rs >= 7)
+    pure (acquired <> reacquired, relays)
 
 -- | The peer announces 'fetchedEb', which so takes its election's focus, and
 -- then offers nothing over LeiosNotify. It rolls forward the header that

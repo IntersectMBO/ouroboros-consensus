@@ -1,7 +1,7 @@
 -- | Where the node announces each endorser block and closure it acquires.
 --
--- LeiosFetch announces them, once each write is durable, and only for the
--- endorser blocks it fetched during this execution. The ChainDB subscribes, so
+-- LeiosFetch announces them, once each write is durable; see
+-- 'LeiosEbNotification' for at which points. The ChainDB subscribes, so
 -- that ChainSel can select a block certifying an endorser block once the node
 -- holds that endorser block's closure.
 module Ouroboros.Consensus.Leios.Acquisitions
@@ -25,12 +25,19 @@ import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 
 -- | An acquisition the node announces.
 --
--- Each notification is sent at every 'LeiosPoint' of the EB that is its
--- election's focus and whose slot is not older than the ImmutableDB tip's, even
--- one that becomes the focus after the EB was acquired. An election's focus is
--- the first announcement in it that the node accepts, until a verified
--- certificate names another, so every point that a block certifies is a focus.
--- So a subscriber hears of the EB's youngest focus.
+-- LeiosFetch sends each notification when it acquires the EB, at the youngest
+-- 'LeiosPoint' at which an election focused the EB. It sends it again whenever
+-- the EB takes an election's focus afterwards, unless that election's slot is
+-- older than the ImmutableDB tip's: when a later election's focus is an
+-- announcement of the EB, or when a verified certificate moves an election's
+-- focus to the EB. An election's focus is the first announcement in it that the
+-- node accepts, until a verified certificate names another, so every
+-- 'LeiosPoint' that a block certifies is a focus. So a subscriber hears of the
+-- EB's youngest focus.
+--
+-- 'AcquiredEb' carries the body's size, which LeiosFetch does not know for an
+-- EB the LeiosDB already held when the node started, so for such an EB it sends
+-- only 'AcquiredEbTxs'.
 data LeiosEbNotification
   = -- | The node holds the EB's body.
     AcquiredEb

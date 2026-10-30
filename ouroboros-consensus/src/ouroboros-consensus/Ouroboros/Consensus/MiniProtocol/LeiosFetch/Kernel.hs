@@ -80,6 +80,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , ebStateHasBody
   , focusCertifiedEb
   , focusElectionIfUnfocused
+  , heldAcquisitionsAt
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
   , pruneOutstandingToImmTip
@@ -363,10 +364,9 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 -- cost us. If that one turns out to be the certified one, a verified
 -- certificate gives it an entry then.
 --
--- TODO If this announcement is younger than every earlier one of an endorser
--- block the node already holds, announce the acquisition again at its point,
--- so that the ChainDB keeps the closure acquired for as long as this
--- announcement matters.
+-- If the announcement takes the focus and the node already holds its endorser
+-- block, this also announces the acquisition again, at its point (see
+-- 'LeiosEbNotification').
 onNewLeiosAnnouncement ::
   forall m peer blk.
   (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
@@ -380,27 +380,28 @@ onNewLeiosAnnouncement kernel valid = do
       slot
       (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
       ebHash
-  void $ writeEbPoint lfcWriter (MkLeiosPoint slot ebHash) (announcementEbSize announcement)
-  changed <- modifyMVar lfcOutstanding $ \outstanding ->
+  void $ writeEbPoint lfcWriter point (announcementEbSize announcement)
+  (changed, reacquired) <- modifyMVar lfcOutstanding $ \outstanding ->
     let tooOld = slot < outstandingPrunedSlot outstanding
         introducesFocus = not $ Map.member elId (elFocus outstanding)
         held = maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
+        outstanding' =
+          focusElectionIfUnfocused elId ebHash $
+            recordMaxAnnouncementSlot ebHash slot (SJust announcementOnset) outstanding
      in pure $
           if tooOld || not introducesFocus
-            then (outstanding, False)
-            else
-              ( focusElectionIfUnfocused elId ebHash $
-                  recordMaxAnnouncementSlot ebHash slot (SJust announcementOnset) outstanding
-              , not held
-              )
+            then (outstanding, (False, []))
+            else (outstanding', (not held, heldAcquisitionsAt point outstanding'))
+  atomically $ mapM_ lfcNotify reacquired
   when changed $ void $ tryPutMVar lfcReady ()
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcWriter} = lfkContext kernel
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcWriter, lfcNotify} = lfkContext kernel
   MkValidAnnouncement{announcingHeader = anc, announcementOnset} = valid
   announcement = ancAnnouncement anc
   elId = ancElectionId anc
   slot = electionSlot elId
   ebHash = announcementEbHash announcement
+  point = MkLeiosPoint slot ebHash
 
 -- | Each time something might give a peer something new to do, decide what to
 -- request from every peer, at most twice a second.
@@ -468,6 +469,10 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- it started, comes to fetch the certified one. Each iteration compares the
 -- certified endorser blocks against the ones it last saw, so a certificate
 -- verified after the offer arrived still moves the focus.
+--
+-- If that moves an election's focus onto an endorser block the node already
+-- holds, this also announces the acquisition again, at the certified point (see
+-- 'LeiosEbNotification').
 leiosFetchFocuser ::
   IOLike m =>
   ChainDB m blk ->
@@ -475,7 +480,7 @@ leiosFetchFocuser ::
   m Void
 leiosFetchFocuser chainDB kernel = go Map.empty
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify} = lfkContext kernel
 
   go seen = do
     certified <- atomically $ do
@@ -483,10 +488,22 @@ leiosFetchFocuser chainDB kernel = go Map.empty
       if certified == seen then retry else pure certified
     let arrived =
           Map.differenceWith (\new old -> if new == old then Nothing else Just new) certified seen
-    modifyMVar_ lfcOutstanding $ \outstanding ->
-      pure $! Map.foldlWithKey' (\acc elId ebHash -> focusCertifiedEb elId ebHash acc) outstanding arrived
+    reacquired <- modifyMVar lfcOutstanding $ \outstanding ->
+      pure $ Map.foldlWithKey' focus (outstanding, []) arrived
+    atomically $ mapM_ lfcNotify reacquired
     void $ tryPutMVar lfcReady ()
     go certified
+
+  focus (outstanding, reacquired) elId ebHash =
+    let outstanding' = focusCertifiedEb elId ebHash outstanding
+        newlyFocused = case Map.lookup elId (elFocus outstanding) of
+          Just focused -> focused /= ebHash
+          Nothing -> True
+     in ( outstanding'
+        , if newlyFocused
+            then reacquired <> heldAcquisitionsAt (MkLeiosPoint (electionSlot elId) ebHash) outstanding'
+            else reacquired
+        )
 
 -- | Prune the node's LeiosFetch state, the peers' offers and claims, and the
 -- LeiosTxCache each time the immutable tip's slot advances.
