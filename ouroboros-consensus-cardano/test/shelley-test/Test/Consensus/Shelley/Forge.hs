@@ -7,13 +7,11 @@ module Test.Consensus.Shelley.Forge (tests) where
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL (Globals (..), ProtVer (..))
-import Cardano.Ledger.Binary (serialize')
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Core (bodyTxL, eraProtVerLow, feeTxBodyL, ppProtocolVersionL)
-import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Core (bodyTxL, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
-import Cardano.Ledger.Hashes (HASH, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH, originalBytes, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
@@ -248,9 +246,10 @@ reference tx =
   , fromIntegral (BS.length (txBytes tx))
   )
 
--- | The bytes of a transaction that an endorser block references.
+-- | The bytes of a transaction that an endorser block references: the
+-- block-body encoding, which keeps the @is_valid@ flag.
 txBytes :: GenTx StandardDijkstraBlock -> BS.ByteString
-txBytes (ShelleyTx _ tx) = serialize' (eraProtVerLow @DijkstraEra) tx
+txBytes (ShelleyTx _ tx) = originalBytes tx
 
 exampleDijkstraBlock :: StandardDijkstraBlock
 exampleDijkstraBlock = example Examples.exampleBlock

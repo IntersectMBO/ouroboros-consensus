@@ -142,7 +142,7 @@ praos2SharedBlockForging hotKey slotToPeriod credentials =
     basePraosSharedBlockForging (praosParams . leiosPraosConfig) hotKey slotToPeriod credentials
 
   checkEbSize ForgeBlockArgs{fbConfig, fbCurrentTickedLedgerState} forged@ForgeBlockResult{endorserBlock} =
-    -- If a ledger change makes the 'serialize'' bytes of a transaction longer
+    -- If a ledger change makes the 'ebTxBytes' of a transaction longer
     -- than its 'sizeTxF' plus 'perTxOverhead', the endorser block can exceed
     -- the size that 'txEbMeasureDijkstra' reserved. Header validation then
     -- rejects the block with 'LeiosEbTooBig'. The assert makes a test fail at
