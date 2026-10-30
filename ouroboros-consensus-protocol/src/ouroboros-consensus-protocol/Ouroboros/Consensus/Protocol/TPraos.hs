@@ -328,10 +328,6 @@ data instance Ticked TPraosState = TickedChainDepState
   , tickedTPraosStateLedgerView :: SL.TPraosLedgerView
   }
 
-instance ChainDepStateSupportsPeras TPraosState
-
-instance ChainDepStateSupportsPeras (Ticked TPraosState)
-
 instance SL.PraosCrypto c => LeiosProtocol (TPraos c) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   getContainsLeiosCert = defaultGetContainsLeiosCert

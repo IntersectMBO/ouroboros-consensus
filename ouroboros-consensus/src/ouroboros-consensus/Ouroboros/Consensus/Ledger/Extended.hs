@@ -29,7 +29,8 @@ module Ouroboros.Consensus.Ledger.Extended
   , decodeExtLedgerState
   , encodeDiskExtLedgerState
   , encodeExtLedgerState
-  , initPerasEpochContextResolver
+
+    -- * Peras epoch context resolver helpers
   , mkPerasEpochContextResolverHandle
 
     -- * Type family instances
@@ -79,7 +80,6 @@ import Ouroboros.Consensus.Peras.Context
   , PerasEpochContextResolver (..)
   , PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext (..)
-  , initPerasEpochContextResolver
   , resolveRoundNo
   )
 import Ouroboros.Consensus.Protocol.Abstract
