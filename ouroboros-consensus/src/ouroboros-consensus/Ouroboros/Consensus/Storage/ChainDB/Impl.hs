@@ -288,6 +288,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
+            , cdbDelaySnapshots = Args.cdbsDelaySnapshots cdbSpecificArgs
             , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             }
 

@@ -89,7 +89,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node
-  ( mkNodeKernelArgs
+  ( delaySnapshotsOnceCaughtUp
+  , mkNodeKernelArgs
   , mkNodeToNodeApps
   , mkNodeToNodeInitiatorResponderVersions
   , nodeKernelArgsEnforceInvariants
@@ -242,6 +243,7 @@ withNodeUnderTest ::
 withNodeUnderTest cfg tracers nodeDBs body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
+  hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
   let seeds = nodeSeeds cfg
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
@@ -261,7 +263,7 @@ withNodeUnderTest cfg tracers nodeDBs body = do
             (fst (mkInMemoryArgs ()))
             leiosDB
             ChainDB.defaultArgs
-            updateChainDbArgs
+            (updateChainDbArgs . delaySnapshotsOnceCaughtUp hasBeenCaughtUp)
       )
       ChainDB.closeDB
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
@@ -297,6 +299,7 @@ withNodeUnderTest cfg tracers nodeDBs body = do
                 , GSM.removeMarkerFile = pure ()
                 , GSM.hasMarkerFile = pure True
                 }
+              hasBeenCaughtUp
               (pure DontUseBootstrapPeers)
               publicPeerSelectionStateVar
               genesisArgs

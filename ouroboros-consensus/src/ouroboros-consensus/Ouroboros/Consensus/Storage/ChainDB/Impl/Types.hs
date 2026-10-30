@@ -385,6 +385,9 @@ data ChainDbEnv m blk = CDB
   , cdbSnapshotDelayRNG :: !(StrictTVar m StdGen)
   -- ^ PRNG for determining the random delay we'll wait before actually
   -- performing the snapshot when one has been requested.
+  , cdbDelaySnapshots :: !(m Bool)
+  -- ^ Whether to wait out that delay at all, see @cdbsDelaySnapshots@ in
+  -- "Ouroboros.Consensus.Storage.ChainDB.Impl.Args".
   , cdbPerasCertDB :: !(PerasCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   , cdbLeiosDb :: !(LeiosDbHandle m)

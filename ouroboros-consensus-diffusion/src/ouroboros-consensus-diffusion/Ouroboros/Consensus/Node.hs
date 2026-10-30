@@ -57,6 +57,7 @@ module Ouroboros.Consensus.Node
   , ChainSyncIdleTimeout (..)
 
     -- * Internal helpers
+  , delaySnapshotsOnceCaughtUp
   , mkNodeKernelArgs
   , nodeKernelArgsEnforceInvariants
   , openChainDB
@@ -531,6 +532,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           (genesisArgs, setLoEinChainDbArgs) <-
             mkGenesisNodeKernelArgs llrnGenesisConfig
+          hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
 
           let maybeValidateAll
                 | lastShutDownWasClean =
@@ -559,6 +561,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               leiosDB
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
+                  . delaySnapshotsOnceCaughtUp hasBeenCaughtUp
                   . maybeValidateAll
                   . llrnCustomiseChainDbArgs
               )
@@ -614,6 +617,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
+                  hasBeenCaughtUp
                   rnGetUseBootstrapPeers
                   llrnPublicPeerSelectionStateVar
                   genesisArgs
@@ -996,6 +1000,31 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB defA
             defArgs
    in (,args) <$> ChainDB.openDB args
 
+-- | Write requested ledger snapshots right away until the node has been caught
+-- up, and only wait out the randomised delay from then on, see
+-- 'ChainDB.cdbsDelaySnapshots'.
+--
+-- The delay spreads the writes of the nodes at the tip over time, which does
+-- not matter while syncing. It does cost memory then: the ledger state being
+-- snapshotted stays alive for the whole delay, and the current ledger state
+-- moves so far from it in that time that the two share little.
+--
+-- Once caught up, the node keeps delaying even if it falls behind again, for
+-- example because it lost its peers or was eclipsed.
+delaySnapshotsOnceCaughtUp ::
+  IOLike m =>
+  GSM.HasBeenCaughtUp m ->
+  ChainDbArgs f m blk ->
+  ChainDbArgs f m blk
+delaySnapshotsOnceCaughtUp hasBeenCaughtUp args =
+  args
+    { ChainDB.cdbsArgs =
+        (ChainDB.cdbsArgs args)
+          { ChainDB.cdbsDelaySnapshots =
+              atomically $ GSM.awaitHasBeenCaughtUp hasBeenCaughtUp
+          }
+    }
+
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
   (RunNode blk, IOLike m) =>
@@ -1015,6 +1044,8 @@ mkNodeKernelArgs ::
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
+  -- | The one given to 'delaySnapshotsOnceCaughtUp' for the ChainDB
+  GSM.HasBeenCaughtUp m ->
   STM m UseBootstrapPeers ->
   StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
   GenesisNodeKernelArgs m blk ->
@@ -1039,6 +1070,7 @@ mkNodeKernelArgs
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
+  gsmHasBeenCaughtUp
   getUseBootstrapPeers
   publicPeerSelectionStateVar
   genesisArgs
@@ -1074,6 +1106,7 @@ mkNodeKernelArgs
                 , gsmDurationUntilTooOld
                 , gsmMarkerFileView
                 , gsmMinCaughtUpDuration = maxCaughtUpAge
+                , gsmHasBeenCaughtUp
                 }
           , getUseBootstrapPeers
           , keepAliveRng = kaRng

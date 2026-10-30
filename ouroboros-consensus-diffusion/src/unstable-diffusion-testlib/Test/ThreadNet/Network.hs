@@ -1045,6 +1045,9 @@ runThreadNetwork
           (gsmRng, rng'') = splitGen rng'
           (psRng, chainSyncRng) = splitGen rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+      -- Only recorded: the ChainDB is not given it, so it always delays
+      -- snapshots, as by default.
+      hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1090,6 +1093,7 @@ runThreadNetwork
                           , hasMarkerFile = pure False
                           }
                     , gsmMinCaughtUpDuration = 0
+                    , gsmHasBeenCaughtUp = hasBeenCaughtUp
                     }
               , getUseBootstrapPeers = pure DontUseBootstrapPeers
               , publicPeerSelectionStateVar

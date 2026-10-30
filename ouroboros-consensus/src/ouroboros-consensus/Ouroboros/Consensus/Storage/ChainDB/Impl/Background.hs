@@ -401,6 +401,11 @@ ledgerDbTaskWatcher CDB{cdbLedgerDB} (LedgerDbTasksTrigger varSt) =
 -- the thread that decided the snapshot must be taken is what allows that
 -- thread to carry on in the meantime, in particular to garbage-collect the
 -- LedgerDB states the snapshots no longer need.
+--
+-- The delay is skipped when 'cdbDelaySnapshots' says so. The ledger state a
+-- request pins stays alive for the whole delay, and while syncing the current
+-- ledger state moves so far from it within that time that the two share little
+-- memory.
 snapshotRunner ::
   forall m blk.
   ( IOLike m
@@ -410,14 +415,18 @@ snapshotRunner ::
   ) =>
   ChainDbEnv m blk ->
   m Void
-snapshotRunner cdb@CDB{cdbTracer, cdbLedgerDB} =
+snapshotRunner cdb@CDB{cdbTracer, cdbLedgerDB, cdbDelaySnapshots} =
   forever $ LedgerDB.withSnapshotRequest queue $ \req -> do
     -- The LedgerDB assumes that all snapshots correspond to immutable blocks,
     -- so copy the immutable blocks from the VolatileDB to the ImmutableDB
     -- first.
     void $ copyToImmutableDB cdb
 
-    delayBeforeSnapshotting <- mkRandomSnapshotDelay cdb delayRange
+    delaySnapshots <- cdbDelaySnapshots
+    delayBeforeSnapshotting <-
+      if delaySnapshots
+        then mkRandomSnapshotDelay cdb delayRange
+        else pure 0
     traceWith (TraceLedgerDBEvent . LedgerDB.LedgerDBSnapshotEvent >$< cdbTracer) $
       LedgerDB.SnapshotRequestDelayed
         (LedgerDB.snapshotRequestedAt req)

@@ -40,6 +40,7 @@ import Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import qualified Control.Monad.IOSim as IOSim
+import Control.Monad.Except (ExceptT, runExceptT, throwError)
 import Control.Monad.Reader
 import Control.Tracer (mkTracer)
 import Data.Functor ((<&>))
@@ -71,6 +72,7 @@ tests = adhoc <> core
  where
   adhoc =
     [ testProperty "GSM yield regression" prop_yield_regression
+    , testProperty "HasBeenCaughtUp" prop_hasBeenCaughtUp
     ]
   core =
     [ adjustQuickCheckTests (* 10) $
@@ -110,6 +112,34 @@ prop_yield_regression =
       <> (wrapPositiveAction $ TimePasses 61)
       <> (wrapPositiveAction $ ExtendSelection (S (-4)))
       <> (wrapPositiveAction $ ReadMarker)
+
+-- | 'GSM.HasBeenCaughtUp' is unknown until a state is recorded, and from then
+-- on says whether any recorded state was 'GSM.CaughtUp'.
+prop_hasBeenCaughtUp :: QC.Property
+prop_hasBeenCaughtUp =
+  QC.forAll (QC.listOf (elements [GSM.PreSyncing, GSM.Syncing, GSM.CaughtUp])) $ \gsmStates ->
+    case IOSim.runSimOrThrow (runExceptT (hasBeenCaughtUpModel gsmStates)) of
+      Left err -> QC.counterexample err False
+      Right () -> QC.property True
+
+-- | Record each of the given states in turn, checking 'GSM.hasBeenCaughtUp'
+-- against the model before the first and after each of them.
+hasBeenCaughtUpModel :: MonadSTM m => [GSM.GsmState] -> ExceptT String m ()
+hasBeenCaughtUpModel gsmStates = do
+  var <- lift GSM.newHasBeenCaughtUp
+  expect "before recording any state" Nothing =<< lift (atomically $ GSM.hasBeenCaughtUp var)
+  Monad.foldM_ (step var) False gsmStates
+ where
+  step var hasSeenCaughtUp gsmState = do
+    let hasSeenCaughtUp' = hasSeenCaughtUp || gsmState == GSM.CaughtUp
+    val <- lift $ atomically $ GSM.recordGsmState var gsmState >> GSM.hasBeenCaughtUp var
+    expect ("after recording " <> show gsmState) (Just hasSeenCaughtUp') val
+    pure hasSeenCaughtUp'
+
+  expect what expected actual =
+    Monad.unless (actual == expected) $
+      throwError $
+        "hasBeenCaughtUp " <> what <> ": expected " <> show expected <> ", got " <> show actual
 
 prop_sequential_iosim ::
   Maybe UpstreamPeer -> LedgerStateJudgement -> QC.Fun (Set.Set UpstreamPeer) Bool -> QC.Property
