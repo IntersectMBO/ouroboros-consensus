@@ -67,6 +67,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
+import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -213,6 +214,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- 'leiosNotifyPruner' prunes.
   , getLeiosAnnounceState :: AnnounceState m blk
   -- ^ The announcements the node has accepted, from whichever peer.
+  , getLeiosVoteState :: VoteState m blk
+  -- ^ The votes the node has accepted from any peer, which decides which of
+  -- them it relays.
   , getLeiosNotifyLog :: NotifyLog m blk
   -- ^ What the node relays to its downstream peers over LeiosNotify.
   }
@@ -405,10 +409,14 @@ initNodeKernel
 
     leiosNotifyLog <- newNotifyLog
     leiosAnnounceState <- newAnnounceState leiosNotifyLog
+    leiosVoteState <- newVoteState (leiosVoteStateTracer tracers) leiosAnnounceState leiosNotifyLog
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
         leiosNotifyPruner chainDB leiosAnnounceState leiosNotifyClientStates
+    void $
+      forkLinkedThread registry "NodeKernel.leiosVotePruner" $
+        votePruner leiosVoteState systemTime
     void $
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
@@ -448,6 +456,7 @@ initNodeKernel
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
+        , getLeiosVoteState = leiosVoteState
         , getLeiosNotifyLog = leiosNotifyLog
         }
    where

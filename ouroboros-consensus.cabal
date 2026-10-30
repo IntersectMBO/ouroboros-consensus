@@ -205,6 +205,7 @@ library
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.Types
+    Ouroboros.Consensus.Leios.VoteState
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -230,6 +231,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
@@ -1523,6 +1525,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
+    Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
@@ -1559,7 +1562,7 @@ test-suite consensus-diffusion-test
     bytestring,
     cardano-binary,
     cardano-crypto-class:cardano-crypto-class,
-    cardano-crypto-leios,
+    cardano-crypto-leios:{cardano-crypto-leios, testlib},
     cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-binary,
     cardano-ledger-core,

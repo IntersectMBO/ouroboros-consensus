@@ -32,10 +32,12 @@ module Test.Consensus.Leios.NodeUnderTest
   , defaultNodeUnderTestConfig
   , maxEbBodySize
   , withNode
+  , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeUnderTest
   ) where
 
+import Cardano.Crypto.Leios (LeiosCommittee)
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.Diffusion.Configuration
@@ -104,7 +106,7 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( BlockNodeToNodeVersion
   , supportedNodeToNodeVersions
   )
-import Ouroboros.Consensus.Node.Tracers (nullTracers)
+import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
@@ -233,10 +235,11 @@ type NodeVersions m =
 -- subdirectory. The ledger and GSM file systems go unused.
 withNodeUnderTest ::
   NodeUnderTestConfig ->
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg nodeDBs body = do
+withNodeUnderTest cfg tracers nodeDBs body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = nodeSeeds cfg
@@ -273,7 +276,7 @@ withNodeUnderTest cfg nodeDBs body = do
               (seedKeepAliveAndPeerSharing seeds)
               (topLevelConfigOf cfg)
               mempty
-              nullTracers
+              tracers
               btime
               nodeSystemTime
               InFutureCheck.defaultClockSkew
@@ -336,9 +339,14 @@ withNode = withNodeForecastingOnly 100000
 
 -- | A node whose ledger view forecasts this many slots past its immutable tip.
 withNodeForecastingOnly :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecastingOnly range body = do
+withNodeForecastingOnly = withNodeCommittee emptyLeiosCommittee
+
+-- | 'withNodeForecastingOnly', with this committee in the node's ledger view.
+withNodeCommittee ::
+  LeiosCommittee -> SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
+  withNodeUnderTest cfg nullTracers nodeDBs body
  where
   k = SecurityParam $ knownNonZeroBounded @10
   cfg =
@@ -350,7 +358,7 @@ withNodeForecastingOnly range body = do
         , ltlcForecastRange = range
         , ltlcLeios =
             MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
+              { llvCommittee = committee
               , llvQuorumStakeThreshold = maxBound
               , llvAnnouncementPeriod = Milliseconds32 1000
               , llvVotePeriod = Milliseconds32 4000

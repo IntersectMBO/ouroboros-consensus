@@ -14,7 +14,11 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidAnnouncement (..)
   , ExnLeiosNotifyInvalidVotes (..)
+  , InvalidVoteReason (..)
+  , AcceptedVote (..)
   , checkLeiosVotes
+  , VoteWindow (..)
+  , leiosVoteWindow
   , voteLateGrace
   , ExnLeiosNotifyInvalidOffer (..)
   , checkLeiosBlockOffer
@@ -25,7 +29,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   , pruneLeiosNotifyPeerState
   ) where
 
-import Cardano.Crypto.Leios (LeiosSeatId)
+import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId)
 import Control.Monad (foldM, when)
 import Control.Monad.Except (Except, ExceptT, liftEither, throwError, withExcept, withExceptT)
 import Control.Monad.Trans (lift)
@@ -36,6 +40,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -49,9 +54,13 @@ import Ouroboros.Consensus.Block
   , SlotNo (..)
   , WithOrigin (NotOrigin)
   , blockSlot
-  , headerHash
   )
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, SystemTime, diffRelTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime
+  , SystemTime (..)
+  , addRelTime
+  , diffRelTime
+  )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
@@ -72,14 +81,15 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosVote (..)
   , RankingBlockHash
   , milliseconds32ToNominalDiffTime
-  , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity
-  , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
+  , AnnouncingHeader (ancAnnouncement, ancElectionId)
   , announcementValidity
+  , announcingRbHash
+  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -149,11 +159,6 @@ pruneLeiosNotifyPeerState immTipSlot st
  where
   (prunedAnnouncements, announcements) =
     Announcements.prune immTipSlot (lnpsAnnouncements st)
-
--- | The hash of the announcing block, which votes name.
-announcingRbHash ::
-  forall blk. (ConvertRawHash blk, GetHeader blk) => AnnouncingHeader blk -> RankingBlockHash
-announcingRbHash anc = toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc))
 
 -- | Thrown when a peer's offer over LeiosNotify is one an honest peer would not
 -- send; the ensuing thread death disconnects it.
@@ -339,10 +344,11 @@ data ExnLeiosNotifyInvalidVotes
       !SlotNo
       -- | how long after the election slot began the vote arrived
       !NominalDiffTime
-  | -- | A vote too old to still be relayed. Votes stop being relayed 3 L_hdr +
-    -- L_vote after the slot began, widened by 'voteLateGrace' so that an
-    -- honest peer is never disconnected. A vote for a slot behind the immutable
-    -- tip is among these, long past any window.
+  | -- | A vote too old to still be relayed. Votes stop being relayed when
+    -- their diffusion period ends, 3 L_hdr + L_vote + L_diff after the slot
+    -- began, widened by 'voteLateGrace' so that an honest peer is never
+    -- disconnected. A vote for a slot behind the immutable tip is among these,
+    -- long past its diffusion period.
     ExnLeiosVoteTooLate
       -- | the announcing block
       !RankingBlockHash
@@ -358,16 +364,72 @@ data ExnLeiosNotifyInvalidVotes
       !RankingBlockHash
       -- | the election slot
       !SlotNo
+  | -- | An accepted vote turned out to be invalid.
+    ExnLeiosInvalidVote
+      !AcceptedVote
+      !InvalidVoteReason
   deriving Show
 
 instance Exception ExnLeiosNotifyInvalidVotes
 
+-- | Why a vote is invalid.
+data InvalidVoteReason
+  = -- | Its seat is not in the election's committee.
+    SeatNotResolvable
+  | -- | Its seat is in the election's committee, but holds no key.
+    SeatHasNoKey
+  | -- | Its signature does not verify under its seat's key.
+    BadSignature !Text
+  deriving stock (Eq, Show)
+
+-- | A vote a client accepted from its peer, with what the node's 'VoteState'
+-- needs to judge and relay it.
+data AcceptedVote = MkAcceptedVote
+  { acceptedVote :: !LeiosVote
+  , voteElectionSlot :: !SlotNo
+  , voteCommittee :: !LeiosCommittee
+  -- ^ The committee of the election slot's ledger view.
+  , voteWindow :: !VoteWindow
+  -- ^ See 'leiosVoteWindow'.
+  }
+  deriving Show
+
+-- | When a vote should be cast and relayed.
+data VoteWindow = MkVoteWindow
+  { voteFrom :: !RelativeTime
+  -- ^ Before this, a downstream peer whose clock is behind ours could reject
+  -- the vote.
+  , voteUntil :: !RelativeTime
+  -- ^ The vote's deadline: the earliest block that can certify its
+  -- announcement is in the first slot at or after it, and the node uses no
+  -- vote it has only after it.
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | When a vote is worth relaying, given its election's ledger view and when
+-- its election slot began: from 3 L_hdr after until 3 L_hdr + L_vote + L_diff
+-- after, or until its announcement is no longer relayed, if sooner.
+leiosVoteWindow :: LeiosLedgerView -> RelativeTime -> VoteWindow
+leiosVoteWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
+  MkVoteWindow
+    (onset `plus` (3 * lHdr))
+    -- NOTE: This cap never applies on mainnet, as L_diff is under 20 s.
+    (onset `plus` (min (3 * lHdr + lVote + lDiff) maxAnnouncementAgeSend))
+ where
+  plus = flip addRelTime
+
+  lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
+  lVote = milliseconds32ToNominalDiffTime llvVotePeriod
+  lDiff = milliseconds32ToNominalDiffTime llvDiffusionPeriod
+
 -- | Accept a peer's 'MsgLeiosVotes', or say why the peer must go; see
 -- 'ExnLeiosNotifyInvalidVotes'.
 --
--- This does not check a vote's seat or signature. The node's central vote
--- processing will, once per vote, caching the result, so a badly signed copy of
--- a vote the node already has costs it only the bytes.
+-- This does not check a vote's seat or signature. The node's 'VoteState' will,
+-- once per vote, unless copies arrive simultaneously, so a badly signed copy of
+-- a vote the node already has costs it only the bytes; see
+-- 'ExnLeiosInvalidVote'.
 checkLeiosVotes ::
   forall blk.
   ( LedgerSupportsProtocol blk
@@ -383,10 +445,11 @@ checkLeiosVotes ::
   RelativeTime ->
   NonEmpty LeiosVote ->
   LeiosNotifyPeerState blk ->
-  Except ExnLeiosNotifyInvalidVotes (LeiosNotifyPeerState blk)
-checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
+  Except ExnLeiosNotifyInvalidVotes (LeiosNotifyPeerState blk, [AcceptedVote])
+checkLeiosVotes cfg skew immLedger now votes st0 =
+  fmap reverse <$> foldM checkOne (st0, []) votes
  where
-  checkOne st vote = do
+  checkOne (st, accepted) vote = do
     slot <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
         Map.lookup rbHash (lnpsAnnouncedRbHashes st)
@@ -408,23 +471,31 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
           slot
     -- Without Leios at this slot, the protocol announces nothing there, so no
     -- vote in it can have an announcement.
-    MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod} <-
+    leiosView@MkLeiosLedgerView{llvCommittee} <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
-    let lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
-        lVote = milliseconds32ToNominalDiffTime llvVotePeriod
-    when (age < 3 * lHdr - InFutureCheck.unClockSkew skew) $
+    let window = leiosVoteWindow leiosView onset
+    when (now < addRelTime (negate (InFutureCheck.unClockSkew skew)) (voteFrom window)) $
       throwError (ExnLeiosVoteTooEarly rbHash slot age)
-    when (age > 3 * lHdr + lVote + voteLateGrace) $
+    when (now > addRelTime voteLateGrace (voteUntil window)) $
       throwError (ExnLeiosVoteTooLate rbHash slot age)
-    pure st{lnpsVotes = Set.insert (slot, seat) (lnpsVotes st)}
+    pure
+      ( st{lnpsVotes = Set.insert (slot, seat) (lnpsVotes st)}
+      , MkAcceptedVote
+          vote
+          slot
+          llvCommittee
+          window
+          : accepted
+      )
    where
     rbHash = voteAnnouncingRbHash vote
     seat = voteSeatId vote
 
--- | How much later than 3 L_hdr + L_vote after its election slot began a vote
--- may arrive: enough for transmission, clock skew, and votes queued behind
--- other traffic.
+-- | How much later than its deadline a vote may arrive without the node
+-- disconnecting the peer: enough for transmission, clock skew, and votes queued
+-- behind other traffic. Such a vote is too late to use, and the node's
+-- 'VoteState' traces it.
 --
 -- TODO magic number; measure buffer bloat on a loaded network.
 voteLateGrace :: NominalDiffTime

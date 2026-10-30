@@ -31,6 +31,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Types (EndorserBlock)
+import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState)
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -44,6 +45,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( TraceChainSyncServerEvent
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
@@ -83,7 +85,9 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
+  , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
   , leiosDbTracer :: f TraceLeiosDb
+  , leiosVoteStateTracer :: f TraceLeiosVoteState
   , txInboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
   , txOutboundTracer ::
@@ -130,7 +134,9 @@ instance
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
       , leiosFetchServerTracer = f leiosFetchServerTracer
+      , leiosNotifyClientTracer = f leiosNotifyClientTracer
       , leiosDbTracer = f leiosDbTracer
+      , leiosVoteStateTracer = f leiosVoteStateTracer
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
@@ -177,7 +183,9 @@ nullTracers =
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
     , leiosFetchServerTracer = nullTracer
+    , leiosNotifyClientTracer = nullTracer
     , leiosDbTracer = nullTracer
+    , leiosVoteStateTracer = nullTracer
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
@@ -234,7 +242,9 @@ showTracers tr =
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
     , leiosFetchServerTracer = show >$< tr
+    , leiosNotifyClientTracer = show >$< tr
     , leiosDbTracer = show >$< tr
+    , leiosVoteStateTracer = show >$< tr
     , txInboundTracer = show >$< tr
     , txOutboundTracer = show >$< tr
     , localTxSubmissionServerTracer = show >$< tr

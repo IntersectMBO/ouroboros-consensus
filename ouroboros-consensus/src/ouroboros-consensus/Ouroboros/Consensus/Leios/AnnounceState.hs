@@ -11,6 +11,7 @@
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
+  , hasAnnouncement
   , newAnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
@@ -19,18 +20,20 @@ module Ouroboros.Consensus.Leios.AnnounceState
 import Control.Monad (when)
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block (HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (addRelTime)
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( NotifyEntry (..)
+  ( Notification (..)
   , NotifyLog
   , appendNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (OCINStaleness (FreshOCIN))
-import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot))
+import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RankingBlockHash)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
   , ValidAnnouncement (..)
+  , announcingRbHash
   , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -58,7 +61,8 @@ newAnnounceState ::
 newAnnounceState notifyLog =
   MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
 
--- | Accept a valid announcement, and relay it if it is new and fresh enough.
+-- | Accept a valid announcement, and relay it if it is new and fresh enough,
+-- until 'maxAnnouncementAgeSend' after its election slot began.
 --
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
@@ -76,7 +80,10 @@ onValidAnnouncement st valid = do
       Right seen' -> do
         writeTVar announced seen'
         when (announcementAge <= maxAnnouncementAgeSend) $
-          appendNotifyLog relayLog (NotifyAnnouncement announcementOnset announcingHeader)
+          appendNotifyLog
+            relayLog
+            (NotifyAnnouncement announcingHeader)
+            (addRelTime maxAnnouncementAgeSend announcementOnset)
  where
   electionId = ancElectionId announcingHeader
 
@@ -88,6 +95,20 @@ onValidAnnouncement st valid = do
     , announcementAge
     , announcementStaleness
     } = valid
+
+-- | Whether the node accepted the announcement of this announcing block, in an
+-- election of the given slot, so that it can relay votes for it.
+--
+-- It accepts but does not relay one too old to relay, but then the votes for
+-- it are past their deadline too, so the node relays none of them either.
+hasAnnouncement ::
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
+  AnnounceState m blk ->
+  SlotNo ->
+  RankingBlockHash ->
+  STM m Bool
+hasAnnouncement st slot rbHash =
+  any ((== rbHash) . announcingRbHash) . Announcements.inSlot slot <$> readTVar (announced st)
 
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::
