@@ -367,7 +367,10 @@ data ExnLeiosNotifyInvalidVotes
       !SlotNo
   | -- | An accepted vote turned out to be invalid.
     ExnLeiosInvalidVote
-      !AcceptedVote
+      -- | the vote
+      !LeiosVote
+      -- | the election slot
+      !SlotNo
       !InvalidVoteReason
   deriving Show
 

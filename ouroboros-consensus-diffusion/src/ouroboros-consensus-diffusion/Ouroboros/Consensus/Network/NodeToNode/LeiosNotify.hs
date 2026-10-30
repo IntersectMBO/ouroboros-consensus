@@ -148,12 +148,12 @@ leiosNotifyClient
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
-            for_ accepted $ \vote@MkAcceptedVote{acceptedVote} ->
+            for_ accepted $ \vote@MkAcceptedVote{acceptedVote, voteElectionSlot} ->
               addVote voteState systemTime vote >>= \case
                 Added ->
                   traceWith tracer $ TraceLeiosNotifyClientVoteAdded acceptedVote
                 VoteInvalid reason ->
-                  throwIO $ ExnLeiosInvalidVote vote reason
+                  throwIO $ ExnLeiosInvalidVote acceptedVote voteElectionSlot reason
                 ArrivedTooLate ->
                   traceWith tracer $ TraceLeiosNotifyClientVoteArrivedTooLate acceptedVote
                 AlreadyKnown -> pure ()
