@@ -151,5 +151,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsSnapshotDelayRNG = mkStdGen 0
+          , cdbsDelaySnapshots = pure True
           }
     }

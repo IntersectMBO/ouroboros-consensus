@@ -312,6 +312,7 @@ initNodeKernel
                 , GSM.writeGsmState = \gsmState ->
                     atomicallyWithMonotonicTime $ \time -> do
                       writeTVar varGsmState gsmState
+                      GSM.recordGsmState gsmHasBeenCaughtUp gsmState
                       handles <- cschcMap varChainSyncHandles
                       traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
                 , GSM.isHaaSatisfied = do
@@ -485,6 +486,7 @@ initInternalState
           (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
           gsmDurationUntilTooOld
           gsmMarkerFileView
+      atomically $ GSM.recordGsmState gsmHasBeenCaughtUp gsmState
       newTVarIO gsmState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection

@@ -284,6 +284,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
+            , cdbDelaySnapshots = Args.cdbsDelaySnapshots cdbSpecificArgs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env

@@ -6,6 +6,46 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.3.0.0'></a>
+## 5.3.0.0 -- 2026-10-30
+
+### Breaking
+
+- `newSnapshotRequestQueue`, `snapshotRequestInFlight` and
+  `tryEnqueueSnapshotRequest` now require `MonadSTM` instead of `MonadMVar`, and
+  `withSnapshotRequest` and `tryWithSnapshotRequest` require `MonadSTM` and
+  `MonadMask` instead of `MonadMVar` and `MonadThrow`.
+- `GsmNodeKernelArgs` has a new field `gsmHasBeenCaughtUp`, and
+  `mkNodeKernelArgs` takes the `HasBeenCaughtUp` to put there, after the
+  `MarkerFileView`.
+
+### Non-Breaking
+
+- The snapshot request queue no longer keeps a request reachable while it is
+  being served. It used to stay in the queue until the snapshots were written,
+  which kept whatever writing them evaluated reachable too, in particular the
+  serialised snapshot already written to disk, so live memory grew by about the
+  snapshot's size during every write. The queue is still occupied, and still
+  accepts no other request, for the whole delay and write.
+- The node writes ledger snapshots as soon as they are requested until it has
+  been caught up, and only waits out the randomised snapshot delay from then on,
+  even if it falls behind again. While syncing, the ledger state a delayed
+  snapshot pins stayed alive for the whole delay, sharing little with the
+  current one by the time it was written.
+- New `ChainDbSpecificArgs` field `cdbsDelaySnapshots`, asked whenever a
+  snapshot request is served, to decide whether to wait out the delay. It
+  defaults to always delaying, as before; the node sets it with
+  `delaySnapshotsOnceCaughtUp`.
+- New `HasBeenCaughtUp`, which records whether the GSM has been in `CaughtUp`
+  since the node started (`newHasBeenCaughtUp`, `recordGsmState`,
+  `hasBeenCaughtUp`, `awaitHasBeenCaughtUp`).
+
+### Patch
+
+- The forging thread emits `TraceForgingMempoolSnapshot` once it has computed
+  the mempool snapshot to forge with, instead of before, so that the time it
+  takes is not attributed to forging the block.
+
 <a id='changelog-5.2.0.0'></a>
 ## 5.2.0.0 -- 2026-10-23
 
