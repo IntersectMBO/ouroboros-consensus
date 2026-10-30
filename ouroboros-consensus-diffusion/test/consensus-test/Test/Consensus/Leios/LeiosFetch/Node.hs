@@ -13,7 +13,7 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (replicateM, void)
+import Control.Monad (forM_, replicateM, void)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -26,15 +26,18 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (listToMaybe, mapMaybe)
 import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
 import Ouroboros.Consensus.Block
   ( Header
+  , Point
   , Proxy (..)
+  , SlotNo
   , blockHash
+  , blockPoint
   , blockSlot
   , pattern GenesisPoint
   )
@@ -52,6 +55,14 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , mkEndorserBlock
   , toRankingBlockHash
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( ExnLeiosFetchInvalidReply (..)
+  , LeiosFetchClientContext (..)
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+  ( LeiosOutstanding (..)
+  , isFocusedEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( ExnLeiosTwoCertificationClaims (..)
@@ -89,6 +100,7 @@ import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
 import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
@@ -213,6 +225,55 @@ tests =
         "the node disconnects a peer that rolls forward certificates of two endorser blocks for one election"
         $ runSimFinishing nodeDisconnectsDoubleCertifier
           >>= (@?= Just (endorserBlockHash fetchedEb, otherEbHash))
+    , testCase
+        "the node selects a block certifying an endorser block it acquired at an earlier election"
+        $ runSimFinishing (nodeSelectsReannounced NothingPruned)
+          >>= (@?= lastPoint (reannouncedChain NothingPruned))
+    , testCase
+        "the node selects a block certifying an endorser block it acquired, pruned, and saw announced again"
+        $ runSimFinishing (nodeSelectsReannounced PruneThenReannounce)
+          >>= (@?= lastPoint (reannouncedChain PruneThenReannounce))
+    , testCase
+        "the node selects a block certifying an endorser block it acquired and saw announced again, once it prunes the first announcement"
+        $ runSimFinishing (nodeSelectsReannounced ReannounceThenPrune)
+          >>= (@?= lastPoint (reannouncedChain ReannounceThenPrune))
+    , testCase
+        "the node fetches an endorser block a later election announced, once it prunes the earlier announcement"
+        $ runSimFinishing nodeFetchesAfterPruningEarlier
+          >>= (@?= [AcquiredBody refocusedPoint, AcquiredClosure refocusedPoint])
+    , testCase
+        "the node selects a block certifying an endorser block though a rival announcement took the focus first"
+        $ runSimFinishing nodeSelectsCertifiedRival
+          >>= (@?= (True, blockPoint certifyingFetched))
+    , testCase
+        "the node fetches an endorser block at the size its peer offers, though the announcement states another"
+        $ runSimFinishing nodeFetchesAtOfferedSize
+          >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
+    , testCase
+        "the node selects a block certifying an endorser block that another election announced at another size"
+        $ runSimFinishing nodeSelectsDespiteMisstatedSize
+          >>= (@?= blockPoint certifyingFetched)
+    , testCase
+        "the node disconnects a peer that serves an endorser block referencing more transaction bytes than the ledger allows"
+        $ runSimFinishing (nodeFetchClientFails (oneTxEb (maxEbBodySize + 1)))
+          >>= ( @?=
+                  Just
+                    ( show
+                        ( ExnLeiosClosureTooBig
+                            (oneTxEbPoint (maxEbBodySize + 1))
+                            (fromIntegral maxEbBodySize + 1)
+                            maxEbBodySize
+                        )
+                    )
+              )
+    , testCase
+        "the node fetches an endorser block referencing as many transaction bytes as the ledger allows"
+        $ runSimFinishing (nodeFetchesOneTxEb (oneTxEb maxEbBodySize))
+          >>= ( @?=
+                  [ AcquiredBody (oneTxEbPoint maxEbBodySize)
+                  , AcquiredClosure (oneTxEbPoint maxEbBodySize)
+                  ]
+              )
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
@@ -494,6 +555,291 @@ nodeDisconnectsDoubleCertifier = withNode $ \nut -> do
             Just (claimed, claimedAgain)
       _ -> Nothing
 
+-- | When the peer announces 'fetchedEb' again, relative to the node pruning
+-- 'announcingFetched'.
+data WhenReannounced
+  = -- | The chain is only k blocks long, so the node prunes nothing, and the
+    -- peer does not announce 'fetchedEb' again: only the certificate names the
+    -- second announcement.
+    NothingPruned
+  | PruneThenReannounce
+  | ReannounceThenPrune
+
+-- | The chain the node adds, one block per slot from 'announcingFetched'. Its
+-- second-to-last block announces 'fetchedEb' again, and its last block
+-- certifies that announcement.
+reannouncedChain :: WhenReannounced -> [LeiosTestBlock]
+reannouncedChain whenReannounced = take beforeLength blocks <> [reannouncing, certifying reannouncing]
+ where
+  blocks = iterate successorLeiosBlock announcingFetched
+  reannouncing =
+    setAnnouncement
+      (endorserBlockHash fetchedEb)
+      (encodeEndorserBlockSize fetchedEb)
+      (blocks !! beforeLength)
+  beforeLength = case pruningPrefix whenReannounced of
+    Nothing -> 8
+    Just n -> n + 2
+
+-- | How many blocks of 'reannouncedChain' the node adds first, so that its
+-- immutable tip passes 'announcingFetched'. With k at 10, fourteen blocks put
+-- it at the fourth.
+pruningPrefix :: WhenReannounced -> Maybe Int
+pruningPrefix = \case
+  NothingPruned -> Nothing
+  PruneThenReannounce -> Just 14
+  ReannounceThenPrune -> Just 14
+
+-- | The peer announces 'fetchedEb' in 'announcingFetched', offers it, and
+-- serves it. Once the node has acquired it, the node adds the 'pruningPrefix'
+-- of 'reannouncedChain' and prunes, and the peer announces and offers
+-- 'fetchedEb' again where that chain does, in the order the argument says.
+-- Then the node adds the whole chain. The tip of the node's selection, once
+-- that is the chain's last block or ten seconds have passed.
+nodeSelectsReannounced :: WhenReannounced -> IOSim s (Point LeiosTestBlock)
+nodeSelectsReannounced whenReannounced = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  notifications <- newTQueueIO
+  let chain = reannouncedChain whenReannounced
+      announceAndOffer = atomically . mapM_ (writeTQueue notifications) . announcingAndOffering fetchedEb
+      reannounce = do
+        announceAndOffer (chain !! (length chain - 2))
+        -- Let the node take it in.
+        threadDelay 1
+      prune = forM_ (pruningPrefix whenReannounced) $ \n -> do
+        addBlocks nut (take n chain)
+        awaitPrunedPast nut (blockSlot announcingFetched)
+      envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    announceAndOffer announcingFetched
+    _ <- replicateM 2 $ atomically next
+    case whenReannounced of
+      NothingPruned -> pure ()
+      PruneThenReannounce -> prune >> reannounce
+      ReannounceThenPrune -> reannounce >> prune
+    addBlocks nut chain
+    awaitTip nut (lastPoint chain)
+
+-- | The peer announces 'fetchedEb' in 'announcingFetched' and again in
+-- 'reannouncingFetched', and offers nothing. The node adds a chain of twelve
+-- blocks from 'announcingFetched', which puts its immutable tip at
+-- 'reannouncingFetched', and prunes. Only then does the peer offer 'fetchedEb',
+-- at the second announcement, and serve it. The node's acquisitions, as it
+-- announces them.
+nodeFetchesAfterPruningEarlier :: IOSim s [Acquired]
+nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  relayed <- newTVarIO []
+  notifications <- newTQueueIO
+  atomically $
+    mapM_
+      (writeTQueue notifications . MsgLeiosBlockAnnouncement . ltbHeader)
+      [announcingFetched, reannouncingFetched]
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    -- The node relays an announcement only once it has taken it in.
+    atomically $ readTVar relayed >>= check . (>= 2) . length
+    addBlocks nut $ announcingFetched : take 11 (iterate successorLeiosBlock reannouncingFetched)
+    awaitPrunedPast nut (blockSlot announcingFetched)
+    atomically $
+      mapM_
+        (writeTQueue notifications)
+        [ MsgLeiosBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
+        , MsgLeiosBlockTxsOffer refocusedPoint
+        ]
+    replicateM 2 $ acquiredOf <$> atomically next
+
+-- | The peer announces 'otherEbHash' in 'announcingOther', and then 'fetchedEb'
+-- in 'announcingFetched', for the same election, so that the former takes its
+-- focus. It offers 'fetchedEb' and serves it. The node then adds
+-- 'announcingFetched' and 'certifyingFetched'. Whether 'otherEbHash' had the
+-- focus until then, and the tip of the node's selection, once that is
+-- 'certifyingFetched' or ten seconds have passed.
+nodeSelectsCertifiedRival :: IOSim s (Bool, Point LeiosTestBlock)
+nodeSelectsCertifiedRival = withNode $ \nut -> do
+  relayed <- newTVarIO []
+  notifications <- newTQueueIO
+  atomically $
+    mapM_ (writeTQueue notifications) $
+      MsgLeiosBlockAnnouncement (ltbHeader announcingOther)
+        : announcingAndOffering fetchedEb announcingFetched
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut relayed)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    -- The node relays an announcement only once it has taken it in.
+    atomically $ readTVar relayed >>= check . (>= 2) . length
+    rivalFocused <- isFocusedEb otherEbHash <$> readOutstanding nut
+    addBlocks nut [announcingFetched, certifyingFetched]
+    (,) rivalFocused <$> awaitTip nut (blockPoint certifyingFetched)
+
+-- | The peer announces 'fetchedEb' in 'announcingFetched', but at one byte more
+-- than its size. It then offers it at its size, and serves it. The node's
+-- acquisitions, as it announces them.
+nodeFetchesAtOfferedSize :: IOSim s [Acquired]
+nodeFetchesAtOfferedSize = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  notifications <- newTQueueIO
+  atomically $
+    mapM_ (writeTQueue notifications) $
+      announcingAndOffering fetchedEb (misstating announcingFetched)
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
+    replicateM 2 $ acquiredOf <$> atomically next
+
+-- | The peer announces 'fetchedEb' at one byte more than its size, in an
+-- election of its own, and then in 'announcingFetched'. It offers 'fetchedEb'
+-- there, and serves it. The node then adds 'announcingFetched' and
+-- 'certifyingFetched'. The tip of the node's selection, once that is
+-- 'certifyingFetched' or ten seconds have passed.
+nodeSelectsDespiteMisstatedSize :: IOSim s (Point LeiosTestBlock)
+nodeSelectsDespiteMisstatedSize = withNode $ \nut -> do
+  notifications <- newTQueueIO
+  atomically $
+    mapM_ (writeTQueue notifications) $
+      MsgLeiosBlockAnnouncement (ltbHeader (misstating (successorLeiosBlock (firstLeiosBlock 7))))
+        : announcingAndOffering fetchedEb announcingFetched
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    addBlocks nut [announcingFetched, certifyingFetched]
+    awaitTip nut (blockPoint certifyingFetched)
+
+-- | The block, announcing 'fetchedEb' at one byte more than its size.
+misstating :: LeiosTestBlock -> LeiosTestBlock
+misstating =
+  setAnnouncement (endorserBlockHash fetchedEb) (encodeEndorserBlockSize fetchedEb + 1)
+
+-- | An endorser block of one transaction of this many bytes, and that
+-- transaction.
+oneTxEb :: BytesSize -> (EndorserBlock, V.Vector LeiosTx)
+oneTxEb size = (mkEndorserBlock [(hashLeiosTx tx, size)], V.singleton tx)
+ where
+  tx = MkLeiosTx (BS.replicate (fromIntegral size) 7)
+
+-- | Where 'oneTxEbPeer' announces the endorser block of 'oneTxEb'.
+oneTxEbPoint :: BytesSize -> LeiosPoint
+oneTxEbPoint size = MkLeiosPoint 1 (endorserBlockHash (fst (oneTxEb size)))
+
+-- | A peer that announces the endorser block, in the slot of 'oneTxEbPoint',
+-- offers it and its closure, and serves both.
+oneTxEbPeer ::
+  NodeUnderTest (IOSim s) -> (EndorserBlock, V.Vector LeiosTx) -> IOSim s (EnvPeer (IOSim s))
+oneTxEbPeer nut (eb, txs) = do
+  notifications <- newTQueueIO
+  atomically $
+    mapM_ (writeTQueue notifications) $
+      announcingAndOffering eb $
+        setAnnouncement (endorserBlockHash eb) (encodeEndorserBlockSize eb) (firstLeiosBlock 0)
+  pure
+    EnvPeer
+      { epChainSyncServer = quietChainSyncServer
+      , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+      , epLeiosNotifyClient = Nothing
+      , epLeiosFetchServer = serving eb txs nut
+      , epLeiosFetchClient = Nothing
+      }
+
+-- | The node's acquisitions, as it announces them, from 'oneTxEbPeer'.
+nodeFetchesOneTxEb :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s [Acquired]
+nodeFetchesOneTxEb ebAndTxs = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  envPeer <- oneTxEbPeer nut ebAndTxs
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
+    replicateM 2 $ acquiredOf <$> atomically next
+
+-- | Why the node's LeiosFetch client for 'oneTxEbPeer' failed, if it did.
+nodeFetchClientFails :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s (Maybe String)
+nodeFetchClientFails ebAndTxs = withNode $ \nut -> do
+  envPeer <- oneTxEbPeer nut ebAndTxs
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+    client <-
+      maybe (throwIO $ userError "the node does not run a LeiosFetch client") pure $
+        Map.lookup leiosFetchMiniProtocolNum (connNodeInitiators conn)
+    atomically client <&> \case
+      Left e -> Just (show e)
+      Right _ -> Nothing
+
+-- | The block's announcement of the endorser block, and offers of its body and
+-- its closure there, at its size.
+announcingAndOffering ::
+  EndorserBlock ->
+  LeiosTestBlock ->
+  [Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle]
+announcingAndOffering eb blk =
+  [ MsgLeiosBlockAnnouncement (ltbHeader blk)
+  , MsgLeiosBlockOffer point (encodeEndorserBlockSize eb)
+  , MsgLeiosBlockTxsOffer point
+  ]
+ where
+  point = MkLeiosPoint (blockSlot blk) (endorserBlockHash eb)
+
+-- | The node's LeiosFetch state.
+readOutstanding :: NodeUnderTest (IOSim s) -> IOSim s (LeiosOutstanding (ConnectionId PeerAddr))
+readOutstanding nut = IOLike.readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nutKernel nut))))
+
+-- | Wait until the node has pruned what is older than the slot after it.
+awaitPrunedPast :: NodeUnderTest (IOSim s) -> SlotNo -> IOSim s ()
+awaitPrunedPast nut slot = do
+  outstanding <- readOutstanding nut
+  if outstandingPrunedSlot outstanding > slot
+    then
+      -- The ChainDB prunes its own record as it copies blocks to the
+      -- ImmutableDB, which nothing observes, so give it a moment too.
+      threadDelay 1
+    else threadDelay 0.1 >> awaitPrunedPast nut slot
+
+-- | Wait until the tip of the node's selection is the point, or ten seconds
+-- have passed, and return the tip.
+awaitTip :: NodeUnderTest (IOSim s) -> Point LeiosTestBlock -> IOSim s (Point LeiosTestBlock)
+awaitTip nut point = do
+  _ <- timeout 10 $ atomically $ ChainDB.getTipPoint (nutChainDB nut) >>= check . (== point)
+  atomically $ ChainDB.getTipPoint (nutChainDB nut)
+
+-- | The point of the chain's last block.
+lastPoint :: [LeiosTestBlock] -> Point LeiosTestBlock
+lastPoint = maybe GenesisPoint blockPoint . listToMaybe . reverse
+
 acquiredOf :: LeiosEbNotification -> Acquired
 acquiredOf = \case
   AcquiredEb point _size -> AcquiredBody point
@@ -543,9 +889,18 @@ feedingLeiosNotifyServer nut notifications chan = do
 
 -- | A LeiosFetch server that serves 'fetchedEb' and its transactions.
 servingFetched :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
-servingFetched nut chan =
+servingFetched = serving fetchedEb fetchedTxs
+
+-- | A LeiosFetch server that serves the endorser block and its transactions.
+serving ::
+  EndorserBlock ->
+  V.Vector LeiosTx ->
+  NodeUnderTest (IOSim s) ->
+  Channel (IOSim s) ByteString ->
+  IOSim s ()
+serving eb txs nut chan =
   fst
-    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer serveFetched)
+    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer (serveEb eb txs))
 
 -- | A peer that serves the chain over ChainSync, and says nothing over the Leios
 -- mini-protocols.
@@ -576,12 +931,14 @@ relayedOf = \case
   MsgLeiosVotes _votes -> RelayedVotes
   MsgCanceled -> RelayedVotes
 
--- | Serve 'fetchedEb' and its transactions.
-serveFetched :: Monad m => LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
-serveFetched = MkLeiosFetchRequestHandler $ \case
-  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock fetchedEb)
+-- | Serve the endorser block and its transactions.
+serveEb ::
+  Monad m =>
+  EndorserBlock -> V.Vector LeiosTx -> LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
+serveEb eb txs = MkLeiosFetchRequestHandler $ \case
+  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock eb)
   MsgLeiosBlockTxsRequest _point bitmaps ->
-    pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (fetchedTxs V.!?) (bitmapOffsets bitmaps)
+    pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (txs V.!?) (bitmapOffsets bitmaps)
 
 {-------------------------------------------------------------------------------
   The node's server
