@@ -265,7 +265,7 @@ tests =
           relayToOne
             0
             ( withControl
-                [[announce equivocation], [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
+                [[announce equivocation], [announceAt 2 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
             )
         votes down @?= [control]
     , testCase "the node relays a vote that arrives after its voting period, within its diffusion period" $ do
