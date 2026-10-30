@@ -2296,7 +2296,7 @@ test-suite tools-test
     cardano-ledger-dijkstra,
     directory,
     filepath,
-    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-testlib, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
     sop-core,
     strict-sop-core,
