@@ -113,6 +113,11 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
+  --
+  -- TODO When this 'LeiosPoint' is its election's focus and the DB already
+  -- holds the EB's body, send 'AcquiredEb' for it, and 'AcquiredEbTxs' too if
+  -- the DB holds every tx, as 'LeiosEbNotification' requires. Nothing in the
+  -- node calls 'writeEbPoint' yet.
   , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m CompletedEbs)
   -- ^ Persist an EB body. Returns any EBs whose closure this completed.
   --
@@ -158,14 +163,22 @@ awaitAll = traverse_ await
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
 
+-- | What the DB tells its subscribers as it acquires EBs.
+--
+-- Each notification is sent at every 'LeiosPoint' of the EB that is its
+-- election's focus and whose slot is not older than the ImmutableDB tip's, even
+-- one that becomes the focus after the EB was acquired. An election's focus is
+-- the first announcement in it that the node accepts, until a verified
+-- certificate names another, so every point that a block certifies is a focus.
+-- So a subscriber hears of the EB's youngest focus.
 data LeiosEbNotification
-  = -- | An EB body was written.
+  = -- | The DB holds the EB's body.
     AcquiredEb
       -- | the EB's point
       LeiosPoint
       -- | its size in bytes
       BytesSize
-  | -- | Every tx of the EB is now in the DB.
+  | -- | The DB holds the EB's body and every tx it lists.
     AcquiredEbTxs
       -- | the EB's point
       LeiosPoint

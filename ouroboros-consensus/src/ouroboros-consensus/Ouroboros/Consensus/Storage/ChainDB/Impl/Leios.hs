@@ -74,7 +74,11 @@ leiosBlockInfo bcfg blk =
 -------------------------------------------------------------------------------}
 
 -- | The endorser blocks whose closure the LeiosDB holds, each with the slot of
--- its youngest announcement.
+-- its youngest focus (see @LeiosEbNotification@).
+--
+-- That slot is the youngest slot of any 'LeiosPoint' in an @AcquiredEbTxs@
+-- notification for the endorser block, since the LeiosDB sends that
+-- notification at every focus not older than the ImmutableDB tip.
 --
 -- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
 -- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.
@@ -109,9 +113,12 @@ insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredLeiosEb
 isAcquiredLeiosEb :: EndorserBlockHash -> AcquiredLeiosEbs -> Bool
 isAcquiredLeiosEb ebHash = Map.member ebHash . aleYoungestSlot
 
--- | Forget every endorser block all of whose announcements are older than the
--- slot: once the immutable tip has passed them, no block that ChainSel has yet
--- to select can certify it.
+-- | Forget every endorser block all of whose foci are older than the slot. A
+-- block that ChainSel has yet to select can then certify it only at another
+-- announcement, and verifying that certificate makes the announcement a focus,
+-- which records the endorser block here again.
+--
+-- See 'AcquiredLeiosEbs' for why its slots are the youngest foci.
 pruneAcquiredLeiosEbs :: SlotNo -> AcquiredLeiosEbs -> AcquiredLeiosEbs
 pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot) =
   UnsafeAcquiredLeiosEbs
