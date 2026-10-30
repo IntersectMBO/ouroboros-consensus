@@ -28,6 +28,7 @@ import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Data (Typeable)
 import Data.Foldable as Foldable (foldl', toList)
+import Data.Functor (($>))
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
@@ -183,12 +184,38 @@ objectDiffusionInbound
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
-    -- Keep the previous round when there is no known next ID. Only the
-    -- server's await response establishes that its front has been reached.
-    publishOutstanding :: StrictSeq objectId -> m ()
-    publishOutstanding fifo = case fifo of
-      objectId Seq.:<| _ -> odisvSetNextOutstandingObjectId stateView objectId
-      Seq.Empty -> pure ()
+    -- set the 'outstandingFifo' in an 'InboundSt' to an extension of the
+    -- current 'outstandingFifo'. structure updates of `outstandingFifo` into
+    -- first enqueuing at the rear and then dequeuing at the front. use
+    -- `setOutstandingFifoExtension` for the former and
+    -- `setOutstandingFifoSuffix` for the latter. do not set `outstandingFifo`
+    -- directly, via record update for example.
+    setOutstandingFifoExtension ::
+      StrictSeq objectId -> InboundSt objectId object -> InboundSt objectId object
+    setOutstandingFifoExtension outstandingFifo !st = st{outstandingFifo = outstandingFifo}
+
+    -- set the 'outstandingFifo' in an 'InboundSt' to a suffix of the current
+    -- 'outstandingFifo' and publish the next outstanding object id. structure
+    -- updates of `outstandingFifo` into first enqueuing at the rear and then
+    -- dequeuing at the front. use `setOutstandingFifoExtension` for the former
+    -- and `setOutstandingFifoSuffix` for the latter. do not set
+    -- `outstandingFifo` directly, via record update for example.
+    setOutstandingFifoSuffix ::
+      StrictSeq objectId -> InboundSt objectId object -> m (InboundSt objectId object)
+    setOutstandingFifoSuffix outstandingFifo !st =
+      let (!st', nextOutstandingObjectId) = setOutstandingFifoSuffixAndGetNextOutstandingObjectId outstandingFifo st
+       in traverse (odisvSetNextOutstandingObjectId stateView) nextOutstandingObjectId $> st'
+
+    setOutstandingFifoSuffixAndGetNextOutstandingObjectId ::
+      StrictSeq objectId -> InboundSt objectId object -> (InboundSt objectId object, Maybe objectId)
+    setOutstandingFifoSuffixAndGetNextOutstandingObjectId outstandingFifoNew !st@(InboundSt{outstandingFifo = outstandingFifoOld}) =
+      ( st{outstandingFifo = outstandingFifoNew}
+      , case (outstandingFifoNew, outstandingFifoOld) of
+          (nextOutstandingObjectId Seq.:<| _, _) -> Just nextOutstandingObjectId
+          (Seq.Empty, _ Seq.:|> nextOutstandingObjectId) -> Just nextOutstandingObjectId
+          -- this function is never called with the current 'outstandingFifo' empty as far as i know.
+          (Seq.Empty, Seq.Empty) -> assert False Nothing
+      )
 
     selectObjectsToRequest ::
       InboundSt objectId object ->
@@ -219,17 +246,19 @@ objectDiffusionInbound
     -- An ID may already be too old when advertised, or become so while we
     -- wait for a validation context. Neither is a protocol violation. Skip its
     -- download, but acknowledge it only when all earlier FIFO entries are done.
-    skipTooOldObject :: InboundSt objectId object -> objectId -> InboundSt objectId object
+    skipTooOldObject :: InboundSt objectId object -> objectId -> m (InboundSt objectId object)
     skipTooOldObject !st objectId =
       let pendingObjects' = Map.insert objectId Nothing (pendingObjects st)
           (objectIdsToAck, outstandingFifo') =
             Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
-       in st
-            { canRequestNext = Set.delete objectId (canRequestNext st)
-            , pendingObjects = Foldable.foldl' (flip Map.delete) pendingObjects' objectIdsToAck
-            , outstandingFifo = outstandingFifo'
-            , numToAckOnNextReq = numToAckOnNextReq st + fromIntegral (Seq.length objectIdsToAck)
-            }
+       in setOutstandingFifoSuffix
+            outstandingFifo'
+            ( st
+                { canRequestNext = Set.delete objectId (canRequestNext st)
+                , pendingObjects = Foldable.foldl' (flip Map.delete) pendingObjects' objectIdsToAck
+                , numToAckOnNextReq = numToAckOnNextReq st + fromIntegral (Seq.length objectIdsToAck)
+                }
+            )
 
     -- Computes how many new IDs we can request so that receiving all of them
     -- won't make 'outstandingFifo' exceed 'maxFifoLength'.
@@ -250,8 +279,8 @@ objectDiffusionInbound
       InboundSt objectId object ->
       (objectId -> Bool) ->
       [objectId] ->
-      InboundSt objectId object
-    preAcknowledge !st _ collectedIds | null collectedIds = st
+      m (InboundSt objectId object)
+    preAcknowledge !st _ collectedIds | null collectedIds = pure $! st
     preAcknowledge !st poolHasObject collectedIds =
       let
         -- Divide the collected IDs in two parts: those that are already in the
@@ -290,18 +319,16 @@ objectDiffusionInbound
             (flip Map.delete)
             pendingObjects'
             objectIdsToAck
-
-        !st' =
-          st
+       in
+        setOutstandingFifoSuffix outstandingFifo''
+          . setOutstandingFifoExtension outstandingFifo'
+          $ st
             { canRequestNext = canRequestNext st <> Set.fromList notYetObtained
             , pendingObjects = pendingObjects''
-            , outstandingFifo = outstandingFifo''
             , numToAckOnNextReq =
                 numToAckOnNextReq st
                   + fromIntegral (Seq.length objectIdsToAck)
             }
-       in
-        st'
 
     go ::
       forall (n :: N).
@@ -309,7 +336,6 @@ objectDiffusionInbound
       InboundSt objectId object ->
       InboundStIdle n objectId object m ()
     go n !st = WithEffect $ do
-      publishOutstanding (outstandingFifo st)
       -- Check whether we should continue engaging in the protocol.
       ctrlMsg <- atomically controlMessageSTM
       traceWith tracer $
@@ -322,8 +348,9 @@ objectDiffusionInbound
         _continue -> do
           requestSelection <- atomically $ selectObjectsToRequest st
           case (requestSelection, n) of
-            (RequestSelectionTooOld objectId, _) ->
-              pure $! checkState (skipTooOldObject st objectId) & go n
+            (RequestSelectionTooOld objectId, _) -> do
+              !st' <- skipTooOldObject st objectId
+              pure $! checkState st' & go n
             -- We didn't pipeline any requests, so there are no replies in flight
             -- (nothing to collect).
             (RequestSelection requestablePrefix, Zero)
@@ -392,8 +419,9 @@ objectDiffusionInbound
           traceWith tracer $
             TraceObjectDiffusionInboundRecvControlMessage Terminate
           pure $! terminateAfterDrain Zero
-        Just (RequestSelectionTooOld objectId) ->
-          pure $! checkState (skipTooOldObject st objectId) & go Zero
+        Just (RequestSelectionTooOld objectId) -> do
+          !st' <- skipTooOldObject st objectId
+          pure $! checkState st' & go Zero
         Just (RequestSelection requestablePrefix) -> do
           traceWith tracer $ TraceObjectDiffusionInboundUnblocked blockedId
           pure $!
@@ -441,17 +469,13 @@ objectDiffusionInbound
                 Set.fromList (toList alreadyKnownIds)
             )
 
-        -- Publish received IDs before checking the pool: even if all of them
-        -- are already present, an empty FIFO is not proof of the server front.
-        publishOutstanding (outstandingFifo st <> Seq.fromList collectedIds)
-
         -- We extend our outstanding FIFO with the newly received objectIds by
         -- calling 'preAcknowledge' which will also pre-emptively acknowledge the
         -- objectIds that we already have in the pool and thus don't need to
         -- request.
         let !st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
         poolHasObject <- atomically $ opwHasObject
-        let !st'' = preAcknowledge st' poolHasObject collectedIds
+        !st'' <- preAcknowledge st' poolHasObject collectedIds
         pure $! checkState st'' & go n
       CollectObjects requestedIds collectedObjects -> WithEffect $ do
         let requestedIdsSet = Set.fromList requestedIds
@@ -512,14 +536,16 @@ objectDiffusionInbound
           TraceObjectDiffusionInboundAddedObjects
             (NumObjectsProcessed (fromIntegral $ length objectsToAck))
 
-        let !st' =
-              st
+        !st' <-
+          setOutstandingFifoSuffix
+            outstandingFifo'
+            ( st
                 { pendingObjects = pendingObjects''
-                , outstandingFifo = outstandingFifo'
                 , numToAckOnNextReq =
                     numToAckOnNextReq st
                       + fromIntegral (Seq.length objectIdsToAck)
                 }
+            )
         pure $! checkState st' & go n
 
     goReqObjectIdsBlocking ::
