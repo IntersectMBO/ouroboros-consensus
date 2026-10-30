@@ -69,3 +69,10 @@ instance
         (\(WrapLedgerConfig cfg') (Current _ (Flip ls)) -> K (getMinCertificationGap cfg' ls))
         (distribLedgerConfig (State.epochInfoLedger cfg hfState) cfg)
         (Telescope.tip tele)
+
+  getLeiosVoteTiming (HardForkLedgerState (HardForkState tele)) =
+    hcollapse $
+      hcmap
+        (Proxy @HasLeiosVoting)
+        (\(Current _ (Flip ls)) -> K (getLeiosVoteTiming ls))
+        (Telescope.tip tele)

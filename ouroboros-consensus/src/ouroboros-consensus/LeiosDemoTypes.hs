@@ -1508,6 +1508,10 @@ class HasLeiosVoting blk where
   getMinCertificationGap :: LedgerConfig blk -> LedgerState blk EmptyMK -> Maybe SlotNo
   getMinCertificationGap _ _ = Nothing
 
+  -- | When voters may vote for an EB announced on this ledger state's chain.
+  getLeiosVoteTiming :: LedgerState blk EmptyMK -> LeiosVoteTiming
+  getLeiosVoteTiming _ = defaultLeiosVoteTiming
+
 -- * Tracing
 
 messageLeiosNotifyToObject ::
@@ -2716,6 +2720,29 @@ maxTxsPerEb =
   framing = fromIntegral $ unByteSize32 encodeLeiosEbMaxFramingSize
 
   minItemSize = fromIntegral $ unByteSize32 (encodeLeiosEbItemSize (ByteSize32 0))
+
+-- | When an EB's voters may vote, measured from its announcing slot's onset.
+data LeiosVoteTiming = LeiosVoteTiming
+  { leiosVoteOpens :: !NominalDiffTime
+  -- ^ The equivocation-detection wait, @3 * L_hdr@.
+  , leiosVoteWindow :: !NominalDiffTime
+  -- ^ How long after opening votes are still accepted, @L_vote@.
+  }
+  deriving stock (Eq, Show)
+
+-- | The timing of eras without Leios protocol parameters.
+defaultLeiosVoteTiming :: LeiosVoteTiming
+defaultLeiosVoteTiming = LeiosVoteTiming{leiosVoteOpens = 3, leiosVoteWindow = 4}
+
+-- | The vote timing the protocol parameters set.
+leiosVoteTiming :: DijkstraEraPParams era => PParams era -> LeiosVoteTiming
+leiosVoteTiming pp =
+  LeiosVoteTiming
+    { leiosVoteOpens = 3 * seconds (pp ^. ppLeiosAnnouncementPeriodLengthL)
+    , leiosVoteWindow = seconds (pp ^. ppLeiosVotePeriodLengthL)
+    }
+ where
+  seconds = (/ 1000) . fromIntegral . unMilliseconds32
 
 -- | Slots between an EB's announcement and the earliest block that may certify
 -- it: the announcement, voting and diffusion periods must all have elapsed.

@@ -109,7 +109,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (minCertificationGap)
+import LeiosDemoTypes (leiosVoteTiming, minCertificationGap)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -971,6 +971,8 @@ instance HasLeiosVoting (ShelleyBlock (Praos2 c) DijkstraEra) where
       . minCertificationGap (shelleyLedgerSlotLength cfg)
       . getPParams
       . shelleyLedgerState
+
+  getLeiosVoteTiming = leiosVoteTiming . getPParams . shelleyLedgerState
 
   -- The ledger already seats the committee, on the stake snapshot, at the era
   -- boundary; take it from there rather than selecting a second time here.
