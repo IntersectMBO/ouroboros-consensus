@@ -57,7 +57,6 @@ import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
@@ -366,18 +365,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPerasVotingViewHandle =
                 PerasVotingViewHandle $ \roundNo ->
                   getEnvSTM h $
-                    Query.getPerasVotingView
-                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
-                      roundNo
+                    Query.getPerasVotingView roundNo
             , getPerasCertInclusionViewHandle =
                 PerasCertInclusionViewHandle $ \roundNo ->
                   getEnvSTM h $
                     Query.getPerasCertInclusionView roundNo
             , getTimeResolutionContextHandle =
                 TimeResolutionContextHandle $
-                  getEnvSTM h $
-                    Query.getTimeResolutionContext
-                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
+                  getEnvSTM h Query.getTimeResolutionContext
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
