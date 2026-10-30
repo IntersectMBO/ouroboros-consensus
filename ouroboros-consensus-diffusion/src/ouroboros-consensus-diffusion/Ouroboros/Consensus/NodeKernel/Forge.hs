@@ -117,8 +117,6 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
-        traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
-
         selectedTxs <-
           getTransactionsToForge
             cfg
@@ -127,6 +125,11 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
             tickedLedgerState
             forker
             Nothing -- NOTE: no Peras cert to include for now
+
+        -- Trace only once the mempool's computation is done, so that the time
+        -- it takes is attributed to the mempool snapshot.
+        traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+
         let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
