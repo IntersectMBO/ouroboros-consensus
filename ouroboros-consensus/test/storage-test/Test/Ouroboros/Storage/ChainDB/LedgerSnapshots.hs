@@ -212,6 +212,8 @@ data TestSetup = TestSetup
   , tsPerm :: Permutation
   -- ^ Shuffle the blocks when adding them to the ChainDB, see 'tsBlocksToAdd'.
   , tsTestSnapshotPolicyArgs :: TestSnapshotPolicyArgs
+  , tsDelaySnapshots :: Bool
+  -- ^ See 'ChainDB.cdbsDelaySnapshots'.
   }
   deriving stock Show
 
@@ -321,6 +323,7 @@ instance Arbitrary TestSetup where
 
     tsPerm <- arbitrary
     tsTestSnapshotPolicyArgs <- arbitrary
+    tsDelaySnapshots <- arbitrary
     pure
       TestSetup
         { tsSecParam = SecurityParam $ unsafeNonZero $ fromIntegral k
@@ -328,6 +331,7 @@ instance Arbitrary TestSetup where
         , tsForks
         , tsPerm
         , tsTestSnapshotPolicyArgs
+        , tsDelaySnapshots
         }
 
   shrink testSetup@TestSetup{tsSecParam, tsMainChain, tsForks} =
@@ -408,6 +412,10 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
                     { LedgerDB.lgrBackendArgs = lgrDbBackendArgs
                     , LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
                     }
+              , ChainDB.cdbsArgs =
+                  (ChainDB.cdbsArgs a)
+                    { ChainDB.cdbsDelaySnapshots = pure $ tsDelaySnapshots testSetup
+                    }
               }
       pure $ updLgrDbArgs $ ChainDB.updateTracer cdbTracer cdbArgs
     (_, chainDB) <-
@@ -459,6 +467,20 @@ checkTestOutcome testSetup testOutcome =
                     actual === expect
                 else
                   property $ actual `Set.isSubsetOf` expect
+      , counterexample "Requests not written after the delay they were given..." $
+          conjoin
+            [ counterexample ("...of " <> show delay <> ", but after " <> show waited) $
+                conjoin
+                  [ waited === delay
+                  , if tsDelaySnapshots
+                      then
+                        counterexample ("...which is not in " <> show tspaDelaySnapshotRange) $
+                          minimumDelay tspaDelaySnapshotRange `le` delay
+                            .&&. delay `le` maximumDelay tspaDelaySnapshotRange
+                      else delay === 0
+                  ]
+            | (delay, waited) <- servedRequests
+            ]
       ]
  where
   TestSetup
@@ -470,8 +492,27 @@ checkTestOutcome testSetup testOutcome =
         , tspaInterval
         , tspaOffset
         , tspaRateLimit
+        , tspaDelaySnapshotRange
         }
+    , tsDelaySnapshots
     } = testSetup
+
+  -- The delay each served request was given, and how long it took from then
+  -- until it was completed.
+  servedRequests :: [(DiffTime, DiffTime)]
+  servedRequests = go toutTrace
+   where
+    go = \case
+      (t1, ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent (SnapshotRequestDelayed _ delay _)))
+        : rest
+          | (t2, _) : rest' <- dropWhile (not . isCompleted . snd) rest ->
+              (delay, diffTime t2 t1) : go rest'
+      _ : rest -> go rest
+      [] -> []
+
+    isCompleted = \case
+      ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent SnapshotRequestCompleted) -> True
+      _ -> False
 
   immChain = AF.dropNewest (fromIntegral k) tsMainChain
 
@@ -522,4 +563,5 @@ checkTestOutcome testSetup testOutcome =
 
   withLabelling =
     tabulate "# actual snapshots" [show (length actualSnapshots)]
+      . tabulate "delay snapshots" [show tsDelaySnapshots]
       . tabulate "length of immutable chain" [show (AF.anchorToBlockNo toutImmutableTip)]
