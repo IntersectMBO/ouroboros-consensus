@@ -93,6 +93,13 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- current LoE fragment.
   , cdbsSnapshotDelayRNG :: HKD f StdGen
   -- ^ RNG used to randomly determine the duration of snapshot delays
+  , cdbsDelaySnapshots :: m Bool
+  -- ^ Whether to wait out the randomised delay ('onDiskSnapshotDelayRange')
+  -- before writing a requested snapshot, or to write it right away.
+  --
+  -- Asked every time a request is served. It may block, until the answer is
+  -- known; the request is held, with the ledger state it pins, in the
+  -- meantime.
   }
 
 -- | Default arguments
@@ -128,6 +135,7 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsSnapshotDelayRNG = noDefault
+    , cdbsDelaySnapshots = pure True
     }
 
 -- | Default arguments
