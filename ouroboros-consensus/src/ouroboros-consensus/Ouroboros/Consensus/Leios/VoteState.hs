@@ -80,6 +80,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
   , NotifyLog
   , appendNotifyLog
+  , notifyLogPruneCadence
   )
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..), RankingBlockHash)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -390,7 +391,7 @@ pruneVotes st now = do
   writeTVar (votes st) (MkVotes (max now votesPrunedAt) unexpired)
   pure expired
 
--- | Prune the votes every second; see 'pruneVotes'.
+-- | Prune the votes every 'notifyLogPruneCadence'; see 'pruneVotes'.
 votePruner :: IOLike m => VoteState m blk -> SystemTime m -> m Void
 votePruner st systemTime = forever $ do
   now <- systemTimeCurrent systemTime
@@ -404,7 +405,7 @@ votePruner st systemTime = forever $ do
       , Map.notMember rbHash certified
       ]
   for_ missed $ \(rbHash, weight) -> traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
-  threadDelay 1
+  threadDelay (nominalDelay notifyLogPruneCadence)
 
 {-------------------------------------------------------------------------------
   Certificates
