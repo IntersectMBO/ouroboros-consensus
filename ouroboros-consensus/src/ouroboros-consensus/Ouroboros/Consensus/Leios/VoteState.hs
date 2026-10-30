@@ -185,7 +185,7 @@ addVote st systemTime accepted = do
   -- NOTE: 'checkLeiosVotes' just rejected votes earlier than the
   -- clock skew, so this waits at most 'InFutureCheck.ClockSkew'.
   let early = voteFrom voteWindow `diffRelTime` received
-  when (early >= 0) $ do
+  when (early > 0) $ do
     traceWith (tracer st) (TraceLeiosVoteAwaitingWindow acceptedVote early)
     threadDelay (nominalDelay early)
   seen <- atomically $ hasSeenVote st accepted
