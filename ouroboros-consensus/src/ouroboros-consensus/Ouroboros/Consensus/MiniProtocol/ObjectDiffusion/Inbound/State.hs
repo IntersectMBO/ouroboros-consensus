@@ -147,7 +147,7 @@ bracketObjectDiffusionInbound handles peer body = do
     $ ObjectDiffusionInboundStateView
       { odisvSignalCaughtUp =
           updateState odiState $ \s ->
-              s{nextOutstandingRoundNumber = CaughtUp}
+            s{nextOutstandingRoundNumber = CaughtUp}
       , odisvSetNextOutstandingObjectId = \roundNo ->
           updateState odiState $ \s ->
             s{nextOutstandingRoundNumber = NextOutstandingRoundNumber roundNo}

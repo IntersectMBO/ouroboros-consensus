@@ -42,7 +42,7 @@ import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundStateView (odisvSignalCaughtUp, odisvSetNextOutstandingObjectId)
+  ( ObjectDiffusionInboundStateView (odisvSetNextOutstandingObjectId, odisvSignalCaughtUp)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
@@ -202,20 +202,14 @@ objectDiffusionInbound
     -- `outstandingFifo` directly, via record update for example.
     setOutstandingFifoSuffix ::
       StrictSeq objectId -> InboundSt objectId object -> m (InboundSt objectId object)
-    setOutstandingFifoSuffix outstandingFifo !st =
-      let (!st', nextOutstandingObjectId) = setOutstandingFifoSuffixAndGetNextOutstandingObjectId outstandingFifo st
-       in traverse (odisvSetNextOutstandingObjectId stateView) nextOutstandingObjectId $> st'
-
-    setOutstandingFifoSuffixAndGetNextOutstandingObjectId ::
-      StrictSeq objectId -> InboundSt objectId object -> (InboundSt objectId object, Maybe objectId)
-    setOutstandingFifoSuffixAndGetNextOutstandingObjectId outstandingFifoNew !st@(InboundSt{outstandingFifo = outstandingFifoOld}) =
-      ( st{outstandingFifo = outstandingFifoNew}
-      , case (outstandingFifoNew, outstandingFifoOld) of
-          (nextOutstandingObjectId Seq.:<| _, _) -> Just nextOutstandingObjectId
-          (Seq.Empty, _ Seq.:|> nextOutstandingObjectId) -> Just nextOutstandingObjectId
+    setOutstandingFifoSuffix outstandingFifoNew !st@(InboundSt{outstandingFifo = outstandingFifoOld}) =
+      ( case (outstandingFifoNew, outstandingFifoOld) of
+          (nextOutstandingObjectId Seq.:<| _, _) -> odisvSetNextOutstandingObjectId stateView nextOutstandingObjectId
+          (Seq.Empty, _ Seq.:|> nextOutstandingObjectId) -> odisvSetNextOutstandingObjectId stateView nextOutstandingObjectId
           -- this function is never called with the current 'outstandingFifo' empty as far as i know.
-          (Seq.Empty, Seq.Empty) -> assert False Nothing
+          (Seq.Empty, Seq.Empty) -> assert False (pure ())
       )
+        $> st{outstandingFifo = outstandingFifoNew}
 
     selectObjectsToRequest ::
       InboundSt objectId object ->
