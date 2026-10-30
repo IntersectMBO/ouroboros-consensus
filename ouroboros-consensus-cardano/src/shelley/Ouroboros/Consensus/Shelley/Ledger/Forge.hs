@@ -1,7 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
@@ -13,6 +16,7 @@ import qualified Cardano.Ledger.Core as SL
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
+import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
 import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
@@ -21,6 +25,7 @@ import Data.Foldable (asum)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
+import Data.Typeable (Typeable, eqT)
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -35,7 +40,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
-import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (ebTxBytes))
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -97,7 +102,10 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe ForgedLeiosEb)
     forgedEb =
       pureLeiosOnly @proto $
-        forgeLeiosEb . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
+        -- This switch on Dijkstra is only needed because we don't have a
+        -- era-polymorphic "serialize to block" function.
+        maybeDijkstra @era $
+          forgeLeiosEb . fmap extractTx <$> nonEmpty fbEbTxs
 
     -- TODO Forging does not yet certify endorser blocks.
     leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
@@ -124,3 +132,14 @@ forgeShelleyBlock
         . castHash
         . getTipHash
         $ fbCurrentTickedLedgerState
+
+-- | Maybe provide a value when @era@ is @DijkstraEra@.
+maybeDijkstra ::
+  forall era a.
+  Typeable era =>
+  (era ~ DijkstraEra => Maybe a) ->
+  Maybe a
+maybeDijkstra ma =
+  case eqT @era @DijkstraEra of
+    Nothing -> Nothing
+    Just Refl -> ma

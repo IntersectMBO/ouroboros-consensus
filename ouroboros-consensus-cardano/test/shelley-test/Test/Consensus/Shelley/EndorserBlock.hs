@@ -23,7 +23,6 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (ebTxBytes))
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)

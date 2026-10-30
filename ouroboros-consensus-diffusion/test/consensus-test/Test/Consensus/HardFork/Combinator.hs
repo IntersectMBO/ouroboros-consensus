@@ -139,7 +139,12 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
       }
 
   mkForgedLeiosEb :: NonEmpty (GenTx BlockA) -> ForgedLeiosEb
-  mkForgedLeiosEb = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
+  mkForgedLeiosEb txs = do
+    let forgedEbTxs = for txs $ \(TxA (TxId n) _) -> serialize' n
+    ForgedLeiosEb
+      { forgedEbBody = endorserBlockFromTxBytes forgedEbTxs
+      , forgedEbTxs
+      }
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB

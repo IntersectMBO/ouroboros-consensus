@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
@@ -43,10 +44,6 @@ module Ouroboros.Consensus.Leios.Types
   , TxOffset
   , mkEndorserBlock
   , endorserBlockFromTxBytes
-  , ForgedLeiosEb
-  , forgedEbBody
-  , forgedEbTxs
-  , forgeLeiosEb
   , endorserBlockHash
   , endorserBlockReferences
   , encodeEndorserBlock
@@ -56,6 +53,12 @@ module Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
+  , ForgedLeiosEb
+  , forgedEbBody
+  , forgedEbTxs
+  , forgeLeiosEb
+  , serializeTxForLeios
+  , deserializeTxForLeios
 
     -- * Header checks
   , milliseconds32ToNominalDiffTime
@@ -79,16 +82,20 @@ import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
+  , DecoderError
   , EncCBOR (..)
   , FullByteString (..)
   , Version
+  , decodeFullAnnotator
+  , serialize'
   , toPlainDecoder
   , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
-import Cardano.Ledger.Core (eraProtVerLow)
+import Cardano.Ledger.Core (TopTx, Tx, eraProtVerLow)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Cardano.Ledger.Dijkstra.Block.Endorser as Ledger
+import Cardano.Ledger.Dijkstra.Tx (Tx (..), decodeDijkstraTopTxInBlock, toCBORForBlockInclusion)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockHeader
   , EraIndependentEbReferences
@@ -313,12 +320,31 @@ data ForgedLeiosEb = ForgedLeiosEb
 -- | The endorser block that references the given transactions, in the given
 -- order. The reference to a transaction holds the Blake2b-256 hash and the
 -- length of its bytes.
-forgeLeiosEb :: NonEmpty ByteString -> ForgedLeiosEb
-forgeLeiosEb txBytes =
+forgeLeiosEb :: NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
+forgeLeiosEb txs =
   ForgedLeiosEb
     { forgedEbBody = endorserBlockFromTxBytes txBytes
     , forgedEbTxs = txBytes
     }
+ where
+  txBytes = serializeTxForLeios <$> txs
+
+-- | A Dijkstra tx as an endorser block carries it. Since Dijkstra, this is a
+-- special block-body encoding which includes an @is_valid@ flag. This is
+-- deliberately monomorphic in the only era that supports Leios.
+serializeTxForLeios :: Tx TopTx DijkstraEra -> ByteString
+serializeTxForLeios =
+  serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
+
+-- | Decode a transaction as it was endorsed through an endorser block. This is
+-- deliberately monomorphic in the only era that supports Leios.
+deserializeTxForLeios :: ByteString -> Either DecoderError (Tx TopTx DijkstraEra)
+deserializeTxForLeios =
+  decodeFullAnnotator
+    (eraProtVerLow @DijkstraEra)
+    "Leios Tx"
+    (fmap MkDijkstraTx <$> decodeDijkstraTopTxInBlock)
+    . BSL.fromStrict
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
