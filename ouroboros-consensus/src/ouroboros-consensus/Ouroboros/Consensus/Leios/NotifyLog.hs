@@ -187,6 +187,10 @@ notifyLogPruneCadence = 1
 -- of each announcement of it that the log still holds, and only then: a
 -- downstream peer that reads the log has then received the announcement before
 -- the offer. Each offer is worth relaying exactly as long as its announcement.
+--
+-- The node may announce an acquisition again ('LeiosEbNotification'), so this
+-- skips a point the log already holds that offer at: a downstream peer
+-- disconnects a peer that repeats an offer.
 leiosOfferRelay ::
   IOLike m =>
   LeiosAcquisitions m ->
@@ -207,12 +211,16 @@ leiosOfferRelay acquisitions notifyLog = do
               , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
               , announcementEbHash (ancAnnouncement anc) == ebHash
               ]
+        bodyOffered = Set.fromList [p | NotifyBlockOffer p _size <- Map.elems entries]
+        closureOffered = Set.fromList [p | NotifyBlockTxsOffer p <- Map.elems entries]
     sequence_ $ case acquired of
       AcquiredEb point size ->
         [ appendNotifyLog notifyLog (NotifyBlockOffer p size) expires
         | (p, expires) <- announced (pointEbHash point)
+        , Set.notMember p bodyOffered
         ]
       AcquiredEbTxs point ->
         [ appendNotifyLog notifyLog (NotifyBlockTxsOffer p) expires
         | (p, expires) <- announced (pointEbHash point)
+        , Set.notMember p closureOffered
         ]
