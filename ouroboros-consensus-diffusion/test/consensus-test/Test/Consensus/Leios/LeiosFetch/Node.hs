@@ -13,7 +13,7 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (forM_, replicateM, void)
+import Control.Monad (forM_, replicateM, unless, void)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -79,6 +79,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( ExnLeiosNotifyInvalidOffer (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
   , leiosNotifyServerPeerLookahead
@@ -97,10 +100,14 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type as LN
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
-import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
+import Ouroboros.Consensus.Network.LeiosNotify
+  ( leiosNotifyMiniProtocolNum
+  , runLookaheadFixedSenderPeerWithLimits
+  )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
@@ -130,6 +137,7 @@ import Test.Consensus.Leios.TestBlock
   )
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
@@ -274,6 +282,29 @@ tests =
                   , AcquiredClosure (oneTxEbPoint maxEbBodySize)
                   ]
               )
+    , testCase
+        "the node selects a block certifying an endorser block once the block arrives again after a restart forgot it"
+        $ runSimFinishing nodeReselectsForgotten
+          >>= (@?= ((1, True), (True, 0, lastPoint forgottenChain)))
+    , testCase
+        "the node relays an announcement to a peer that connects after it, before offering that peer the endorser block"
+        $ runSimFinishing nodeAnnouncesToLateListener
+          >>= ( @?=
+                  [ RelayedAnnouncement
+                  , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                  , RelayedBlockTxsOffer fetchedPoint
+                  ]
+              )
+    , testCase
+        "the node disconnects a peer that offers an endorser block's body again once the node has requested it"
+        $ runSimFinishing nodeDisconnectsReofferAfterRequest
+          >>= (@?= Just (show (ExnLeiosRepeatedBlockOffer fetchedPoint)))
+    , testCase
+        "the node does not offer the closure of an endorser block that misstates the size of a transaction the node already holds"
+        $ runSimFinishing (nodeOffersLyingEb TxBeforeBody) >>= (@?= (True, False))
+    , testCase
+        "the node does not offer the closure of an endorser block that misstates the size of a transaction the node fetches afterwards"
+        $ runSimFinishing (nodeOffersLyingEb BodyBeforeTx) >>= (@?= (True, False))
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
         runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
     , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
@@ -799,6 +830,256 @@ nodeFetchClientFails ebAndTxs = withNode $ \nut -> do
     atomically client <&> \case
       Left e -> Just (show e)
       Right _ -> Nothing
+
+-- | A chain without certificates, on a fork of its own, longer than
+-- 'certifyingFetched''s.
+betterChain :: [LeiosTestBlock]
+betterChain = take 3 $ iterate successorLeiosBlock (firstLeiosBlock 1)
+
+-- | 'announcingFetched' and 'certifyingFetched', and then enough blocks to make
+-- the chain longer than 'betterChain'.
+forgottenChain :: [LeiosTestBlock]
+forgottenChain = announcingFetched : take 3 (iterate successorLeiosBlock certifyingFetched)
+
+-- | Before a restart, the node adds 'announcingFetched' and
+-- 'certifyingFetched', which it parks, since no peer offers 'fetchedEb', and
+-- then 'betterChain', which it selects. After the restart, a rival peer
+-- announces 'otherEbHash' for the same election, which so takes its focus. Then
+-- a holder announces 'fetchedEb', offers it, and serves it, and the node adds
+-- 'forgottenChain'.
+--
+-- Before the restart: how many endorser blocks the ChainDB says are certified,
+-- and whether it holds 'certifyingFetched'. After it: whether the ChainDB
+-- forgot 'certifyingFetched', how many endorser blocks it then said are
+-- certified, and the tip of the node's selection, once that is the last block
+-- of 'forgottenChain' or ten seconds have passed.
+nodeReselectsForgotten :: IOSim s ((Int, Bool), (Bool, Int, Point LeiosTestBlock))
+nodeReselectsForgotten = do
+  nodeDBs <- emptyNodeDBs
+  leiosDb <- newLeiosDBInMemory
+  beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+    -- Let the slots of the chains' blocks pass, so none is from the future.
+    threadDelay 20
+    addBlocks nut [announcingFetched, certifyingFetched]
+    addBlocks nut betterChain
+    (,) <$> certifiedCount nut <*> holds nut certifyingFetched
+  afterRestart <- withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+    forgotten <- not <$> holds nut certifyingFetched
+    certifiedAtStart <- certifiedCount nut
+    heardByRival <- newTVarIO []
+    rivalNotifications <- newTQueueIO
+    holderNotifications <- newTQueueIO
+    atomically $ do
+      writeTQueue rivalNotifications (MsgLeiosBlockAnnouncement (ltbHeader announcingOther))
+      mapM_ (writeTQueue holderNotifications) (announcingAndOffering fetchedEb announcingFetched)
+    let rival =
+          EnvPeer
+            { epChainSyncServer = quietChainSyncServer
+            , epLeiosNotifyServer = feedingLeiosNotifyServer nut rivalNotifications
+            , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut heardByRival)
+            , epLeiosFetchServer = silentLeiosFetchServer nut
+            , epLeiosFetchClient = Nothing
+            }
+        holder =
+          EnvPeer
+            { epChainSyncServer = quietChainSyncServer
+            , epLeiosNotifyServer = feedingLeiosNotifyServer nut holderNotifications
+            , epLeiosNotifyClient = Nothing
+            , epLeiosFetchServer = servingFetched nut
+            , epLeiosFetchClient = Nothing
+            }
+    withNodeVsEnvConnection nut (PeerAddr 1) rival $ \_rivalConn -> do
+      -- The node relays an announcement only once it has taken it in.
+      atomically $ readTVar heardByRival >>= check . not . null
+      withNodeVsEnvConnection nut (PeerAddr 2) holder $ \_holderConn -> do
+        addBlocks nut forgottenChain
+        (,,) forgotten certifiedAtStart <$> awaitTip nut (lastPoint forgottenChain)
+  pure (beforeRestart, afterRestart)
+ where
+  certifiedCount nut = Map.size <$> atomically (ChainDB.getLeiosCertifiedEbs (nutChainDB nut))
+  holds nut blk = atomically $ ($ blockPoint blk) <$> ChainDB.getIsFetched (nutChainDB nut)
+
+-- | The holder announces 'fetchedEb', and the node relays the announcement,
+-- before the listener connects. Only then does the holder offer 'fetchedEb' and
+-- serve it. The first three notifications the node relays to the listener.
+nodeAnnouncesToLateListener :: IOSim s [Relayed]
+nodeAnnouncesToLateListener = withNode $ \nut -> do
+  heardByHolder <- newTVarIO []
+  heardByListener <- newTVarIO []
+  notifications <- newTQueueIO
+  atomically $
+    writeTQueue notifications (MsgLeiosBlockAnnouncement (ltbHeader announcingFetched))
+  let holder =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut heardByHolder)
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+      listener =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = \_chan -> atomically retry
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut heardByListener)
+          , epLeiosFetchServer = silentLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) holder $ \_holderConn -> do
+    -- The node relays an announcement only once it has taken it in.
+    atomically $ readTVar heardByHolder >>= check . not . null
+    withNodeVsEnvConnection nut (PeerAddr 2) listener $ \_listenerConn -> do
+      atomically $
+        mapM_
+          (writeTQueue notifications)
+          [ MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+          , MsgLeiosBlockTxsOffer fetchedPoint
+          ]
+      atomically $ readTVar heardByListener >>= \rs -> take 3 rs <$ check (length rs >= 3)
+
+-- | The peer announces 'fetchedEb' and offers its body, and once the node has
+-- requested the body, which the peer never sends, offers it again. Why the
+-- node's LeiosNotify client failed, if it did.
+nodeDisconnectsReofferAfterRequest :: IOSim s (Maybe String)
+nodeDisconnectsReofferAfterRequest = withNode $ \nut -> do
+  requested <- newTVarIO False
+  notifications <- newTQueueIO
+  let offer ::
+        Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle
+      offer = MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+      envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = withholding nut requested
+          , epLeiosFetchClient = Nothing
+          }
+  atomically $
+    mapM_ (writeTQueue notifications) [MsgLeiosBlockAnnouncement (ltbHeader announcingFetched), offer]
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+    atomically $ readTVar requested >>= check
+    atomically $ writeTQueue notifications offer
+    client <-
+      maybe (throwIO $ userError "the node does not run a LeiosNotify client") pure $
+        Map.lookup leiosNotifyMiniProtocolNum (connNodeInitiators conn)
+    atomically client <&> \case
+      Left e -> Just (show e)
+      Right _ -> Nothing
+
+-- | A LeiosFetch server that notes that it was sent a request, and never
+-- answers it.
+withholding ::
+  NodeUnderTest (IOSim s) ->
+  StrictTVar (IOSim s) Bool ->
+  Channel (IOSim s) ByteString ->
+  IOSim s ()
+withholding nut requested chan =
+  fst
+    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer withhold)
+ where
+  withhold = MkLeiosFetchRequestHandler $ \_request -> do
+    atomically $ writeTVar requested True
+    atomically retry
+
+-- | Which arrives first: 'honestEb''s closure, which holds 'sharedTx', or the
+-- body of 'lyingEb', which names it at the wrong size.
+data LieArrival = TxBeforeBody | BodyBeforeTx
+
+-- | A transaction that 'honestEb' and 'lyingEb' both name.
+sharedTx :: LeiosTx
+sharedTx = MkLeiosTx (BS.replicate 50 4)
+
+-- | Names 'sharedTx' at its size.
+honestEb :: EndorserBlock
+honestEb = mkEndorserBlock [(hashLeiosTx sharedTx, 50)]
+
+-- | Names 'sharedTx' at one byte.
+lyingEb :: EndorserBlock
+lyingEb = mkEndorserBlock [(hashLeiosTx sharedTx, 1)]
+
+-- | Announce 'honestEb' and 'lyingEb', in elections of their own.
+announcingHonest, announcingLying :: LeiosTestBlock
+announcingHonest =
+  setAnnouncement
+    (endorserBlockHash honestEb)
+    (encodeEndorserBlockSize honestEb)
+    (successorLeiosBlock (firstLeiosBlock 4))
+announcingLying =
+  setAnnouncement
+    (endorserBlockHash lyingEb)
+    (encodeEndorserBlockSize lyingEb)
+    (iterate successorLeiosBlock (firstLeiosBlock 5) !! 3)
+
+-- | A listener connects, and then a holder and a liar. The holder announces
+-- 'honestEb', offers its body and closure, and serves both. The liar announces
+-- 'lyingEb', offers only its body, and serves only that. Each starts once the
+-- node has acquired what the other offered, in the order the argument says.
+-- Whether the node offered the listener 'lyingEb''s body, and its closure.
+nodeOffersLyingEb :: LieArrival -> IOSim s (Bool, Bool)
+nodeOffersLyingEb arrival = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  heard <- newTVarIO []
+  holderNotifications <- newTQueueIO
+  liarNotifications <- newTQueueIO
+  let lyingPoint = MkLeiosPoint (blockSlot announcingLying) (endorserBlockHash lyingEb)
+      listener =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = \_chan -> atomically retry
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut heard)
+          , epLeiosFetchServer = silentLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
+          }
+      holder =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut holderNotifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = serving honestEb (V.singleton sharedTx) nut
+          , epLeiosFetchClient = Nothing
+          }
+      liar =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut liarNotifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = serving lyingEb V.empty nut
+          , epLeiosFetchClient = Nothing
+          }
+      servesTheTx = do
+        atomically $
+          mapM_ (writeTQueue holderNotifications) (announcingAndOffering honestEb announcingHonest)
+        awaitAcquired next $
+          AcquiredClosure (MkLeiosPoint (blockSlot announcingHonest) (endorserBlockHash honestEb))
+      servesTheLie = do
+        atomically $
+          mapM_
+            (writeTQueue liarNotifications)
+            [ MsgLeiosBlockAnnouncement (ltbHeader announcingLying)
+            , MsgLeiosBlockOffer lyingPoint (encodeEndorserBlockSize lyingEb)
+            ]
+        awaitAcquired next (AcquiredBody lyingPoint)
+  -- Let the slots of the announcing blocks pass, so neither is from the future.
+  threadDelay 6
+  withNodeVsEnvConnection nut (PeerAddr 1) listener $ \_listenerConn ->
+    withNodeVsEnvConnection nut (PeerAddr 2) holder $ \_holderConn ->
+      withNodeVsEnvConnection nut (PeerAddr 3) liar $ \_liarConn -> do
+        case arrival of
+          TxBeforeBody -> servesTheTx >> servesTheLie
+          BodyBeforeTx -> servesTheLie >> servesTheTx
+        threadDelay 5
+        relays <- readTVarIO heard
+        pure
+          ( RelayedBlockOffer lyingPoint (encodeEndorserBlockSize lyingEb) `elem` relays
+          , RelayedBlockTxsOffer lyingPoint `elem` relays
+          )
+
+-- | Wait until the node announces this acquisition.
+awaitAcquired :: STM (IOSim s) LeiosEbNotification -> Acquired -> IOSim s ()
+awaitAcquired next acquired = do
+  got <- acquiredOf <$> atomically next
+  unless (got == acquired) $ awaitAcquired next acquired
 
 -- | The block's announcement of the endorser block, and offers of its body and
 -- its closure there, at its size.
