@@ -26,8 +26,11 @@ import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.List (nub, sortOn)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -41,7 +44,10 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxOffset
   , encodeEndorserBlockSize
+  , endorserBlockHash
   , endorserBlockReferences
+  , forgeLeiosEb
+  , forgedEbBody
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -53,6 +59,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , Promise (..)
   , TraceLeiosDb (..)
   , newLeiosDBInMemory
+  , storeForgedEb
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
   , withReader
@@ -93,7 +100,7 @@ tests =
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
          , -- InMemory only: on SQLite a failed write also stops the writer, which
            -- is linked to the thread that opened the database.
-           testCase "InMemory: writing a body for an unwritten point fails, as on SQLite" $
+           testCase "InMemory: writing a body for an unwritten point fails, without an await" $
              withFreshDb InMemory test_ebBodyWithoutPointFails
          , -- InMemory only: the SQLite implementation sweeps in the background.
            testGroup
@@ -247,6 +254,11 @@ mkTestGroups impl =
       , testProperty "partial txs returns Nothing" $ prop_completedEbPartialTxs impl
       , testProperty "no body returns Nothing" $ prop_completedEbNoBody impl
       ]
+  , testGroup
+      "storeForgedEb"
+      [ testProperty "stores the point, the body and the txs of the endorser block" $
+          prop_storeForgedEbThenLookup impl
+      ]
   ]
 
 -- * QuickCheck generators
@@ -280,6 +292,12 @@ genEb numTxs = do
 -- | Generate a LeiosPoint and EndorserBlock together with the given number of transactions.
 genPointAndEb :: Int -> Gen (LeiosPoint, EndorserBlock)
 genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
+
+-- | Transaction bytes, distinct from each other.
+genDistinctTxBytes :: Gen (NonEmpty BS.ByteString)
+genDistinctTxBytes = NE.nub <$> ((:|) <$> genTxBytes <*> listOf genTxBytes)
+ where
+  genTxBytes = chooseInt (1, 32) >>= fmap BS.pack . vector
 
 -- | Bytes for the tx at the given offset of the EB: of its declared size, as
 -- a write must be to be accepted, and distinct per offset.
@@ -718,10 +736,11 @@ test_multipleSlotsSameHash db = do
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
 -- | A body can only be written for a point already written, by 'writeEbPoint'
--- on the announcement path.
+-- on the announcement path. The write fails at submission, so a caller that
+-- does not 'await' its 'Promise' also sees the failure.
 test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
 test_ebBodyWithoutPointFails db = withRW db $ \con -> do
-  result <- tryDb $ rwInsertEbBody con (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
+  result <- tryDb $ void $ writeEbBody (rwWriter con) (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
   case result of
     Left _ -> pure ()
     Right _ -> assertFailure "writeEbBody succeeded for a point that was never written"
@@ -1079,6 +1098,29 @@ data Op
 -- pool of each transaction it references: the same hash always names the same
 -- body, as it would on the wire.
 type Bodies = Map.Map EndorserBlockHash (EndorserBlock, [Int])
+
+-- | 'storeForgedEb' writes the endorser block at the point of the given slot
+-- and the hash of the body. After the writer closes, a reader sees that point
+-- and the bytes of all its txs.
+prop_storeForgedEbThenLookup :: DbImpl -> Property
+prop_storeForgedEbThenLookup impl =
+  forAll genSlotNo $ \slot ->
+    forAll genDistinctTxBytes $ \txs ->
+      ioProperty $ withFreshDb impl $ \db -> do
+        let forged = forgeLeiosEb txs
+            body = forgedEbBody forged
+            ebHash = endorserBlockHash body
+        withWriter db $ \writer -> storeForgedEb writer slot forged
+        (points, closure) <-
+          withReader db $ \reader ->
+            (,) <$> testScanEbPoints reader <*> lookupEbClosure reader ebHash
+        pure $
+          conjoin
+            [ counterexample "the point is not the slot and the hash of the body" $
+                points === [(slot, ebHash)]
+            , counterexample "the stored txs are not the forged ones" $
+                closure === Just (zip (map fst (endorserBlockReferences body)) (toList txs))
+            ]
 
 -- | Property: running the same operations against both implementations, a
 -- reader sees the same in each, and each write completes the same endorser

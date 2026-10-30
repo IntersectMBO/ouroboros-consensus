@@ -775,8 +775,8 @@ deriving via
 {-------------------------------------------------------------------------------
   Mempool
 
-  'RunNode' demands a mempool even of a node that never forges. This one
-  rejects every transaction.
+  'RunNode' demands a mempool. This one rejects every transaction, so a forged
+  block holds none.
 -------------------------------------------------------------------------------}
 
 data instance GenTx LeiosTestBlock = LeiosTestGenTx
@@ -924,8 +924,8 @@ instance SerialiseNodeToClientConstraints LeiosTestBlock
 
 instance RunNode LeiosTestBlock
 
--- | The node under test has no credentials, so it never forges; these exist
--- only because 'RunNode' asks for them.
+-- | A test's block forging has no credentials, so nothing can stop it from
+-- forging. These exist only because 'RunNode' asks for them.
 type instance CannotForge LeiosTestBlock = Void
 
 type instance ForgeStateInfo LeiosTestBlock = ()

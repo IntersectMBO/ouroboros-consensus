@@ -105,7 +105,12 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle
+  , LeiosDbWriter (..)
+  , openWriter
+  , storeForgedEb
+  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -496,6 +501,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
+  , leiosDB :: LeiosDbHandle m
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
   , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
@@ -520,6 +526,7 @@ initInternalState
   NodeKernelArgs
     { tracers
     , chainDB
+    , leiosDB
     , registry
     , cfg
     , blockFetchSize
@@ -591,9 +598,9 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
+    allocateForging
+    finalizeForging
+    ( \(bf, leiosDbWriter) -> knownSlotWatcher btime $
         \currentSlot ->
           withEarlyExit_ $
             forge
@@ -603,17 +610,23 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (\_ _ -> pure ())
+              (storeForgedEb leiosDbWriter . blockSlot)
               currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
 
-  blockForgingMLabel = do
+  allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    pure bf
+    leiosDbWriter <- openWriter leiosDB
+    pure (bf, leiosDbWriter)
+
+  -- 'finalize' erases the KES key, so it runs first: 'closeWriter' waits for
+  -- the LeiosDB write queue.
+  finalizeForging (bf, leiosDbWriter) =
+    finalize bf `finally` closeWriter leiosDbWriter
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

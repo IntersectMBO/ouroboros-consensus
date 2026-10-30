@@ -43,6 +43,10 @@ module Ouroboros.Consensus.Leios.Types
   , TxOffset
   , mkEndorserBlock
   , endorserBlockFromTxBytes
+  , ForgedLeiosEb
+  , forgedEbBody
+  , forgedEbTxs
+  , forgeLeiosEb
   , endorserBlockHash
   , endorserBlockReferences
   , encodeEndorserBlock
@@ -294,6 +298,27 @@ endorserBlockFromTxBytes =
 
 -- | The position of a transaction in its endorser block.
 type TxOffset = Int
+
+-- | An endorser block that this node forged, with the bytes of its
+-- transactions. Only 'forgeLeiosEb' builds it, so that the bytes always match
+-- the references.
+data ForgedLeiosEb = ForgedLeiosEb
+  { forgedEbBody :: !EndorserBlock
+  , forgedEbTxs :: !(NonEmpty ByteString)
+  -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
+  -- same order.
+  }
+  deriving stock (Show, Eq)
+
+-- | The endorser block that references the given transactions, in the given
+-- order. The reference to a transaction holds the Blake2b-256 hash and the
+-- length of its bytes.
+forgeLeiosEb :: NonEmpty ByteString -> ForgedLeiosEb
+forgeLeiosEb txBytes =
+  ForgedLeiosEb
+    { forgedEbBody = endorserBlockFromTxBytes txBytes
+    , forgedEbTxs = txBytes
+    }
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.

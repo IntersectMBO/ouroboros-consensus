@@ -591,8 +591,8 @@ relayPeers end ups downs = do
 -- | 'relayPeers', with a node that takes this long to verify each vote, and
 -- without failing for what the node relays.
 runRelay :: VerifyingTime -> DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
-runRelay verifying end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode verifying $ \nut ->
-  forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
+runRelay verifying end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode verifying $ \node ->
+  forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer node end (PeerAddr i) spec
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
 
@@ -605,20 +605,20 @@ relayToOne at ups =
     _ -> error "relayToOne: one downstream peer"
 
 runPeer :: NodeUnderTest (IOSim s) -> DiffTime -> PeerAddr -> PeerSpec -> IOSim s PeerOutcome
-runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
+runPeer node end addr PeerSpec{psConnectAt, psSends} = do
   threadDelay psConnectAt
   queue <- newTQueueIO
   received <- newTVarIO []
-  let c = envLeiosNotifyCodec nut
+  let c = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
           { epLeiosNotifyServer = runFeedingServer c (readTQueue queue)
           , epLeiosNotifyClient = Just $ runRecordingClient c received
-          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withAsync (feedAt queue psSends) $ \_feeder ->
-    withNodeVsEnvConnection nut addr envPeer $ \conn -> do
+    withNodeVsEnvConnection node addr envPeer $ \conn -> do
       Time now <- getMonotonicTime
       threadDelay (end - now)
       ended <- case Map.lookup leiosNotifyMiniProtocolNum (connNodeInitiators conn) of

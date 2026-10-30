@@ -22,7 +22,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus, configLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (encodeEndorserBlockSize)
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb (..), encodeEndorserBlockSize)
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
@@ -142,7 +142,7 @@ praos2SharedBlockForging hotKey slotToPeriod credentials =
     basePraosSharedBlockForging (praosParams . leiosPraosConfig) hotKey slotToPeriod credentials
 
   checkEbSize ForgeBlockArgs{fbConfig, fbCurrentTickedLedgerState} forged@ForgeBlockResult{endorserBlock} =
-    -- If a ledger change makes the 'serialize'' bytes of a transaction longer
+    -- If a ledger change makes the 'ebTxBytes' of a transaction longer
     -- than its 'sizeTxF' plus 'perTxOverhead', the endorser block can exceed
     -- the size that 'txEbMeasureDijkstra' reserved. Header validation then
     -- rejects the block with 'LeiosEbTooBig'. The assert makes a test fail at
@@ -151,4 +151,4 @@ praos2SharedBlockForging hotKey slotToPeriod credentials =
    where
     Praos2HasLeios leiosLedgerView =
       plvLeios $ protocolLedgerView (configLedger fbConfig) fbCurrentTickedLedgerState
-    fits eb = encodeEndorserBlockSize eb <= llvMaxEbBodySize leiosLedgerView
+    fits eb = encodeEndorserBlockSize (forgedEbBody eb) <= llvMaxEbBodySize leiosLedgerView

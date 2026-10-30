@@ -6,6 +6,7 @@ import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (TopTx, Tx)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Hashes (extractHash, hashAnnotated)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
@@ -16,12 +17,13 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , TxHash
   , encodeEndorserBlock
+  , endorserBlockFromTxBytes
   , endorserBlockReferences
   , mkEndorserBlock
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Ledger.Forge (ebTxBytes)
+import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (ebTxBytes))
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
@@ -44,6 +46,9 @@ tests =
         "the tx size a forged endorser block records does not exceed the tx size the mempool records"
         -- Few runs: the generator of Dijkstra transactions is slow.
         (withNumTests 10 prop_dijkstraEbTxSizeBounded)
+    , testProperty
+        "a forged endorser block references a Dijkstra transaction by its hashAnnotated"
+        (withNumTests 10 prop_dijkstraEbTxHashIsLedgerHash)
     ]
 
 genTxHash :: Gen TxHash
@@ -142,7 +147,7 @@ prop_referencesCapacityFloorsAtZero =
 -- its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra' reserves for the
 -- reference.
 --
--- The ledger computes 'sizeTxF' from one encoding and 'serialize'' uses
+-- The ledger computes 'sizeTxF' from one encoding and 'ebTxBytes' uses
 -- another, so a ledger change can make the two disagree.
 prop_dijkstraEbTxSizeBounded :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxSizeBounded tx =
@@ -151,3 +156,14 @@ prop_dijkstraEbTxSizeBounded tx =
  where
   ebTxSize = BS.length (ebTxBytes tx)
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
+
+-- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
+-- 'ebTxBytes'. The Dijkstra ledger defines this reference as the
+-- transaction's 'hashAnnotated', which is the hash of its 'originalBytes'.
+-- Thus a node can check fetched bytes against the reference without decoding
+-- them. Fails if 'ebTxBytes' returns other bytes, for example the 'EncCBOR'
+-- encoding, which drops the @is_valid@ flag.
+prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
+prop_dijkstraEbTxHashIsLedgerHash tx =
+  map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (ebTxBytes tx))))
+    === [extractHash (hashAnnotated tx)]
