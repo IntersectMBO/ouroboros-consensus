@@ -1169,6 +1169,7 @@ runThreadNetwork
                 -- immutable tip near genesis, so the real lead would hold
                 -- back every offer there is.
                 leiosMinOfferLead = Leios.MkLeiosMinOfferLead 0
+              , leiosAdaptiveEb = Nothing
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

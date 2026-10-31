@@ -1508,6 +1508,10 @@ class HasLeiosVoting blk where
   getMinCertificationGap :: LedgerConfig blk -> LedgerState blk EmptyMK -> Maybe SlotNo
   getMinCertificationGap _ _ = Nothing
 
+  -- | When voters may vote for an EB announced on this ledger state's chain.
+  getLeiosVoteTiming :: LedgerState blk EmptyMK -> LeiosVoteTiming
+  getLeiosVoteTiming _ = defaultLeiosVoteTiming
+
 -- * Tracing
 
 messageLeiosNotifyToObject ::
@@ -1695,6 +1699,15 @@ data TraceLeiosKernel
       , appliedSteps :: Natural
       , appliedMem :: Natural
       , appliedRefScriptBytes :: Word32
+        }
+  | -- | The block after an announcement arrived, so the node took the vote
+    -- weight the announcement had collected. Only an announcement whose
+    -- certification was possible moves the endorser-block capacity scale.
+    TraceLeiosAdaptiveEb
+      { ebPoint :: LeiosPoint
+      , participation :: Double
+      , certifiable :: Bool
+      , ebCapacityScale :: Double
       }
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
@@ -2048,6 +2061,20 @@ traceLeiosKernelToObject = \case
         "voteIn" .= voteIn
       , "deadlineIn" .= deadlineIn
       ]
+  TraceLeiosAdaptiveEb
+    { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
+    , participation
+    , certifiable
+    , ebCapacityScale
+    } ->
+      mconcat
+        [ "kind" .= Aeson.String "LeiosAdaptiveEb"
+        , "ebHash" .= prettyEbHash ebHash
+        , "ebSlot" .= ebSlot
+        , "participation" .= participation
+        , "certifiable" .= certifiable
+        , "ebCapacityScale" .= ebCapacityScale
+        ]
   TraceLeiosEbValidated
     { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
     , reapplied
@@ -2192,6 +2219,7 @@ data LeiosKernelNS
   | LKNSNotVoted
   | LKNSVoteScheduled
   | LKNSEbValidated
+  | LKNSAdaptiveEb
   | LKNSDbException
   | LKNSDb
   | LKNSDbCopied
@@ -2225,6 +2253,7 @@ leiosKernelNSOf = \case
   TraceLeiosNotVoted{} -> LKNSNotVoted
   TraceLeiosVoteScheduled{} -> LKNSVoteScheduled
   TraceLeiosEbValidated{} -> LKNSEbValidated
+  TraceLeiosAdaptiveEb{} -> LKNSAdaptiveEb
   TraceLeiosDbException{} -> LKNSDbException
   -- The copier/sweeper events get their own namespaces under Db so their
   -- severity and frequency can be configured apart from the stats gauges.
@@ -2287,6 +2316,7 @@ leiosKernelNSInfo = \case
   LKNSNotVoted -> LeiosNSInfo ["NotVoted"] LSInfo []
   LKNSVoteScheduled -> LeiosNSInfo ["VoteScheduled"] LSInfo []
   LKNSEbValidated -> LeiosNSInfo ["EbValidated"] LSInfo []
+  LKNSAdaptiveEb -> LeiosNSInfo ["AdaptiveEb"] LSInfo []
   LKNSDbException -> LeiosNSInfo ["DbException"] LSError []
   -- Sampled on a timer by the node, so these gauges exist from node start.
   LKNSDb ->
@@ -2418,6 +2448,14 @@ traceLeiosKernelForHuman = \case
       <> showT voteIn
       <> ", deadline in "
       <> showT deadlineIn
+  TraceLeiosAdaptiveEb{ebPoint, participation, certifiable, ebCapacityScale} ->
+    "Leios adaptive EB: "
+      <> T.pack (show ebPoint)
+      <> " participation "
+      <> showT participation
+      <> (if certifiable then "" else " (not certifiable)")
+      <> ", capacity scale "
+      <> showT ebCapacityScale
   TraceLeiosEbValidated{ebPoint, reapplied, applied, duration} ->
     "Leios EB validated "
       <> T.pack (show ebPoint)
@@ -2716,6 +2754,29 @@ maxTxsPerEb =
   framing = fromIntegral $ unByteSize32 encodeLeiosEbMaxFramingSize
 
   minItemSize = fromIntegral $ unByteSize32 (encodeLeiosEbItemSize (ByteSize32 0))
+
+-- | When an EB's voters may vote, measured from its announcing slot's onset.
+data LeiosVoteTiming = LeiosVoteTiming
+  { leiosVoteOpens :: !NominalDiffTime
+  -- ^ The equivocation-detection wait, @3 * L_hdr@.
+  , leiosVoteWindow :: !NominalDiffTime
+  -- ^ How long after opening votes are still accepted, @L_vote@.
+  }
+  deriving stock (Eq, Show)
+
+-- | The timing of eras without Leios protocol parameters.
+defaultLeiosVoteTiming :: LeiosVoteTiming
+defaultLeiosVoteTiming = LeiosVoteTiming{leiosVoteOpens = 3, leiosVoteWindow = 4}
+
+-- | The vote timing the protocol parameters set.
+leiosVoteTiming :: DijkstraEraPParams era => PParams era -> LeiosVoteTiming
+leiosVoteTiming pp =
+  LeiosVoteTiming
+    { leiosVoteOpens = 3 * seconds (pp ^. ppLeiosAnnouncementPeriodLengthL)
+    , leiosVoteWindow = seconds (pp ^. ppLeiosVotePeriodLengthL)
+    }
+ where
+  seconds = (/ 1000) . fromIntegral . unMilliseconds32
 
 -- | Slots between an EB's announcement and the earliest block that may certify
 -- it: the announcement, voting and diffusion periods must all have elapsed.

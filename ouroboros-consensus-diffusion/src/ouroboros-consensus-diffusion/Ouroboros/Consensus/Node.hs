@@ -104,6 +104,7 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
+import LeiosAdaptiveEndorsements (LeiosAdaptiveEbConfig)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes (ProtVerParity, SerializedEbBody)
 import LeiosTxCache
@@ -408,6 +409,10 @@ data StdRunNodeArgs m blk
   -- A network whose immutable tip trails its selection by less than the lead
   -- offers nothing at all, so a test network or a devnet has to set its own,
   -- smaller value; see 'Leios.defaultLeiosMinOfferLead'.
+  , srnLeiosAdaptiveEb :: Maybe LeiosAdaptiveEbConfig
+  -- ^ Scale the endorser blocks this node forges by how much of the stake
+  -- votes in time for recent announcements; 'Nothing' forges them at the
+  -- capacity the protocol allows.
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
@@ -1026,6 +1031,7 @@ mkNodeKernelArgs
           , leiosTxCache
           , leiosFetchRng = lfRng
           , leiosMinOfferLead = Leios.defaultLeiosMinOfferLead
+          , leiosAdaptiveEb = Nothing
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
@@ -1201,6 +1207,7 @@ stdLowLevelRunNodeArgsIO
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
         . modifyLeiosMinOfferLead
+        . (\nka -> nka{leiosAdaptiveEb = srnLeiosAdaptiveEb})
      where
       modifyBlockFetchConfiguration =
         maybe

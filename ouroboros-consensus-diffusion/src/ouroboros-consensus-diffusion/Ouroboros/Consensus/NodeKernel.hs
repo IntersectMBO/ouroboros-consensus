@@ -63,6 +63,7 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Text as Text
 import Data.Void (Void)
+import LeiosAdaptiveEndorsements (LeiosAdaptiveEbConfig, forkAdaptiveEndorsements)
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
@@ -324,6 +325,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- which shuffles job assignment to peers. An independent split of the node
   -- generator, like 'keepAliveRng' / 'peerSharingRng'.
   , leiosMinOfferLead :: Leios.LeiosMinOfferLead
+  , leiosAdaptiveEb :: Maybe LeiosAdaptiveEbConfig
+  -- ^ Scale the endorser blocks this node forges by recent participation;
+  -- 'Nothing' forges them at the capacity the protocol allows.
   }
 
 initNodeKernel ::
@@ -356,6 +360,7 @@ initNodeKernel
     , miniProtocolParameters
     , leiosDB
     , leiosMinOfferLead
+    , leiosAdaptiveEb
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -466,9 +471,25 @@ initNodeKernel
               (cschcMap varChainSyncHandles)
               varLoEFragment
 
+    -- Adaptive endorsements: follow how much of the stake votes in time for
+    -- recent announcements, and scale the endorser blocks this node forges.
+    -- Without them the forge uses the protocol's whole capacity.
+    readEbCapacityScale <-
+      case leiosAdaptiveEb of
+        Nothing -> pure (pure 1)
+        Just adaptiveCfg ->
+          forkAdaptiveEndorsements
+            registry
+            (leiosKernelTracer tracers)
+            adaptiveCfg
+            (configLedger cfg)
+            chainDB
+            leiosVoteState
+            ((== GSM.CaughtUp) <$> readTVar varGsmState)
+
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+        blockForgingController st readEbCapacityScale (LazySTM.takeTMVar blockForgingVar)
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
@@ -723,15 +744,16 @@ initNodeKernel
     blockForgingController ::
       Ord remotePeer =>
       InternalState m remotePeer localPeer blk ->
+      STM m Rational ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st getBlockForging = go []
+    blockForgingController st readEbCapacityScale getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st) blockForging
+        blockForging' <- traverse (forkBlockForging st readEbCapacityScale) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -907,9 +929,11 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk, Ord addrNTN) =>
   InternalState m addrNTN addrNTC blk ->
+  -- | The share of the protocol's endorser-block capacity to forge with.
+  STM m Rational ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} readEbCapacityScale (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
@@ -938,6 +962,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     chainDB
                     mempool
                     leiosVoteState
+                    readEbCapacityScale
                     bf
                     leiosDbReader
                     ( \forgedHeader forgedEb ->
