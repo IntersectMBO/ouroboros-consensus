@@ -1,7 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -16,11 +18,14 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
+import Cardano.Ledger.Api (AllegraEraTxBody, EraTx, PParams, Tx, TxOut)
+import Cardano.Ledger.Api.Tx.In (TxIn)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
 import Cardano.Ledger.Val ((<->))
 import Cardano.Protocol.Crypto (VRF)
 import Control.Exception (assert)
@@ -37,6 +42,7 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoEras
   , GenTx (..)
+  , LedgerState (LedgerStateConway, LedgerStateDijkstra)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
@@ -52,22 +58,31 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Basics
   ( ComputeLedgerEvents (..)
   , LedgerConfig
-  , LedgerState
   , TickedLedgerState
   , applyChainTick
   )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
+import Ouroboros.Consensus.Ledger.Tables (ValuesMK, getLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.MapKind
+  ( getValuesMK
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( applyDiffs
   , forgetLedgerTables
   )
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes)
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
+  ( BigEndianTxIn (..)
+  , ShelleyBasedEra
+  , shelleyLedgerState
+  , shelleyLedgerTables
+  , tickedShelleyLedgerState
   )
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
+import qualified Test.QuickCheck as QC
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
 
@@ -75,22 +90,63 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   { ctgeByronGenesisKeys :: GeneratedSecrets
   , ctgeNetworkMagic :: Byron.NetworkMagic
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
+  , ctgeExtraTxGen ::
+      forall era.
+      (EraTx era, AllegraEraTxBody era) =>
+      SlotNo ->
+      Shelley.CoreNode c ->
+      PParams era ->
+      Map TxIn (TxOut era) ->
+      QC.Gen [Tx SL.TopTx era]
   }
 
 instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
   type TxGenExtra (CardanoBlock c) = CardanoTxGenExtra c
 
   -- TODO also generate " typical " Byron and Shelley transactions
-  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls =
-    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+  testGenTxs ::
+    CoreNodeId ->
+    NumCoreNodes ->
+    SlotNo ->
+    TopLevelConfig (CardanoBlock c) ->
+    CardanoTxGenExtra c ->
+    LedgerState (CardanoBlock c) ValuesMK ->
+    QC.Gen [GenTx (CardanoBlock c)]
+  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls = do
+    let migrateTxs = maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+    extraTxs <- case ls of
+      LedgerStateConway st -> genFor GenTxConway st
+      LedgerStateDijkstra st -> genFor GenTxDijkstra st
+      _ -> pure []
+    pure $ migrateTxs <> extraTxs
    where
+    genFor ::
+      forall era proto.
+      (ShelleyBasedEra era, AllegraEraTxBody era) =>
+      (GenTx (ShelleyBlock proto era) -> GenTx (CardanoBlock c)) ->
+      LedgerState (ShelleyBlock proto era) ValuesMK ->
+      QC.Gen [GenTx (CardanoBlock c)]
+    genFor wrap st =
+      fmap (map (wrap . mkShelleyTx)) $
+        ctgeExtraTxGen
+          curSlot
+          coreNode
+          (shelleyLedgerState st ^. nesEsL . curPParamsEpochStateL)
+          ( Map.mapKeys getOriginalTxIn $
+              getValuesMK . getLedgerTables . shelleyLedgerTables $
+                st
+          )
+
     lcfg = topLevelConfigLedger cfg
 
     CardanoTxGenExtra
       { ctgeByronGenesisKeys
       , ctgeNetworkMagic
       , ctgeShelleyCoreNodes
+      , ctgeExtraTxGen
       } = extra
+
+    coreNode = ctgeShelleyCoreNodes !! fromIntegral i
 
     GeneratedSecrets
       { gsRichSecrets
@@ -186,11 +242,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
                       (Shelley.mkCredential stakingSK)
                       (Shelley.mkKeyHash poolSK)
                   ]
-              & SL.inputsTxBodyL .~ Map.keysSet picked
+              & SL.inputsTxBodyL
+                .~ Map.keysSet picked
               & SL.outputsTxBodyL
                 .~ StrictSeq.singleton (SL.ShelleyTxOut shelleyAddr unspentCoin)
-              & SL.ttlTxBodyL .~ SlotNo maxBound
-              & SL.feeTxBodyL .~ fee
+              & SL.ttlTxBodyL
+                .~ SlotNo maxBound
+              & SL.feeTxBodyL
+                .~ fee
 
           bodyHash :: SL.SafeHash SL.EraIndependentTxBody
           bodyHash = SL.hashAnnotated body
@@ -219,8 +278,12 @@ migrateUTxO migrationInfo curSlot lcfg lst
             else
               (Just . GenTxShelley . mkShelleyTx) $
                 SL.mkBasicTx body
-                  & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
-                  & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
+                  & SL.witsTxL
+                    . SL.addrTxWitsL
+                    .~ Set.fromList [delegWit, poolWit]
+                  & SL.witsTxL
+                    . SL.bootAddrTxWitsL
+                    .~ Set.singleton byronWit
   | otherwise = Nothing
  where
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
