@@ -16,8 +16,10 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_, replicateM, unless, void)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
+import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
+import Data.Bifunctor (first)
 import Data.Bits ((.|.))
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
@@ -29,6 +31,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Vector.Strict as V
+import Data.Void (Void)
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
@@ -41,8 +44,11 @@ import Ouroboros.Consensus.Block
   , blockHash
   , blockPoint
   , blockSlot
+  , withOrigin
   , pattern GenesisPoint
   )
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -85,8 +91,18 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( AnnouncingHeader (ancElectionId)
+  , mkAnnouncingHeader
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidOffer (..)
+  , LeiosNotifyPeerState (..)
+  , checkLeiosBlockOffer
+  , checkLeiosClosureOffer
+  , emptyLeiosNotifyPeerState
+  , pruneLeiosNotifyPeerState
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
@@ -360,6 +376,8 @@ data Relayed
   | RelayedBlockOffer LeiosPoint BytesSize
   | RelayedBlockTxsOffer LeiosPoint
   | RelayedVotes
+  | -- | Something a receiving node would disconnect the node for, and why.
+    RelayedDishonestly String
   deriving (Eq, Show)
 
 -- | The transactions of 'fetchedEb'.
@@ -1225,15 +1243,20 @@ acquiredOf = \case
 
 -- | A LeiosNotify client that records what the node relays.
 --
--- TODO It does not check what it records as a receiving node would, so a test
--- using it does not establish that an honest peer would accept the node's
--- offers, nor that it could then fetch what they offer.
+-- It holds each announcement and offer to what a receiving node checks, with
+-- the node's own immutable tip standing in for the receiver's, and records one
+-- that fails as 'RelayedDishonestly'. It does not check an announcement's
+-- validity, only that it counts towards its election as an honest one would.
+--
+-- TODO It does not fetch what the node offers, so a test using it does not
+-- establish that a peer could.
 recordingLeiosNotifyClient ::
   NodeUnderTest (IOSim s) ->
   StrictTVar (IOSim s) [Relayed] ->
   Channel (IOSim s) ByteString ->
   IOSim s ()
-recordingLeiosNotifyClient nut relayed chan =
+recordingLeiosNotifyClient nut relayed chan = do
+  stVar <- newTVarIO emptyLeiosNotifyPeerState
   fst
     <$> runPipelinedPeerWithLimits
       nullTracer
@@ -1242,10 +1265,30 @@ recordingLeiosNotifyClient nut relayed chan =
       timeLimitsLeiosNotify
       chan
       ( toLeiosNotifyClientPeerPipelined $
-          leiosNotifyClientPeerPipelined
-            (pure (Right 1))
-            (pure (\msg -> atomically $ modifyTVar relayed (<> [relayedOf msg])))
+          leiosNotifyClientPeerPipelined (pure (Right 1)) (pure (record stVar))
       )
+ where
+  cfg = nutTopLevelConfig nut
+
+  record stVar msg = atomically $ do
+    immLedger <- ChainDB.getImmutableLedger (nutChainDB nut)
+    st <-
+      pruneLeiosNotifyPeerState (withOrigin 0 id (getTipSlot (ledgerState immLedger)))
+        <$> readTVar stVar
+    let checked = case msg of
+          MsgLeiosBlockAnnouncement hdr -> case mkAnnouncingHeader cfg hdr of
+            Nothing -> Left $ "not an announcement: " <> show hdr
+            Just anc ->
+              either (Left . show) (\anns -> Right st{lnpsAnnouncements = anns}) $
+                Announcements.insert @_ @Void (ancElectionId anc) anc (lnpsAnnouncements st)
+          MsgLeiosBlockOffer point size ->
+            first show $ runExcept $ checkLeiosBlockOffer cfg immLedger point size st
+          MsgLeiosBlockTxsOffer point ->
+            first show $ runExcept $ checkLeiosClosureOffer point st
+          _ -> Right st
+    case checked of
+      Left why -> modifyTVar relayed (<> [RelayedDishonestly why])
+      Right st' -> writeTVar stVar st' >> modifyTVar relayed (<> [relayedOf msg])
 
 -- | A LeiosNotify server that sends what the queue holds, as the node asks.
 feedingLeiosNotifyServer ::
