@@ -214,6 +214,7 @@ library
     Ouroboros.Consensus.Mempool.Impl.Common
     Ouroboros.Consensus.Mempool.Init
     Ouroboros.Consensus.Mempool.Query
+    Ouroboros.Consensus.Mempool.Reapply
     Ouroboros.Consensus.Mempool.TxSeq
     Ouroboros.Consensus.Mempool.Update
     Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
@@ -393,6 +394,7 @@ library
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
+    Ouroboros.Consensus.Util.TimeBoundedLoop
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
@@ -846,6 +848,7 @@ test-suite consensus-test
     Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
+    Test.Consensus.Util.TimeBoundedLoop
     Test.Consensus.Util.Versioned
 
   build-depends:

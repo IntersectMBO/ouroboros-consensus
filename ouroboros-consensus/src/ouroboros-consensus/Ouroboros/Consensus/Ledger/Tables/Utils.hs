@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils
     -- * Exposed for @cardano-api@
   , applyDiffsMK
   , restrictValuesMK
+  , restrictValues'
 
     -- * Testing
   , applyDiffs'
@@ -323,6 +324,13 @@ restrictValuesMK ::
   KeysMK k v ->
   ValuesMK k v
 restrictValuesMK (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
+
+restrictValues' ::
+  LedgerTableConstraints blk =>
+  LedgerTables blk ValuesMK ->
+  LedgerTables blk KeysMK ->
+  LedgerTables blk ValuesMK
+restrictValues' = ltliftA2 restrictValuesMK
 
 ---
 
