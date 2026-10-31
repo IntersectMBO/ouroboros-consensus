@@ -121,6 +121,7 @@ serveEb tracer reader point = do
     refs -> do
       let n = length refs
       traceWith tracer $ TraceLeiosFetchServerBlockServed point n
+      -- In this node's preferred encoding; see the TODO on 'lookupEbBody'.
       pure $ mkEndorserBlock refs
 
 serveTxs ::

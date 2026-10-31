@@ -189,6 +189,16 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
 -- unregisters it, and cancels what it had in flight, so that other peers are
 -- asked instead. Any of its mini-protocols still running keep their state, but
 -- the decision loop no longer assigns them anything.
+--
+-- TODO Nothing tells a later connection with the same key from this one. If
+-- one registers before all of this one's mini-protocols have ended, this one's
+-- unregistering removes it, and this one's late replies refund its budget.
+-- The diffusion layer allows that: its connection manager accepts an inbound
+-- connection from a peer whose previous connection is in @TerminatingState@,
+-- which it enters before that connection's mini-protocols are stopped, and
+-- BlockFetch's @bracketFetchClient@ waits for an older client of the same peer
+-- to unregister for that reason. So register each connection under its own
+-- key.
 withLeiosFetchPeer ::
   (IOLike m, Ord peer) =>
   LeiosFetchKernel m peer ->

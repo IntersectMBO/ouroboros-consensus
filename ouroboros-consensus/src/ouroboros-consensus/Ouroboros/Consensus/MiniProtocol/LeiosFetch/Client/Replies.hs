@@ -308,6 +308,9 @@ processLeiosBlock ctx peer req eb = do
     bodyWritten <- writeEbBody lfcWriter point eb localFills
     -- Off this thread, but linked to it, so a failed write still brings the
     -- node down rather than being silently dropped.
+    --
+    -- TODO Like the worker that 'processLeiosBlockTxs' forks to settle a
+    -- reply's txs, this one is orphaned at teardown; see the TODO there.
     link =<< async (settleBody now pointWritten bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $

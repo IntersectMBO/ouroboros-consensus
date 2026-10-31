@@ -1199,6 +1199,10 @@ acquiredOf = \case
   AcquiredEbTxs point -> AcquiredClosure point
 
 -- | A LeiosNotify client that records what the node relays.
+--
+-- TODO It does not check what it records as a receiving node would, so a test
+-- using it does not establish that an honest peer would accept the node's
+-- offers, nor that it could then fetch what they offer.
 recordingLeiosNotifyClient ::
   NodeUnderTest (IOSim s) ->
   StrictTVar (IOSim s) [Relayed] ->

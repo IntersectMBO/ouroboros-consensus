@@ -50,10 +50,12 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size
   --
-  -- TODO Nothing reads it yet. A certifying ranking block's ChainSync
-  -- @MsgRollForward@ will be interpreted as an offer of the endorser block it
-  -- certifies, of this size, and Leios voting will confirm that the size is
-  -- accurate.
+  -- LeiosFetch takes a certifying ranking block's ChainSync @MsgRollForward@
+  -- as an offer of the endorser block it certifies, at this size.
+  --
+  -- TODO Leios voting will confirm that the size is accurate. Until then, if
+  -- it is not, a peer that serves the endorser block at its true size loses its
+  -- connection, though the node keeps the bytes.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
