@@ -95,7 +95,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 import Control.Monad (void)
 import Control.ResourceRegistry
 import Data.Map (Map)
-import Data.Maybe.Strict (StrictMaybe)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -108,7 +108,8 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Leios.Protocol
-  ( LeiosLedgerView
+  ( LeiosAnnouncement
+  , LeiosLedgerView
   , LeiosProtocol
   , trivialLeiosLedgerView
   )
@@ -191,14 +192,16 @@ data ChainDB m blk = ChainDB
       InvalidBlockPunishment m ->
       WithOrigin SlotNo ->
       StrictMaybe LeiosLedgerView ->
+      StrictMaybe LeiosAnnouncement ->
       blk ->
       m (AddBlockPromise m blk)
   -- ^ Add a block to the heap of blocks
   --
-  -- The caller also supplies the slot of the block's predecessor and the Leios
-  -- part of the ledger view at the block's slot, as validating the block's
-  -- header revealed them, so that the block's Leios certificate can be checked
-  -- as soon as the block arrives.
+  -- The caller also supplies the slot of the block's predecessor, the Leios
+  -- part of the ledger view at the block's slot, and the announcement the
+  -- block's Leios certificate certifies, as validating the block's header
+  -- revealed them, so that the block's Leios certificate can be checked as
+  -- soon as the block arrives.
   --
   -- We do /not/ assume that the block is valid (under the legder rules);
   -- it is the responsibility of the Chain DB itself to only select chains
@@ -617,10 +620,11 @@ addBlockWaitWrittenToDisk ::
   InvalidBlockPunishment m ->
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m Bool
-addBlockWaitWrittenToDisk chainDB punish predecessorSlot leiosView blk = do
-  promise <- addBlockAsync chainDB punish predecessorSlot leiosView blk
+addBlockWaitWrittenToDisk chainDB punish predecessorSlot leiosView certified blk = do
+  promise <- addBlockAsync chainDB punish predecessorSlot leiosView certified blk
   atomically $ blockWrittenToDisk promise
 
 -- | Add a block synchronously: wait until the block has been processed (see
@@ -636,10 +640,11 @@ addBlock ::
   InvalidBlockPunishment m ->
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m (AddBlockResult blk)
-addBlock chainDB punish predecessorSlot leiosView blk = do
-  promise <- addBlockAsync chainDB punish predecessorSlot leiosView blk
+addBlock chainDB punish predecessorSlot leiosView certified blk = do
+  promise <- addBlockAsync chainDB punish predecessorSlot leiosView certified blk
   atomically $ blockProcessed promise
 
 -- | Add a block synchronously. Variant of 'addBlock' that doesn't return the
@@ -652,10 +657,11 @@ addBlock_ ::
   InvalidBlockPunishment m ->
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m ()
-addBlock_ chainDB punish predecessorSlot leiosView =
-  void . addBlock chainDB punish predecessorSlot leiosView
+addBlock_ chainDB punish predecessorSlot leiosView certified =
+  void . addBlock chainDB punish predecessorSlot leiosView certified
 
 -- | Alias for naming consistency.
 -- The short name was chosen to avoid a larger diff from alignment changes.
@@ -863,7 +869,7 @@ fromChain openDB chain = do
   -- added just before it.
   sequence_ $
     zipWith
-      (\predecessorSlot -> addBlock_ chainDB noPunishment predecessorSlot leiosView)
+      (\predecessorSlot -> addBlock_ chainDB noPunishment predecessorSlot leiosView SNothing)
       (Origin : map (NotOrigin . blockSlot) blks)
       blks
   return chainDB

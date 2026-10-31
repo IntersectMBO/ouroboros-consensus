@@ -36,6 +36,7 @@ import Ouroboros.Consensus.Block
   , Point
   , Proxy (..)
   , SlotNo
+  , WithOrigin (NotOrigin)
   , blockHash
   , blockPoint
   , blockSlot
@@ -251,7 +252,11 @@ tests =
           >>= (@?= [AcquiredBody refocusedPoint, AcquiredClosure refocusedPoint])
     , testCase
         "the node selects a block certifying an endorser block though a rival announcement took the focus first"
-        $ runSimFinishing nodeSelectsCertifiedRival
+        $ runSimFinishing (nodeSelectsCertifiedRival CertifyingAfterAnnouncing)
+          >>= (@?= (True, blockPoint certifyingFetched))
+    , testCase
+        "the node selects a block certifying an endorser block though a rival announcement took the focus first and the certifying block arrived first"
+        $ runSimFinishing (nodeSelectsCertifiedRival CertifyingBeforeAnnouncing)
           >>= (@?= (True, blockPoint certifyingFetched))
     , testCase
         "the node fetches an endorser block at the size its peer offers, though the announcement states another"
@@ -713,14 +718,17 @@ nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
         ]
     replicateM 2 $ acquiredOf <$> atomically next
 
+-- | Which of 'announcingFetched' and 'certifyingFetched' the node adds first.
+data CertifyingArrival = CertifyingAfterAnnouncing | CertifyingBeforeAnnouncing
+
 -- | The peer announces 'otherEbHash' in 'announcingOther', and then 'fetchedEb'
 -- in 'announcingFetched', for the same election, so that the former takes its
 -- focus. It offers 'fetchedEb' and serves it. The node then adds
 -- 'announcingFetched' and 'certifyingFetched'. Whether 'otherEbHash' had the
 -- focus until then, and the tip of the node's selection, once that is
 -- 'certifyingFetched' or ten seconds have passed.
-nodeSelectsCertifiedRival :: IOSim s (Bool, Point LeiosTestBlock)
-nodeSelectsCertifiedRival = withNode $ \nut -> do
+nodeSelectsCertifiedRival :: CertifyingArrival -> IOSim s (Bool, Point LeiosTestBlock)
+nodeSelectsCertifiedRival arrival = withNode $ \nut -> do
   relayed <- newTVarIO []
   notifications <- newTQueueIO
   atomically $
@@ -741,7 +749,11 @@ nodeSelectsCertifiedRival = withNode $ \nut -> do
     -- The node relays an announcement only once it has taken it in.
     atomically $ readTVar relayed >>= check . (>= 2) . length
     rivalFocused <- isFocusedEb otherEbHash <$> readOutstanding nut
-    addBlocks nut [announcingFetched, certifyingFetched]
+    case arrival of
+      CertifyingAfterAnnouncing -> addBlocks nut [announcingFetched, certifyingFetched]
+      CertifyingBeforeAnnouncing -> do
+        addBlocksAfter nut (NotOrigin announcingFetched) [certifyingFetched]
+        addBlocks nut [announcingFetched]
     (,) rivalFocused <$> awaitTip nut (blockPoint certifyingFetched)
 
 -- | The peer announces 'fetchedEb' in 'announcingFetched', but at one byte more

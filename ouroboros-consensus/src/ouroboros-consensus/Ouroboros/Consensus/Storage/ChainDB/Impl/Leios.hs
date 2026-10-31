@@ -208,7 +208,7 @@ data LeiosValidClaims = LeiosValidClaims
   -- ^ The inverse of 'lvcSlot', so that pruning costs only what it prunes.
   , lvcCertified :: !(Map ElectionId EndorserBlockHash)
   -- ^ The endorser block certified in each election whose claim was
-  -- established while the VolatileDB held the announcing block.
+  -- established with its announcement known.
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -217,7 +217,7 @@ emptyLeiosValidClaims :: LeiosValidClaims
 emptyLeiosValidClaims = LeiosValidClaims Map.empty Map.empty Map.empty
 
 -- | Record that some valid certificate established the claim, whose announcing
--- block made this announcement, if the VolatileDB holds that block.
+-- block made this announcement, if known.
 insertLeiosValidClaim ::
   LeiosClaim -> StrictMaybe LeiosAnnouncement -> LeiosValidClaims -> LeiosValidClaims
 insertLeiosValidClaim (LeiosClaim slot rbHash) mbAnnouncement claims@(LeiosValidClaims slots bySlot certified)

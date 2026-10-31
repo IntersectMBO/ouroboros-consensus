@@ -56,6 +56,7 @@ module Test.Consensus.Leios.TestBlock
     -- * Protocol
   , LeiosTestInvalidHeader (..)
   , LeiosTestProtocol
+  , latestAnnouncement
 
     -- * Node configuration
   , BlockConfig (..)
@@ -409,6 +410,7 @@ instance LeiosProtocol LeiosTestProtocol where
     strictMaybeToMaybe mbAnn
   getLeiosLedgerView _proxy = Just
 
+-- | The chain-dependent state as of this header
 latestAnnouncement :: Header LeiosTestBlock -> LeiosTestChainDepState
 latestAnnouncement =
   LeiosTestChainDepState

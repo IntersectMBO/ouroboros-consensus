@@ -322,9 +322,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = \punish predecessorSlot leiosView blk ->
+            { addBlockAsync = \punish predecessorSlot leiosView certified blk ->
                 getEnv h $ \cdb ->
-                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView blk
+                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView certified blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime

@@ -174,7 +174,7 @@ heldAcrossRestart whatOfA = do
     holds nut
   withNodeOverDBs nodeDBs leiosDb $ \nut -> do
     afterRestart <- holds nut
-    addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [certifyingA]
+    addBlocksAfter nut (NotOrigin announcingA) [certifyingA]
     threadDelay 1
     afterAddingAgain <- holds nut
     pure (beforeRestart, afterRestart, afterAddingAgain)
@@ -203,7 +203,7 @@ minoritySibling =
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling nut = do
   addBlocks nut [announcingA, certifyingA]
-  addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [minoritySibling]
+  addBlocksAfter nut (NotOrigin announcingA) [minoritySibling]
 
 rbHashOf :: LeiosTestBlock -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
