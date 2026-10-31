@@ -543,6 +543,7 @@ dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
   ExtValidationErrorPerasEpochContextResolver e -> ExtValidationErrorPerasEpochContextResolver e
+  ExtValidationErrorLeiosCert e -> ExtValidationErrorLeiosCert e
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol
@@ -576,6 +577,11 @@ instance Bridge m a => LedgerSupportsProtocol (DualBlock m a) where
     protocolLedgerView
       (dualLedgerConfigMain cfg)
       (tickedDualLedgerStateMain state)
+
+  ledgerViewAtTip cfg state =
+    ledgerViewAtTip
+      (dualLedgerConfigMain cfg)
+      (dualLedgerStateMain state)
 
   ledgerViewForecastAt cfg state =
     ledgerViewForecastAt

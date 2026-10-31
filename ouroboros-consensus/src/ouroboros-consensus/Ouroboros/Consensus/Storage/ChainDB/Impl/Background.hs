@@ -47,7 +47,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, join, void)
+import Control.Monad (forM_, forever, join, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
@@ -77,12 +77,19 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( chainSelSync
   )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( insertAcquiredLeiosEb
+  , isAcquiredLeiosEb
+  , pruneAcquiredLeiosEbs
+  , pruneLeiosValidClaims
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosEbNotification (..))
+import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -103,14 +110,18 @@ launchBgTasks ::
   ( IOLike m
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
+  -- | The LeiosDB's next notification, subscribed to before seeding
+  -- 'cdbAcquiredLeiosEbs', so that none is missed in between.
+  STM m LeiosEbNotification ->
   m ()
-launchBgTasks cdb@CDB{..} = do
+launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -135,6 +146,10 @@ launchBgTasks cdb@CDB{..} = do
     launch "ChainDB.snapshotRunner" $
       snapshotRunner cdb
 
+  !leiosAcquiredEbsThread <-
+    launch "ChainDB.leiosAcquiredEbsRunner" $
+      leiosAcquiredEbsRunner cdb nextLeiosEbNotification
+
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_
@@ -143,10 +158,29 @@ launchBgTasks cdb@CDB{..} = do
         , gcThread
         , copyToImmutableDBThread
         , snapshotThread
+        , leiosAcquiredEbsThread
         ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
+
+-- | Grow 'cdbAcquiredLeiosEbs' from the LeiosDB's notifications, and enqueue a
+-- reprocess of the blocks parked on each endorser block the first time its
+-- closure is acquired.
+leiosAcquiredEbsRunner ::
+  IOLike m => ChainDbEnv m blk -> STM m LeiosEbNotification -> m Void
+leiosAcquiredEbsRunner CDB{..} nextNotification =
+  forever $
+    atomically nextNotification >>= \case
+      AcquiredEb{} -> pure ()
+      AcquiredEbTxs point -> do
+        novel <- atomically $ do
+          acquired <- readTVar cdbAcquiredLeiosEbs
+          writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
+          pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
+        -- The set has already grown, so ChainSel sees the closure even while
+        -- this enqueue blocks on a full queue.
+        when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
@@ -173,7 +207,6 @@ copyToImmutableDB ::
   forall m blk.
   ( IOLike m
   , BlockSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -302,7 +335,6 @@ copyToImmutableDBRunner ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
@@ -330,7 +362,10 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
   scheduleGC' Origin = return ()
-  scheduleGC' (NotOrigin slotNo) =
+  scheduleGC' (NotOrigin slotNo) = do
+    atomically $ do
+      modifyTVar cdbAcquiredLeiosEbs (pruneAcquiredLeiosEbs slotNo)
+      modifyTVar cdbLeiosValidClaims (pruneLeiosValidClaims slotNo)
     scheduleGC
       (contramap TraceGCEvent cdbTracer)
       slotNo
@@ -405,7 +440,6 @@ snapshotRunner ::
   forall m blk.
   ( IOLike m
   , BlockSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -489,7 +523,7 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
-  leiosDbGarbageCollect cdbLeiosDb slotNo
+  LeiosDB.garbageCollect cdbLeiosDb slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
@@ -709,6 +743,8 @@ addBlockRunner ::
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
@@ -728,6 +764,11 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           case message of
             ChainSelReprocessLoEBlocks varProcessed ->
               void $ tryPutTMVar varProcessed ()
+            -- No promise to fulfil. The parked blocks are not lost: the ChainDB
+            -- is closing, and initial chain selection reconsiders them when it
+            -- reopens.
+            ChainSelReprocessLeiosEb{} ->
+              pure ()
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
               _ <-
                 tryPutTMVar
@@ -746,6 +787,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           lift $ case message of
             ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
+            ChainSelReprocessLeiosEb{} ->
+              pure ()
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
             ChainSelAddPerasCert cert _varProcessed ->

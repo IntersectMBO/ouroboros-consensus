@@ -69,7 +69,6 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint
@@ -85,6 +84,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeLeiosVote
   , maxTxsPerEndorserBlock
   )
+import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
@@ -267,7 +267,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       FetchedMetricsTracer m ->
-      BlockFetchClient (HeaderWithTime blk) blk blk m ()
+      BlockFetchClient (HeaderWithTime blk) blk (MatchedBlock blk) m ()
   , hBlockFetchServer ::
       ConnectionId addr ->
       NodeToNodeVersion ->
@@ -359,7 +359,6 @@ mkHandlers ::
   , BlockSupportsPeras blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , ConvertRawHash blk
   , HasHardForkHistory blk
   , Ord addrNTN

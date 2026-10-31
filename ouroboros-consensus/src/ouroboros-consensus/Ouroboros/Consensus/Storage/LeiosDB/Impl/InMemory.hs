@@ -132,7 +132,7 @@ newLeiosDBInMemoryWith stateVar = do
         closeLeiosDbHandle = pure ()
       , subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , leiosDbGarbageCollect = imGarbageCollect stateVar
+      , garbageCollect = imGarbageCollect stateVar
       , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)

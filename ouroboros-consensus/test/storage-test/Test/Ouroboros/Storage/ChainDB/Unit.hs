@@ -29,6 +29,7 @@ import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
+import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
@@ -48,7 +49,14 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint, genesisPoint)
+import Ouroboros.Network.Block
+  ( ChainUpdate (..)
+  , Point
+  , SlotNo
+  , blockPoint
+  , blockSlot
+  , genesisPoint
+  )
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
@@ -138,14 +146,14 @@ followerSwitchesToNewChain ::
 followerSwitchesToNewChain =
   let fork i = TestBody i True Nothing
    in do
-        b1 <- addBlock $ firstBlock 0 $ fork 0 -- b1 on top of G
-        b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
+        b1 <- addBlock Origin $ firstBlock 0 $ fork 0 -- b1 on top of G
+        b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
         f <- newFollower
         followerForward f [blockPoint b2] >>= \case
           Right (Just pt) -> assertEqual (blockPoint b2) pt "Expected to be at b2"
           _ -> failWith "Expecting a success"
-        b3 <- addBlock $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
-        b4 <- addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
+        b3 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
+        b4 <- addBlock (NotOrigin (blockSlot b3)) $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
         followerInstruction f >>= \case
           Right (Just (RollBack actual)) ->
             -- Expect to rollback to the intersection point between [b1, b2] and
@@ -175,15 +183,15 @@ ouroboros_network_4183 ::
 ouroboros_network_4183 =
   let fork i = TestBody i True Nothing
    in do
-        b1 <- addBlock $ firstEBB (const True) $ fork 0
-        b2 <- addBlock $ mkNextBlock b1 0 $ fork 0
-        b3 <- addBlock $ mkNextBlock b2 1 $ fork 1
-        b4 <- addBlock $ mkNextBlock b2 1 $ fork 0
+        b1 <- addBlock Origin $ firstEBB (const True) $ fork 0
+        b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 0 $ fork 0
+        b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 1 $ fork 1
+        b4 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 1 $ fork 0
         f <- newFollower
         void $ followerForward f [blockPoint b1]
-        void $ addBlock $ mkNextBlock b4 4 $ fork 0
+        void $ addBlock (NotOrigin (blockSlot b4)) $ mkNextBlock b4 4 $ fork 0
         persistBlks
-        void $ addBlock $ mkNextBlock b3 3 $ fork 1
+        void $ addBlock (NotOrigin (blockSlot b3)) $ mkNextBlock b3 3 $ fork 1
         followerInstruction f >>= \case
           Right (Just (RollBack actual)) ->
             assertEqual (blockPoint b1) actual "Rollback to wrong point"
@@ -203,14 +211,14 @@ ouroboros_network_3999 ::
   ) =>
   m ()
 ouroboros_network_3999 = do
-  b1 <- addBlock $ firstBlock 0 $ fork 1
-  b2 <- addBlock $ mkNextBlock b1 1 $ fork 1
-  b3 <- addBlock $ mkNextBlock b2 2 $ fork 1
+  b1 <- addBlock Origin $ firstBlock 0 $ fork 1
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 1 $ fork 1
+  b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 2 $ fork 1
   i <- streamAssertSuccess (inclusiveFrom b1) (inclusiveTo b3)
-  b4 <- addBlock $ mkNextBlock b1 3 $ fork 2
-  b5 <- addBlock $ mkNextBlock b4 4 $ fork 2
-  b6 <- addBlock $ mkNextBlock b5 5 $ fork 2
-  void $ addBlock $ mkNextBlock b6 6 $ fork 2
+  b4 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 3 $ fork 2
+  b5 <- addBlock (NotOrigin (blockSlot b4)) $ mkNextBlock b4 4 $ fork 2
+  b6 <- addBlock (NotOrigin (blockSlot b5)) $ mkNextBlock b5 5 $ fork 2
+  void $ addBlock (NotOrigin (blockSlot b6)) $ mkNextBlock b6 6 $ fork 2
   persistBlksThenGC
 
   -- The block b1 is part of the current chain, so should always be returned.
@@ -248,9 +256,9 @@ waitForImmutableBlock_existingBlock ::
   forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 waitForImmutableBlock_existingBlock = do
   -- add three blocks, as @k@ is set to 2 in these test
-  b1 <- addBlock $ firstBlock 0 $ fork0
-  b2 <- addBlock $ mkNextBlock b1 1 $ fork0
-  _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
+  b1 <- addBlock Origin $ firstBlock 0 $ fork0
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 1 $ fork0
+  _b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 2 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1
   persistBlks
@@ -274,9 +282,9 @@ waitForImmutableBlock_existingBlockConcurrent = do
   addBlocksConcurrently :: m ()
   addBlocksConcurrently = do
     -- add three blocks, as @k@ is set to 2 in these test
-    b1 <- addBlock $ firstBlock 0 $ fork0
-    b2 <- addBlock $ mkNextBlock b1 1 $ fork0
-    _b3 <- addBlock $ mkNextBlock b2 2 $ fork0
+    b1 <- addBlock Origin $ firstBlock 0 $ fork0
+    b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 1 $ fork0
+    _b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 2 $ fork0
     -- copy the blocks older than @k@ into ImmutableDB,
     -- should copy only b1
     persistBlks
@@ -290,10 +298,10 @@ waitForImmutableBlock_wrongHash ::
   forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 waitForImmutableBlock_wrongHash = do
   -- add four blocks, as @k@ is set to 2 in these test
-  b1 <- addBlock $ firstBlock 0 $ fork0
-  b2 <- addBlock $ mkNextBlock b1 1 $ fork0
-  b3 <- addBlock $ mkNextBlock b2 2 $ fork0
-  _b4 <- addBlock $ mkNextBlock b3 3 $ fork0
+  b1 <- addBlock Origin $ firstBlock 0 $ fork0
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 1 $ fork0
+  b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 2 $ fork0
+  _b4 <- addBlock (NotOrigin (blockSlot b3)) $ mkNextBlock b3 3 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1 and b2
   persistBlks
@@ -313,10 +321,10 @@ waitForImmutableBlock_emptySlot ::
   forall m. (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 waitForImmutableBlock_emptySlot = do
   -- add four blocks, as @k@ is set to 2 in these test
-  b1 <- addBlock $ firstBlock 1 $ fork0
-  b2 <- addBlock $ mkNextBlock b1 2 $ fork0
-  b3 <- addBlock $ mkNextBlock b2 3 $ fork0
-  _b4 <- addBlock $ mkNextBlock b3 4 $ fork0
+  b1 <- addBlock Origin $ firstBlock 1 $ fork0
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 2 $ fork0
+  b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 3 $ fork0
+  _b4 <- addBlock (NotOrigin (blockSlot b3)) $ mkNextBlock b3 4 $ fork0
   -- copy the blocks older than @k@ into ImmutableDB,
   -- should copy only b1
   persistBlks
@@ -342,9 +350,9 @@ updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot ::
   ) =>
   m ()
 updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
-  b1 <- addBlock $ firstBlock 1 $ fork0
-  b2 <- addBlock $ mkNextBlock b1 3 $ fork0
-  _b3 <- addBlock $ mkNextBlock b2 5 $ fork0
+  b1 <- addBlock Origin $ firstBlock 1 $ fork0
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 3 $ fork0
+  _b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 5 $ fork0
 
   -- With k=2, 3 blocks are not enough to trigger a snapshot,
   updateLedgerSnapshots
@@ -438,7 +446,10 @@ class SupportsUnitTest m where
   type Block m
 
   addBlock ::
-    Block m -> m (Block m)
+    -- | The slot of the block's predecessor
+    WithOrigin SlotNo ->
+    Block m ->
+    m (Block m)
 
   newFollower ::
     m (FollowerId m)
@@ -543,8 +554,8 @@ instance
       SM.MbChainUpdate mcu -> pure (Right mcu)
       _ -> failWith $ "followerInstruction: unexpected result" <> show result
 
-  addBlock blk = do
-    void $ runModelCmd (SM.AddBlock blk (SM.Persistent []))
+  addBlock predSlot blk = do
+    void $ runModelCmd (SM.AddBlock blk predSlot (SM.Persistent []))
     pure blk
 
   followerForward followerId points = do
@@ -694,8 +705,8 @@ instance (IOLike m, TestConstraints blk) => SupportsUnitTest (SystemM blk m) whe
   type FollowerId (SystemM blk m) = SM.TestFollower m blk
   type Block (SystemM blk m) = blk
 
-  addBlock blk = do
-    void $ runCmd (SM.AddBlock blk (SM.Persistent []))
+  addBlock predSlot blk = do
+    void $ runCmd (SM.AddBlock blk predSlot (SM.Persistent []))
     pure blk
 
   persistBlks =

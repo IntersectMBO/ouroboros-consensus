@@ -38,7 +38,6 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , nextNotifyLog
   , notifyLogStart
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote (..))
 import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), VoteState, addVote)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
@@ -75,7 +74,6 @@ leiosNotifyClient ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , ConvertRawHash blk
   , HasHardForkHistory blk
   ) =>

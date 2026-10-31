@@ -131,6 +131,7 @@ instance
   LedgerSupportsProtocol (SimplePBftBlock c PBftMockCrypto)
   where
   protocolLedgerView cfg _ = simpleMockLedgerConfig cfg
+  ledgerViewAtTip cfg _ = simpleMockLedgerConfig cfg
   ledgerViewForecastAt cfg st =
     constantForecastOf
       (simpleMockLedgerConfig cfg)

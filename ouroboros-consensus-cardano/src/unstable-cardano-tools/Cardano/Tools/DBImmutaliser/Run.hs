@@ -42,6 +42,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (leiosBlockInfo)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
@@ -136,6 +137,7 @@ withDBs cfg registry dbDirs f =
     VolatileDB.defaultArgs
       { volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
       , volCodecConfig = codecCfg
+      , volLeiosBlockInfo = leiosBlockInfo (configBlock cfg)
       , volHasFS = volDBDir dbDirs
       }
 

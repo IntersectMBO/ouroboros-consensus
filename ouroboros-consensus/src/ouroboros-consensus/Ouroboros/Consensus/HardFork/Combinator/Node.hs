@@ -26,8 +26,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
-  ( SingleEraBlockAndLeiosProtocol
-  , SingleEraBlockAndPerasProtocol
+  ( SingleEraBlockAndPerasProtocol
   )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
@@ -73,7 +72,6 @@ instance
   , HasSizeForBlockBodyInclusion (TxMeasurePhase1 (HardForkBlock xs)) (OneEraPerasCert xs)
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
-  , All SingleEraBlockAndLeiosProtocol xs
   , All SingleEraBlockAndPerasProtocol xs
   ) =>
   RunNode (HardForkBlock xs)

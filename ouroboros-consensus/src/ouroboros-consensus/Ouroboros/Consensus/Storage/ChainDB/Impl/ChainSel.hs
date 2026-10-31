@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
+  , TentativeHeaderPermission (..)
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
@@ -31,7 +32,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
-import Control.Monad.Except ()
+import Control.Monad.Except (runExcept)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.State.Strict
@@ -58,12 +59,18 @@ import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
   ( HeaderWithTime (..)
-  , mkHeaderWithTime
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Cert
+  ( LeiosCertRejection
+  , LeiosClaim (..)
+  , leiosClaim
+  , verifyLeiosClaim
+  )
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -85,6 +92,13 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
   ( BlockCache
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( AcquiredLeiosEbs
+  , ignoreParkedCertRB
+  , ignoreParkedCertRBSuc
+  , insertLeiosValidClaim
+  , isLeiosValidClaim
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -124,9 +138,11 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  -- | The endorser blocks whose closure is acquired ('cdbAcquiredLeiosEbs').
+  STM m AcquiredLeiosEbs ->
   LoE () ->
   PerasWeightSnapshot blk ->
-  m (AnchoredFragment (Header blk))
+  m (AnchoredFragment (HeaderWithTime blk))
 initialChainSelection
   immutableDB
   volatileDB
@@ -134,6 +150,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
+  getAcquiredLeiosEbs
   loE
   weights = do
     -- TODO: Improve the user experience by trimming any potential
@@ -157,16 +174,19 @@ initialChainSelection
     -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
+      acquired <- getAcquiredLeiosEbs
+      lookupBlockInfo <- VolatileDB.getBlockInfo volatileDB
       (,)
         <$> ImmutableDB.getTipAnchor immutableDB
         <*> ( ignoreInvalidSuc volatileDB invalid
+                . ignoreParkedCertRBSuc acquired lookupBlockInfo
                 <$> VolatileDB.filterByPredecessor volatileDB
             )
 
     chains <- constructChains i succsOf
 
     -- We use the empty fragment anchored at @i@ as the current chain (and
-    -- ledger) and the default in case there is no better candidate.
+    -- ledger).
     let curChain :: AnchoredFragment (Header blk)
         curChain = Empty (AF.castAnchor i)
 
@@ -176,9 +196,9 @@ initialChainSelection
       , ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain chain]
       ] of
       -- If there are no candidates, no chain selection is needed
-      Nothing -> pure curChain
+      Nothing -> pure (Empty (AF.castAnchor i))
       Just chains' ->
-        fromMaybe curChain <$> chainSelection' curChain chains'
+        fromMaybe (Empty (AF.castAnchor i)) <$> chainSelection' curChain chains'
    where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -232,7 +252,7 @@ initialChainSelection
       -- @i@.
       NonEmpty (AnchoredFragment (Header blk), ReasonForSwitch' blk) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (AnchoredFragment (Header blk)))
+      m (Maybe (AnchoredFragment (HeaderWithTime blk)))
     chainSelection' curChain candidates =
       assert (all ((curpt ==) . castPoint . AF.anchorPoint . fst) candidates) $
         assert (all (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . fst) candidates) $ do
@@ -241,7 +261,7 @@ initialChainSelection
             <$> chainSelection
               cse
               (first Diff.extend <$> candidates)
-              (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
+              (\_ _ -> MkSuccessForkerAction $ \_validated -> join . atomically . forkerCommit)
      where
       curpt = AF.anchorPoint curChain
       chainSelEnv = do
@@ -260,6 +280,7 @@ initialChainSelection
               pipeliningTracer = nullTracer
             , varTentativeState
             , varTentativeHeader
+            , tentativeHeaderPermission = MayNotSetTentativeHeader
             , punish = Nothing
             , getTentativeFollowers = pure []
             }
@@ -294,6 +315,8 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
+  StrictMaybe LeiosLedgerView ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -353,6 +376,8 @@ chainSelSync ::
   , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
+  , ConvertRawHash blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
@@ -398,7 +423,8 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv =
+      mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
 
   chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
     for
@@ -416,6 +442,49 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
     Nothing -> pure ()
 
   atomically $ putTMVar varProcessed ()
+-- The blocks parked on an endorser block are the blocks containing a
+-- certificate that succeed the blocks announcing it. Now that its closure is
+-- acquired, ChainSel no longer hides them, so construct the candidates through
+-- them, as for the LoE above.
+chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
+  (announcers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+    invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    (,,,,)
+      <$> VolatileDB.getLeiosAnnouncers cdbVolatileDB
+      <*> ( ignoreInvalidSuc cdbVolatileDB invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
+      <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+  let
+    unparkedPoints :: [RealPoint blk]
+    unparkedPoints =
+      [ RealPoint (VolatileDB.biSlotNo bi) succHash
+      | announcer <- Set.toList (announcers ebHash)
+      , succHash <- Set.toList (succsOf (BlockHash announcer))
+      , Just bi <- [lookupBlockInfo succHash]
+      , VolatileDB.lbiHasCert (VolatileDB.biLeios bi)
+      ]
+
+    chainSelEnv =
+      mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
+
+  traceWith (TraceAddBlockEvent >$< cdbTracer) $
+    ReconsideredParkedBlocks ebHash (length unparkedPoints)
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      unparkedPoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
 chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
@@ -454,7 +523,23 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView b) >>= \case
+          Right () ->
+            chainSelectionForBlock
+              cdb
+              (BlockCache.singleton b)
+              hdr
+              MaySetTentativeHeader
+              blockPunish
+          Left rejection -> lift $ do
+            let e = ExtValidationErrorLeiosCert rejection
+            traceWith (AddBlockValidation >$< addBlockTracer) $
+              InvalidBlock e (blockRealPoint b)
+            addInvalidBlock cdbInvalid e (blockRealPoint b)
+            -- The rejected certificate is the block's own.
+            InvalidBlockPunishment.enact
+              blockPunish
+              InvalidBlockPunishment.BlockItself
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -532,7 +617,13 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
 
     -- Trigger chain selection for the boosted block.
     lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
-    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+    lift $
+      chainSelectionForBlock
+        cdb
+        BlockCache.empty
+        boostedHdr
+        MayNotSetTentativeHeader
+        noPunishment
     pure $ addedCertRes
 
   -- Deliver promise indicating that we processed the cert.
@@ -627,9 +718,10 @@ chainSelectionForBlock ::
   ChainDbEnv m blk ->
   BlockCache blk ->
   Header blk ->
+  TentativeHeaderPermission ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
+chainSelectionForBlock cdb@CDB{..} blockCache hdr permission punish = electric $ do
   (invalid, curChain, weights) <-
     atomically $
       (,,)
@@ -675,7 +767,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain (Just (p, punish))
+            chainSelEnv =
+              mkChainSelEnv cdb blockCache weights curChain permission (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -723,9 +816,17 @@ constructPreferableCandidates ::
 constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,)
-      <$> (ignoreInvalidSuc p invalid <$> VolatileDB.filterByPredecessor cdbVolatileDB)
-      <*> (ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
+    -- Parked blocks ('ignoreParkedCertRB') are absent as invalid ones are, but
+    -- only until the closure they wait for is acquired.
+    acquired <- readTVar cdbAcquiredLeiosEbs
+    rawLookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
+    rawSuccsOf <- VolatileDB.filterByPredecessor cdbVolatileDB
+    pure
+      ( ignoreInvalidSuc p invalid $
+          ignoreParkedCertRBSuc acquired rawLookupBlockInfo rawSuccsOf
+      , ignoreInvalid p invalid $
+          ignoreParkedCertRB acquired rawLookupBlockInfo
+      )
 
   loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
   traceWith
@@ -900,7 +1001,7 @@ switchTo ::
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
   SuccessForkerAction m ExtLedgerState blk
-switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
+switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \validated forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -914,16 +1015,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
       Nothing ->
         error "chainDiff doesn't fit onto current chain"
       Just newChain -> do
-        let lcfg = configLedger cdbTopLevelConfig
-            diffWithTime =
-              -- the new ledger state can translate the slots of the new
-              -- headers
-              Diff.map
-                ( mkHeaderWithTime
-                    lcfg
-                    (ledgerState newLedger)
-                )
-                chainDiff
+        let diffWithTime = ChainDiff (Diff.getRollback chainDiff) validated
             newChainWithTime =
               case Diff.apply curChainWithTime diffWithTime of
                 Nothing -> error "chainDiff failed for HeaderWithTime"
@@ -1053,6 +1145,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , blockCache :: BlockCache blk
   , weights :: PerasWeightSnapshot blk
   , curChain :: AnchoredFragment (Header blk)
+  , tentativeHeaderPermission :: TentativeHeaderPermission
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
   -- punish action for the peer that sent that block; see
@@ -1081,10 +1174,11 @@ mkChainSelEnv ::
   PerasWeightSnapshot blk ->
   -- | See 'curChain'
   AnchoredFragment (Header blk) ->
+  TentativeHeaderPermission ->
   -- | See 'punish'.
   Maybe (RealPoint blk, InvalidBlockPunishment m) ->
   ChainSelEnv m blk
-mkChainSelEnv CDB{..} blockCache weights curChain punish =
+mkChainSelEnv CDB{..} blockCache weights curChain tentativeHeaderPermission punish =
   ChainSelEnv
     { lgrDB = cdbLedgerDB
     , bcfg = configBlock cdbTopLevelConfig
@@ -1101,8 +1195,34 @@ mkChainSelEnv CDB{..} blockCache weights curChain punish =
         TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
     , pipeliningTracer =
         TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
+    , tentativeHeaderPermission
     , punish
     }
+
+-- | Whether a chain selection may set the tentative header
+--
+-- A downstream peer's LeiosFetch reads the header of a block that contains a
+-- Leios certificate as an offer of the endorser block that the certificate
+-- certifies. So ChainSel must not pipeline the header of a block whose
+-- certificate does not establish its claim: that would offer an endorser block
+-- as certified when it is not.
+--
+-- ChainSel checks a block's certificate when the block arrives
+-- ('checkLeiosCert'), and an invalid certificate makes the block invalid. But
+-- the record of invalid blocks lives in memory, so a restart forgets it. And
+-- every other trigger of chain selection can reconsider blocks that have been
+-- in the VolatileDB since a previous execution: an endorser block's closure
+-- arriving, the LoE fragment moving, or a Peras certificate boosting a block.
+-- So only the chain selection that a block's arrival triggers may set the
+-- tentative header.
+--
+-- Forgetting the certifying blocks that are off the initial selection
+-- ('forgetLeiosCertsAtStartUpExcept') already keeps such blocks out of reach,
+-- so this is a second line of defense.
+data TentativeHeaderPermission
+  = MaySetTentativeHeader
+  | MayNotSetTentativeHeader
+  deriving (Eq, Show)
 
 -- | Perform chain selection with the given candidates. If a validated candidate
 -- was chosen to replace the current chain, perform the passed continuation and
@@ -1124,10 +1244,10 @@ chainSelection ::
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
   (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
-  -- | The (valid) chain diff and corresponding LedgerDB that was selected,
-  -- or 'Nothing' if there is no valid chain diff preferred over the current
-  -- chain.
-  m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+  -- | The (valid) chain diff that was selected, with the headers its
+  -- validation produced, or 'Nothing' if there is no valid chain diff
+  -- preferred over the current chain.
+  m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
 chainSelection chainSelEnv chainDiffs onSuccess =
   assert
     ( all
@@ -1155,7 +1275,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
   --        [Ouroboros] below.
   go ::
     [(ChainDiff (Header blk), ReasonForSwitch' blk)] ->
-    m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+    m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
   go [] = pure Nothing
   go ((candidate, reason) : candidates0) = do
     case NE.nonEmpty (AF.toOldestFirst $ getSuffix candidate) of
@@ -1165,7 +1285,8 @@ chainSelection chainSelEnv chainDiffs onSuccess =
         validateCandidate chainSelEnv candidate neHeaders (onSuccess candidate reason) >>= \case
           FullyValid candidate' ->
             -- The entire candidate is valid
-            assert (Diff.getTip candidate == Diff.getTip candidate') $ pure (Just (candidate, reason))
+            assert (Diff.getTip candidate == castPoint (Diff.getTip candidate')) $
+              pure (Just (candidate', reason))
           ValidPrefix candidate' -> do
             whenJust mTentativeHeader clearTentativeHeader
             -- Prefix of the candidate because it contained rejected blocks
@@ -1192,9 +1313,11 @@ chainSelection chainSelEnv chainDiffs onSuccess =
     -- out to be invalid.
     setTentativeHeader :: m (Maybe (Header blk, TentativeHeaderState blk))
     setTentativeHeader = do
-      pipeliningResult <-
-        (\ts -> isPipelineable bcfg ts candidate)
-          <$> readTVarIO varTentativeState
+      pipeliningResult <- case tentativeHeaderPermission of
+        MayNotSetTentativeHeader -> pure Nothing
+        MaySetTentativeHeader ->
+          (\ts -> isPipelineable bcfg ts candidate)
+            <$> readTVarIO varTentativeState
       whenJust pipeliningResult $ \(tentativeHeader, _) -> do
         let setTentative = SetTentativeHeader tentativeHeader
         encloseWith (setTentative >$< pipeliningTracer) $
@@ -1265,8 +1388,9 @@ chainSelection chainSelEnv chainDiffs onSuccess =
 
 -- | Result of 'validateCandidate'.
 data ValidationResult blk
-  = -- | The entire candidate fragment was valid.
-    FullyValid (ChainDiff (Header blk))
+  = -- | The entire candidate fragment was valid, with the headers its
+    -- validation produced.
+    FullyValid (ChainDiff (HeaderWithTime blk))
   | -- | The candidate fragment contained invalid blocks that had to be
     -- truncated from the fragment. We only return the (potentially empty) valid
     -- prefix.
@@ -1318,7 +1442,7 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
       ValidateLedgerError (AnnLedgerError lastValid pt e) -> do
         let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
         traceWith validationTracer (InvalidBlock e pt)
-        addInvalidBlock e pt
+        addInvalidBlock varInvalid e pt
         traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
 
         -- punish the peer who sent a block if it is invalid or a block from its
@@ -1347,9 +1471,9 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
         -- three blocks in a row have the same slot.)
 
         pure $ ValidPrefix chainDiff'
-      ValidateSuccessful -> do
+      ValidateSuccessful validated -> do
         traceWith validationTracer (ValidCandidate suffix)
-        pure $ FullyValid chainDiff
+        pure $ FullyValid (ChainDiff rollback validated)
  where
   ChainSelEnv
     { lgrDB
@@ -1361,13 +1485,51 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
 
   traceUpdate = traceWith $ UpdateLedgerDbTraceEvent >$< validationTracer
 
-  -- \| Record the invalid block in 'cdbInvalid' and change its fingerprint.
-  addInvalidBlock :: ExtValidationError blk -> RealPoint blk -> m ()
-  addInvalidBlock e (RealPoint slot hash) = atomically $
-    modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
-      WithFingerprint
-        (Map.insert hash (InvalidBlockInfo e slot) invalid)
-        (succ fp)
+-- | Record the invalid block in the map and change its fingerprint.
+addInvalidBlock ::
+  (IOLike m, StandardHash blk) =>
+  StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  ExtValidationError blk ->
+  RealPoint blk ->
+  m ()
+addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
+  modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
+    WithFingerprint
+      (Map.insert hash (InvalidBlockInfo e slot) invalid)
+      (succ fp)
+
+{-------------------------------------------------------------------------------
+  Leios certificates
+-------------------------------------------------------------------------------}
+
+-- | Check the Leios certificate of an arriving block, if it contains one,
+-- against the Leios part of the ledger view at the block's slot.
+--
+-- If the certificate is valid, then record the claim it establishes; see
+-- 'LeiosValidClaims'. If it is invalid, then so is the block. A block making an
+-- already established claim need not have its certificate verified.
+checkLeiosCert ::
+  (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
+  ChainDbEnv m blk ->
+  -- | The slot of the block's predecessor
+  WithOrigin SlotNo ->
+  StrictMaybe LeiosLedgerView ->
+  blk ->
+  m (Either LeiosCertRejection ())
+checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
+  case blockLeiosCert b of
+    Nothing -> pure $ Right ()
+    Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
+      Left rejection -> pure $ Left rejection
+      Right claim -> do
+        claims <- readTVarIO cdbLeiosValidClaims
+        if
+          | isLeiosValidClaim (leiosClaimRbHash claim) claims -> pure $ Right ()
+          | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
+              Left rejection -> pure $ Left rejection
+              Right () -> do
+                atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim)
+                pure $ Right ()
 
 {-------------------------------------------------------------------------------
   Diffusion pipelining

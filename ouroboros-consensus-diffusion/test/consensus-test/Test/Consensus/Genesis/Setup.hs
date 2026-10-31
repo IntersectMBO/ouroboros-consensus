@@ -24,8 +24,7 @@ import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
 import Data.SOP (All, Top)
 import Ouroboros.Consensus.Block.Abstract
-  ( BlockProtocol
-  , ChainHash (..)
+  ( ChainHash (..)
   , ConvertRawHash
   , GetHeader
   , Header
@@ -33,6 +32,7 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   ( BlockSupportsDiffusionPipelining
   )
+import Ouroboros.Consensus.Block.SupportsLeios (BlockSupportsLeios)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
@@ -41,7 +41,6 @@ import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
@@ -164,10 +163,10 @@ runGenesisTest ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
@@ -228,10 +227,10 @@ runConformanceTest ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk

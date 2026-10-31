@@ -15,6 +15,8 @@ module Ouroboros.Consensus.Storage.VolatileDB.API
 
     -- * Types
   , BlockInfo (..)
+  , LeiosBlockInfo (..)
+  , noLeiosBlockInfo
 
     -- * Errors
   , ApiMisuse (..)
@@ -31,6 +33,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.API
 import Cardano.Binary (DecoderError)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Maybe (isJust)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Data.Word (Word16)
@@ -38,6 +41,7 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block (MaxSlotNo)
@@ -67,6 +71,9 @@ data VolatileDB m blk = VolatileDB
   -- ^ Store the given block in the VolatileDB.
   --
   -- Returns after the block has been written to disk.
+  , getLeiosAnnouncers :: HasCallStack => STM m (EndorserBlockHash -> Set (HeaderHash blk))
+  -- ^ Return a function that returns the blocks that announce the endorser
+  -- block with the given hash ('lbiAnnouncedEb').
   , filterByPredecessor :: HasCallStack => STM m (ChainHash blk -> Set (HeaderHash blk))
   -- ^ Return a function that returns the successors of the block with the
   -- given hash.
@@ -82,6 +89,33 @@ data VolatileDB m blk = VolatileDB
   -- ^ Return a function that returns the 'BlockInfo' of the block with
   -- the given hash or 'Nothing' if the block is not found in the
   -- VolatileDB.
+  , forgetLeiosCertsAtStartUpExcept :: HasCallStack => Set (HeaderHash blk) -> m ()
+  -- ^ Forget every block containing a Leios certificate ('lbiHasCert') except
+  -- the given ones.
+  --
+  -- Forgetting stands in for deleting. The VolatileDB's files are append-only,
+  -- so it cannot delete an individual block; if it could, this would simply
+  -- delete these blocks.
+  --
+  -- The VolatileDB knows that a /forgotten/ block is stored but otherwise
+  -- behaves as if the block is absent: its bytes stay on disk, and this DB
+  -- still recognises its hash if the block is added again, but
+  -- 'getBlockInfo', 'filterByPredecessor' and 'getBlockComponent' all answer
+  -- as though we do not hold it. 'putBlock' is the one exception: adding a
+  -- forgotten block again writes nothing and makes the block known again.
+  --
+  -- See docs\/website\/contents\/explanations\/valid_claims_startup.md for why.
+  --
+  -- Only 'putBlock' un-forgets a block. Forgotten blocks are garbage collected.
+  --
+  -- PRECONDITION: called at most once, during node start-up, before the ChainDB
+  -- has revealed its initial chain selection to anything --- not to a
+  -- downstream peer, not to a local client, not even to another component of
+  -- this node. Forgetting is only sound while nobody can already be aware of a
+  -- forgotten block, and no one can be before that reveal.
+  --
+  -- PRECONDITION: forgetting a block on the initial selection would break the
+  -- ChainDB, so the caller must not ask for that.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Try to remove all blocks with a slot number less than the given
   -- one.
@@ -157,8 +191,28 @@ data BlockInfo blk = BlockInfo
   , biIsEBB :: !IsEBB
   , biHeaderOffset :: !Word16
   , biHeaderSize :: !Word16
+  , biLeios :: !LeiosBlockInfo
   }
   deriving (Eq, Show, Generic, NoThunks)
+
+-- | What a block says about Leios endorser blocks. ChainSel needs it for every
+-- block in the VolatileDB, including right after a restart, which is why the
+-- VolatileDB holds it. It is a type of its own, rather than fields of
+-- 'BlockInfo', so that
+-- 'Ouroboros.Consensus.Storage.VolatileDB.Impl.volLeiosBlockInfo' can return
+-- it whole.
+data LeiosBlockInfo = LeiosBlockInfo
+  { lbiHasCert :: !Bool
+  -- ^ Whether the block contains a Leios certificate, which certifies the
+  -- endorser block its predecessor announced.
+  , lbiAnnouncedEb :: !(StrictMaybe EndorserBlockHash)
+  -- ^ The endorser block the block announces, if any.
+  }
+  deriving (Eq, Show, Generic, NoThunks)
+
+-- | A block that contains no certificate and announces no endorser block.
+noLeiosBlockInfo :: LeiosBlockInfo
+noLeiosBlockInfo = LeiosBlockInfo False SNothing
 
 {------------------------------------------------------------------------------
   Errors

@@ -791,7 +791,7 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   -- The old EB references transactions 0, 1 and 2, and the other only 0 and 1.
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
   writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
-  leiosDbGarbageCollect db 6
+  garbageCollect db 6
   rwLookupEbBody con (mkTestEbHash 1) >>= (@?= [])
   holdsClosure con (mkTestEbHash 1) >>= (@?= False)
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
@@ -805,14 +805,14 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
-  leiosDbGarbageCollect db 6
+  garbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
 test_gcKeepsPinnedEb :: LeiosDbHandle IO -> IO ()
 test_gcKeepsPinnedEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
-  leiosDbGarbageCollect db 6
+  garbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
 test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
@@ -1156,11 +1156,6 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- whose points are older than its slot, pinned or not, since a pinned one has
 -- a complete closure, so has been copied.
 --
--- WARNING: the node as of this incomplete port can still pin an endorser block
--- whose closure is incomplete. Its ChainSel adopts a block certifying an
--- endorser block without checking it holds that block's closure. TODO Remove
--- this warning once ChainSel checks.
---
 -- An endorser block is also promoted at most once: the node pins only what the
 -- immutable chain certifies, and a chain cannot certify the same endorser
 -- block twice, since it cannot be valid twice.
@@ -1224,7 +1219,7 @@ observe db settle bodies ops = withRW db $ \rw -> do
           else go rw points bodied pinned nEvicted rest
       [] -> go rw points bodied pinned nEvicted rest
     OpGc slot -> do
-      leiosDbGarbageCollect db slot
+      garbageCollect db slot
       settle
       let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
           evicted =

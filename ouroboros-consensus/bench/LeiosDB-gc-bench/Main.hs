@@ -34,7 +34,7 @@
 --     everything that aged out meanwhile is marked at once.
 --
 -- A phase takes the next N EBs of the schedule, so the GC frontier passed to
--- 'leiosDbGarbageCollect' makes exactly N EBs collectable. Per phase, in
+-- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
 -- order:
 --
 --   1. insert 5 fresh full EBs (announcement + body + txs) at the current
@@ -42,7 +42,7 @@
 --   2. promote half of the N EBs and wait for the background copier to land
 --      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
 --      un-copied, as un-certified EBs are on a real node;
---   3. call 'leiosDbGarbageCollect' --- which only MARKS (@markSeconds@) ---
+--   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
 --      and wait for the background sweeper to drain the marks
 --      (@sweepSeconds@).
 --
@@ -543,7 +543,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain
-          (_, markWall) <- timed $ leiosDbGarbageCollect db (SlotNo frontier)
+          (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
           (_, sweepWall) <- timed $ awaitZero "sweep" sweepBacklog
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents

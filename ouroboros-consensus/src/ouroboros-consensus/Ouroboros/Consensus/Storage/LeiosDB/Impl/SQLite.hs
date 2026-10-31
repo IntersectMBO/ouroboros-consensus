@@ -176,7 +176,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       , openReader = implOpenReader statsVar
       , openWriter = implOpenWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
-      , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
+      , garbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
       , leiosDbSampleStats = readTVarIO statsVar
       }

@@ -67,6 +67,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
@@ -957,7 +958,15 @@ runThreadNetwork
                 -- ChainDB will reject it as invalid, and
                 -- 'Test.ThreadNet.General.prop_general' will eventually fail
                 -- because of a block rejection.
-                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
+                --
+                -- Only Byron has EBBs, and Byron has no Leios.
+                void $
+                  ChainDB.addBlock
+                    chainDB
+                    InvalidBlockPunishment.noPunishment
+                    (pointSlot p)
+                    SNothing
+                    ebb
                 pure forged
 
       -- This variable holds the number of the earliest slot in which the

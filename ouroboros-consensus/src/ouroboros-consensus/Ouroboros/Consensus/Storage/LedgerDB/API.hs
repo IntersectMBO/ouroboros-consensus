@@ -309,6 +309,7 @@ data LedgerDB m l blk = LedgerDB
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
   , validateFork ::
+      l ~ ExtLedgerState =>
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
@@ -319,7 +320,12 @@ data LedgerDB m l blk = LedgerDB
   -- back as many blocks as the passed @Word64@.
   --
   -- The passed continuation will be executed if the result of validation is
-  -- fully successful.
+  -- fully successful, given the headers of the validated blocks.
+  --
+  -- TODO The @l ~ ExtLedgerState@ constraint could be removed if validation
+  -- returned the states the validated blocks produced instead of their
+  -- 'HeaderWithTime's, leaving the ChainDB to build those, at the cost of the
+  -- ChainDB zipping those states with the headers.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()

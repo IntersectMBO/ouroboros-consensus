@@ -238,11 +238,11 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
 
 instance NodeInitStorage DualByronBlock where
   -- Just like Byron, we need to start with an EBB
-  nodeInitChainDB cfg InitChainDB{getCurrentLedger, addBlock} = do
+  nodeInitChainDB cfg InitChainDB{getCurrentLedger, addTheFirstEbb} = do
     tip <- ledgerTipPoint <$> getCurrentLedger
     case tip of
       BlockPoint{} -> return ()
-      GenesisPoint -> addBlock genesisEBB
+      GenesisPoint -> addTheFirstEbb genesisEBB
    where
     genesisEBB :: DualByronBlock
     genesisEBB =
@@ -274,6 +274,9 @@ instance NodeInitStorage DualByronBlock where
 
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
+
+instance BlockSupportsLeios DualByronBlock where
+  blockLeiosCert = defaultBlockLeiosCert
 
 instance BlockSupportsSanityCheck DualByronBlock where
   configAllSecurityParams = pure . configSecurityParam

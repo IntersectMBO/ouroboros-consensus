@@ -50,6 +50,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Protocol.Abstract
   ( CanBeLeader
   , ChainDepState
@@ -203,6 +204,7 @@ class ProtocolHeaderSupportsProtocol proto where
 
 class
   ( ConsensusProtocol proto
+  , LeiosProtocol proto
   , Typeable (ShelleyProtocolHeader proto)
   , ProtocolHeaderSupportsEnvelope proto
   , ProtocolHeaderSupportsKES proto

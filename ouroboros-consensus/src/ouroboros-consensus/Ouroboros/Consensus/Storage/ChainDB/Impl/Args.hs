@@ -25,11 +25,11 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
   , LoE (LoEDisabled)
   )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (leiosBlockInfo)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ( TraceEvent (..)
   )
@@ -171,7 +171,9 @@ ensureValidateAll args =
     }
 
 completeChainDbArgs ::
-  (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
+  ( BlockSupportsProtocol blk
+  , IOLike m
+  ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
@@ -217,6 +219,7 @@ completeChainDbArgs
             { VolatileDB.volHasFS = mkVolFS $ RelativeMountPoint "volatile"
             , VolatileDB.volCheckIntegrity = checkIntegrity
             , VolatileDB.volCodecConfig = configCodec cdbsTopLevelConfig
+            , VolatileDB.volLeiosBlockInfo = leiosBlockInfo (configBlock cdbsTopLevelConfig)
             }
       , cdbLgrDbArgs =
           (cdbLgrDbArgs defArgs)

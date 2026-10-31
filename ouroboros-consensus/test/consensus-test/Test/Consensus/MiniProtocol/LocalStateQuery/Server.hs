@@ -274,9 +274,9 @@ initLedgerDB s c = do
           BlockCache.empty
           0
           (NE.map getHeader chain)
-          (MkSuccessForkerAction $ join . atomically . LedgerDB.forkerCommit)
+          (MkSuccessForkerAction $ \_validated -> join . atomically . LedgerDB.forkerCommit)
       case result of
-        LedgerDB.ValidateSuccessful -> do
+        LedgerDB.ValidateSuccessful _ -> do
           pure ()
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"

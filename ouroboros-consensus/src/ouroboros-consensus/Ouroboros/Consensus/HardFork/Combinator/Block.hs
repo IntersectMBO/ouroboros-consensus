@@ -123,6 +123,13 @@ instance CanHardFork xs => GetPrevHash (HardForkBlock xs) where
         GenesisHash -> GenesisHash
         BlockHash h -> BlockHash (OneEraHash $ toShortRawHash (Proxy @blk) h)
 
+instance CanHardFork xs => BlockSupportsLeios (HardForkBlock xs) where
+  blockLeiosCert =
+    hcollapse
+      . hcmap proxySingle (K . blockLeiosCert . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
 {-------------------------------------------------------------------------------
   NestedContent
 -------------------------------------------------------------------------------}

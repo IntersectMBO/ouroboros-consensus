@@ -80,6 +80,7 @@ class
   , ConfigSupportsNode blk
   , NodeInitStorage blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo

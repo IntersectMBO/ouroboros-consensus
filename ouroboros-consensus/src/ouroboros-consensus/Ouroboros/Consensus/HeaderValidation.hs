@@ -65,7 +65,6 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
-  , mkHeaderWithTime
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -83,6 +82,7 @@ import Control.Monad.Except
 import Data.Coerce
 import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Proxy
 import Data.Typeable (Typeable)
 import Data.Void (Void)
@@ -92,11 +92,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
-  ( HasHardForkHistory (hardForkSummary)
-  )
-import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
@@ -590,15 +586,34 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
   Header with time
 -------------------------------------------------------------------------------}
 
--- | A header paired with the time of the slot that it inhabits.
+-- | A header paired with the time of the slot that it inhabits, with the slot
+-- of its predecessor, and with the Leios part of the ledger view at its slot.
 --
--- Note that the header's slot was translated to this time (in the ChainSync
--- client) according to the header's chain. This clarification may be helpful,
--- since it's possible that some other chain would translate that same slot to
--- a different time.
+-- Note that the header's slot was translated to this time (by whatever
+-- validated the header) according to the header's chain. This clarification
+-- may be helpful, since it's possible that some other chain would translate
+-- that same slot to a different time.
+--
+-- TODO rename this type, eg to @ValidatedHeader@, and the @hwt@ prefix on its
+-- fields to match: it no longer merely adds a time. \"Validated\" rather than
+-- \"enriched\" because that names where these can come from -- every field
+-- beyond the header itself is a by-product of validating it, so the only
+-- places able to build one are the two that validate.
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
+  , hwtPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of the header's predecessor on the chain it arrived on
+  --
+  -- The header commits only to its predecessor's hash, so this is knowledge
+  -- of that chain rather than of the header. It is nonetheless unambiguous,
+  -- since every chain carrying this header carries the same predecessor.
+  , hwtLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
+  -- ^ 'SNothing' if and only if the header's era has no Leios
+  --
+  -- The ledger view is a property of the slot, so applying the header's block
+  -- in that slot does not change it: the state just before the block and the
+  -- state the block produced give the same view.
   }
   deriving Generic
 
@@ -639,31 +654,6 @@ instance
 
 instance GetHeader1 HeaderWithTime where
   getHeader1 = hwtHeader
-
--- | Convert 'Header' to 'HeaderWithTime'
---
--- PREREQ: The given ledger must be able to translate the slot of the given
--- header.
---
--- This is INLINEed since the summary can usually be reused.
-mkHeaderWithTime ::
-  ( HasHardForkHistory blk
-  , HasHeader (Header blk)
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk mk ->
-  Header blk ->
-  HeaderWithTime blk
-{-# INLINE mkHeaderWithTime #-}
-mkHeaderWithTime cfg lst = \hdr ->
-  let summary = hardForkSummary cfg lst
-      slot = realPointSlot $ headerRealPoint hdr
-      qry = Qry.slotToWallclock slot
-      (slotTime, _) = Qry.runQueryPure qry summary
-   in HeaderWithTime
-        { hwtHeader = hdr
-        , hwtSlotRelativeTime = slotTime
-        }
 
 {-------------------------------------------------------------------------------
   Serialisation

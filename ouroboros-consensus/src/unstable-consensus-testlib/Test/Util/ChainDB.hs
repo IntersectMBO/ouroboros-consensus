@@ -15,6 +15,7 @@ import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
+  , configBlock
   , configCodec
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
@@ -25,6 +26,7 @@ import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (leiosBlockInfo)
 import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -122,6 +124,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , volMaxBlocksPerFile = VolatileDB.mkBlocksPerFile 4
           , volTracer = nullTracer
           , volValidationPolicy = VolatileDB.ValidateAll
+          , volLeiosBlockInfo = leiosBlockInfo (configBlock mcdbTopLevelConfig)
           }
     , cdbLgrDbArgs =
         LedgerDbArgs

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -65,13 +66,28 @@ import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (configLedger)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
+import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
+import Ouroboros.Consensus.HeaderValidation
+  ( AnnTip (..)
+  , HeaderState (..)
+  , HeaderWithTime (..)
+  , annTipHash
+  )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , leiosLedgerViewAtTip
+  )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
   Forker
@@ -301,6 +317,9 @@ validate ::
   ( IOLike m
   , HasCallStack
   , ApplyBlock l blk
+  , l ~ ExtLedgerState
+  , LedgerSupportsProtocol blk
+  , HasHardForkHistory blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
@@ -335,25 +354,28 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either GetForkerError (Either (AnnLedgerError l blk) ()) ->
+    Either
+      GetForkerError
+      (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk))) ->
     ValidateResult l blk
   rewrap (Right (Left e)) = ValidateLedgerError e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
   rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
-  rewrap (Right (Right ())) = ValidateSuccessful
+  rewrap (Right (Right validated)) = ValidateSuccessful validated
 
   mkAps ::
     Set (RealPoint blk) ->
-    NonEmpty (Ap m l blk)
+    NonEmpty (Header blk, Ap m l blk)
   mkAps prev =
     NE.map
-      ( \hdr -> case ( Set.member (headerRealPoint hdr) prev
-                     , BlockCache.lookup (headerHash hdr) blockCache
-                     ) of
-          (False, Nothing) -> ApplyRef (headerRealPoint hdr)
-          (True, Nothing) -> ReapplyRef (headerRealPoint hdr)
-          (False, Just blk) -> ApplyVal blk
-          (True, Just blk) -> ReapplyVal blk
+      ( \hdr ->
+          (,) hdr $ case ( Set.member (headerRealPoint hdr) prev
+                         , BlockCache.lookup (headerHash hdr) blockCache
+                         ) of
+            (False, Nothing) -> ApplyRef (headerRealPoint hdr)
+            (True, Nothing) -> ReapplyRef (headerRealPoint hdr)
+            (False, Just blk) -> ApplyVal blk
+            (True, Just blk) -> ReapplyVal blk
       )
       hdrs
 
@@ -362,28 +384,37 @@ validate evs args = do
   validBlockPoints :: ValidateResult l blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
-    ValidateSuccessful -> id
+    ValidateSuccessful _ -> id
     ValidateLedgerError e -> takeWhile (/= annLedgerErrRef e)
 
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , l ~ ExtLedgerState
+  , LedgerSupportsProtocol blk
+  , HasHardForkHistory blk
+  ) =>
   (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
-  -- | New blocks to apply
-  NonEmpty (Ap m l blk) ->
+  -- | New blocks to apply, with their headers
+  NonEmpty (Header blk, Ap m l blk) ->
   ResolveBlock m blk ->
   SuccessForkerAction m l blk ->
-  m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
+  m
+    ( Either
+        GetForkerError
+        (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
+    )
 switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
-    let start = PushStart . toRealPoint . NE.head $ newBlocks
-        goal = PushGoal . toRealPoint . NE.last $ newBlocks
+    let start = PushStart . toRealPoint . snd . NE.head $ newBlocks
+        goal = PushGoal . toRealPoint . snd . NE.last $ newBlocks
     ePush <-
       applyThenPushMany
         (trace . StartedPushingBlockToTheLedgerDb start goal)
@@ -394,7 +425,9 @@ switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSucc
         doResolve
     case ePush of
       Left err -> pure (Left err)
-      Right () -> fmap Right $ applySuccessForkerAction onSuccess fo
+      Right validated -> do
+        applySuccessForkerAction onSuccess validated fo
+        pure (Right validated)
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -458,7 +491,7 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
     f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
--- push the resulting ledger state to the forker.
+-- push the resulting ledger state to the forker, and return it.
 applyThenPush ::
   (ApplyBlock l blk, MonadSTM m) =>
   ComputeLedgerEvents ->
@@ -466,32 +499,62 @@ applyThenPush ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
+  m (Either (AnnLedgerError l blk) (l blk DiffMK))
 applyThenPush evs cfg ap fo doResolve = do
   eLerr <- applyBlock evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
-    Right st -> Right <$> forkerPush fo st
+    Right st -> Right st <$ forkerPush fo st
 
--- | Apply and push a sequence of blocks (oldest first).
+-- | Apply and push a sequence of blocks (oldest first), and return their
+-- headers, anchored where the forker started.
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , l ~ ExtLedgerState
+  , LedgerSupportsProtocol blk
+  , HasHardForkHistory blk
+  ) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
-  [Ap m l blk] ->
+  [(Header blk, Ap m l blk)] ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
-applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
+  m (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
+applyThenPushMany trace evs cfg aps fo doResolveBlock = do
+  start <- atomically $ forkerGetLedgerState fo
+  pushAndTrace (AF.Empty (anchorOf start)) aps
  where
-  pushAndTrace [] = pure $ Right ()
-  pushAndTrace (ap : aps') = do
+  lcfg = configLedger (getExtLedgerCfg cfg)
+
+  anchorOf st = case headerStateTip (headerState st) of
+    Origin -> AF.AnchorGenesis
+    NotOrigin annTip ->
+      AF.Anchor (annTipSlotNo annTip) (annTipHash annTip) (annTipBlockNo annTip)
+
+  pushAndTrace acc [] = pure $ Right acc
+  pushAndTrace acc ((hdr, ap) : aps') = do
     trace $ Pushing . toRealPoint $ ap
     res <- applyThenPush evs cfg ap fo doResolveBlock
     case res of
       Left err -> pure (Left err)
-      Right () -> pushAndTrace aps'
+      Right st -> do
+        -- The state the block produced can translate the block's slot, which
+        -- is that state's tip slot, and gives the ledger view at that slot; see
+        -- 'hwtLeiosLedgerView'.
+        let !hwt =
+              HeaderWithTime
+                { hwtHeader = hdr
+                , hwtSlotRelativeTime =
+                    fst $
+                      Qry.runQueryPure
+                        (Qry.slotToWallclock (blockSlot hdr))
+                        (hardForkSummary lcfg (ledgerState st))
+                , hwtPredecessorSlot = AF.headSlot acc
+                , hwtLeiosLedgerView = leiosLedgerViewAtTip lcfg (ledgerState st)
+                }
+        pushAndTrace (acc AF.:> hwt) aps'
 
 {-------------------------------------------------------------------------------
   Finding blocks
@@ -525,13 +588,17 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- commonly used as "how to close a @res@", which is *NOT* the case
 -- here. So it's preferable to use this more perspicious type in
 -- signatures.
+--
+-- Its argument holds the headers of the blocks that validation pushed onto the
+-- forker, anchored where the forker started.
 newtype SuccessForkerAction m l blk = MkSuccessForkerAction
-  { applySuccessForkerAction :: Forker m l blk -> m ()
+  { applySuccessForkerAction :: AnchoredFragment (HeaderWithTime blk) -> Forker m l blk -> m ()
   }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
 data ValidateResult l blk
-  = ValidateSuccessful
+  = -- | The headers of the validated blocks, as for 'SuccessForkerAction'
+    ValidateSuccessful (AnchoredFragment (HeaderWithTime blk))
   | ValidateLedgerError (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 

@@ -98,6 +98,7 @@ instance
   LedgerSupportsProtocol (SimplePraosRuleBlock c)
   where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
 {-------------------------------------------------------------------------------

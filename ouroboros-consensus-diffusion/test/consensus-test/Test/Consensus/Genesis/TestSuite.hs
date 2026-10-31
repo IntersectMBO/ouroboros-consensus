@@ -35,8 +35,8 @@ import Data.Monoid (Endo (..))
 import Data.SOP (All, Top)
 import GHC.Generics (Generic, Generically (..))
 import Ouroboros.Consensus.Block
-  ( BlockProtocol
-  , BlockSupportsDiffusionPipelining
+  ( BlockSupportsDiffusionPipelining
+  , BlockSupportsLeios
   , BlockSupportsPeras
   , ConvertRawHash
   , Header
@@ -48,7 +48,6 @@ import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -188,10 +187,10 @@ toTestTree ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LeiosProtocol (BlockProtocol blk)
   , StateSupportsPerasEpochContext blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsLeios blk
   , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk

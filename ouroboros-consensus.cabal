@@ -102,6 +102,7 @@ library
     Ouroboros.Consensus.Block.NestedContent
     Ouroboros.Consensus.Block.RealPoint
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
+    Ouroboros.Consensus.Block.SupportsLeios
     Ouroboros.Consensus.Block.SupportsMetrics
     Ouroboros.Consensus.Block.SupportsPeras
     Ouroboros.Consensus.Block.SupportsProtocol
@@ -202,6 +203,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Leios.AnnounceState
+    Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.Types
@@ -295,6 +297,7 @@ library
     Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
     Ouroboros.Consensus.Storage.ChainDB.Impl.Follower
     Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
+    Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
     Ouroboros.Consensus.Storage.ChainDB.Impl.Paths
     Ouroboros.Consensus.Storage.ChainDB.Impl.Query
     Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -1354,6 +1357,7 @@ library diffusion
     cardano-base,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1401,6 +1405,7 @@ library unstable-diffusion-testlib
     bytestring,
     cardano-diffusion:cardano-diffusion,
     cardano-ledger-core,
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1513,7 +1518,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.Cert
     Test.Consensus.Leios.ChainDB
+    Test.Consensus.Leios.Committee
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Codec
@@ -1525,6 +1532,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
+    Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch
@@ -1686,6 +1694,7 @@ library cardano
     cardano-binary,
     cardano-crypto,
     cardano-crypto-class:cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-crypto-wrapper,
     cardano-ledger-allegra ^>=1.10,
     cardano-ledger-alonzo ^>=1.18,

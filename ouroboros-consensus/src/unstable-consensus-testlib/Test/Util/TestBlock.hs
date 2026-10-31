@@ -718,6 +718,7 @@ instance PayloadSemantics ptype => ValidateEnvelope (TestBlockWith ptype)
 
 instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView _ _ = ()
+  ledgerViewAtTip _ _ = ()
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
@@ -1140,6 +1141,9 @@ deriving via
   instance
     BlockSupportsProtocol (TestBlockWith ptype) =>
     BlockSupportsDiffusionPipelining (TestBlockWith ptype)
+
+instance BlockSupportsLeios (TestBlockWith ptype) where
+  blockLeiosCert = defaultBlockLeiosCert
 
 -----
 
