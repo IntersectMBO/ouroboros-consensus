@@ -433,9 +433,7 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
     , isComplete ebHash
     ]
 
--- | This falls back to the immutable copy only when 'imEbBodies' lacks the
--- body, even if that body's closure is incomplete. The SQLite implementation
--- has the same shortcoming (see the TODO on @sqlBatchRetrieveTxs@).
+-- | A tx the volatile copy lacks is read from the immutable copy, if any.
 imBatchRetrieveTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
@@ -444,15 +442,15 @@ imBatchRetrieveTxs ::
   m [(Int, TxHash, Maybe ByteString)]
 imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
   state <- readTVar stateVar
-  pure $ case Map.lookup ebHash (imEbBodies state) of
-    Just offsetMap -> retrieve offsetMap (Map.findWithDefault IntMap.empty ebHash (imEbTxBytes state))
-    Nothing -> case Map.lookup ebHash (imImmutableEbBodies state) of
-      Just offsetMap -> retrieve offsetMap (Map.findWithDefault IntMap.empty ebHash (imImmutableEbTxBytes state))
-      Nothing -> []
- where
-  retrieve offsetMap txBytesByOffset =
-    [ (offset, eteTxHash entry, IntMap.lookup offset txBytesByOffset)
-    | offset <- offsets
+  let bytesIn txBytes offset = IntMap.lookup offset (Map.findWithDefault IntMap.empty ebHash txBytes)
+  pure
+    [ ( offset
+      , eteTxHash entry
+      , bytesIn (imEbTxBytes state) offset <|> bytesIn (imImmutableEbTxBytes state) offset
+      )
+    | Just offsetMap <-
+        [Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state)]
+    , offset <- offsets
     , Just entry <- [IntMap.lookup offset offsetMap]
     ]
 

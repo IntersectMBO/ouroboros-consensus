@@ -173,6 +173,13 @@ withFreshDb InMemory action =
   newLeiosDBInMemory >>= action
 withFreshDb SQLite action = withFreshSQLiteDb action
 
+-- | 'withFreshDb', with a wait for the SQLite implementation's background work
+-- to catch up (see 'withSettle'). The in-memory implementation has none.
+withSettledDb :: DbImpl -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
+withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (pure ())
+withSettledDb SQLite action =
+  withFreshSQLiteFile $ \volDbPath _immDbPath db -> withSettle volDbPath (action db)
+
 withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 
@@ -223,6 +230,8 @@ mkTestGroups impl =
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
       , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
+      , testCase "a tx missing from a volatile copy fetched again is read from the immutable copy" $
+          test_retrieveFallsBackPerTx impl
       ]
   , testGroup
       "local fills"
@@ -638,6 +647,24 @@ writeWholeEb con points eb = do
   forM_ points $ \point -> rwInsertEbPoint con point (encodeEndorserBlockSize eb)
   forM_ points $ \point -> void $ rwInsertEbBody con point eb
   forM_ (take 1 points) $ \point -> void $ rwInsertTxs con point (allTxsFor eb)
+
+-- | An EB copied to the immutable partition, evicted from the volatile one, and
+-- then fetched again at a new point: a tx the new volatile copy lacks is still
+-- read from the immutable copy.
+test_retrieveFallsBackPerTx :: DbImpl -> IO ()
+test_retrieveFallsBackPerTx impl = withSettledDb impl $ \db settle -> withRW db $ \con -> do
+  let eb = mkTestEb 2
+      again = mkTestPoint 10 1
+  writeWholeEb con [mkTestPoint 5 1] eb
+  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
+  settle
+  garbageCollect db 6
+  settle
+  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  void $ rwInsertEbBody con again eb
+  void $ rwInsertTxs con again (take 1 (allTxsFor eb))
+  rwBatchRetrieveTxs con (mkTestEbHash 1) [0, 1]
+    >>= (@?= [(off, mkTestTxHash (fromIntegral off), Just (txBytesFor eb off)) | off <- [0, 1]])
 
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> EndorserBlockHash -> IO Bool
