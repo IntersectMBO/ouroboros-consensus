@@ -76,6 +76,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , acquireEbBody
   , completeTxRequest
   , ebStateHasBody
+  , newLeiosJobPool
   , offsetsToBitmap
   , refundEbRequest
   , refundTxRequest
@@ -345,29 +346,31 @@ processLeiosBlock ctx peer req eb = do
   settleBody now pointWritten bodyWritten = do
     () <- await pointWritten
     (_completed, filledOffs) <- await bodyWritten
-    let jobPool =
-          Jobs.mkLeiosJobPool
-            (maxJobBytesSize lfcStaticEnv)
-            (maxJobTxCount lfcStaticEnv)
-            (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
     acquired <- modifyMVar lfcOutstanding $ \outstanding ->
       case Map.lookup ebHash (ebState outstanding) of
         Just (MkEbState slot onset NoBody) -> do
           let acquiredPoint = MkLeiosPoint slot ebHash
+              (jobPool, outstanding') =
+                newLeiosJobPool
+                  lfcStaticEnv
+                  (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
+                  outstanding
           atomically $ do
             lfcNotify $ AcquiredEb acquiredPoint ebBytesSize
             when (Jobs.nullLeiosJobPool jobPool) $
               lfcNotify $
                 AcquiredEbTxs acquiredPoint
           pure
-            (acquireEbBody ebHash (FetchedBody ebBytesSize) jobPool outstanding, Just (acquiredPoint, onset))
+            ( acquireEbBody ebHash (FetchedBody ebBytesSize) jobPool outstanding'
+            , Just (acquiredPoint, onset, jobPool)
+            )
         -- Pruned meanwhile, or another delivery of it settled first.
         _ -> pure (outstanding, Nothing)
     -- These bytes are durable now: advertise them as fill sources for later
     -- endorser blocks referencing the same txs.
     setTxLocations lfcTxCache ebHash [(off, fst (refs IntMap.! off)) | off <- filledOffs]
     void $ tryPutMVar lfcReady ()
-    forM_ acquired $ \(acquiredPoint, onset) -> do
+    forM_ acquired $ \(acquiredPoint, onset, jobPool) -> do
       traceWith lfcTracer $ TraceLeiosFetchClientBlockAcquired acquiredPoint (ageAt now onset)
       when (Jobs.nullLeiosJobPool jobPool) $
         traceWith lfcTracer $

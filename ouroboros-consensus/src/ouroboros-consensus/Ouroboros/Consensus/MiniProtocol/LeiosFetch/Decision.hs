@@ -27,6 +27,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , heldAcquisitionsAt
   , emptyLeiosOutstanding
   , initializeLeiosOutstanding
+  , newLeiosJobPool
   , acquireEbBody
   , recordMaxAnnouncementSlot
   , focusElectionIfUnfocused
@@ -82,6 +83,7 @@ import Ouroboros.Consensus.Leios.Types
   , ElectionId (..)
   , EndorserBlockHash
   , LeiosPoint (..)
+  , TxHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -289,6 +291,8 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
   -- (a uniform pick within the least-requested multiplicity bucket), so job ids
   -- aren't consumed in a fixed order. Seeded once at start-up.
+  , nextLeiosJobId :: !Jobs.LeiosJobId
+  -- ^ The first job id that no pool has used yet; see 'newLeiosJobPool'.
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
@@ -309,6 +313,7 @@ emptyLeiosOutstanding prng prunedSlot =
     , requestedBytesSizePerPeer = Map.empty
     , requestedJobsPerPeer = Map.empty
     , leiosFetchPrng = prng
+    , nextLeiosJobId = Jobs.MkLeiosJobId 0
     }
 
 -- | Per-EB state tracked in 'ebState'
@@ -383,6 +388,23 @@ heldAcquisitionsAt point outstanding = case Map.lookup (pointEbHash point) (ebSt
           OversizedBody -> []
   Just (MkEbState _slot _onset NoBody) -> []
   Nothing -> []
+
+-- | A pool of jobs to fetch these missing txs of an EB's closure, given as in
+-- 'Jobs.mkLeiosJobPool', and the state with its jobs' ids taken.
+newLeiosJobPool ::
+  LeiosFetchStaticEnv ->
+  IntMap.IntMap (TxHash, BytesSize) ->
+  LeiosOutstanding peer ->
+  (Jobs.LeiosJobPool, LeiosOutstanding peer)
+newLeiosJobPool env misses outstanding =
+  (jobPool, outstanding{nextLeiosJobId = nextId})
+ where
+  (jobPool, nextId) =
+    Jobs.mkLeiosJobPool
+      (maxJobBytesSize env)
+      (maxJobTxCount env)
+      (nextLeiosJobId outstanding)
+      misses
 
 -- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.

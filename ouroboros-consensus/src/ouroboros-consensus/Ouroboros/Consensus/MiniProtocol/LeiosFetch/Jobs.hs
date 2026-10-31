@@ -72,8 +72,9 @@ data LeiosJob
     MkLeiosJob !IntSet !Word32 !JobRootHash
   deriving (Eq, Show)
 
--- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
--- pool's lifetime).
+-- | Identifies a 'LeiosJob' among every job of every 'LeiosJobPool' the node
+-- builds, so that a late reply for a pool since discarded names no job of a
+-- pool built afresh for the same endorser block.
 newtype LeiosJobId = MkLeiosJobId Int
   deriving (Eq, Ord, Show)
 
@@ -107,21 +108,26 @@ data LeiosJobPool = MkLeiosJobPool
 -- Each miss is its offset within the EB body mapped to its tx hash and its
 -- on-the-wire byte size. Each job's 'JobRootHash' commitment is computed here via
 -- 'jobRootHashOfTxHashes' over its covered tx hashes.
+--
+-- The jobs are numbered from the given id; the result includes the first id
+-- left unused.
 mkLeiosJobPool ::
-  Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
-mkLeiosJobPool maxJobBytes maxJobTxCount misses =
-  MkLeiosJobPool
-    { jobs =
-        IntMap.fromList
-          [ (jid, MkLeiosJobState job (MkLeiosJobMultiplicity 0))
-          | (jid, job) <- ijbs
-          ]
-    , jobsByMultiplicity =
-        maybe IntMap.empty (IntMap.singleton 0) $
-          NEIntSet.nonEmptySet (IntSet.fromList (map fst ijbs))
-    }
+  Word32 -> Int -> LeiosJobId -> IntMap (TxHash, Word32) -> (LeiosJobPool, LeiosJobId)
+mkLeiosJobPool maxJobBytes maxJobTxCount (MkLeiosJobId firstId) misses =
+  ( MkLeiosJobPool
+      { jobs =
+          IntMap.fromList
+            [ (jid, MkLeiosJobState job (MkLeiosJobMultiplicity 0))
+            | (jid, job) <- ijbs
+            ]
+      , jobsByMultiplicity =
+          maybe IntMap.empty (IntMap.singleton 0) $
+            NEIntSet.nonEmptySet (IntSet.fromList (map fst ijbs))
+      }
+  , MkLeiosJobId (firstId + length ijbs)
+  )
  where
-  ijbs = zip [0 ..] $ case IntMap.toAscList misses of
+  ijbs = zip [firstId ..] $ case IntMap.toAscList misses of
     [] -> []
     ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
 
