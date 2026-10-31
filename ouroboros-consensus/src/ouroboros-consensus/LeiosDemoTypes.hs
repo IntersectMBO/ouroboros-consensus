@@ -119,7 +119,7 @@ import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word64)
+import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
@@ -136,6 +136,7 @@ import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block.Abstract (BlockProtocol, StandardHash)
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint
@@ -1683,7 +1684,18 @@ data TraceLeiosKernel
     TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
   | -- | An EB's endorsed transactions all applied, so we are about to vote for
     -- it. The split says how many txs the LeiosTxCache spared full validation.
-    TraceLeiosEbValidated {ebPoint :: LeiosPoint, reapplied :: Int, applied :: Int}
+    TraceLeiosEbValidated
+      { ebPoint :: LeiosPoint
+      , reapplied :: Int
+      , applied :: Int
+      , duration :: NominalDiffTime
+      -- ^ Wall-clock time from reading the closure to the last tx applied.
+      , appliedBytes :: Word32
+      -- ^ Summed measure of the txs validated in full.
+      , appliedSteps :: Natural
+      , appliedMem :: Natural
+      , appliedRefScriptBytes :: Word32
+      }
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A forged RB both certifies an EB and announce a new one
@@ -2036,14 +2048,28 @@ traceLeiosKernelToObject = \case
         "voteIn" .= voteIn
       , "deadlineIn" .= deadlineIn
       ]
-  TraceLeiosEbValidated{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reapplied, applied} ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosEbValidated"
-      , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= ebSlot
-      , "reapplied" .= reapplied
-      , "applied" .= applied
-      ]
+  TraceLeiosEbValidated
+    { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
+    , reapplied
+    , applied
+    , duration
+    , appliedBytes
+    , appliedSteps
+    , appliedMem
+    , appliedRefScriptBytes
+    } ->
+      mconcat
+        [ "kind" .= Aeson.String "LeiosEbValidated"
+        , "ebHash" .= prettyEbHash ebHash
+        , "ebSlot" .= ebSlot
+        , "reapplied" .= reapplied
+        , "applied" .= applied
+        , "durationSeconds" .= duration
+        , "appliedBytes" .= appliedBytes
+        , "appliedSteps" .= appliedSteps
+        , "appliedMem" .= appliedMem
+        , "appliedRefScriptBytes" .= appliedRefScriptBytes
+        ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb ev -> jsonLeiosDb ev
@@ -2392,14 +2418,15 @@ traceLeiosKernelForHuman = \case
       <> showT voteIn
       <> ", deadline in "
       <> showT deadlineIn
-  TraceLeiosEbValidated{ebPoint, reapplied, applied} ->
+  TraceLeiosEbValidated{ebPoint, reapplied, applied, duration} ->
     "Leios EB validated "
       <> T.pack (show ebPoint)
       <> " (reapplied "
       <> showT reapplied
       <> ", applied "
       <> showT applied
-      <> ")"
+      <> ") in "
+      <> showT duration
   TraceLeiosNotVoted{ebPoint, reason} ->
     "Leios not voted for " <> T.pack (show ebPoint) <> ": " <> T.pack (show reason)
   TraceLeiosDbException e -> "Leios DB exception: " <> T.pack (show e)

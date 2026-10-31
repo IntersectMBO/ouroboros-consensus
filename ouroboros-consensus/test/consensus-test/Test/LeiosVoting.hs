@@ -182,7 +182,7 @@ data Verdict
 
 summarise :: EbClosureVerdict blk -> Verdict
 summarise = \case
-  EbClosureValid r a -> Valid r a
+  EbClosureValid r a _ -> Valid r a
   EbClosureInvalid _ -> Invalid
   EbClosureUnreadable _ -> Unreadable
 
