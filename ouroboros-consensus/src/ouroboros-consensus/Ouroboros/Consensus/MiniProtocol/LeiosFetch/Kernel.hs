@@ -22,7 +22,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , leiosFetchPruner
   ) where
 
-import Control.Monad (forM_, forever, void, when)
+import Control.Monad (forM, forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -58,6 +58,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -98,6 +99,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
+  , Promise (..)
   , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -384,7 +386,7 @@ onNewLeiosAnnouncement kernel valid = do
       slot
       (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
       ebHash
-  void $ writeEbPoint lfcWriter point (announcementEbSize announcement)
+  pointWritten <- writeEbPoint lfcWriter point (announcementEbSize announcement)
   (changed, reacquired) <- modifyMVar lfcOutstanding $ \outstanding ->
     let tooOld = slot < outstandingPrunedSlot outstanding
         introducesFocus = not $ Map.member elId (elFocus outstanding)
@@ -396,6 +398,9 @@ onNewLeiosAnnouncement kernel valid = do
           if tooOld || not introducesFocus
             then (outstanding, (False, []))
             else (outstanding', (not held, heldAcquisitionsAt point outstanding'))
+  -- The LeiosDB keeps the endorser block only while some point it holds for
+  -- the block is recent, so it must hold this one before anyone hears of it.
+  unless (null reacquired) $ await pointWritten
   atomically $ mapM_ lfcNotify reacquired
   when changed $ void $ tryPutMVar lfcReady ()
  where
@@ -476,7 +481,13 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 --
 -- If that moves an election's focus onto an endorser block the node already
 -- holds, this also announces the acquisition again, at the certified point (see
--- 'LeiosEbNotification').
+-- 'LeiosEbNotification'), once the LeiosDB holds that point, so that it keeps
+-- the endorser block for as long as the point matters.
+--
+-- TODO The LeiosDB records a size with each point, which LeiosFetch does not
+-- know for an endorser block the LeiosDB held when the node started, so for
+-- such a block this writes no point, and the LeiosDB can still evict it while
+-- the certified point matters.
 leiosFetchFocuser ::
   IOLike m =>
   ChainDB m blk ->
@@ -484,7 +495,7 @@ leiosFetchFocuser ::
   m Void
 leiosFetchFocuser chainDB kernel = go Map.empty
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify} = lfkContext kernel
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify, lfcWriter} = lfkContext kernel
 
   go seen = do
     certified <- atomically $ do
@@ -494,6 +505,9 @@ leiosFetchFocuser chainDB kernel = go Map.empty
           Map.differenceWith (\new old -> if new == old then Nothing else Just new) certified seen
     reacquired <- modifyMVar lfcOutstanding $ \outstanding ->
       pure $ Map.foldlWithKey' focus (outstanding, []) arrived
+    pointsWritten <-
+      forM [(p, size) | AcquiredEb p size <- reacquired] $ uncurry (writeEbPoint lfcWriter)
+    mapM_ await pointsWritten
     atomically $ mapM_ lfcNotify reacquired
     void $ tryPutMVar lfcReady ()
     go certified
