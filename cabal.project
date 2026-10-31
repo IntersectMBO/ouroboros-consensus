@@ -95,11 +95,11 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
--- ouroboros-network karknu/egress_scheduler.leios
+-- ouroboros-network leios-prototype with the egress scheduler
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: ed62adffa4a98541a61cf070daa1909d1d9903d0
+  tag: 2f1c154f248659b89523d5679ca532f442e7ed2a
   --sha256: sha256-DN+GYo7bBHr006XphDIli+hYWZJXW53u88F5ZxEcI+s=
   subdir:
     ouroboros-network
