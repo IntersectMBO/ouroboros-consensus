@@ -13,10 +13,12 @@ import Data.Function ((&))
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -92,6 +94,10 @@ tests =
         "fetch priority"
         [ testCase "freshest window oldest-first, then rest freshest-first" $
             test_fetchPriorityOrder
+        , testCase "an EB ranks by the slots of the elections fetching it" $
+            test_fetchPriorityByElections
+        , testCase "an offer ranks by the elections fetching its EB, not by its own point" $
+            test_rankByFocusingElections
         ]
     ]
 
@@ -100,12 +106,29 @@ tests =
 -- everything older is freshest-first.
 test_fetchPriorityOrder :: IO ()
 test_fetchPriorityOrder =
-  map (unSlot . (.pointSlotNo) . fst) (hi ++ lo)
+  map (unSlot . (.pointSlotNo)) (hi ++ lo)
     @?= [90, 95, 100, 101, 105, 89, 50, 0]
  where
   (hi, lo) = fetchPriorityTiers (Just (SlotNo 100)) 10 offers
-  offers = Map.fromList [(point a 'x', ()) | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
+  offers = [(NESet.singleton (election a), point a 'x') | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
   unSlot (SlotNo n) = n
+
+-- | With S=100 and L=10, an EB that an election in the window is fetching ranks
+-- by the oldest such election, any other EB by its youngest election, and when
+-- the current slot is unknown every EB ranks by its oldest election.
+test_fetchPriorityByElections :: IO ()
+test_fetchPriorityByElections = do
+  fetchPriorityTiers (Just (SlotNo 100)) 10 offers @?= ("zyx", "vu")
+  fetchPriorityTiers Nothing 10 offers @?= ("uxvzy", "")
+ where
+  offers =
+    [ (elections (50 :| [95]), 'x')
+    , (elections (92 :| []), 'y')
+    , (elections (91 :| [99]), 'z')
+    , (elections (40 :| [85]), 'u')
+    , (elections (88 :| []), 'v')
+    ]
+  elections = NESet.fromList . fmap election
 
 {-------------------------------------------------------------------------------
   Scenarios
@@ -163,6 +186,24 @@ test_perPeerByteBudget =
     & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
+
+-- | The peer can afford one more request. It offers @a@ at a point older than
+-- the window, but an election in the window is also fetching @a@, so @a@
+-- outranks @b@, whose one election is older than the window but younger than
+-- that point.
+test_rankByFocusingElections :: IO ()
+test_rankByFocusingElections =
+  empty
+    & withMissingBody (point 50 'a') 1024
+    & withMissingBody (point 89 'b') 1024
+    & onOutstanding
+      ( focusElectionIfUnfocused (election 95) (eb 'a')
+          . recordMaxAnnouncementSlot (eb 'a') (SlotNo 95) SNothing
+      )
+    & withRequestedBytesPerPeer peerA (maxRequestedBytesSizePerPeer env - 1)
+    & offersBody peerA [point 50 'a', point 89 'b']
+    & runIterationAt (SlotNo 100)
+    & assertBodyRequest peerA (point 50 'a') 1024
 
 test_focusCertifiedPruned :: IO ()
 test_focusCertifiedPruned =
@@ -330,6 +371,10 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
 fixtureElectee :: KeyHash r
 fixtureElectee = KeyHash $ UnsafeHash $ SBS.pack (replicate 28 0)
 
+-- | The election at this slot.
+election :: Word -> ElectionId
+election slot = ElectionId (SlotNo (fromIntegral slot)) fixtureElectee
+
 alreadyRequestedEbFrom :: EndorserBlockHash -> [Peer] -> Scenario -> Scenario
 alreadyRequestedEbFrom ebHash peers =
   onOutstanding $ \o ->
@@ -363,15 +408,20 @@ onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 
 -- | Run the iteration and project the decisions.
 runIteration :: Scenario -> Map.Map Peer (NESeq LeiosFetchRequest)
-runIteration sc =
+runIteration =
   -- Any known current slot suffices here: these scenarios don't depend on the
   -- offer-visit order (the priority order is tested by 'test_fetchPriorityOrder').
+  runIterationAt minBound
+
+-- | Run the iteration at this current slot and project the decisions.
+runIterationAt :: SlotNo -> Scenario -> Map.Map Peer (NESeq LeiosFetchRequest)
+runIterationAt currentSlot sc =
   let (_out, reqs, _drops) =
         -- No big-ledger peers in these scenarios.
         leiosFetchLogicIteration
           env
           anyBounds
-          (Just minBound)
+          (Just currentSlot)
           (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
           Map.empty
           sc.scOutstanding

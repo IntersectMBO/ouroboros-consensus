@@ -60,12 +60,12 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.MultiSet (MultiSet)
-import qualified Data.MultiSet as MultiSet
+import Data.Ord (Down (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Sequence.NonEmpty (NESeq)
@@ -252,10 +252,9 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- its certificate is verified, not its header, which only records an offer.
   -- Pruning is the only other writer, and it just drops the elections below
   -- the immutable tip.
-  , focusedEbs :: !(MultiSet EndorserBlockHash)
-  -- ^ The image of 'elFocus', as a multiset so that an election switching away
-  -- from an endorser block does not speak for another election that announced
-  -- the same one.
+  , ebFocusingElections :: !(Map EndorserBlockHash (NESet ElectionId))
+  -- ^ The inverse of 'elFocus': the elections fetching each endorser block.
+  -- 'fetchPriorityTiers' ranks an endorser block by their slots.
   --
   -- Unless an endorser block is in here, the decision logic asks no peer for
   -- anything about it: neither its body nor any of its closure's jobs, since
@@ -306,7 +305,7 @@ emptyLeiosOutstanding prng prunedSlot =
     { ebState = Map.empty
     , ebsPerMaxAnnouncementSlot = Map.empty
     , elFocus = Map.empty
-    , focusedEbs = MultiSet.empty
+    , ebFocusingElections = Map.empty
     , outstandingPrunedSlot = prunedSlot
     , numMissingBodies = 0
     , requestedEbPeers = Map.empty
@@ -584,14 +583,22 @@ focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstandin
   mbOldEbHash ->
     outstanding
       { elFocus = Map.insert elId ebHash (elFocus outstanding)
-      , focusedEbs =
-          MultiSet.insert ebHash $
-            maybe id MultiSet.delete mbOldEbHash (focusedEbs outstanding)
+      , ebFocusingElections =
+          Map.insertWith NESet.union ebHash (NESet.singleton elId) $
+            maybe id (unfocusing elId) mbOldEbHash (ebFocusingElections outstanding)
       }
+
+-- | Remove an election from those fetching this endorser block.
+unfocusing ::
+  ElectionId ->
+  EndorserBlockHash ->
+  Map EndorserBlockHash (NESet ElectionId) ->
+  Map EndorserBlockHash (NESet ElectionId)
+unfocusing elId = Map.update (NESet.nonEmptySet . NESet.delete elId)
 
 -- | Whether some election is currently fetching this endorser block.
 isFocusedEb :: EndorserBlockHash -> LeiosOutstanding peer -> Bool
-isFocusedEb ebHash = MultiSet.member ebHash . focusedEbs
+isFocusedEb ebHash = Map.member ebHash . ebFocusingElections
 
 -- | Whether this EB's body is one we are still trying to fetch: the per-entry
 -- contribution to 'numMissingBodies'.
@@ -659,7 +666,7 @@ pruneOutstandingToImmTip immTipSlot outstanding =
       { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
       , ebsPerMaxAnnouncementSlot = atOrAbove
       , elFocus = elFocusAtOrAbove
-      , focusedEbs = focusedEbs'
+      , ebFocusingElections = ebFocusingElections'
       , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
       , numMissingBodies = numMissingBodies outstanding - prunedMissing
       }
@@ -682,8 +689,11 @@ pruneOutstandingToImmTip immTipSlot outstanding =
       (\n h -> n + maybe 0 wantsBody (Map.lookup h (ebState outstanding)))
       0
       prunedHashes
-  focusedEbs' =
-    F.foldl' (flip MultiSet.delete) (focusedEbs outstanding) (Map.elems staleFocus)
+  ebFocusingElections' =
+    Map.foldlWithKey'
+      (\m elId ebHash -> unfocusing elId ebHash m)
+      (ebFocusingElections outstanding)
+      staleFocus
 
 {-------------------------------------------------------------------------------
   Settled requests
@@ -897,9 +907,9 @@ leiosFetchLogicIteration ::
   )
 leiosFetchLogicIteration env forecastEbBounds mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
-  -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
-  -- the freshest EBs are fetched first whether it is the body or the closure
-  -- they still need.
+  -- ranked by the slots of the elections fetching each EB (see
+  -- 'fetchPriorityTiers'), whether it is the body or the closure they still
+  -- need.
   -- Each peer's 'assignPeer' yields only its own requests and dead offers; fold
   -- those into the per-peer maps here.
   Map.foldlWithKey'
@@ -936,35 +946,43 @@ peerBudget env isBig acc peer =
     IsBigLedgerPeer -> maxRequestedBytesSizePerBigLedgerPeer env
     IsNotBigLedgerPeer -> maxRequestedBytesSizePerPeer env
 
--- | Prioritize a peer's Leios offers
+-- | Prioritize a peer's Leios offers, each given with the elections fetching
+-- its EB
 --
--- The offers are categorized into two tiers. The high-priority tier prioritizes
--- /staler/ EBs (those with lesser slot numbers). The low-priority tier
--- prioritizes /fresher/ EBs (those with greater slot numbers).
+-- The offers are categorized into two tiers. The high-priority tier is the EBs
+-- still worth voting on: those that an election no older than L = 3*L_hdr +
+-- L_vote + L_diff is fetching (ie whose slot is @>= currentSlot - L@). It
+-- prioritizes /staler/ EBs, by the oldest such election. The low-priority tier
+-- is the rest, and it prioritizes /fresher/ EBs, by the youngest election.
 --
 -- 'assignPeer' processes the high-priority tier first and then it carries over
 -- the resulting accumulator in order to process the low-priority tier.
 --
 -- When the node's ledger state is too old to know what the current slot is, all
--- EBs are categorized as the high-priority tier, and the low-priority tier is
--- empty.
---
--- When the current slot is known, the high-priority tier is only the freshest
--- EBs, those no older than L = 3*L_hdr + L_vote + L_diff (ie whose slot is @>=
--- currentSlot - L@). All EBs older than that are categorized as the
--- low-priority tier.
-fetchPriorityTiers ::
-  Maybe SlotNo -> Word64 -> Map LeiosPoint v -> ([(LeiosPoint, v)], [(LeiosPoint, v)])
+-- EBs are categorized as the high-priority tier, by the oldest election, and
+-- the low-priority tier is empty.
+fetchPriorityTiers :: Maybe SlotNo -> Word64 -> [(NESet ElectionId, v)] -> ([v], [v])
 fetchPriorityTiers mbCurrentSlot l offers =
-  (Map.toAscList highTier, Map.toDescList lowTier)
+  ( map snd $ sortOn fst [(slot, v) | (HighTier slot, v) <- tiered]
+  , map snd $ sortOn (Down . fst) [(slot, v) | (LowTier slot, v) <- tiered]
+  )
  where
-  (highTier, lowTier) = case mbCurrentSlot of
-    Nothing -> (offers, Map.empty)
+  tiered = [(tierOf (NESet.toSet elIds), v) | (elIds, v) <- offers]
+
+  -- 'ElectionId' orders slot-first, so each lookup is logarithmic.
+  tierOf elIds = case mbCurrentSlot of
+    Nothing -> HighTier $ electionSlot $ Set.findMin elIds
     Just (SlotNo s) ->
-      -- @a + l < s@ (i.e. @a < S - L@) is the low tier, guarding underflow when
-      -- @S < L@; 'spanAntitone' relies on it being false-suffixed in slot order.
-      let (stale, fresh) = Map.spanAntitone (\p -> case p.pointSlotNo of SlotNo a -> a + l < s) offers
-       in (fresh, stale)
+      -- @a + l < s@ (i.e. @a < S - L@) is stale, guarding underflow when
+      -- @S < L@.
+      let stale elId = case electionSlot elId of SlotNo a -> a + l < s
+       in case Set.lookupMin (Set.dropWhileAntitone stale elIds) of
+            Just elId -> HighTier $ electionSlot elId
+            Nothing -> LowTier $ electionSlot $ Set.findMax elIds
+
+-- | Which of 'fetchPriorityTiers' an offer falls in, and the slot it is ranked
+-- by there
+data FetchPriorityTier = HighTier SlotNo | LowTier SlotNo
 
 -- | Walk this peer's offered points in priority order (see
 -- 'fetchPriorityTiers'), assigning requests to the peer until it's saturated at
@@ -1000,7 +1018,10 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
       -- else is skipped rather than dropped, so it comes back into play if some
       -- election later fetches that endorser block --- because a certificate
       -- moved an election onto it, or because another election announced it.
-      (Map.filterWithKey (\point _ -> isFocusedEb point.pointEbHash acc) offers)
+      [ (elIds, (point, offer))
+      | (point, offer) <- Map.toList offers
+      , Just elIds <- [Map.lookup point.pointEbHash (ebFocusingElections acc)]
+      ]
 
   go st@(acc', _dec, _drops) = \case
     [] -> st
