@@ -406,21 +406,31 @@ imInsertTxs stateVar point offBytes = atomically $ do
       }
   pure completed
 
--- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
--- announced no older than the given slot.
+-- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each EB whose closure
+-- is complete, at its youngest point no older than the given slot, as in the
+-- SQLite backend.
 --
--- Derived from 'imCompletedEbs': an EB's greatest announcer slot is no older
--- than @sinceSlot@ exactly when at least one of its completed points has a slot
--- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
--- is precise across all of an EB's announcer slots, as in the SQLite backend.
+-- The point that proves the closure complete need not be that recent one: an
+-- EB announced again after it was acquired gets only the new point written.
+-- A promoted EB is complete too, since only complete EBs are promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
+  let completed = Set.map pointEbHash (imCompletedEbs s)
+      isComplete ebHash =
+        Set.member ebHash completed || Map.member ebHash (imImmutableEbBodies s)
+      youngest =
+        Map.fromListWith
+          max
+          [ (pointEbHash p, pointSlotNo p)
+          | p <- Map.keys (imEbPoints s)
+          , pointSlotNo p >= sinceSlot
+          ]
   pure
-    [ p
-    | p <- Set.toList (imCompletedEbs s)
-    , pointSlotNo p >= sinceSlot
+    [ MkLeiosPoint slot ebHash
+    | (ebHash, slot) <- Map.toList youngest
+    , isComplete ebHash
     ]
 
 -- | This falls back to the immutable copy only when 'imEbBodies' lacks the
