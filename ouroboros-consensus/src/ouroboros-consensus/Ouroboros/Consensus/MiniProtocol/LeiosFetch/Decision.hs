@@ -9,6 +9,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     LeiosFetchRequest (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
+  , LeiosEbBounds (..)
   , offsetsToBitmap
 
     -- * Offers
@@ -104,10 +105,19 @@ data LeiosBlockRequest = MkLeiosBlockRequest
   , lbrOfferedSize :: !BytesSize
   -- ^ The size the peer offered this endorser block at; not sent, but used by
   -- the reply handler.
-  , lbrMaxEbTxsSize :: !BytesSize
-  -- ^ The maximum allowed closure size for this block; not sent, but used by
-  -- the reply handler.
+  , lbrEbBounds :: !LeiosEbBounds
+  -- ^ The ledger's bounds on this block; not sent, but used by the reply
+  -- handler.
   }
+
+-- | The ledger's bounds on an endorser block, as of its slot.
+data LeiosEbBounds = MkLeiosEbBounds
+  { lebMaxBodySize :: !BytesSize
+  -- ^ the largest body the ledger admits
+  , lebMaxTxsSize :: !BytesSize
+  -- ^ the largest total size of the transactions a body may reference
+  }
+  deriving (Eq, Show, Bounded)
 
 data LeiosBlockTxsRequest
   = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
@@ -162,8 +172,8 @@ instance Monoid WhetherTxsClosureOffered where
 -- taken from the body we already hold by the time 'assignClosure' runs, so
 -- there is nothing there for a peer to claim.
 data PeerOffer = MkPeerOffer
-  { poMaxEbTxsSize :: !(StrictMaybe BytesSize)
-  -- ^ The maximum closure size allowed for this offered EB. It's 'SNothing' if
+  { poEbBounds :: !(StrictMaybe LeiosEbBounds)
+  -- ^ The ledger's bounds on this offered EB. It's 'SNothing' if
   -- the offer arrived via LeiosNotify, and 'SJust' if it arrived via ChainSync.
   --
   -- The decision logic uses forecasting in the 'SNothing' case. We avoid
@@ -837,13 +847,13 @@ defaultLeiosFetchStaticEnv maxPerBigLedgerPeer =
 leiosFetchLogicIteration ::
   Ord peer =>
   LeiosFetchStaticEnv ->
-  -- | The maximum EB closure size forecast from the immutable tip to a slot.
+  -- | The ledger's bounds on an EB, forecast from the immutable tip to a slot.
   --
   -- Only an offer that brought no bound of its own needs this, and for those it
   -- cannot fail: the announcement backing such an offer was accepted by
   -- forecasting from the immutable tip to that same slot. See
-  -- 'poMaxEbTxsSize'.
-  (SlotNo -> Either OutsideForecastRange BytesSize) ->
+  -- 'poEbBounds'.
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
   -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
@@ -857,7 +867,7 @@ leiosFetchLogicIteration ::
   , Map peer (NESeq LeiosFetchRequest)
   , Map peer (NESet LeiosPoint)
   )
-leiosFetchLogicIteration env forecastMaxEbTxsSize mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
+leiosFetchLogicIteration env forecastEbBounds mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
   -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
   -- the freshest EBs are fetched first whether it is the body or the closure
@@ -868,7 +878,7 @@ leiosFetchLogicIteration env forecastMaxEbTxsSize mbCurrentSlot offerings bigLed
     ( \(acc, reqs, drops) peer offers ->
         let isBig = Map.findWithDefault IsNotBigLedgerPeer peer bigLedgerPeers
             (acc', peerReqs, peerDrops) =
-              assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peer offers acc
+              assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc
          in ( acc'
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
@@ -941,14 +951,14 @@ fetchPriorityTiers mbCurrentSlot l offers =
 assignPeer ::
   Ord peer =>
   LeiosFetchStaticEnv ->
-  (SlotNo -> Either OutsideForecastRange BytesSize) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
   Maybe SlotNo ->
   IsBigLedgerPeer ->
   peer ->
   Map LeiosPoint PeerOffer ->
   LeiosOutstanding peer ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest, Set LeiosPoint)
-assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peer offers acc =
+assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
   -- Walk the high-priority tier, then the low, threading the accumulator; the
   -- second walk immediately short-circuits if the first already saturated the
   -- peer.
@@ -981,12 +991,12 @@ assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peer offers acc =
         (NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
-          let (acc2, dec2) = assignBody forecastMaxEbTxsSize peer ebHash slot offerKind (acc1, dec1)
+          let (acc2, dec2) = assignBody forecastEbBounds peer ebHash slot offerKind (acc1, dec1)
            in (acc2, dec2, Set.insert point drops)
         (NoBody, TxsClosureOffered) ->
           -- Request the body now, but keep the offer: we will request the
           -- closure from this peer once we hold the body.
-          let (acc2, dec2) = assignBody forecastMaxEbTxsSize peer ebHash slot offerKind (acc1, dec1)
+          let (acc2, dec2) = assignBody forecastEbBounds peer ebHash slot offerKind (acc1, dec1)
            in (acc2, dec2, drops)
         (BodyAcquired _source _jobPool, TxsClosureNotOffered) ->
           -- We hold the body and the peer never offered the closure, so it can
@@ -1024,26 +1034,26 @@ assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peer offers acc =
 -- loses the connection then.
 assignBody ::
   Ord peer =>
-  -- | The maximum EB closure size forecast for a slot. See 'poMaxEbTxsSize'.
-  (SlotNo -> Either OutsideForecastRange BytesSize) ->
+  -- | The ledger's bounds on an EB, forecast for a slot. See 'poEbBounds'.
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
   peer ->
   EndorserBlockHash ->
   SlotNo ->
   PeerOffer ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest) ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest)
-assignBody forecastMaxEbTxsSize peer ebHash slot offer st@(acc, dec)
+assignBody forecastEbBounds peer ebHash slot offer st@(acc, dec)
   | peer `Set.member` Map.findWithDefault Set.empty ebHash (requestedEbPeers acc) =
       -- unless we've already requested it from them
       st
-  | otherwise = case (eMaxEbTxsSize, poOfferedBody offer) of
+  | otherwise = case (eEbBounds, poOfferedBody offer) of
       -- Beyond our horizon and the offer brought no bound of its own, so we
       -- have nothing to hold the body to. Ignoring it this iteration costs
       -- nothing: a later one forecasts again, from a tip that has moved.
       (Left _outsideRange, _) -> st
       -- the peer offered the closure but not the body
       (Right _, SNothing) -> st
-      (Right maxEbTxsSize, SJust size) ->
+      (Right bounds, SJust size) ->
         let acc' =
               acc
                 { requestedEbPeers =
@@ -1057,14 +1067,14 @@ assignBody forecastMaxEbTxsSize peer ebHash slot offer st@(acc, dec)
                   MkLeiosBlockRequest
                     { lbrPoint = MkLeiosPoint slot ebHash
                     , lbrOfferedSize = size
-                    , lbrMaxEbTxsSize = maxEbTxsSize
+                    , lbrEbBounds = bounds
                     }
             )
  where
   -- What the offer brought, else what we can forecast for its slot.
-  eMaxEbTxsSize = case poMaxEbTxsSize offer of
+  eEbBounds = case poEbBounds offer of
     SJust x -> Right x
-    SNothing -> forecastMaxEbTxsSize slot
+    SNothing -> forecastEbBounds slot
 
 -- | Whether all jobs matching a peer's offers are already inflight
 data WhetherPeerEbExhausted = PeerEbExhausted | PeerEbNotExhausted

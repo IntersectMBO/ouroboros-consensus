@@ -283,6 +283,21 @@ tests =
                   ]
               )
     , testCase
+        "the node does not acquire an endorser block larger than the ledger allows, though it references few transaction bytes"
+        $ runSimFinishing nodeRefusesOversizedEb
+          >>= ( @?=
+                  ( Just
+                      ( show
+                          ( ExnLeiosBlockWrongSize
+                              oversizedPoint
+                              maxEbBodySize
+                              (encodeEndorserBlockSize (fst oversizedEb))
+                          )
+                      )
+                  , Nothing
+                  )
+              )
+    , testCase
         "the node selects a block certifying an endorser block once the block arrives again after a restart forgot it"
         $ runSimFinishing nodeReselectsForgotten
           >>= (@?= ((1, True), (True, 0, lastPoint forgottenChain)))
@@ -830,6 +845,51 @@ nodeFetchClientFails ebAndTxs = withNode $ \nut -> do
     atomically client <&> \case
       Left e -> Just (show e)
       Right _ -> Nothing
+
+-- | An endorser block larger than the ledger allows, referencing only one byte
+-- per transaction, and those transactions.
+oversizedEb :: (EndorserBlock, V.Vector LeiosTx)
+oversizedEb = (mkEndorserBlock [(hashLeiosTx tx, 1) | tx <- V.toList txs], txs)
+ where
+  txs = V.fromList [MkLeiosTx (BS.singleton w) | w <- [0 .. 199]]
+
+oversizedPoint :: LeiosPoint
+oversizedPoint = MkLeiosPoint 1 (endorserBlockHash (fst oversizedEb))
+
+-- | Why the node's LeiosFetch client failed for a peer that announces
+-- 'oversizedEb' and offers it at the most the ledger allows, and what the node
+-- announces acquiring, if anything, by a second later.
+nodeRefusesOversizedEb :: IOSim s (Maybe String, Maybe Acquired)
+nodeRefusesOversizedEb = withNode $ \nut -> do
+  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+  notifications <- newTQueueIO
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcing)
+      , MsgLeiosBlockOffer oversizedPoint maxEbBodySize
+      , MsgLeiosBlockTxsOffer oversizedPoint
+      ]
+  let envPeer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = serving eb txs nut
+          , epLeiosFetchClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+    client <-
+      maybe (throwIO $ userError "the node does not run a LeiosFetch client") pure $
+        Map.lookup leiosFetchMiniProtocolNum (connNodeInitiators conn)
+    failure <- atomically client <&> either (Just . show) (const Nothing)
+    -- The client settles a write on another thread.
+    threadDelay 1
+    acquired <- atomically $ (Just . acquiredOf <$> next) `orElse` pure Nothing
+    pure (failure, acquired)
+ where
+  (eb, txs) = oversizedEb
+  announcing = setAnnouncement (endorserBlockHash eb) maxEbBodySize (firstLeiosBlock 0)
 
 -- | A chain without certificates, on a fork of its own, longer than
 -- 'certifyingFetched''s.

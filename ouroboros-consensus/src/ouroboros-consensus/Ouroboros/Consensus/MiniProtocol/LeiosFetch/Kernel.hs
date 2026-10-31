@@ -73,7 +73,8 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosFetchRequest
+  ( LeiosEbBounds (..)
+  , LeiosFetchRequest
   , LeiosOutstanding (..)
   , PeerOffer (..)
   , WhetherTxsClosureOffered (..)
@@ -266,7 +267,7 @@ recordLeiosCertOffer cfg kernel peerVars hdr predState =
           ebHash
         recordLeiosOffer kernel peerVars (MkLeiosPoint slot ebHash) $
           MkPeerOffer
-            { poMaxEbTxsSize = SJust (llvMaxEbTxsSize llv)
+            { poEbBounds = SJust (leiosEbBounds llv)
             , poOfferedBody = SJust (announcementEbSize announcement)
             , poClosure = TxsClosureOffered
             }
@@ -274,6 +275,9 @@ recordLeiosCertOffer cfg kernel peerVars hdr predState =
  where
   p = Proxy @(BlockProtocol blk)
   predHeaderState = hswtHeaderState predState
+
+leiosEbBounds :: LeiosLedgerView -> LeiosEbBounds
+leiosEbBounds llv = MkLeiosEbBounds (llvMaxEbBodySize llv) (llvMaxEbTxsSize llv)
 
 -- | Count the peer's claim that an endorser block is certified for an
 -- election, disconnecting it if it contradicts an earlier claim of the peer's.
@@ -431,14 +435,14 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
         -- One forecast anchor for the whole pass: the immutable tip, which is
         -- also what the announcement validation a LeiosNotify offer rides on
         -- forecast from, so it reaches every slot such an offer names.
-        forecastMaxEbTxsSize slot =
-          maybe 0 llvMaxEbTxsSize . getLeiosLedgerView (Proxy @(BlockProtocol blk))
+        forecastEbBounds slot =
+          maybe (MkLeiosEbBounds 0 0) leiosEbBounds . getLeiosLedgerView (Proxy @(BlockProtocol blk))
             <$> runExcept
               (forecastFor (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger)) slot)
         (!outstanding', requests, offerDrops) =
           leiosFetchLogicIteration
             (lfcStaticEnv lfkContext)
-            forecastMaxEbTxsSize
+            forecastEbBounds
             mbCurrentSlot
             offerings
             (Map.map lfpIsBigLedgerPeer peersVars)

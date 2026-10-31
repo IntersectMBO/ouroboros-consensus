@@ -69,6 +69,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
+  , LeiosEbBounds (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -136,6 +137,13 @@ data ExnLeiosFetchInvalidReply
       -- | the offered size
       !BytesSize
       -- | its actual size
+      !BytesSize
+  | -- | The endorser block is larger than the ledger allows.
+    ExnLeiosBlockTooBig
+      !LeiosPoint
+      -- | its size
+      !BytesSize
+      -- | the most the ledger allows
       !BytesSize
   | -- | The endorser block references more transaction bytes than the ledger
     -- allows.
@@ -226,7 +234,9 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
 -- asked for or they are not, and no announcement gets a say. Bytes that are
 -- the right block but not the size the peer offered still cost the peer its
 -- connection, but only once we have taken the body: throwing them away would
--- let a peer deny us an endorser block just by lowballing its own offer.
+-- let a peer deny us an endorser block just by lowballing its own offer. Bytes
+-- larger than the ledger allows, or referencing more transaction bytes than it
+-- allows, are never written, so the node never offers them onward.
 processLeiosBlock ::
   forall peer m.
   (Ord peer, IOLike m) =>
@@ -301,9 +311,12 @@ processLeiosBlock ctx peer req eb = do
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
-  when tooBig $
+  when bodyTooBig $
     throwIO $
-      ExnLeiosClosureTooBig point closureBytesSize (lbrMaxEbTxsSize req)
+      ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
+  when closureTooBig $
+    throwIO $
+      ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
  where
   MkLeiosFetchClientContext
     { lfcStaticEnv
@@ -322,7 +335,10 @@ processLeiosBlock ctx peer req eb = do
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   closureBytesSize :: Word64
   closureBytesSize = sum (fromIntegral . snd <$> refs)
-  tooBig = closureBytesSize > fromIntegral (lbrMaxEbTxsSize req)
+  MkLeiosEbBounds{lebMaxBodySize, lebMaxTxsSize} = lbrEbBounds req
+  bodyTooBig = ebBytesSize > lebMaxBodySize
+  closureTooBig = closureBytesSize > fromIntegral lebMaxTxsSize
+  tooBig = bodyTooBig || closureTooBig
 
   -- Claim the body, now that its write is durable, with the jobs that the
   -- write's fills left to fetch, and announce what is acquired.

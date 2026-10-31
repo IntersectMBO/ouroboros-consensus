@@ -28,6 +28,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( BodySource (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
+  , LeiosEbBounds
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -179,7 +180,7 @@ test_bigLedgerPeerBudget = do
         (_o, reqs, _d) =
           leiosFetchLogicIteration
             env
-            anyClosureSize
+            anyBounds
             (Just (SlotNo 11))
             offers
             bigLedgerPeers
@@ -314,7 +315,7 @@ runIteration sc =
         -- No big-ledger peers in these scenarios.
         leiosFetchLogicIteration
           env
-          anyClosureSize
+          anyBounds
           (Just minBound)
           (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
           Map.empty
@@ -383,7 +384,7 @@ txHashOf i = UnsafeHash $ SBS.pack $ replicate 32 (fromIntegral i)
 eb :: Char -> EndorserBlockHash
 eb c = UnsafeHash $ SBS.pack $ replicate 32 (fromIntegral (fromEnum c))
 
--- | The closure bound these scenarios forecast: large enough that nothing here
--- trips it.
-anyClosureSize :: SlotNo -> Either OutsideForecastRange BytesSize
-anyClosureSize _slot = Right maxBound
+-- | The bounds these scenarios forecast: large enough that nothing here trips
+-- them.
+anyBounds :: SlotNo -> Either OutsideForecastRange LeiosEbBounds
+anyBounds _slot = Right maxBound
