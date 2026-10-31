@@ -865,6 +865,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.ChainSync.CSJ
+    Test.Consensus.MiniProtocol.ChainSync.Server
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
@@ -883,6 +884,7 @@ test-suite consensus-test
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoLogic.Invariants
     Test.LeiosDemoTypes
+    Test.LeiosTestNode
     Test.LeiosTxCache.Optimized
     Test.LeiosTxCache.Optimized.MutableHashTable
     Test.LeiosTxCache.Reference

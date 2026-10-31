@@ -1,7 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -20,34 +18,21 @@ module Test.LeiosValidClaimsChainDB (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
-import Control.ResourceRegistry (forkLinkedThread, withRegistry)
-import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.IntMap.Strict as IntMap
 import Data.Maybe (isJust)
 import LeiosDemoTypes
   ( LeiosPoint (..)
-  , RbHash (MkRbHash)
+  , RbHash
   )
 import LeiosValidClaims (memberValidClaim, sizeValidClaims)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB, Predecessor (..))
+import Ouroboros.Consensus.Storage.ChainDB.API (Predecessor (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch.ConsensusInterface (WithFingerprint (..))
-import System.FS.Sim.MockFS (MockFS)
-import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee)
-import Test.LeiosValidClaims (mkCert, wholeCommittee)
-import Test.QuickCheck.Gen (unGen)
-import Test.QuickCheck.Random (mkQCGen)
+import Test.LeiosTestNode
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Util.ChainDB
@@ -98,11 +83,11 @@ announcer =
 
 -- | The claim a CertRB extending 'announcer' makes.
 announcerClaim :: RbHash
-announcerClaim = MkRbHash $ toRawHash (Proxy @Blk) (blockHash announcer)
+announcerClaim = claimOf announcer
 
 -- | A CertRB over 'announcer', with a certificate that verifies.
 certRB :: Blk
-certRB = certifying (mkCert testCommittee announcerClaim) (successorLeiosBlock announcer)
+certRB = certifying (certFor announcer) (successorLeiosBlock announcer)
 
 -- | A second CertRB over the same announcer, making the same claim. It carries
 -- the same certificate, which is legitimate: the signed message is the
@@ -119,89 +104,19 @@ better2 = successorLeiosBlock better1
 better3 = successorLeiosBlock better2
 
 {-------------------------------------------------------------------------------
-  Certificates
--------------------------------------------------------------------------------}
-
--- | One committee for every epoch of every test. Drawn from a fixed seed, so
--- these are unit tests rather than properties.
-testCommittee :: TestCommittee
-testCommittee = unGen genCommittee (mkQCGen 42) 10
-
-{-------------------------------------------------------------------------------
   The node under test
 -------------------------------------------------------------------------------}
-
-data Node m = Node
-  { nChainDB :: ChainDB m Blk
-  , nInternal :: ChainDBImpl.Internal m Blk
-  }
-
-ledgerConfig :: LeiosTestLedgerConfig
-ledgerConfig =
-  leiosTestLedgerConfig
-    eraParams
-    -- Generously wide: these tests are not about the forecast horizon.
-    100
-    (const (Just (testCommittee.committee, wholeCommittee)))
-
-eraParams :: HardFork.EraParams
-eraParams = HardFork.defaultEraParams securityParam (slotLengthFromSec 1) HardFork.NoPerasEnabled
 
 -- | Larger than every chain these tests build, so nothing becomes immutable and
 -- every block stays in the VolatileDB, where forgetting can reach it.
 securityParam :: SecurityParam
 securityParam = SecurityParam $ knownNonZeroBounded @8
 
--- | Open a ChainDB over the given mocked filesystems, run the body, and close
--- it. Calling this twice over the same 'NodeDBs' is a node restart.
-withNode ::
-  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
-  LeiosDb.LeiosDbHandle (IOSim s) ->
-  (Node (IOSim s) -> IOSim s a) ->
-  IOSim s a
-withNode mcdbNodeDBs mcdbLeiosDb body =
-  withRegistry $ \registry -> do
-    let mcdbTopLevelConfig = singleNodeLeiosTestConfig ledgerConfig securityParam
-        mcdbChunkInfo = simpleChunkInfo (HardFork.eraEpochSize eraParams)
-        mcdbInitLedger = leiosTestInitExtLedger ledgerConfig IntMap.empty
-        mcdbRegistry = registry
-        args =
-          ChainDB.updateTracer nullTracer $
-            fromMinimalChainDbArgs MinimalChainDbArgs{..}
-    bracket
-      (ChainDBImpl.openDBInternal args False)
-      (ChainDB.closeDB . fst)
-      $ \(nChainDB, nInternal) -> do
-        _ <-
-          forkLinkedThread registry "AddBlockRunner" $
-            ChainDBImpl.intAddBlockRunner nInternal
-        body Node{nChainDB, nInternal}
-
 withFreshNode :: (Node (IOSim s) -> IOSim s a) -> IOSim s a
 withFreshNode body = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- LeiosDb.newLeiosDBInMemory
-  withNode nodeDBs leiosDb body
-
--- | Add a block the way BlockFetch would: with the ledger view forecast at its
--- predecessor's slot.
-addWithCommittee :: Node (IOSim s) -> Blk -> Blk -> IOSim s ()
-addWithCommittee node predecessor blk =
-  addBlockWith
-    node
-    ( Predecessor
-        (blockSlot predecessor)
-        (LeiosTestView (Just (testCommittee.committee, wholeCommittee)) maxBound)
-    )
-    blk
-
-addBlockWith :: Node (IOSim s) -> Predecessor Blk -> Blk -> IOSim s ()
-addBlockWith Node{nChainDB} predecessor =
-  ChainDB.addBlock_ nChainDB Punishment.noPunishment predecessor
-
--- | Add a block that extends genesis.
-addAtGenesis :: Node (IOSim s) -> Blk -> IOSim s ()
-addAtGenesis node = addBlockWith node NoPredecessor
+  withNode securityParam nodeDBs leiosDb body
 
 claimCount :: Node (IOSim s) -> IOSim s Int
 claimCount Node{nChainDB} =
@@ -260,9 +175,7 @@ test_invalidCert = do
   assertBool "the CertRB is rejected" rejected
  where
   -- Signed over the wrong message: the certifying block's own hash.
-  wrongClaim = MkRbHash $ toRawHash (Proxy @Blk) (blockHash certRB)
-  poisoned =
-    certifying (mkCert testCommittee wrongClaim) (successorLeiosBlock announcer)
+  poisoned = certifying (certFor certRB) (successorLeiosBlock announcer)
 
 -- | A CertRB whose announcing view seats no committee establishes nothing.
 test_noCommittee :: Assertion
@@ -295,9 +208,8 @@ test_knownClaimShortCircuits = do
   assertBool "the good CertRB establishes the claim" established
   assertBool "the bad one is not rejected" (not rejected)
  where
-  wrongClaim = MkRbHash $ toRawHash (Proxy @Blk) (blockHash certRB)
-  poisonedSibling =
-    certifying (mkCert testCommittee wrongClaim) (forkLeiosBlock certRBSibling)
+  -- Signed over the wrong message, as in 'test_invalidCert'.
+  poisonedSibling = certifying (certFor certRB) (forkLeiosBlock certRBSibling)
 
 -- | The policy of @valid_claims_startup.md@: a CertRB that is in the
 -- VolatileDB but off the selection at startup is treated as a block we do not
@@ -308,7 +220,7 @@ test_forgetAndReacquire = do
         nodeDBs <- emptyNodeDBs
         leiosDb <- LeiosDb.newLeiosDBInMemory
 
-        before <- withNode nodeDBs leiosDb $ \node -> do
+        before <- withNode securityParam nodeDBs leiosDb $ \node -> do
           addAtGenesis node announcer
           addWithCommittee node announcer certRB
           claims <- claimCount node
@@ -319,7 +231,7 @@ test_forgetAndReacquire = do
           tip <- tipPoint node
           pure (claims, tip)
 
-        restarted <- withNode nodeDBs leiosDb $ \node -> do
+        restarted <- withNode securityParam nodeDBs leiosDb $ \node -> do
           claimsAtStartUp <- claimCount node
           certRBForgotten <- not <$> isFetched node certRB
           -- The announcer is off the selection too, but carries no
@@ -339,7 +251,7 @@ test_forgetAndReacquire = do
 
         -- A third open sees a VolatileDB that was written to twice for the same
         -- block; it must not have been truncated.
-        third <- withNode nodeDBs leiosDb $ \node ->
+        third <- withNode securityParam nodeDBs leiosDb $ \node ->
           (,) <$> tipPoint node <*> isFetched node announcer
 
         pure (before, restarted, third)
@@ -384,12 +296,12 @@ test_unacquiredCertRBAtStartUp = do
         nodeDBs <- emptyNodeDBs
         leiosDb <- LeiosDb.newLeiosDBInMemory
 
-        before <- withNode nodeDBs leiosDb $ \node -> do
+        before <- withNode securityParam nodeDBs leiosDb $ \node -> do
           addAtGenesis node announcer
           addWithCommittee node announcer certRB
           tipPoint node
 
-        after' <- withNode nodeDBs leiosDb $ \node ->
+        after' <- withNode securityParam nodeDBs leiosDb $ \node ->
           (,,)
             <$> isFetched node certRB
             <*> tipPoint node

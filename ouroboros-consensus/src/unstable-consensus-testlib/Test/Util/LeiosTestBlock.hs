@@ -85,6 +85,7 @@ module Test.Util.LeiosTestBlock
   , LeiosTestView (..)
 
     -- * Node configuration
+  , CodecConfig (LeiosTestCodecConfig)
   , singleNodeLeiosTestConfig
   ) where
 

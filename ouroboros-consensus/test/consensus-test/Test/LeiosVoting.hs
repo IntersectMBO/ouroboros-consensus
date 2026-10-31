@@ -46,11 +46,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValu
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle
   , LeiosDbReader (..)
-  , LeiosDbWriter (..)
-  , Promise (..)
   , newLeiosDBInMemory
   , withReader
-  , withWriter
   )
 import Test.Consensus.Mempool.Util
   ( TestBlock
@@ -60,6 +57,7 @@ import Test.Consensus.Mempool.Util
   , testInitLedger
   , testLedgerConfigNoSizeLimits
   )
+import Test.LeiosTestNode (storeEb)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
@@ -239,11 +237,8 @@ validateOnce Harness{hReader, hCache, hPoint} txs = do
 withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
-  withReader db $ \reader -> withWriter db $ \writer -> do
-    void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
-    void $ await =<< writeEbBody writer point eb []
-    void $ await =<< writeTxs writer point (zip [0 ..] (map txBytes txs))
-
+  storeEb db point eb (encodeLeiosEbSize eb) (map txBytes txs)
+  withReader db $ \reader -> do
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)
     -- The fold over the not-yet-acquired txs is what a fetch would use to build
