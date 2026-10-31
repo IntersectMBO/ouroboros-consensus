@@ -13,7 +13,7 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (forM_, replicateM, unless, void)
+import Control.Monad (forM, forM_, replicateM, unless, void)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI (DiffTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
@@ -41,7 +41,7 @@ import Ouroboros.Consensus.Block
   , Point
   , Proxy (..)
   , SlotNo (..)
-  , WithOrigin (NotOrigin)
+  , WithOrigin (..)
   , blockHash
   , blockPoint
   , blockSlot
@@ -255,6 +255,14 @@ tests =
         runSimFinishing nodeRecordsJumperOffers >>= (@?= [True, True])
     , testCase "the node fetches what a certifying header certifies from a peer that jumps over it" $
         runSimFinishing nodeFetchesFromJumper >>= (@?= lastPoint jumpedChain)
+    , testCase
+        "the node fetches what a certifying header certifies from a jumper whose jump over it starts at the announcing header"
+        $ runSimFinishing nodeFetchesFromJumperInSteps
+          >>= ( @?=
+                  ( [NotOrigin (blockSlot announcingFetched), NotOrigin (blockSlot certifyingFetched)]
+                  , lastPoint jumpedChain
+                  )
+              )
     , testCase "the node records no offer older than the slot it pruned its peers' offers to" $
         runSimFinishing nodeIgnoresPrunedOffer >>= (@?= [SlotNo 5])
     , testCase
@@ -695,6 +703,36 @@ nodeFetchesFromJumper = withJumpingNode 1 $ \nut -> do
       threadDelay 2
       addBlocks nut jumpedChain
       awaitTip nut (lastPoint jumpedChain)
+
+-- | As 'nodeFetchesFromJumper', but the leader's chain grows a block at a time
+-- from 'announcingFetched', so that the jumper's second jump, which reaches
+-- 'certifyingFetched', starts where its first ended, at 'announcingFetched'.
+-- The slot the node takes the jumper's jumps to have reached after each block,
+-- and the tip of the node's selection, once that is the last block of
+-- 'jumpedChain' or ten seconds have passed.
+nodeFetchesFromJumperInSteps :: IOSim s ([WithOrigin SlotNo], Point LeiosTestBlock)
+nodeFetchesFromJumperInSteps = withJumpingNode 1 $ \nut -> do
+  leaderChain <- newEnvChain (take 1 jumpedChain)
+  jumperChain <- newEnvChain jumpedChain
+  let jumper = (servingChain nut jumperChain){epLeiosFetchServer = servingFetched nut}
+  withNodeVsEnvConnection nut (PeerAddr 1) (servingChain nut leaderChain) $ \_conn -> do
+    threadDelay 3
+    withNodeVsEnvConnection nut (PeerAddr 2) jumper $ \_conn -> do
+      reached <- forM [2, 3] $ \n -> do
+        threadDelay 1
+        serveChain leaderChain (take n jumpedChain)
+        threadDelay 2
+        jumpedThrough nut (PeerAddr 2)
+      addBlocks nut jumpedChain
+      (,) reached <$> awaitTip nut (lastPoint jumpedChain)
+
+-- | The slot the node takes the peer at the address to have jumped through.
+jumpedThrough :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s (WithOrigin SlotNo)
+jumpedThrough nut addr = IOLike.atomically $ do
+  peers <- IOLike.readTVar (lfkPeers (getLeiosFetchKernel (nutKernel nut)))
+  case [peer | (connId, peer) <- Map.toList peers, remoteAddress connId == addr] of
+    [] -> pure Origin
+    peer : _ -> IOLike.readTVar (lfpJumpedThrough peer)
 
 -- | Once the node has pruned its peers' offers to a slot, it records only the
 -- offers at or after that slot. The slots of the offers it records.
