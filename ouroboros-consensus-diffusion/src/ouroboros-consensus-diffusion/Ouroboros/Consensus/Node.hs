@@ -106,6 +106,7 @@ import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes (ProtVerParity, SerializedEbBody)
+import LeiosFreshBytes (readFreshBytes)
 import LeiosTxCache
   ( LeiosTxCache
   , defaultLeiosTxCacheShift
@@ -677,6 +678,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                    , Cardano.Diffusion.freshBytes = readFreshBytes (NodeKernel.getFreshBytes nodeKernel)
+                    , Cardano.Diffusion.freshMaxBytes = NodeKernel.getFreshMaxBytes nodeKernel
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
@@ -990,7 +993,7 @@ mkNodeKernelArgs
     do
       let (kaRng, rng') = splitGen rng
           (psRng, rng'') = splitGen rng'
-          (lfRng, _) = splitGen rng''
+          (lfRng, ttRng) = splitGen rng''
       return
         NodeKernelArgs
           { tracers
@@ -1025,6 +1028,7 @@ mkNodeKernelArgs
           , leiosDB
           , leiosTxCache
           , leiosFetchRng = lfRng
+          , txTierRng = ttRng
           , leiosMinOfferLead = Leios.defaultLeiosMinOfferLead
           }
 

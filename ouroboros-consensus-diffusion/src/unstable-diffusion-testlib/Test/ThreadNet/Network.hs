@@ -1107,7 +1107,8 @@ runThreadNetwork
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
           (psRng, rng''') = splitGen rng''
-          (lfRng, chainSyncRng) = splitGen rng'''
+          (lfRng, rng'''') = splitGen rng'''
+          (ttRng, chainSyncRng) = splitGen rng''''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
 
       let nodeKernelArgs =
@@ -1165,6 +1166,7 @@ runThreadNetwork
               , leiosDB = leiosDbHandle
               , leiosTxCache
               , leiosFetchRng = lfRng
+              , txTierRng = ttRng
               , -- These runs are a couple of hundred slots long with the
                 -- immutable tip near genesis, so the real lead would hold
                 -- back every offer there is.

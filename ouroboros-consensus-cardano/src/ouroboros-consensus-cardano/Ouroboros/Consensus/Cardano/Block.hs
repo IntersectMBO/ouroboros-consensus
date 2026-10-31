@@ -1631,6 +1631,16 @@ instance
     eraProxy :: WrapLedgerView blk -> Proxy blk
     eraProxy _ = Proxy
 
+  getFreshMaxBytesFromView _ (HardForkLedgerView _transition hfState) =
+    hcollapse $
+      hcmap
+        (Proxy @ResolveLeiosBlock)
+        (\wlv -> K (getFreshMaxBytesFromView (eraProxy wlv) (unwrapLedgerView wlv)))
+        (State.tip hfState)
+   where
+    eraProxy :: WrapLedgerView blk -> Proxy blk
+    eraProxy _ = Proxy
+
   validateAnnouncementChainDepState = update @(CardanoEras c)
 
   headerContainsLeiosCert hdr = case hdr of
