@@ -274,6 +274,10 @@ tests =
         $ runSimFinishing (nodeSelectsReannounced ReannounceThenPrune)
           >>= (@?= lastPoint (reannouncedChain ReannounceThenPrune))
     , testCase
+        "the node fetches and selects what a certificate certifies at an election's third announcement, which it does not relay"
+        $ runSimFinishing nodeFetchesCertifiedThird
+          >>= (@?= (blockPoint certifyingFetched, [RelayedAnnouncement, RelayedAnnouncement]))
+    , testCase
         "the node keeps an endorser block that a certificate refocuses an election onto through garbage collection and a restart"
         $ runSimFinishingWithin 200 nodeKeepsRefocusedThroughGc
           >>= (@?= lastPoint gcRestartChain)
@@ -450,6 +454,60 @@ otherEbHash = UnsafeHash (SBS.replicate 32 3)
 announcingOther :: LeiosTestBlock
 announcingOther =
   setAnnouncement otherEbHash (encodeEndorserBlockSize fetchedEb) (forkLeiosBlock announcingFetched)
+
+-- | A third sibling of 'announcingFetched' by the same issuer, which announces
+-- 'anotherEbHash'.
+announcingAnother :: LeiosTestBlock
+announcingAnother =
+  setAnnouncement anotherEbHash (encodeEndorserBlockSize fetchedEb) (forkLeiosBlock announcingOther)
+
+-- | A third endorser block for the election of 'fetchedEb'.
+anotherEbHash :: EndorserBlockHash
+anotherEbHash = UnsafeHash (SBS.replicate 32 4)
+
+-- | One peer announces 'announcingOther' and 'announcingAnother', and the node
+-- relays both. Only then does another peer announce 'fetchedEb' in the same
+-- election, in 'announcingFetched', offer it, and serve it: the election's
+-- third announcement, which the node takes in from that peer but does not
+-- relay or fetch for. Then the node adds 'announcingFetched' and
+-- 'certifyingFetched'. The tip of the node's selection, once that is
+-- 'certifyingFetched' or ten seconds have passed, and what the node relayed to
+-- the first peer.
+nodeFetchesCertifiedThird :: IOSim s (Point LeiosTestBlock, [Relayed])
+nodeFetchesCertifiedThird = withNode $ \nut -> do
+  heard <- newTVarIO []
+  announcerNotifications <- newTQueueIO
+  holderNotifications <- newTQueueIO
+  atomically $ do
+    mapM_
+      (writeTQueue announcerNotifications . MsgLeiosBlockAnnouncement . ltbHeader)
+      [announcingOther, announcingAnother]
+    mapM_ (writeTQueue holderNotifications) (announcingAndOffering fetchedEb announcingFetched)
+  let announcer =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut announcerNotifications
+          , epLeiosNotifyClient = Just (recordingLeiosNotifyClient nut heard)
+          , epLeiosFetchServer = silentLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
+          }
+      holder =
+        EnvPeer
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = feedingLeiosNotifyServer nut holderNotifications
+          , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = servingFetched nut
+          , epLeiosFetchClient = Nothing
+          }
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  withNodeVsEnvConnection nut (PeerAddr 1) announcer $ \_announcerConn -> do
+    -- The node relays an announcement only once it has taken it in.
+    atomically $ readTVar heard >>= check . (>= 2) . length
+    withNodeVsEnvConnection nut (PeerAddr 2) holder $ \_holderConn -> do
+      threadDelay 1
+      addBlocks nut [announcingFetched, certifyingFetched]
+      (,) <$> awaitTip nut (blockPoint certifyingFetched) <*> readTVarIO heard
 
 -- | The peer announces 'fetchedEb', offers its body and its closure, and
 -- serves both. The node's acquisitions, as it announces them, and the first
