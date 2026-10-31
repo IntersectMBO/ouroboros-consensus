@@ -133,6 +133,15 @@ class
     HardForkTxEbMeasure xs ->
     (HardForkTxMeasurePhase1 xs, HardForkTxMeasurePhase2 xs)
 
+  -- | 'scaleEbCapacity' for the hard fork block. The identity unless an era
+  -- in @xs@ has endorser blocks.
+  hardForkScaleEbCapacity ::
+    proxy xs ->
+    Rational ->
+    HardForkTxEbMeasure xs ->
+    HardForkTxEbMeasure xs
+  hardForkScaleEbCapacity _ _ = id
+
   -- | Whether two transaction ids of @xs@ are equal, ignoring which era each
   -- sits in. Two txids in different eras can be equal; see the
   -- 'Ouroboros.Consensus.HardFork.Combinator.AcrossEras.OneEraGenTxId' 'Eq'
@@ -172,6 +181,8 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
 
   hardForkMempoolEbReservation _ eb =
     let TxMeasure p1 p2 = mempoolEbReservation (Proxy @blk) eb in (p1, p2)
+
+  hardForkScaleEbCapacity _ = scaleEbCapacity (Proxy @blk)
 
   -- No production code uses a single-era hard fork, so an allocating raw-hash
   -- comparison is fine here.

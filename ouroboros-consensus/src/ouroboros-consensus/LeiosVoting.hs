@@ -34,13 +34,13 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
-import Data.Time.Clock (NominalDiffTime)
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosClosureError (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosSigningKey
+  , LeiosVoteTiming (..)
   , ProtVerParity
   , RbHash (..)
   , SerializedEbBody
@@ -125,12 +125,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Time (nominalDelay)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 
--- * Voting timing constants
-
---
--- These are stubs for the equivocation-safety and vote-deadline gates
--- described in the Leios protocol specification. Real values should come
--- from the protocol parameters once wired in.
+-- * Voting timing
 
 -- Validation is linear in the closure -- a full ~13.5k-tx closure takes ~1.5s
 -- even when every tx is a tx-cache hit -- so doing it inside the vote window
@@ -144,23 +139,6 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 --
 -- TODO: validate the closure as it streams in, rather than waiting for all of
 -- it. Subsumes the above, and is considerably more involved.
-
--- | How long after its announcing slot /begins/ before an EB's voters may cast
--- a vote. Serves as the equivocation-detection window: if a peer equivocates by
--- announcing two different EBs on the same slot, we want to observe the second
--- announcement (and drop the vote) before issuing our vote. Stub for
--- '3 * L_hdr'.
---
--- TODO: read from the ledger state, once the Leios protocol parameters are
--- there; a constant cannot follow an on-chain change.
-lHdrWait :: NominalDiffTime
-lHdrWait = 3
-
--- | How long after 'lHdrWait' votes are still accepted. Stub for 'L_vote'.
---
--- TODO: read from the ledger state, as for 'lHdrWait'.
-lVoteWindow :: NominalDiffTime
-lVoteWindow = 4
 
 -- * Vote timers
 
@@ -186,6 +164,7 @@ newVoteTimers ::
   ( IOLike m
   , MonadTimer m
   , HasHardForkHistory blk
+  , HasLeiosVoting blk
   ) =>
   Tracer m TraceLeiosKernel ->
   LedgerConfig blk ->
@@ -211,8 +190,10 @@ newVoteTimers tracer lcfg chainDB systemTime = do
                   <> show horizon
             Right announced -> do
               now <- systemTimeCurrent systemTime
-              let voteAt = addRelTime lHdrWait announced
-                  voteDeadline = addRelTime lVoteWindow voteAt
+              let LeiosVoteTiming{leiosVoteOpens, leiosVoteWindow} =
+                    getLeiosVoteTiming (ledgerState extLedger)
+                  voteAt = addRelTime leiosVoteOpens announced
+                  voteDeadline = addRelTime leiosVoteWindow voteAt
                   voteIn = voteAt `diffRelTime` now
               traceWith tracer $
                 TraceLeiosVoteScheduled
@@ -242,7 +223,7 @@ newVoteTimers tracer lcfg chainDB systemTime = do
 
 -- | When a slot begins, in wall-clock terms.
 --
--- Both gates are durations -- the protocol parameters they stub for are diff
+-- Both gates are durations -- the protocol parameters that set them are diff
 -- times, not slot counts -- so they are measured from the announcing slot's
 -- onset rather than counted against the current slot.
 slotOnset ::

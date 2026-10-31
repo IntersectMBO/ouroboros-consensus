@@ -271,6 +271,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
       , leiosFetchRng = mkStdGen 4
       , txTierRng = mkStdGen 5
       , leiosMinOfferLead = nutcMinOfferLead cfg
+      , leiosAdaptiveEb = Nothing
       }
 
 topLevelConfigOf :: NodeUnderTestConfig -> TopLevelConfig Blk

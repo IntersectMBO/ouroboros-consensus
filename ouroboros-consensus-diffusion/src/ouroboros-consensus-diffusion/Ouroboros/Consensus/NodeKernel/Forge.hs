@@ -97,6 +97,8 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   LeiosVoteState m ->
+  -- | The share of the protocol's endorser-block capacity to forge with.
+  STM m Rational ->
   BlockForging m blk ->
   LeiosDbReader m ->
   -- | Invoked with the header and closure of each EB we forge, to ingest it
@@ -105,7 +107,7 @@ forge ::
   (Header blk -> Leios.ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosDbReader onForgedLeiosEb currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState readEbCapacityScale blockForging leiosDbReader onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -216,6 +218,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
                 partitionMempool
                   leiosDbReader
                   leiosVoteState
+                  readEbCapacityScale
                   leiosTracer
                   ctrace
                   pmCCtx
@@ -733,6 +736,8 @@ partitionMempool ::
   (IOLike m, RunNode blk) =>
   LeiosDbReader m ->
   LeiosVoteState m ->
+  -- | The share of the protocol's endorser-block capacity to forge with.
+  STM m Rational ->
   Tracer m TraceLeiosKernel ->
   -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
   -- 'TraceForgeEvent' tracer, already labelled with the forger's creds.
@@ -752,7 +757,7 @@ partitionMempool ::
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
-partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedChainDepState tickedLedgerState unticked forker = do
+partitionMempool leiosDbReader leiosVoteState readEbCapacityScale leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedChainDepState tickedLedgerState unticked forker = do
   let readTables = roforkerReadTables forker
 
       pmTraceVia ::
@@ -777,8 +782,11 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
         unticked
         tickedChainDepState
 
+  ebCapacityScale <- atomically readEbCapacityScale
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-      ebCap = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+      ebCap =
+        scaleEbCapacity (Proxy @blk) ebCapacityScale $
+          ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
   (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot) <-
     case mayLeiosCertAndAnnouncement of
       Nothing -> do

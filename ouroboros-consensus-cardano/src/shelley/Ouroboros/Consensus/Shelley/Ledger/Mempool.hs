@@ -854,6 +854,33 @@ txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
           txMeasureByteSize alonzo
     }
 
+-- | Every component of an endorser-block measure scaled by a factor in
+-- @[0, 1]@, rounded down.
+scaleDijkstraEbMeasure :: Rational -> DijkstraEbMeasure -> DijkstraEbMeasure
+scaleDijkstraEbMeasure factor eb =
+  DijkstraEbMeasure
+    { ebClosureMeasure =
+        TxMeasure
+          AlonzoMeasure{byteSize = bytes byteSize, exUnits = fmap scale exUnits}
+          (RefScriptSize (bytes refScripts))
+    , txReferencesSize = bytes (txReferencesSize eb)
+    }
+ where
+  TxMeasure AlonzoMeasure{byteSize, exUnits} (RefScriptSize refScripts) = ebClosureMeasure eb
+
+  bytes :: IgnoringOverflow ByteSize32 -> IgnoringOverflow ByteSize32
+  bytes =
+    IgnoringOverflow
+      . ByteSize32
+      . fromIntegral
+      . scale
+      . fromIntegral
+      . unByteSize32
+      . unIgnoringOverflow
+
+  scale :: Natural -> Natural
+  scale n = floor (factor * fromIntegral n)
+
 -- | What one Leios endorser block may hold, from the Dijkstra endorser-block
 -- protocol parameters.
 leiosEndorserBlockCapacity ::
@@ -966,3 +993,4 @@ instance
   ebCapacityTxMeasure _cfg = leiosEndorserBlockCapacity
   mempoolEbReservation _ DijkstraEbMeasure{ebClosureMeasure = TxMeasure alonzo refScripts} =
     TxMeasure alonzo refScripts
+  scaleEbCapacity _ = scaleDijkstraEbMeasure

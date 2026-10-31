@@ -34,6 +34,7 @@ import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
+import qualified Test.LeiosAdaptiveEndorsements (tests)
 import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
 import qualified Test.LeiosDemoLogic.Invariants (tests)
@@ -125,6 +126,7 @@ tests =
         , Test.LeiosValidClaimsChainDB.tests
         , Test.LeiosVoteState.tests
         , Test.LeiosVoting.tests
+        , Test.LeiosAdaptiveEndorsements.tests
         , Test.LeiosUtils.CallTrace.tests
         , Test.LeiosUtils.TimeBoundedLoop.tests
         ]
