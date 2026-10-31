@@ -31,6 +31,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , StrictTQueue
   , StrictTVar
   , atomically
+  , check
   , modifyTVar
   , newTQueueIO
   , newTVarIO
@@ -67,7 +68,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), ad
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.AnnounceState
-  ( newAnnounceState
+  ( hasAnnouncement
+  , newAnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
   )
@@ -123,6 +125,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
@@ -139,7 +142,7 @@ import Test.Consensus.Leios.Environment
   )
 import Test.Consensus.Leios.NodeUnderTest
   ( Blk
-  , NodeUnderTest
+  , NodeUnderTest (..)
   , PeerAddr (..)
   , defaultNodeUnderTestConfig
   , withNodeUnderTest
@@ -187,18 +190,17 @@ tests =
         announcements down @?= [ltbHeader someAnnouncingBlock]
     , testCase "the node relays both announcements of an election, but no third" $ do
         down <-
-          relayToOne
-            0
-            -- The node's clients request nothing before 1s, so the third
-            -- comes later than that, to arrive after the other two.
-            [[announce someAnnouncingBlock, announce equivocation], [announceAt 2 thirdAnnouncement]]
+          relayAfter
+            [ PeerSpec 0 [] [announce someAnnouncingBlock, announce equivocation]
+            , PeerSpec 0 [someAnnouncingBlock, equivocation] [announce thirdAnnouncement]
+            ]
         announcements down @?= map ltbHeader [someAnnouncingBlock, equivocation]
     , testCase "the node does not relay an announcement too old to relay" $ do
         -- connecting late, since a connection without KeepAlive times out
         (_, downs) <-
           relayPeers
             400
-            [PeerSpec 340 [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
+            [PeerSpec 340 [] [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
             [340]
         map announcements downs @?= [[ltbHeader lateAnnouncingBlock]]
     , testCase "the node does not relay an announcement of a revoked operational certificate" $ do
@@ -262,11 +264,13 @@ tests =
         map poNodeClientEnded ups @?= [Nothing, Nothing]
     , testCase "the node does not relay a vote for an announcement it did not relay" $ do
         down <-
-          relayToOne
-            0
-            ( withControl
-                [[announce equivocation], [announceAt 2 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
-            )
+          relayAfter $
+            PeerSpec 0 [] [announce someAnnouncingBlock, announce equivocation]
+              : PeerSpec
+                0
+                [someAnnouncingBlock, equivocation]
+                [announce thirdAnnouncement, (5, vote thirdAnnouncement 0)]
+              : map (PeerSpec 0 []) (withControl [])
         votes down @?= [control]
     , testCase "the node relays a vote that arrives after its voting period, within its diffusion period" $ do
         -- Voting ends 8 s in, and diffusion 9 s in.
@@ -399,7 +403,7 @@ prop_relay peers =
            ]
  where
   ups = allPeers peers
-  (upOutcomes, down) = case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0] of
+  (upOutcomes, down) = case runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0 []) ups) [0] of
     (ups', [down']) -> (ups', down')
     _ -> error "prop_relay: one downstream peer"
   (honestOutcomes, invalidOutcomes) = splitAt (length (honestPeers peers)) upOutcomes
@@ -564,6 +568,9 @@ showNotification = \case
 -- | A peer: when it connects, and what it sends the node when.
 data PeerSpec = PeerSpec
   { psConnectAt :: DiffTime
+  , psAfterAccepting :: [LeiosTestBlock]
+  -- ^ The announcements the node must have accepted before the peer sends
+  -- anything, however late that makes its sends.
   , psSends :: [(DiffTime, Notification)]
   }
 
@@ -580,7 +587,7 @@ data PeerOutcome = PeerOutcome
 -- the node relays to it, and the test fails if an honest peer's client would
 -- disconnect the node for it.
 relay :: DiffTime -> [[(DiffTime, Notification)]] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
-relay end ups = relayPeers end (map (PeerSpec 0) ups)
+relay end ups = relayPeers end (map (PeerSpec 0 []) ups)
 
 -- | 'relay', with upstream peers that connect when they say.
 relayPeers :: DiffTime -> [PeerSpec] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
@@ -598,7 +605,7 @@ runRelay :: VerifyingTime -> DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutco
 runRelay verifying end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode verifying $ \nut ->
   forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
  where
-  specs = ups <> [PeerSpec at [] | at <- downs]
+  specs = ups <> [PeerSpec at [] [] | at <- downs]
 
 -- | 'relay' for 20 seconds, past every vote's diffusion period, to one downstream peer
 -- connecting at the given time.
@@ -608,8 +615,16 @@ relayToOne at ups =
     (_, [down]) -> pure down
     _ -> error "relayToOne: one downstream peer"
 
+-- | 'relayToOne', with upstream peers that connect and wait as they say, to a
+-- downstream peer that connects at once.
+relayAfter :: [PeerSpec] -> IO PeerOutcome
+relayAfter ups =
+  relayPeers 20 ups [0] >>= \case
+    (_, [down]) -> pure down
+    _ -> error "relayAfter: one downstream peer"
+
 runPeer :: NodeUnderTest (IOSim s) -> DiffTime -> PeerAddr -> PeerSpec -> IOSim s PeerOutcome
-runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
+runPeer nut end addr PeerSpec{psConnectAt, psAfterAccepting, psSends} = do
   threadDelay psConnectAt
   queue <- newTQueueIO
   received <- newTVarIO []
@@ -622,7 +637,18 @@ runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
           , epLeiosFetchServer = refusingLeiosFetchServer nut
           , epLeiosFetchClient = Nothing
           }
-  withAsync (feedAt queue psSends) $ \_feeder ->
+  let awaitAccepted =
+        atomically $
+          mapM_
+            ( \blk ->
+                check
+                  =<< hasAnnouncement
+                    (getLeiosAnnounceState (nutKernel nut))
+                    (blockSlot (ltbHeader blk))
+                    (rbHashOf (ltbHeader blk))
+            )
+            psAfterAccepting
+  withAsync (awaitAccepted >> feedAt queue psSends) $ \_feeder ->
     withNodeVsEnvConnection nut addr envPeer $ \conn -> do
       Time now <- getMonotonicTime
       threadDelay (end - now)
