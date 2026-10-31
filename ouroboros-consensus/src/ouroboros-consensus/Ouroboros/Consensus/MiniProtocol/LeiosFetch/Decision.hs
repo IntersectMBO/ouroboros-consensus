@@ -504,11 +504,17 @@ focusElectionIfUnfocused elId ebHash outstanding
 -- race, or may never have reached us --- and nothing lists it in the meantime,
 -- because an unverified claim must not be able to make us track an endorser
 -- block.
+--
+-- It does nothing for an election older than what has been pruned: its
+-- certificate may have been read before the pruning, and focusing it now would
+-- track, and announce held acquisitions at, what the pruning dropped.
 focusCertifiedEb ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
-focusCertifiedEb elId ebHash =
-  focusElection elId ebHash
-    . trackCertifiedEb (MkLeiosPoint (electionSlot elId) ebHash)
+focusCertifiedEb elId ebHash outstanding
+  | electionSlot elId < outstandingPrunedSlot outstanding = outstanding
+  | otherwise =
+      focusElection elId ebHash $
+        trackCertifiedEb (MkLeiosPoint (electionSlot elId) ebHash) outstanding
 
 -- | Start tracking a certified endorser block, unless it is too old.
 --

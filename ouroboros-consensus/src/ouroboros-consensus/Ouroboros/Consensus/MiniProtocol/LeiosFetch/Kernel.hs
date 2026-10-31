@@ -500,9 +500,8 @@ leiosFetchFocuser chainDB kernel = go Map.empty
 
   focus (outstanding, reacquired) elId ebHash =
     let outstanding' = focusCertifiedEb elId ebHash outstanding
-        newlyFocused = case Map.lookup elId (elFocus outstanding) of
-          Just focused -> focused /= ebHash
-          Nothing -> True
+        focuses o = Map.lookup elId (elFocus o) == Just ebHash
+        newlyFocused = focuses outstanding' && not (focuses outstanding)
      in ( outstanding'
         , if newlyFocused
             then reacquired <> heldAcquisitionsAt (MkLeiosPoint (electionSlot elId) ebHash) outstanding'
