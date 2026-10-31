@@ -253,6 +253,8 @@ tests =
               )
     , testCase "the node takes a peer that jumps over a certifying header as offering what it certifies" $
         runSimFinishing nodeRecordsJumperOffers >>= (@?= [True, True])
+    , testCase "the node fetches what a certifying header certifies from a peer that jumps over it" $
+        runSimFinishing nodeFetchesFromJumper >>= (@?= lastPoint jumpedChain)
     , testCase "the node records no offer older than the slot it pruned its peers' offers to" $
         runSimFinishing nodeIgnoresPrunedOffer >>= (@?= [SlotNo 5])
     , testCase
@@ -611,6 +613,30 @@ nodeRecordsJumperOffers = withJumpingNode 1 $ \nut -> do
       mapM (offersFetched nut) [PeerAddr 1, PeerAddr 2]
  where
   longer = [announcingFetched, certifyingFetched, successorLeiosBlock certifyingFetched]
+
+-- | The leader's chain once it has grown by a block, as in
+-- 'nodeRecordsJumperOffers'.
+jumpedChain :: [LeiosTestBlock]
+jumpedChain = [announcingFetched, certifyingFetched, successorLeiosBlock certifyingFetched]
+
+-- | As in 'nodeRecordsJumperOffers', but only the jumper serves 'fetchedEb'
+-- over LeiosFetch, so the node can acquire it only by taking the jumper as
+-- offering it. Once the leader's chain has grown, the node adds that chain.
+-- The tip of the node's selection, once that is the last block of
+-- 'jumpedChain' or ten seconds have passed.
+nodeFetchesFromJumper :: IOSim s (Point LeiosTestBlock)
+nodeFetchesFromJumper = withJumpingNode 1 $ \nut -> do
+  leaderChain <- newEnvChain [announcingFetched, certifyingFetched]
+  jumperChain <- newEnvChain jumpedChain
+  let jumper = (servingChain nut jumperChain){epLeiosFetchServer = servingFetched nut}
+  withNodeVsEnvConnection nut (PeerAddr 1) (servingChain nut leaderChain) $ \_conn -> do
+    threadDelay 3
+    withNodeVsEnvConnection nut (PeerAddr 2) jumper $ \_conn -> do
+      threadDelay 1
+      serveChain leaderChain jumpedChain
+      threadDelay 2
+      addBlocks nut jumpedChain
+      awaitTip nut (lastPoint jumpedChain)
 
 -- | Once the node has pruned its peers' offers to a slot, it records only the
 -- offers at or after that slot. The slots of the offers it records.
