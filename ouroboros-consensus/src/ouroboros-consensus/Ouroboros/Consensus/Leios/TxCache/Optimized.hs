@@ -82,6 +82,10 @@ emptyHtState = HtState Map.empty 0 Map.empty (SlotNo 0) Map.empty 0
 -- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots;
 -- the node uses 22, 'Ouroboros.Consensus.Leios.TxCache.API.defaultLeiosTxCacheShift') and
 -- @k0@\/@k1@ are the SipHash salt (feed a securely-random pair).
+--
+-- Every update masks asynchronous exceptions: it mutates the table in place,
+-- which restoring the 'HtState' cannot undo, so a peer thread killed halfway
+-- through would otherwise leave refcounts that nothing will ever decrement.
 newHashTableLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
   Int ->
@@ -97,7 +101,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
   pure
     LeiosTxCache
       { insertAnnouncement = \slot rbh ebh ->
-          MVar.modifyMVar stateVar $ \st ->
+          MVar.modifyMVarMasked stateVar $ \st ->
             if slot < hsPrunedSlot st || announcementPresent slot rbh st
               then pure (st, (Set.empty, Set.empty))
               else
@@ -108,11 +112,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                   Set.empty
                   Set.empty
       , evictOlderThan = \boundary ->
-          MVar.modifyMVar stateVar $ \st ->
+          MVar.modifyMVarMasked stateVar $ \st ->
             let st' = st{hsPrunedSlot = max (hsPrunedSlot st) boundary}
              in evictWhile ht (oldestIsStale (hsPrunedSlot st')) st' Set.empty Set.empty
       , insertBody = \ebh b nil snoc ->
-          MVar.modifyMVar stateVar $ \st ->
+          MVar.modifyMVarMasked stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
               Nothing -> pure (st, Nothing)
               Just BodyAlreadyInserted{} -> pure (st, Nothing)
@@ -149,17 +153,17 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               Just (BodyAlreadyInserted _ b) -> Just b
               _ -> Nothing
       , withLockedInsertUnappliedTx = \k ->
-          MVar.modifyMVar stateVar $ \st -> do
+          MVar.modifyMVarMasked stateVar $ \st -> do
             fab <- k mempty (\fab txh sz () -> setTag ht TxAlreadyInserted fab txh sz)
             pure (st, fab)
       , withLockedInsertAppliedTx = \k ->
-          MVar.modifyMVar_ stateVar $ \st -> do
+          MVar.modifyMVarMasked_ stateVar $ \st -> do
             () <- k () (\() txh parity -> setTag_ ht (TxAlreadyValidated parity) txh)
             pure st
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \ebh offTxs ->
-          MVar.modifyMVar stateVar $ \st -> do
+          MVar.modifyMVarMasked stateVar $ \st -> do
             -- An EB's closure arrives over one or more batches, each a separate
             -- call; all must land in the single slot the EB holds. Claim a new
             -- slot only the first time an EB is seen (while it still occupies the

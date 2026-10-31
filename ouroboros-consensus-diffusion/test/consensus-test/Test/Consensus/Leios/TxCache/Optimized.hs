@@ -15,9 +15,12 @@ module Test.Consensus.Leios.TxCache.Optimized (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (foldM)
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, takeMVar, tryPutMVar, yield)
+import Control.Monad (foldM, void)
+import Data.Bits (shiftR)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List as List
+import Data.Maybe (isJust)
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import Ouroboros.Consensus.Leios.TxCache
@@ -35,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation
   )
+import System.IO.Unsafe (unsafePerformIO)
 import Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   ( Config (..)
   , genConfig
@@ -42,6 +46,7 @@ import Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   , salt1
   )
 import Test.Tasty (TestTree, adjustOption, testGroup)
+import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
@@ -69,6 +74,9 @@ tests =
         testProperty "hash-table handle == pure handle" prop_equiv
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "hash-table handle == pure handle, with evictOlderThan" prop_equivEvict
+    , testCase
+        "a thread killed while inserting a body leaves no tx behind once the body's announcement is evicted"
+        $ killedInsertLeaks >>= (@?= 0)
     ]
 
 type H = LeiosTxCache IO () ProtVerParity TestBody
@@ -235,3 +243,38 @@ prop_equivEvict =
     base <- genOps txDomain
     evicts <- listOf (OpEvict . fromIntegral <$> chooseInt (1, 300))
     shuffle (base ++ evicts)
+
+-- | A peer thread inserting a body is killed halfway through, as when the
+-- node disconnects the peer. Another peer then delivers the same body, every
+-- tx is acquired, and the body's announcement is evicted. How many txs the
+-- cache still holds; it must hold none.
+--
+-- TODO Interrupting 'insertAnnouncement' or 'evictOlderThan' halfway through
+-- its evictions is not tested: neither has a callback to pause in, as
+-- 'insertBody' does. They mask asynchronous exceptions the same way.
+--
+-- Halfway through the body, the inserting thread signals and yields, so that
+-- the killing thread runs then: nothing in an insertion itself would let it.
+-- Neither blocks, so neither lets an exception through a mask.
+killedInsertLeaks :: IO Int
+killedInsertLeaks = do
+  h <- newHashTableLeiosTxCache 13 salt0 salt1 :: IO H
+  _ <- insertAnnouncement h (SlotNo 1) (rbhOf 1) (ebhOf 1)
+  halfway <- newEmptyMVar
+  let signalHalfway w off
+        | off == fromIntegral (length txs `div` 2) =
+            unsafePerformIO (tryPutMVar halfway () >> yield) `seq` w
+        | otherwise = w
+  inserter <-
+    forkIO $ void $ insertBody h (ebhOf 1) (TestBody txs) () (\w off _ _ _ -> signalHalfway w off)
+  takeMVar halfway
+  killThread inserter
+  void $ insertBody h (ebhOf 1) (TestBody txs) () (\() _ _ _ _ -> ())
+  _ <- withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc t 1 ()) z txs)
+  _ <- evictOlderThan h (SlotNo 2)
+  withLookupTx h $ \look -> length . filter isJust <$> mapM look txs
+ where
+  txs = map txhOfInt [0 .. 2 ^ (12 :: Int) - 1]
+  txhOfInt :: Int -> TxHash
+  txhOfInt n =
+    UnsafeHash $ SBS.pack ([fromIntegral (n `shiftR` (8 * i)) | i <- [0 .. 3]] ++ replicate 28 0)
