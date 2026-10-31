@@ -15,6 +15,7 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_, replicateM, unless, void)
 import Control.Monad.Class.MonadThrow
+import Control.Monad.Class.MonadTime.SI (DiffTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -271,6 +272,10 @@ tests =
         $ runSimFinishing (nodeSelectsReannounced ReannounceThenPrune)
           >>= (@?= lastPoint (reannouncedChain ReannounceThenPrune))
     , testCase
+        "the node keeps an endorser block that a certificate refocuses an election onto through garbage collection and a restart"
+        $ runSimFinishingWithin 200 nodeKeepsRefocusedThroughGc
+          >>= (@?= lastPoint gcRestartChain)
+    , testCase
         "the node fetches an endorser block a later election announced, once it prunes the earlier announcement"
         $ runSimFinishing nodeFetchesAfterPruningEarlier
           >>= (@?= [AcquiredBody refocusedPoint, AcquiredClosure refocusedPoint])
@@ -358,8 +363,13 @@ tests =
 -- | Run the simulation, and fail the test if it has not finished after 100
 -- simulated seconds.
 runSimFinishing :: (forall s. IOSim s a) -> IO a
-runSimFinishing sim = case runSimOrThrow (timeout 100 sim) of
-  Nothing -> assertFailure "the simulation did not finish within 100 seconds"
+runSimFinishing = runSimFinishingWithin 100
+
+-- | Run the simulation, and fail the test if it has not finished after this
+-- many simulated seconds.
+runSimFinishingWithin :: DiffTime -> (forall s. IOSim s a) -> IO a
+runSimFinishingWithin limit sim = case runSimOrThrow (timeout limit sim) of
+  Nothing -> assertFailure $ "the simulation did not finish within " <> show limit
   Just a -> pure a
 
 {-------------------------------------------------------------------------------
@@ -722,6 +732,50 @@ nodeSelectsReannounced whenReannounced = withNode $ \nut -> do
       ReannounceThenPrune -> reannounce >> prune
     addBlocks nut chain
     awaitTip nut (lastPoint chain)
+
+-- | 'reannouncedChain' 'NothingPruned' and five more blocks, which put the
+-- immutable tip past 'announcingFetched' but leave the certifying block
+-- volatile, so that nothing pins 'fetchedEb'.
+gcRestartChain :: [LeiosTestBlock]
+gcRestartChain = chain <> take 5 (drop 1 (iterate successorLeiosBlock (last chain)))
+ where
+  chain = reannouncedChain NothingPruned
+
+-- | The peer announces 'fetchedEb' in 'announcingFetched', offers it, and
+-- serves it. Once the node has acquired it, the node adds 'gcRestartChain',
+-- whose certificate moves the second announcement's election onto
+-- 'fetchedEb', though nothing announced it to the node. Then the node waits
+-- out a garbage collection of its LeiosDB to its immutable tip, which is past
+-- 'announcingFetched', and restarts. The tip of its selection after the
+-- restart, once that is the chain's last block or ten seconds have passed.
+nodeKeepsRefocusedThroughGc :: IOSim s (Point LeiosTestBlock)
+nodeKeepsRefocusedThroughGc = do
+  nodeDBs <- emptyNodeDBs
+  leiosDb <- newLeiosDBInMemory
+  withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+    next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
+    notifications <- newTQueueIO
+    atomically $
+      mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
+    let envPeer =
+          EnvPeer
+            { epChainSyncServer = quietChainSyncServer
+            , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
+            , epLeiosNotifyClient = Nothing
+            , epLeiosFetchServer = servingFetched nut
+            , epLeiosFetchClient = Nothing
+            }
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 20
+    withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+      _ <- replicateM 2 $ atomically next
+      addBlocks nut gcRestartChain
+      -- The acquisition announced again, at the certified announcement.
+      _ <- replicateM 2 $ atomically next
+      _ <- awaitTip nut (lastPoint gcRestartChain)
+      -- Past the ChainDB's delay before it collects garbage, and its interval.
+      threadDelay 80
+  withNodeOverDBs nodeDBs leiosDb $ \nut -> awaitTip nut (lastPoint gcRestartChain)
 
 -- | The peer announces 'fetchedEb' in 'announcingFetched' and again in
 -- 'reannouncingFetched', and offers nothing. The node adds a chain of twelve
