@@ -138,6 +138,10 @@ data LeiosFetchKernel m peer = MkLeiosFetchKernel
   , lfkPeers :: !(StrictTVar m (Map.Map peer (LeiosFetchPeer m)))
   -- ^ The upstream peers the decision loop assigns requests to; see
   -- 'withLeiosFetchPeer'.
+  , lfkPrunedSlot :: !(StrictTVar m SlotNo)
+  -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
+  -- and claims to. Nothing older is recorded afterwards, so that an offer or
+  -- claim that arrives after the pruning cannot undo it.
   }
 
 -- | What the node's LeiosFetch state holds about one upstream peer.
@@ -180,7 +184,8 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty
-  pure MkLeiosFetchKernel{lfkContext = mkContext outstanding ready, lfkPeers}
+  lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
+  pure MkLeiosFetchKernel{lfkContext = mkContext outstanding ready, lfkPeers, lfkPrunedSlot}
 
 -- | Run the action with this peer's LeiosFetch state, registering it with the
 -- decision loop if no other mini-protocol of the peer has.
@@ -231,7 +236,8 @@ withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
     pure $! removePeerFromOutstanding peer outstanding
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
--- with, and wake the decision loop.
+-- with, unless the point is older than what has been pruned, and wake the
+-- decision loop.
 recordLeiosOffer ::
   IOLike m =>
   LeiosFetchKernel m peer ->
@@ -240,7 +246,10 @@ recordLeiosOffer ::
   PeerOffer ->
   m ()
 recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
-  atomically $ modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
+  atomically $ do
+    prunedSlot <- readTVar (lfkPrunedSlot kernel)
+    unless (pointSlotNo point < prunedSlot) $
+      modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
   void $ tryPutMVar (lfcReady (lfkContext kernel)) ()
 
 -- | Record the offer a peer makes by rolling forward a header that contains a
@@ -274,6 +283,7 @@ recordLeiosCertOffer cfg kernel peerVars hdr predState =
         let slot = annTipSlotNo predTip
             ebHash = announcementEbHash announcement
         noteCertificationClaim
+          kernel
           peerVars
           (ElectionId slot (announcementElectee announcement))
           ebHash
@@ -303,14 +313,20 @@ leiosEbBounds llv = MkLeiosEbBounds (llvMaxEbBodySize llv) (llvMaxEbTxsSize llv)
 -- announcing blocks, follow each with a header claiming a certificate --- the
 -- certificate is in the block body, which the node need never fetch --- and roll
 -- them all forward, growing the peer's offers without bound.
+--
+-- A claim for an election older than what has been pruned is not counted.
 noteCertificationClaim ::
-  IOLike m => LeiosFetchPeer m -> ElectionId -> EndorserBlockHash -> m ()
-noteCertificationClaim MkLeiosFetchPeer{lfpCertificationClaims} elId ebHash = do
+  IOLike m =>
+  LeiosFetchKernel m peer -> LeiosFetchPeer m -> ElectionId -> EndorserBlockHash -> m ()
+noteCertificationClaim kernel MkLeiosFetchPeer{lfpCertificationClaims} elId ebHash = do
   conflict <- atomically $ do
+    prunedSlot <- readTVar (lfkPrunedSlot kernel)
     claims <- readTVar lfpCertificationClaims
-    case Map.lookup elId claims of
-      Nothing -> Nothing <$ writeTVar lfpCertificationClaims (Map.insert elId ebHash claims)
-      Just claimed -> pure $ if claimed == ebHash then Nothing else Just claimed
+    if electionSlot elId < prunedSlot
+      then pure Nothing
+      else case Map.lookup elId claims of
+        Nothing -> Nothing <$ writeTVar lfpCertificationClaims (Map.insert elId ebHash claims)
+        Just claimed -> pure $ if claimed == ebHash then Nothing else Just claimed
   forM_ conflict $ \claimed -> throwIO $ ExnLeiosTwoCertificationClaims elId claimed ebHash
 
 -- | Thrown when a peer's ChainSync roll-forwards claim that two different
@@ -549,7 +565,7 @@ leiosFetchPruner ::
   m Void
 leiosFetchPruner chainDB kernel = go (SlotNo 0)
  where
-  MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
+  MkLeiosFetchKernel{lfkContext, lfkPeers, lfkPrunedSlot} = kernel
   MkLeiosFetchClientContext{lfcOutstanding, lfcTxCache} = lfkContext
 
   go prunedSlot = do
@@ -562,10 +578,12 @@ leiosFetchPruner chainDB kernel = go (SlotNo 0)
     modifyMVar_ lfcOutstanding $ pure . snd . pruneOutstandingToImmTip immTipSlot
     -- Offers are keyed by point and claims by election, which both order by
     -- slot first.
-    peersVars <- readTVarIO lfkPeers
-    atomically $ forM_ peersVars $ \vars -> do
-      modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
-      modifyTVar
-        (lfpCertificationClaims vars)
-        (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
+    atomically $ do
+      writeTVar lfkPrunedSlot immTipSlot
+      peersVars <- readTVar lfkPeers
+      forM_ peersVars $ \vars -> do
+        modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
+        modifyTVar
+          (lfpCertificationClaims vars)
+          (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
     go immTipSlot

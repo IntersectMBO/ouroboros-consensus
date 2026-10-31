@@ -27,6 +27,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
@@ -35,7 +36,7 @@ import Ouroboros.Consensus.Block
   ( Header
   , Point
   , Proxy (..)
-  , SlotNo
+  , SlotNo (..)
   , WithOrigin (NotOrigin)
   , blockHash
   , blockPoint
@@ -63,12 +64,16 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosOutstanding (..)
+  , PeerOffer (..)
+  , WhetherTxsClosureOffered (..)
   , isFocusedEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( ExnLeiosTwoCertificationClaims (..)
   , LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , recordLeiosOffer
+  , withLeiosFetchPeer
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
@@ -125,6 +130,7 @@ import Ouroboros.Network.Mux
   , TemperatureBundle (..)
   , WithProtocolTemperature (..)
   )
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
@@ -230,6 +236,8 @@ tests =
               )
     , testCase "the node takes a peer that jumps over a certifying header as offering what it certifies" $
         runSimFinishing nodeRecordsJumperOffers >>= (@?= [True, True])
+    , testCase "the node records no offer older than the slot it pruned its peers' offers to" $
+        runSimFinishing nodeIgnoresPrunedOffer >>= (@?= [SlotNo 5])
     , testCase
         "the node disconnects a peer that rolls forward certificates of two endorser blocks for one election"
         $ runSimFinishing nodeDisconnectsDoubleCertifier
@@ -575,6 +583,23 @@ nodeRecordsJumperOffers = withJumpingNode 1 $ \nut -> do
       mapM (offersFetched nut) [PeerAddr 1, PeerAddr 2]
  where
   longer = [announcingFetched, certifyingFetched, successorLeiosBlock certifyingFetched]
+
+-- | Once the node has pruned its peers' offers to a slot, it records only the
+-- offers at or after that slot. The slots of the offers it records.
+nodeIgnoresPrunedOffer :: IOSim s [SlotNo]
+nodeIgnoresPrunedOffer = withNode $ \nut -> do
+  let kernel = getLeiosFetchKernel (nutKernel nut)
+      offer =
+        MkPeerOffer
+          { poEbBounds = SNothing
+          , poOfferedBody = SNothing
+          , poClosure = TxsClosureOffered
+          }
+  IOLike.atomically $ IOLike.writeTVar (lfkPrunedSlot kernel) (SlotNo 5)
+  withLeiosFetchPeer kernel (ConnectionId (PeerAddr 0) (PeerAddr 1)) IsNotBigLedgerPeer $ \peerVars -> do
+    forM_ [SlotNo 4, SlotNo 5] $ \slot ->
+      recordLeiosOffer kernel peerVars (MkLeiosPoint slot (endorserBlockHash fetchedEb)) offer
+    map pointSlotNo . Map.keys <$> IOLike.readTVarIO (lfpOfferings peerVars)
 
 -- | The peer rolls forward the header that certifies 'fetchedEb', rolls back,
 -- and rolls forward one that certifies 'otherEbHash'. The two endorser blocks

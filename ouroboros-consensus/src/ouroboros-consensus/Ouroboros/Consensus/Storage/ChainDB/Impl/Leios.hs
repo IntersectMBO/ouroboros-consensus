@@ -98,28 +98,35 @@ data AcquiredLeiosEbs = UnsafeAcquiredLeiosEbs
   , aleBySlot :: !(Map SlotNo (NESet EndorserBlockHash))
   -- ^ The inverse of 'aleYoungestSlot', so that pruning costs only what it
   -- prunes.
+  , alePrunedSlot :: !SlotNo
+  -- ^ The slot this has most recently been pruned to, so that a notification
+  -- that arrives after the pruning cannot undo it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 mkAcquiredLeiosEbs :: [LeiosPoint] -> AcquiredLeiosEbs
 mkAcquiredLeiosEbs =
-  List.foldl' (flip insertAcquiredLeiosEb) (UnsafeAcquiredLeiosEbs Map.empty Map.empty)
+  List.foldl'
+    (flip insertAcquiredLeiosEb)
+    (UnsafeAcquiredLeiosEbs Map.empty Map.empty (SlotNo 0))
 
 -- | Record that the endorser block's closure is acquired, and that the given
--- point announces it.
+-- point announces it, unless the point is older than what has been pruned.
 insertAcquiredLeiosEb :: LeiosPoint -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredLeiosEbs youngest bySlot) =
-  case Map.lookup ebHash youngest of
-    Nothing -> record bySlot
-    Just prevSlot
-      | slot <= prevSlot -> acquired
-      | otherwise -> record (Map.update (NESet.nonEmptySet . NESet.delete ebHash) prevSlot bySlot)
+insertAcquiredLeiosEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredLeiosEbs youngest bySlot prunedSlot)
+  | slot < prunedSlot = acquired
+  | otherwise = case Map.lookup ebHash youngest of
+      Nothing -> record bySlot
+      Just prevSlot
+        | slot <= prevSlot -> acquired
+        | otherwise -> record (Map.update (NESet.nonEmptySet . NESet.delete ebHash) prevSlot bySlot)
  where
   record bySlot' =
     UnsafeAcquiredLeiosEbs
       (Map.insert ebHash slot youngest)
       (Map.insertWith NESet.union slot (NESet.singleton ebHash) bySlot')
+      prunedSlot
 
 isAcquiredLeiosEb :: EndorserBlockHash -> AcquiredLeiosEbs -> Bool
 isAcquiredLeiosEb ebHash = Map.member ebHash . aleYoungestSlot
@@ -131,10 +138,11 @@ isAcquiredLeiosEb ebHash = Map.member ebHash . aleYoungestSlot
 --
 -- See 'AcquiredLeiosEbs' for why its slots are the youngest foci.
 pruneAcquiredLeiosEbs :: SlotNo -> AcquiredLeiosEbs -> AcquiredLeiosEbs
-pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot) =
+pruneAcquiredLeiosEbs slot (UnsafeAcquiredLeiosEbs youngest bySlot prunedSlot) =
   UnsafeAcquiredLeiosEbs
     (youngest `Map.withoutKeys` foldMap NESet.toSet pruned)
     kept
+    (max slot prunedSlot)
  where
   (pruned, kept) = Map.spanAntitone (< slot) bySlot
 
