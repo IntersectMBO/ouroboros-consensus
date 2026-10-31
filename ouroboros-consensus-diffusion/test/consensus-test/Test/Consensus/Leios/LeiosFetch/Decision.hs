@@ -42,6 +42,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , fetchPriorityTiers
+  , focusCertifiedEb
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
   , newLeiosJobPool
@@ -81,6 +82,11 @@ tests =
         , testCase
             "a late reply for a discarded pool completes no job of the pool built afresh"
             test_completeAfterRebuild
+        ]
+    , testGroup
+        "focus"
+        [ testCase "a verified certificate for an election older than the pruned slot changes nothing" $
+            test_focusCertifiedPruned
         ]
     , testGroup
         "fetch priority"
@@ -157,6 +163,14 @@ test_perPeerByteBudget =
     & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
+
+test_focusCertifiedPruned :: IO ()
+test_focusCertifiedPruned =
+  (Map.size (elFocus outstanding), Map.size (ebState outstanding)) @?= (0, 0)
+ where
+  outstanding =
+    focusCertifiedEb (ElectionId (SlotNo 10) fixtureElectee) (eb 'a') $
+      emptyLeiosOutstanding (mkStdGen 0) (SlotNo 20)
 
 test_completeAfterRebuild :: IO ()
 test_completeAfterRebuild =

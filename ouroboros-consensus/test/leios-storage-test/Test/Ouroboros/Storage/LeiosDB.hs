@@ -239,6 +239,8 @@ mkTestGroups impl =
           withFreshDb impl test_completion
       , testCase "a closure completes for every point of its EB" $
           withFreshDb impl test_multipleSlotsSameHash
+      , testCase "a scan finds a complete EB at a point written after the closure completed" $
+          withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
       "lookupEbClosure"
@@ -501,6 +503,21 @@ test_multipleSlotsSameHash db = do
     void $ rwInsertEbBody con point2 eb
     completed <- rwInsertTxs con point1 (allTxsFor eb)
     Map.fromList [(p, ()) | p <- completed] @?= Map.fromList [(p, ()) | p <- [point1, point2]]
+
+-- | An EB announced again after its closure completed gets only the new point
+-- written. Once the scan's slot is past the point it completed at, the scan
+-- still finds it, at the new point.
+test_scanFindsLaterPoint :: LeiosDbHandle IO -> IO ()
+test_scanFindsLaterPoint db = do
+  let older = mkTestPoint (SlotNo 10) 1
+      younger = mkTestPoint (SlotNo 30) 1
+      eb = mkTestEb 2
+  withRW db $ \con -> do
+    rwInsertEbPoint con older (encodeEndorserBlockSize eb)
+    void $ rwInsertEbBody con older eb
+    void $ rwInsertTxs con older (allTxsFor eb)
+    rwInsertEbPoint con younger (encodeEndorserBlockSize eb)
+    scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 20 >>= (@?= [younger])
 
 -- | A body can only be written for a point already written, by 'writeEbPoint'
 -- on the announcement path.
