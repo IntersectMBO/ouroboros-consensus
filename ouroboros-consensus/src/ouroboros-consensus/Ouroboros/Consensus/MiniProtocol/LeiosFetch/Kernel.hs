@@ -500,6 +500,12 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
     forM_ (Map.toList offerDrops) $ \(peer, dropped) ->
       forM_ (Map.lookup peer peersVars) $ \vars ->
         modifyTVar (lfpOfferings vars) (`Map.withoutKeys` NESet.toSet dropped)
+    -- Published after the lock is released, so a peer that unregistered
+    -- meanwhile still gets these, although unregistering cancelled their
+    -- accounting. That is harmless: a peer unregisters only when one of its
+    -- mini-protocols ends, which the diffusion layer answers by demoting or
+    -- closing its connection, and its LeiosFetch client takes nothing more from
+    -- its queue once told to terminate.
     forM_ (Map.toList requests) $ \(peer, reqs) ->
       forM_ (Map.lookup peer peersVars) $ \vars ->
         modifyTVar (lfpRequestsToSend vars) (<> NESeq.toSeq reqs)
