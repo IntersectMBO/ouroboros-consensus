@@ -79,7 +79,8 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- independently.
   , imEbBodiesDownloaded :: !(Set LeiosPoint)
   -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
-  -- called. Only these points are considered for completion.
+  -- called, or which the garbage collection carried that over to from an older
+  -- point of the same EB. Only these points are considered for completion.
   , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by EB hash. Shared across every
   -- point that references the same EB.
@@ -88,7 +89,8 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- stays true once an EB is complete, so any later batch containing one of
   -- its txs would report it again without this guard. Each point carries the
   -- EB's hash and its announcer slot, so this is also the source for
-  -- 'scanCompleteEbClosuresNotOlderThanSlot'.
+  -- 'scanCompleteEbClosuresNotOlderThanSlot'. Like 'imEbBodiesDownloaded', it
+  -- gets what the garbage collection carries over.
   , imImmutableEbBodies :: !(Map EndorserBlockHash (IntMap EbTxEntry))
   -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
   -- collection evicts such an EB from the other fields like any other, and the
@@ -166,20 +168,34 @@ imPromoteToImmutable stateVar points = do
       "leiosDbPromoteToImmutable: incomplete closure (programmer error): " <> show incomplete
 
 -- | Evict every EB all of whose points are older than the slot, with its body
--- and tx bytes. A promoted EB keeps its copy in 'imImmutableEbBodies' and
--- 'imImmutableEbTxBytes'.
+-- and tx bytes, and drop the older points of every other EB. A promoted EB
+-- keeps its copy in 'imImmutableEbBodies' and 'imImmutableEbTxBytes'.
+--
+-- What a dropped point records towards its EB's completion is carried over to
+-- the EB's points that stay, as the SQLite backend carries its closure count.
 imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
-  let newestPointSlots =
-        Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Map.keys (imEbPoints s)]
-      evicted = Map.keysSet (Map.filter (< slot) newestPointSlots)
-      kept p = pointEbHash p `Set.notMember` evicted
+  let newestPoints =
+        Map.fromListWith max [(pointEbHash p, p) | p <- Map.keys (imEbPoints s)]
+      evicted = Map.keysSet (Map.filter ((< slot) . pointSlotNo) newestPoints)
+      kept p = pointSlotNo p >= slot
+      keptPoints =
+        Map.fromListWith (<>) [(pointEbHash p, [p]) | p <- Map.keys (imEbPoints s), kept p]
+      carried points =
+        Set.filter kept $
+          points
+            <> Set.fromList
+              [ q
+              | p <- Set.toList points
+              , not (kept p)
+              , q <- Map.findWithDefault [] (pointEbHash p) keptPoints
+              ]
    in s
         { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
-        , imEbBodiesDownloaded = Set.filter kept (imEbBodiesDownloaded s)
+        , imEbBodiesDownloaded = carried (imEbBodiesDownloaded s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
-        , imCompletedEbs = Set.filter kept (imCompletedEbs s)
+        , imCompletedEbs = carried (imCompletedEbs s)
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.

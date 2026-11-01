@@ -83,18 +83,26 @@ data GcStmts = GcStmts
   -- ^ 'sql_gc_has_work'
   , gsMarkEbForGC :: !DB.Statement
   -- ^ 'sql_gc_mark'
+  , gsCarryMissingTxCount :: !DB.Statement
+  -- ^ 'sql_gc_carry_missing_tx_count'
+  , gsDropSuperseded :: !DB.Statement
+  -- ^ 'sql_gc_drop_superseded'
   }
 
 prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
 prepareGcStmts db = preparingStmts db $ \prep -> do
   gsHasWork <- prep sql_gc_has_work
   gsMarkEbForGC <- prep sql_gc_mark
+  gsCarryMissingTxCount <- prep sql_gc_carry_missing_tx_count
+  gsDropSuperseded <- prep sql_gc_drop_superseded
   pure GcStmts{..}
 
 finalizeGcStmts :: GcStmts -> IO ()
 finalizeGcStmts GcStmts{..} = do
   dbFinalize gsHasWork
   dbFinalize gsMarkEbForGC
+  dbFinalize gsCarryMissingTxCount
+  dbFinalize gsDropSuperseded
 
 -- | The sweep statements, prepared on the writer's volatile connection;
 -- lifecycle mirrors 'CopierStmts'.

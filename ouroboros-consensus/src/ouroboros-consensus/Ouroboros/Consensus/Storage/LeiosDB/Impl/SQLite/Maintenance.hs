@@ -278,7 +278,9 @@ sqlGarbageCollect writeQueue gcSlot =
 
 -- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
 -- hash all of whose announcements are older than the given slot and not
--- pinned (@status = 1@). Returns the number of 'ebs' rows marked.
+-- pinned (@status = 1@). Of every other EB, it deletes the rows older than the
+-- slot, having carried their closure count onto a row it keeps. Returns the
+-- number of 'ebs' rows marked.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
 -- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
@@ -290,7 +292,7 @@ gcMark ::
   SlotNo ->
   IO Int
 gcMark db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
+  let GcStmts{gsHasWork, gsMarkEbForGC, gsCarryMissingTxCount, gsDropSuperseded} = gcStmts
   -- check if GC has any work to do
   hasWork <-
     useStmt gsHasWork $ do
@@ -300,6 +302,12 @@ gcMark db gcStmts gcSlot = do
     then
       -- mark EBs that are ready to be garbage collected
       dbWithWriteTransactionRaw db $ do
+        useStmt gsCarryMissingTxCount $ do
+          dbBindInt64 gsCarryMissingTxCount 1 slot
+          dbStep1Safe gsCarryMissingTxCount
+        useStmt gsDropSuperseded $ do
+          dbBindInt64 gsDropSuperseded 1 slot
+          dbStep1Safe gsDropSuperseded
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC

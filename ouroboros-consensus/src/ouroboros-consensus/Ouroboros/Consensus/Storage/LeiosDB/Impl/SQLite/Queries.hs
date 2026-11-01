@@ -27,6 +27,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_gc_has_work
   , sql_gc_markable
   , sql_gc_mark
+  , sql_gc_carry_missing_tx_count
+  , sql_gc_drop_superseded
   , sql_sweep_pick_marked
   , sql_gc_ebTxBytes
   , sql_gc_ebTxs
@@ -320,6 +322,35 @@ sql_gc_mark =
   "UPDATE ebs AS c SET status = 3\n\
   \WHERE "
     <> sql_gc_markable
+
+-- | For 'sql_gc_drop_superseded': give each live row of an EB that has older
+-- rows to drop the least closure count among the EB's rows, unless it has one
+-- of its own. Dropping those rows then loses neither the evidence that the
+-- closure is complete nor the count that its remaining transactions decrement
+-- as they arrive.
+sql_gc_carry_missing_tx_count :: String
+sql_gc_carry_missing_tx_count =
+  "UPDATE ebs AS live SET missingTxCount =\n\
+  \  (SELECT MIN(o.missingTxCount) FROM ebs o WHERE o.ebHashBytes = live.ebHashBytes)\n\
+  \WHERE live.missingTxCount IS NULL\n\
+  \  AND (live.status = 1 OR live.ebSlot >= ?1)\n\
+  \  AND EXISTS\n\
+  \    (SELECT 1 FROM ebs old\n\
+  \     WHERE old.ebHashBytes = live.ebHashBytes\n\
+  \       AND old.status IN (0, 2) AND old.ebSlot < ?1\n\
+  \       AND old.missingTxCount IS NOT NULL)"
+
+-- | Delete every row old enough for GC whose EB a live row keeps (pinned, or
+-- announced at or after the frontier @?1@), once 'sql_gc_carry_missing_tx_count'
+-- has run. The EB's body and tx bytes stay: they are the EB's, not the row's.
+sql_gc_drop_superseded :: String
+sql_gc_drop_superseded =
+  "DELETE FROM ebs AS c\n\
+  \WHERE c.status IN (0, 2) AND c.ebSlot < ?1\n\
+  \  AND EXISTS\n\
+  \    (SELECT 1 FROM ebs live\n\
+  \     WHERE live.ebHashBytes = c.ebHashBytes\n\
+  \       AND (live.status = 1 OR live.ebSlot >= ?1))"
 
 -- | Up to @?1@ GC-marked EBs ready to sweep.
 --

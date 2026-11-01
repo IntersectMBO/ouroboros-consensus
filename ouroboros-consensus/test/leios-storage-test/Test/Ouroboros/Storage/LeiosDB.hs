@@ -252,6 +252,15 @@ mkTestGroups impl =
           withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
+      "garbage collection of an EB a newer point keeps"
+      [ testCase "drops its older points and still finds it complete" $
+          withFreshDb impl test_gcDropsOlderPoints
+      , testCase "lets its closure complete after dropping the point its body was written at" $
+          withFreshDb impl test_gcKeepsMissingTxCount
+      , testCase "keeps only the newest point of an EB announced again in each round" $
+          withFreshDb impl test_gcBoundsPointsOfReannouncedEb
+      ]
+  , testGroup
       "lookupEbClosure"
       [ testProperty "complete EB returns Just with tx data" $ prop_completedEbComplete impl
       , testProperty "no txs returns Nothing" $ prop_completedEbMissingTxs impl
@@ -686,6 +695,47 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   void $ rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
   holdsClosure con (mkTestEbHash 3) >>= (@?= False)
 
+-- | An EB written whole at slot 5 and announced again at slot 10, collected at
+-- slot 6.
+test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO ()
+test_gcDropsOlderPoints db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      again = mkTestPoint 10 1
+  writeWholeEb con [mkTestPoint 5 1] eb
+  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  garbageCollect db 6
+  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+  scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 6 >>= (@?= [again])
+
+-- | An EB whose body was written at slot 5, and one of whose two transactions
+-- arrived, is announced again at slot 10 and collected at slot 6. Then its
+-- other transaction arrives.
+test_gcKeepsMissingTxCount :: LeiosDbHandle IO -> IO ()
+test_gcKeepsMissingTxCount db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      older = mkTestPoint 5 1
+      again = mkTestPoint 10 1
+  rwInsertEbPoint con older (encodeEndorserBlockSize eb)
+  void $ rwInsertEbBody con older eb
+  void $ rwInsertTxs con older (take 1 (allTxsFor eb))
+  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  garbageCollect db 6
+  rwInsertTxs con again (drop 1 (allTxsFor eb)) >>= (@?= [again])
+  scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 6 >>= (@?= [again])
+
+-- | An EB written whole at slot 10 is announced again in each of nine more
+-- rounds, each followed by a collection at its slot.
+test_gcBoundsPointsOfReannouncedEb :: LeiosDbHandle IO -> IO ()
+test_gcBoundsPointsOfReannouncedEb db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+  writeWholeEb con [mkTestPoint 10 1] eb
+  forM_ [2 .. 10] $ \n -> do
+    rwInsertEbPoint con (mkTestPoint (10 * n) 1) (encodeEndorserBlockSize eb)
+    garbageCollect db (10 * n)
+  rwScanEbPoints con >>= (@?= [(100, mkTestEbHash 1)])
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
@@ -1031,14 +1081,17 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
--- body is written once per point, for a point the database holds; and an
+-- body is written once per point, for a point the database holds, where a
+-- point the garbage collection carried an older point's body write over to
+-- counts as written, since the node then holds the endorser block; and an
 -- endorser block is promoted only with a complete closure, as the node pins
 -- only what an immutable block certifies, and its ChainSel adopts a block
 -- certifying an endorser block only once it holds that endorser block's
 -- closure. So this tracks which points and
 -- bodies the garbage collection evicts: those of every endorser block all of
 -- whose points are older than its slot, pinned or not, since a pinned one has
--- a complete closure, so has been copied.
+-- a complete closure, so has been copied; and every other point older than its
+-- slot.
 --
 -- An endorser block is also promoted at most once: the node pins only what the
 -- immutable chain certifies, and a chain cannot certify the same endorser
@@ -1109,8 +1162,16 @@ observe db settle bodies ops = withRW db $ \rw -> do
       let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
           evicted =
             nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
-          kept p = pointEbHash p `notElem` evicted
-      go rw (filter kept points) (filter kept bodied) pinned (nEvicted + length evicted) rest
+          kept p = pointSlotNo p >= slot
+          carried =
+            [ q
+            | p <- bodied
+            , not (kept p)
+            , q <- points
+            , pointEbHash q == pointEbHash p
+            , kept q
+            ]
+      go rw (filter kept points) (nub (filter kept bodied <> carried)) pinned (nEvicted + length evicted) rest
 
 -- | Hand the action a wait for the SQLite implementation's background work to
 -- catch up: for its sweep to have evicted every row the garbage collection
