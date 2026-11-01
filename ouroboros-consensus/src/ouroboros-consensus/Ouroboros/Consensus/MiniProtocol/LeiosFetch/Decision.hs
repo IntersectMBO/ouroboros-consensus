@@ -353,8 +353,11 @@ data BodySource
   = -- | Fetched and durably written, during this run or an earlier one
     -- ('initializeLeiosOutstanding'), at this size.
     FetchedBody !BytesSize
-  | -- | Fetched, but with a closure too big to fetch, so never written.
-    OversizedBody
+  | -- | Fetched, but bigger than the bounds it was requested under admit: the
+    -- body's encoded size and the total size of the transactions it references.
+    -- It is never written, and is fetched again once an offer's bounds admit
+    -- both sizes (see 'assignPeer').
+    OversizedBody !BytesSize !Word64
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -381,7 +384,7 @@ heldAcquisitionsAt point outstanding = case Map.lookup (pointEbHash point) (ebSt
     let closure = [AcquiredEbTxs point | Jobs.nullLeiosJobPool jobPool]
      in case source of
           FetchedBody size -> AcquiredEb point size : closure
-          OversizedBody -> []
+          OversizedBody{} -> []
   Just (MkEbState _slot _onset NoBody) -> []
   Nothing -> []
 
@@ -1034,6 +1037,15 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
         -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
         -- prune it now.
         pruneThisOffer
+      Just (MkEbState slot _onset (BodyAcquired (OversizedBody bodySize closureSize) _jobPool))
+        | Right bounds <- offerEbBounds forecastEbBounds slot offerKind
+        , admitsSizes bounds bodySize closureSize ->
+            -- Rejected under smaller bounds than this offer's, as across a
+            -- change of the ledger's limits: fetch it again.
+            classify
+              point
+              offerKind
+              (alterEbState ebHash (fmap (\(MkEbState s o _) -> MkEbState s o NoBody)) acc1, dec1, drops)
       Just (MkEbState slot _onset fetchState) -> case (fetchState, poClosure offerKind) of
         (NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
@@ -1118,10 +1130,24 @@ assignBody forecastEbBounds peer ebHash slot offer st@(acc, dec)
                     }
             )
  where
-  -- What the offer brought, else what we can forecast for its slot.
-  eEbBounds = case poEbBounds offer of
-    SJust x -> Right x
-    SNothing -> forecastEbBounds slot
+  eEbBounds = offerEbBounds forecastEbBounds slot offer
+
+-- | The bounds a request made for this offer holds the endorser block to: the
+-- offer's own, else what we can forecast for the slot.
+offerEbBounds ::
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  SlotNo ->
+  PeerOffer ->
+  Either OutsideForecastRange LeiosEbBounds
+offerEbBounds forecastEbBounds slot offer = case poEbBounds offer of
+  SJust x -> Right x
+  SNothing -> forecastEbBounds slot
+
+-- | Whether these bounds admit an endorser block whose body has this size and
+-- whose transactions total this size.
+admitsSizes :: LeiosEbBounds -> BytesSize -> Word64 -> Bool
+admitsSizes bounds bodySize closureSize =
+  bodySize <= lebMaxBodySize bounds && closureSize <= fromIntegral (lebMaxTxsSize bounds)
 
 -- | Whether all jobs matching a peer's offers are already inflight
 data WhetherPeerEbExhausted = PeerEbExhausted | PeerEbNotExhausted

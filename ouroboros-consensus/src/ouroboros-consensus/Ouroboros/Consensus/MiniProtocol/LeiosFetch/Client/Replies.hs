@@ -261,15 +261,16 @@ processLeiosBlock ctx peer req eb = do
     if
       | tooBig ->
           -- Held with nothing to fetch, so that neither its closure nor a
-          -- re-send of the same bytes costs us anything more. It is not
-          -- written, so it is never announced as acquired.
+          -- re-send of the same bytes costs us anything more, until an offer
+          -- whose bounds admit it. It is not written, so it is never announced
+          -- as acquired.
           --
           -- TODO the LeiosDb has no way to record that we are done with an
           -- endorser block whose closure we never fetched, so a restart within
           -- the pruning window forfeits this, costing one more body fetch from
           -- the next peer to serve it.
           pure
-            ( acquireEbBody ebHash OversizedBody Jobs.emptyLeiosJobPool cleaned
+            ( acquireEbBody ebHash (OversizedBody ebBytesSize closureBytesSize) Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
       | tooOld -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))

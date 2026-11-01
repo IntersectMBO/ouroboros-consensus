@@ -33,7 +33,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbBounds
+  , LeiosEbBounds (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -71,6 +71,9 @@ tests =
             test_bodyAlreadyRequestedPeerSkipped
         , testCase "both offering peers are selected (no per-EB cap)" $
             test_bodyTwoPeersOffer
+        , testCase
+            "an endorser block rejected as too big is fetched again once an offer's bounds admit it, and only then"
+            test_refetchOversized
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
         ]
@@ -176,6 +179,21 @@ test_bodyTwoPeersOffer =
     & runIteration
     -- both peers offer; with no per-EB cap the body is requested from both
     & assertRequestPeerCount 2
+
+-- | An endorser block rejected as too big, then offered at bounds that admit
+-- its closure but not its body, at bounds that admit its body but not its
+-- closure, and at bounds that admit both.
+test_refetchOversized :: IO ()
+test_refetchOversized = do
+  let sc =
+        empty
+          & withMissingBody (point 1 'a') 1024
+          & onOutstanding (acquireEbBody (eb 'a') (OversizedBody 1024 5000) Jobs.emptyLeiosJobPool)
+          & offersBody peerA [point 1 'a']
+      within maxBody maxTxs _slot = Right (MkLeiosEbBounds maxBody maxTxs)
+  runIterationWith (within 1023 5000) sc & assertNoRequests
+  runIterationWith (within 1024 4999) sc & assertNoRequests
+  runIterationWith (within 1024 5000) sc & assertBodyRequest peerA (point 1 'a') 1024
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
@@ -415,12 +433,27 @@ runIteration =
 
 -- | Run the iteration at this current slot and project the decisions.
 runIterationAt :: SlotNo -> Scenario -> Map.Map Peer (NESeq LeiosFetchRequest)
-runIterationAt currentSlot sc =
+runIterationAt = runIterationWithAt anyBounds
+
+-- | 'runIteration', with the ledger's bounds forecast thus.
+runIterationWith ::
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  Scenario ->
+  Map.Map Peer (NESeq LeiosFetchRequest)
+runIterationWith forecastEbBounds = runIterationWithAt forecastEbBounds minBound
+
+-- | 'runIterationAt', with the ledger's bounds forecast thus.
+runIterationWithAt ::
+  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  SlotNo ->
+  Scenario ->
+  Map.Map Peer (NESeq LeiosFetchRequest)
+runIterationWithAt forecastEbBounds currentSlot sc =
   let (_out, reqs, _drops) =
         -- No big-ledger peers in these scenarios.
         leiosFetchLogicIteration
           env
-          anyBounds
+          forecastEbBounds
           (Just currentSlot)
           (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
           Map.empty
