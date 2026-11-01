@@ -235,9 +235,9 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- ^ Per-EB state for every EB this node is tracking. Three things add an
   -- entry: the announcement that takes an election's focus, a verified
   -- certificate ('trackCertifiedEb'), and the start-up seeding
-  -- ('initializeLeiosOutstanding'), which restores what the LeiosDb already
-  -- holds. An offer never does, and is only ever acted on for an endorser
-  -- block already here.
+  -- ('initializeLeiosOutstanding') of the endorser blocks whose closures the
+  -- LeiosDb already holds. An offer never does, and is only ever acted on for
+  -- an endorser block already here.
   , ebsPerMaxAnnouncementSlot :: !(Map SlotNo (NESet EndorserBlockHash))
   -- ^ Slot-keyed reverse index of 'ebStateMaxSlot' on 'ebState'
   --
@@ -350,11 +350,9 @@ data EbFetchState
 -- | Where a body we count as held came from, which decides what the node may
 -- announce about it ('heldAcquisitionsAt').
 data BodySource
-  = -- | Fetched and durably written during this run, at this size.
+  = -- | Fetched and durably written, during this run or an earlier one
+    -- ('initializeLeiosOutstanding'), at this size.
     FetchedBody !BytesSize
-  | -- | Restored from the LeiosDb at start-up ('initializeLeiosOutstanding'), at
-    -- a size we do not know.
-    RestoredBody
   | -- | Fetched, but with a closure too big to fetch, so never written.
     OversizedBody
   deriving (Eq, Show)
@@ -375,15 +373,14 @@ ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   BodyAcquired{} -> True
 
 -- | What to announce again when an election newly focuses this point's
--- endorser block and we hold it: its body, if we know the body's size, and its
--- closure, if we hold every transaction. See 'LeiosEbNotification'.
+-- endorser block and we hold it: its body, and its closure, if we hold every
+-- transaction. See 'LeiosEbNotification'.
 heldAcquisitionsAt :: LeiosPoint -> LeiosOutstanding peer -> [LeiosEbNotification]
 heldAcquisitionsAt point outstanding = case Map.lookup (pointEbHash point) (ebState outstanding) of
   Just (MkEbState _slot _onset (BodyAcquired source jobPool)) ->
     let closure = [AcquiredEbTxs point | Jobs.nullLeiosJobPool jobPool]
      in case source of
           FetchedBody size -> AcquiredEb point size : closure
-          RestoredBody -> closure
           OversizedBody -> []
   Just (MkEbState _slot _onset NoBody) -> []
   Nothing -> []
@@ -495,14 +492,15 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 -- The per-peer request-tracking fields must start empty regardless: there are
 -- no connections yet and nothing is in flight.
-initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstanding peer
+initializeLeiosOutstanding ::
+  StdGen -> [(LeiosPoint, BytesSize)] -> SlotNo -> LeiosOutstanding peer
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
   -- These points were read back out of the LeiosDb, so the body is durable
   -- already: settle it at once.
-  seed1 (MkLeiosPoint slot ebHash) =
-    acquireEbBody ebHash RestoredBody Jobs.emptyLeiosJobPool
+  seed1 (MkLeiosPoint slot ebHash, size) =
+    acquireEbBody ebHash (FetchedBody size) Jobs.emptyLeiosJobPool
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Make this endorser block the one this election is fetching, unless the

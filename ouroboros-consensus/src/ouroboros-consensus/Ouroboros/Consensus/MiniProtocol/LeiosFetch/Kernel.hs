@@ -74,6 +74,8 @@ import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
   , LeiosPoint (..)
+  , encodeEndorserBlockSize
+  , mkEndorserBlock
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
@@ -185,12 +187,21 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   immTipSlot <-
     atomically $
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
-  acquired <- withReader leiosDb $ \reader -> scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
+  acquired <- withReader leiosDb $ \reader -> do
+    points <- scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
+    concat <$> mapM (\point -> withSize point <$> lookupEbBody reader (pointEbHash point)) points
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty
   lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
   pure MkLeiosFetchKernel{lfkContext = mkContext outstanding ready, lfkPeers, lfkPrunedSlot}
+ where
+  -- The size of the body as the node serves it, rebuilt from its references.
+  -- A stored body is never empty, so no references means the LeiosDb no longer
+  -- holds it, and the endorser block starts afresh.
+  withSize point refs = case refs of
+    [] -> []
+    _ : _ -> [(point, encodeEndorserBlockSize (mkEndorserBlock refs))]
 
 -- | Run the action with this peer's LeiosFetch state, registering it with the
 -- decision loop if no other mini-protocol of the peer has.
@@ -521,11 +532,6 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- holds, this also announces the acquisition again, at the certified point (see
 -- 'LeiosEbNotification'), once the LeiosDB holds that point, so that it keeps
 -- the endorser block for as long as the point matters.
---
--- TODO The LeiosDB records a size with each point, which LeiosFetch does not
--- know for an endorser block the LeiosDB held when the node started, so for
--- such a block this writes no point, and the LeiosDB can still evict it while
--- the certified point matters.
 leiosFetchFocuser ::
   IOLike m =>
   ChainDB m blk ->
