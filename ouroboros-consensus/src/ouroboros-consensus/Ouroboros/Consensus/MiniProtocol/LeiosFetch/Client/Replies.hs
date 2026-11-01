@@ -53,14 +53,15 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , ProtVerParity
   , TxHash
-  , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
+  , leiosEbSizes
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -270,7 +271,7 @@ processLeiosBlock ctx peer req eb = do
           -- the pruning window forfeits this, costing one more body fetch from
           -- the next peer to serve it.
           pure
-            ( acquireEbBody ebHash (OversizedBody ebBytesSize closureBytesSize) Jobs.emptyLeiosJobPool cleaned
+            ( acquireEbBody ebHash (OversizedBody sizes) Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
       | tooOld -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))
@@ -334,10 +335,10 @@ processLeiosBlock ctx peer req eb = do
 
   point = lbrPoint req
   ebHash = pointEbHash point
-  ebBytesSize = encodeEndorserBlockSize eb
+  sizes = leiosEbSizes eb
+  ebBytesSize = lesBodySize sizes
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
-  closureBytesSize :: Word64
-  closureBytesSize = sum (fromIntegral . snd <$> refs)
+  closureBytesSize = lesTxsSize sizes
   -- TODO The node does not vote yet. Voting must check the endorser block
   -- against the limits of the election it votes in: these are the limits of
   -- whichever election the request was made for, and a later election that
@@ -362,12 +363,12 @@ processLeiosBlock ctx peer req eb = do
                   (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
                   outstanding
           atomically $ do
-            lfcNotify $ AcquiredEb acquiredPoint ebBytesSize
+            lfcNotify $ AcquiredEb acquiredPoint sizes
             when (Jobs.nullLeiosJobPool jobPool) $
               lfcNotify $
-                AcquiredEbTxs acquiredPoint
+                AcquiredEbTxs acquiredPoint sizes
           pure
-            ( acquireEbBody ebHash (FetchedBody ebBytesSize) jobPool outstanding'
+            ( acquireEbBody ebHash (FetchedBody sizes) jobPool outstanding'
             , Just (acquiredPoint, onset, jobPool)
             )
         -- Pruned meanwhile, or another delivery of it settled first.
@@ -470,12 +471,12 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup ebHash (ebState outstanding), Map.lookup ebHash (ebState outstanding')) of
         ( Just (MkEbState _ _ (BodyAcquired _ before))
-          , Just (MkEbState slot onset (BodyAcquired _ after))
+          , Just (MkEbState slot onset (BodyAcquired (FetchedBody sizes) after))
           )
             | not (Jobs.nullLeiosJobPool before)
             , Jobs.nullLeiosJobPool after -> do
                 let acquiredPoint = MkLeiosPoint slot ebHash
-                atomically $ lfcNotify $ AcquiredEbTxs acquiredPoint
+                atomically $ lfcNotify $ AcquiredEbTxs acquiredPoint sizes
                 pure (outstanding', Just (acquiredPoint, onset))
         _ -> pure (outstanding', Nothing)
     -- These bytes are durable now: advertise them as fill sources for later

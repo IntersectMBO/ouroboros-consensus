@@ -21,7 +21,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , retry
   , writeTChan
   )
-import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
+import Ouroboros.Consensus.Leios.Types (LeiosEbSizes, LeiosPoint)
 
 -- | An acquisition the node announces.
 --
@@ -43,12 +43,14 @@ data LeiosEbNotification
     AcquiredEb
       -- | the EB's point
       LeiosPoint
-      -- | its size in bytes
-      BytesSize
+      -- | its sizes
+      LeiosEbSizes
   | -- | The node holds the EB's body and every tx it lists.
     AcquiredEbTxs
       -- | the EB's point
       LeiosPoint
+      -- | its sizes
+      LeiosEbSizes
 
 -- | A broadcast of the node's acquisitions.
 data LeiosAcquisitions m = MkLeiosAcquisitions

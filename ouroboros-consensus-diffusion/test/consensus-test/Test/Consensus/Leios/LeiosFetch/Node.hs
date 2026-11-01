@@ -50,13 +50,21 @@ import Ouroboros.Consensus.Block
   , withOrigin
   , pattern GenesisPoint
   )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  , newLeiosAcquisitions
+  )
+import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
+  , LeiosEbBounds (..)
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
@@ -64,6 +72,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockHash
   , hashLeiosTx
+  , leiosEbSizes
   , mkEndorserBlock
   , toRankingBlockHash
   )
@@ -196,6 +205,14 @@ tests =
                     , RelayedBlockTxsOffer fetchedPoint
                     ]
                   )
+              )
+    , testCase
+        "the node offers an endorser block it acquires only at the announcements whose bounds admit it"
+        $ runSimFinishing relayOffersWhereAdmitted
+          >>= ( @?=
+                  [ RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+                  , RelayedBlockTxsOffer fetchedPoint
+                  ]
               )
     , testCase
         "the node fetches what a peer offers on a connection that started while an earlier one with the same ConnectionId was still ending"
@@ -553,6 +570,52 @@ nodeFetchesOffered = withNode $ \nut -> do
     acquired <- replicateM 2 $ acquiredOf <$> atomically next
     relays <- atomically $ readTVar relayed >>= \rs -> take 3 rs <$ check (length rs >= 3)
     pure (acquired, relays)
+
+-- | The log holds three announcements of 'fetchedEb', with bounds that admit
+-- it, that admit its body but not its transactions, and that do not admit its
+-- body. The node then acquires 'fetchedEb' and its closure. The offers the
+-- relay adds to the log.
+relayOffersWhereAdmitted :: IOSim s [Relayed]
+relayOffersWhereAdmitted = withNode $ \nut -> do
+  notifyLog <- NotifyLog.newNotifyLog
+  acquisitions <- newLeiosAcquisitions
+  let sizes = leiosEbSizes fetchedEb
+      bodySize = lesBodySize sizes
+      txsSize = fromIntegral (lesTxsSize sizes)
+      announce blk bounds =
+        forM_ (mkAnnouncingHeader (nutTopLevelConfig nut) (ltbHeader blk)) $ \anc ->
+          NotifyLog.appendNotifyLog
+            notifyLog
+            (NotifyLog.NotifyAnnouncement anc bounds)
+            (RelativeTime 1000)
+      announcingAgain =
+        setAnnouncement
+          (endorserBlockHash fetchedEb)
+          (encodeEndorserBlockSize fetchedEb)
+          (successorLeiosBlock reannouncingFetched)
+  atomically $ do
+    announce announcingFetched (MkLeiosEbBounds bodySize txsSize)
+    announce reannouncingFetched (MkLeiosEbBounds bodySize (txsSize - 1))
+    announce announcingAgain (MkLeiosEbBounds (bodySize - 1) txsSize)
+  withAsync (NotifyLog.leiosOfferRelay acquisitions notifyLog) $ \_ -> do
+    -- Until the relay has subscribed.
+    threadDelay 1
+    atomically $ do
+      announceLeiosAcquisition acquisitions (AcquiredEb fetchedPoint sizes)
+      announceLeiosAcquisition acquisitions (AcquiredEbTxs fetchedPoint sizes)
+    threadDelay 1
+    offersFrom notifyLog NotifyLog.notifyLogStart
+ where
+  offersFrom notifyLog cursor =
+    atomically ((Just <$> NotifyLog.nextNotifyLog notifyLog cursor) `orElse` pure Nothing) >>= \case
+      Nothing -> pure []
+      Just (notification, cursor') ->
+        let rest = offersFrom notifyLog cursor'
+         in case notification of
+              NotifyLog.NotifyBlockOffer p size -> (RelayedBlockOffer p size :) <$> rest
+              NotifyLog.NotifyBlockTxsOffer p -> (RelayedBlockTxsOffer p :) <$> rest
+              NotifyLog.NotifyAnnouncement{} -> rest
+              NotifyLog.NotifyVote{} -> rest
 
 -- | The node connects to the peer at one address again while its earlier
 -- connection is still ending, as when the peer reconnects at once: the
@@ -1522,8 +1585,8 @@ lastPoint = maybe GenesisPoint blockPoint . listToMaybe . reverse
 
 acquiredOf :: LeiosEbNotification -> Acquired
 acquiredOf = \case
-  AcquiredEb point _size -> AcquiredBody point
-  AcquiredEbTxs point -> AcquiredClosure point
+  AcquiredEb point _sizes -> AcquiredBody point
+  AcquiredEbTxs point _sizes -> AcquiredClosure point
 
 -- | A LeiosNotify client that records what the node relays.
 --

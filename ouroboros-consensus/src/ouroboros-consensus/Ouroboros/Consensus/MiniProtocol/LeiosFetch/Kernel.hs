@@ -66,15 +66,16 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
-  , LeiosLedgerView (..)
   , LeiosProtocol (..)
+  , leiosEbBounds
   )
 import Ouroboros.Consensus.Leios.TxCache.API (LeiosTxCache (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
-  , encodeEndorserBlockSize
+  , leiosEbSizes
   , mkEndorserBlock
   , toRankingBlockHash
   )
@@ -196,12 +197,12 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
   pure MkLeiosFetchKernel{lfkContext = mkContext outstanding ready, lfkPeers, lfkPrunedSlot}
  where
-  -- The size of the body as the node serves it, rebuilt from its references.
+  -- The sizes of the body as the node serves it, rebuilt from its references.
   -- A stored body is never empty, so no references means the LeiosDb no longer
   -- holds it, and the endorser block starts afresh.
   withSize point refs = case refs of
     [] -> []
-    _ : _ -> [(point, encodeEndorserBlockSize (mkEndorserBlock refs))]
+    _ : _ -> [(point, leiosEbSizes (mkEndorserBlock refs))]
 
 -- | Run the action with this peer's LeiosFetch state, registering it with the
 -- decision loop if no other mini-protocol of the peer has.
@@ -308,9 +309,6 @@ recordLeiosCertOffer cfg kernel peerVars hdr predState =
  where
   p = Proxy @(BlockProtocol blk)
   predHeaderState = hswtHeaderState predState
-
-leiosEbBounds :: LeiosLedgerView -> LeiosEbBounds
-leiosEbBounds llv = MkLeiosEbBounds (llvMaxEbBodySize llv) (llvMaxEbTxsSize llv)
 
 -- | Count the peer's claim that an endorser block is certified for an
 -- election, disconnecting it if it contradicts an earlier claim of the peer's.
@@ -545,7 +543,7 @@ leiosFetchFocuser chainDB kernel = go Map.empty
     reacquired <- modifyMVar lfcOutstanding $ \outstanding ->
       pure $ Map.foldlWithKey' focus (outstanding, []) arrived
     pointsWritten <-
-      forM [(p, size) | AcquiredEb p size <- reacquired] $ uncurry (writeEbPoint lfcWriter)
+      forM [(p, lesBodySize sizes) | AcquiredEb p sizes <- reacquired] $ uncurry (writeEbPoint lfcWriter)
     mapM_ await pointsWritten
     atomically $ mapM_ lfcNotify reacquired
     void $ tryPutMVar lfcReady ()

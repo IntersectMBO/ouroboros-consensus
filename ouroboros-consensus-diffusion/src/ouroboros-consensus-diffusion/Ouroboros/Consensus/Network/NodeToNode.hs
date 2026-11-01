@@ -431,10 +431,11 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime predState -> do
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime leiosView predState -> do
                   -- The node accepts the announcement a valid header carries as
                   -- it would one from a LeiosNotify peer.
-                  mbValid <- chainSyncAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime
+                  mbValid <-
+                    chainSyncAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
                   for_ mbValid $ \valid -> do
                     whetherNew <- atomically $ onValidAnnouncement getLeiosAnnounceState valid
                     case whetherNew of

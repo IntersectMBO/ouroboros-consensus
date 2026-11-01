@@ -59,8 +59,11 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
+  , LeiosEbBounds
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosVote
+  , admitsSizes
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
@@ -81,7 +84,9 @@ import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | A notification the node relays.
 data Notification blk
-  = NotifyAnnouncement !(AnnouncingHeader blk)
+  = -- | An announcement, with the ledger's bounds on its endorser block as of
+    -- its slot.
+    NotifyAnnouncement !(AnnouncingHeader blk) !LeiosEbBounds
   | NotifyVote !LeiosVote
   | -- | An offer of an endorser block's body, at its size.
     NotifyBlockOffer !LeiosPoint !BytesSize
@@ -187,6 +192,8 @@ notifyLogPruneCadence = 1
 -- of each announcement of it that the log still holds, and only then: a
 -- downstream peer that reads the log has then received the announcement before
 -- the offer. Each offer is worth relaying exactly as long as its announcement.
+-- It skips a point whose bounds do not admit the endorser block, since a
+-- downstream peer holds an offer to the bounds as of its point.
 --
 -- The node may announce an acquisition again ('LeiosEbNotification'), so this
 -- skips a point the log already holds that offer at: a downstream peer
@@ -205,22 +212,24 @@ leiosOfferRelay acquisitions notifyLog = do
     let announced ebHash =
           Map.toList $
             Map.fromList
-              [ (MkLeiosPoint (electionSlot (ancElectionId anc)) ebHash, expires)
+              [ (MkLeiosPoint (electionSlot (ancElectionId anc)) ebHash, (expires, bounds))
               | (expires, ats) <- Map.toList expiries
               , at <- ats
-              , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
+              , Just (NotifyAnnouncement anc bounds) <- [Map.lookup at entries]
               , announcementEbHash (ancAnnouncement anc) == ebHash
               ]
         bodyOffered = Set.fromList [p | NotifyBlockOffer p _size <- Map.elems entries]
         closureOffered = Set.fromList [p | NotifyBlockTxsOffer p <- Map.elems entries]
     sequence_ $ case acquired of
-      AcquiredEb point size ->
-        [ appendNotifyLog notifyLog (NotifyBlockOffer p size) expires
-        | (p, expires) <- announced (pointEbHash point)
+      AcquiredEb point sizes ->
+        [ appendNotifyLog notifyLog (NotifyBlockOffer p (lesBodySize sizes)) expires
+        | (p, (expires, bounds)) <- announced (pointEbHash point)
+        , admitsSizes bounds sizes
         , Set.notMember p bodyOffered
         ]
-      AcquiredEbTxs point ->
+      AcquiredEbTxs point sizes ->
         [ appendNotifyLog notifyLog (NotifyBlockTxsOffer p) expires
-        | (p, expires) <- announced (pointEbHash point)
+        | (p, (expires, bounds)) <- announced (pointEbHash point)
+        , admitsSizes bounds sizes
         , Set.notMember p closureOffered
         ]

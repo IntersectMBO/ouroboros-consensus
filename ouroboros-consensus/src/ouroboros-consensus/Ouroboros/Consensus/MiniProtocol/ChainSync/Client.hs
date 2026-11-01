@@ -115,7 +115,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (getLeiosLedgerView))
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricalChainSyncMessage (..)
   , HistoricityCheck
@@ -785,9 +785,11 @@ data ConfigEnv m blk = ConfigEnv
   , chainDbView :: ChainDbView m blk
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
-  , leiosMsgRollForwardCallback :: Header blk -> RelativeTime -> HeaderStateWithTime blk -> m ()
+  , leiosMsgRollForwardCallback ::
+      Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> HeaderStateWithTime blk -> m ()
   -- ^ Invoked on each valid 'MsgRollForward', with the header, the onset of its
-  -- slot, and the state as of its predecessor.
+  -- slot, the Leios part of the ledger view at that slot, and the state as of
+  -- its predecessor.
   , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
   -- ^ Invoked when this peer accepts a jump, with the dynamo's fragment that the
   -- jump carries.
@@ -1559,10 +1561,11 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             traceWith headerMetricsTracer (slotNo, arrivalTime)
 
           -- The history of the state before validating the header still ends
-          -- at its predecessor.
+          -- at its predecessor; the one after ends at the header.
           leiosMsgRollForwardCallback
             hdr
             hdrSlotTime
+            (hswtLeiosLedgerView (HeaderStateHistory.current (theirHeaderStateHistory kis'')))
             (HeaderStateHistory.current (theirHeaderStateHistory kis'))
 
           continueWithState kis''' $

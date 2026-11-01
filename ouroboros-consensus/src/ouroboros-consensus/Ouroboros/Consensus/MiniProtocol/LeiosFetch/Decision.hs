@@ -82,8 +82,11 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
   , EndorserBlockHash
+  , LeiosEbBounds (..)
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , TxHash
+  , admitsSizes
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -111,15 +114,6 @@ data LeiosBlockRequest = MkLeiosBlockRequest
   -- ^ The ledger's bounds on this block; not sent, but used by the reply
   -- handler.
   }
-
--- | The ledger's bounds on an endorser block, as of its slot.
-data LeiosEbBounds = MkLeiosEbBounds
-  { lebMaxBodySize :: !BytesSize
-  -- ^ the largest body the ledger admits
-  , lebMaxTxsSize :: !BytesSize
-  -- ^ the largest total size of the transactions a body may reference
-  }
-  deriving (Eq, Show, Bounded)
 
 data LeiosBlockTxsRequest
   = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
@@ -351,13 +345,12 @@ data EbFetchState
 -- announce about it ('heldAcquisitionsAt').
 data BodySource
   = -- | Fetched and durably written, during this run or an earlier one
-    -- ('initializeLeiosOutstanding'), at this size.
-    FetchedBody !BytesSize
-  | -- | Fetched, but bigger than the bounds it was requested under admit: the
-    -- body's encoded size and the total size of the transactions it references.
-    -- It is never written, and is fetched again once an offer's bounds admit
-    -- both sizes (see 'assignPeer').
-    OversizedBody !BytesSize !Word64
+    -- ('initializeLeiosOutstanding'), of these sizes.
+    FetchedBody !LeiosEbSizes
+  | -- | Fetched, but bigger than the bounds it was requested under admit. It is
+    -- never written, and is fetched again once an offer's bounds admit it (see
+    -- 'assignPeer').
+    OversizedBody !LeiosEbSizes
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -380,11 +373,9 @@ ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
 -- transaction. See 'LeiosEbNotification'.
 heldAcquisitionsAt :: LeiosPoint -> LeiosOutstanding peer -> [LeiosEbNotification]
 heldAcquisitionsAt point outstanding = case Map.lookup (pointEbHash point) (ebState outstanding) of
-  Just (MkEbState _slot _onset (BodyAcquired source jobPool)) ->
-    let closure = [AcquiredEbTxs point | Jobs.nullLeiosJobPool jobPool]
-     in case source of
-          FetchedBody size -> AcquiredEb point size : closure
-          OversizedBody{} -> []
+  Just (MkEbState _slot _onset (BodyAcquired (FetchedBody sizes) jobPool)) ->
+    AcquiredEb point sizes : [AcquiredEbTxs point sizes | Jobs.nullLeiosJobPool jobPool]
+  Just (MkEbState _slot _onset (BodyAcquired OversizedBody{} _jobPool)) -> []
   Just (MkEbState _slot _onset NoBody) -> []
   Nothing -> []
 
@@ -496,14 +487,14 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 -- The per-peer request-tracking fields must start empty regardless: there are
 -- no connections yet and nothing is in flight.
 initializeLeiosOutstanding ::
-  StdGen -> [(LeiosPoint, BytesSize)] -> SlotNo -> LeiosOutstanding peer
+  StdGen -> [(LeiosPoint, LeiosEbSizes)] -> SlotNo -> LeiosOutstanding peer
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
   -- These points were read back out of the LeiosDb, so the body is durable
   -- already: settle it at once.
-  seed1 (MkLeiosPoint slot ebHash, size) =
-    acquireEbBody ebHash (FetchedBody size) Jobs.emptyLeiosJobPool
+  seed1 (MkLeiosPoint slot ebHash, sizes) =
+    acquireEbBody ebHash (FetchedBody sizes) Jobs.emptyLeiosJobPool
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Make this endorser block the one this election is fetching, unless the
@@ -1037,9 +1028,9 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
         -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
         -- prune it now.
         pruneThisOffer
-      Just (MkEbState slot _onset (BodyAcquired (OversizedBody bodySize closureSize) _jobPool))
+      Just (MkEbState slot _onset (BodyAcquired (OversizedBody sizes) _jobPool))
         | Right bounds <- offerEbBounds forecastEbBounds slot offerKind
-        , admitsSizes bounds bodySize closureSize ->
+        , admitsSizes bounds sizes ->
             -- Rejected under smaller bounds than this offer's, as across a
             -- change of the ledger's limits: fetch it again.
             classify
@@ -1142,12 +1133,6 @@ offerEbBounds ::
 offerEbBounds forecastEbBounds slot offer = case poEbBounds offer of
   SJust x -> Right x
   SNothing -> forecastEbBounds slot
-
--- | Whether these bounds admit an endorser block whose body has this size and
--- whose transactions total this size.
-admitsSizes :: LeiosEbBounds -> BytesSize -> Word64 -> Bool
-admitsSizes bounds bodySize closureSize =
-  bodySize <= lebMaxBodySize bounds && closureSize <= fromIntegral (lebMaxTxsSize bounds)
 
 -- | Whether all jobs matching a peer's offers are already inflight
 data WhetherPeerEbExhausted = PeerEbExhausted | PeerEbNotExhausted

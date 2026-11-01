@@ -216,7 +216,7 @@ leiosNotifyServer notifyLog = do
     writeTVar cursorVar cursor
     modifyTVar requests (subtract 1)
     pure $ case n of
-      NotifyAnnouncement anc -> MsgLeiosBlockAnnouncement (ancHeader anc)
+      NotifyAnnouncement anc _bounds -> MsgLeiosBlockAnnouncement (ancHeader anc)
       -- One vote per message: the client pipelines its requests, so several
       -- messages cost about what several votes in one would.
       NotifyVote v -> MsgLeiosVotes (v :| [])

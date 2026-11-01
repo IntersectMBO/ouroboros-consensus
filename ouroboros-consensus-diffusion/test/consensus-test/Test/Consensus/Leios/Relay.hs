@@ -790,6 +790,7 @@ someValidAnnouncement age =
     , announcementOnset = RelativeTime 1
     , announcementAge = age
     , announcementStaleness = FreshOCIN
+    , announcementEbBounds = maxBound
     }
 
 -- | The log's notifications once pruned at the given time, of entries worth
@@ -846,7 +847,7 @@ seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
 nameOf :: NotifyLog.Notification Blk -> Char
 nameOf = \case
   NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
-  NotifyLog.NotifyAnnouncement _ -> '?'
+  NotifyLog.NotifyAnnouncement _ _ -> '?'
   NotifyLog.NotifyBlockOffer _ _ -> '?'
   NotifyLog.NotifyBlockTxsOffer _ -> '?'
 

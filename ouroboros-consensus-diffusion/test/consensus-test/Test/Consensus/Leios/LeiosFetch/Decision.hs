@@ -24,6 +24,7 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
   , EndorserBlockHash
+  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , TxHash
   )
@@ -188,7 +189,8 @@ test_refetchOversized = do
   let sc =
         empty
           & withMissingBody (point 1 'a') 1024
-          & onOutstanding (acquireEbBody (eb 'a') (OversizedBody 1024 5000) Jobs.emptyLeiosJobPool)
+          & onOutstanding
+            (acquireEbBody (eb 'a') (OversizedBody (MkLeiosEbSizes 1024 5000)) Jobs.emptyLeiosJobPool)
           & offersBody peerA [point 1 'a']
       within maxBody maxTxs _slot = Right (MkLeiosEbBounds maxBody maxTxs)
   runIterationWith (within 1023 5000) sc & assertNoRequests
@@ -246,7 +248,7 @@ test_completeAfterRebuild =
   misses offs = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offs]
   acquire offs o =
     let (pool, o') = newLeiosJobPool env{maxJobTxCount = 1} (misses offs) o
-     in (pool, acquireEbBody (eb 'a') (FetchedBody 1000) pool o')
+     in (pool, acquireEbBody (eb 'a') (FetchedBody (MkLeiosEbSizes 1000 0)) pool o')
   (oldPool, held) =
     acquire [0, 1]
       . recordMaxAnnouncementSlot (eb 'a') (SlotNo 10) SNothing
@@ -288,7 +290,7 @@ test_bigLedgerPeerBudget = do
           (\o -> o{requestedBytesSizePerPeer = Map.singleton peerA used})
             -- the election fetching it, without which nothing is requested
             . focusElectionIfUnfocused (ElectionId (SlotNo 10) fixtureElectee) (eb 'a')
-            . acquireEbBody (eb 'a') (FetchedBody 1000) jobPool
+            . acquireEbBody (eb 'a') (FetchedBody (MkLeiosEbSizes 1000 0)) jobPool
             . recordMaxAnnouncementSlot (eb 'a') (SlotNo 10) SNothing
             $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
         (_o, reqs, _d) =

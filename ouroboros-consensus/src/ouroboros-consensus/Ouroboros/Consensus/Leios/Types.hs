@@ -53,6 +53,10 @@ module Ouroboros.Consensus.Leios.Types
   , decodeEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
+  , LeiosEbSizes (..)
+  , leiosEbSizes
+  , LeiosEbBounds (..)
+  , admitsSizes
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -119,7 +123,7 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
@@ -439,6 +443,38 @@ maxTxsPerEndorserBlock =
 -- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
+
+-- | What the ledger's bounds on an endorser block measure.
+data LeiosEbSizes = MkLeiosEbSizes
+  { lesBodySize :: !BytesSize
+  -- ^ the size of 'encodeEndorserBlock'
+  , lesTxsSize :: !Word64
+  -- ^ the total size of the transactions it references
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+leiosEbSizes :: EndorserBlock -> LeiosEbSizes
+leiosEbSizes eb =
+  MkLeiosEbSizes
+    (encodeEndorserBlockSize eb)
+    (sum [fromIntegral size | (_txHash, size) <- endorserBlockReferences eb])
+
+-- | The ledger's bounds on an endorser block, as of its slot.
+data LeiosEbBounds = MkLeiosEbBounds
+  { lebMaxBodySize :: !BytesSize
+  -- ^ the largest body the ledger admits
+  , lebMaxTxsSize :: !BytesSize
+  -- ^ the largest total size of the transactions a body may reference
+  }
+  deriving stock (Eq, Show, Bounded, Generic)
+  deriving anyclass NoThunks
+
+-- | Whether these bounds admit an endorser block of these sizes.
+admitsSizes :: LeiosEbBounds -> LeiosEbSizes -> Bool
+admitsSizes bounds sizes =
+  lesBodySize sizes <= lebMaxBodySize bounds
+    && lesTxsSize sizes <= fromIntegral (lebMaxTxsSize bounds)
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.
