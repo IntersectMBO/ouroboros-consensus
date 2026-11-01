@@ -6,6 +6,7 @@ import LeiosAdaptiveEndorsements
   , LeiosAdaptiveEbConfig (..)
   , defaultLeiosAdaptiveEbConfig
   , initialAdaptiveEbState
+  , lostMarginShare
   , stepAdaptiveEb
   )
 import Test.QuickCheck
@@ -17,40 +18,51 @@ tests =
   testGroup
     "LeiosAdaptiveEndorsements"
     [ testProperty "scale stays within its bounds" prop_scaleBounded
-    , testProperty "full participation keeps the full capacity" prop_fullParticipation
-    , testProperty "a persistent shortfall holds a fixed cut" prop_persistentShortfall
+    , testProperty "no lost margin keeps the full capacity" prop_noLoss
+    , testProperty "a persistent loss holds a fixed cut" prop_persistentLoss
+    , testProperty "the lost margin share is within [-1, 0]" prop_lostMarginShareBounded
+    , testProperty "no margin left reads as all of it lost" prop_noMargin
     ]
 
-newtype Participation = Participation Double
+newtype Stake = Stake Double
   deriving Show
 
-instance Arbitrary Participation where
-  arbitrary = Participation <$> choose (0, 1)
+instance Arbitrary Stake where
+  arbitrary = Stake <$> choose (0, 1)
 
-prop_scaleBounded :: [Participation] -> Property
-prop_scaleBounded ps =
+prop_scaleBounded :: [Stake] -> Property
+prop_scaleBounded es =
   conjoin
     [ counterexample (show st) $
         aebScale st >= aebMinScale cfg && aebScale st <= 1
-    | st <- scanl (flip (stepAdaptiveEb cfg)) initialAdaptiveEbState [p | Participation p <- ps]
+    | st <- scanl (flip (stepAdaptiveEb cfg)) initialAdaptiveEbState [negate e | Stake e <- es]
     ]
  where
   cfg = defaultLeiosAdaptiveEbConfig
 
-prop_fullParticipation :: Positive Int -> Property
-prop_fullParticipation (Positive n) =
-  aebScale (iterate (stepAdaptiveEb cfg 1) initialAdaptiveEbState !! n) === 1
+prop_noLoss :: Positive Int -> Property
+prop_noLoss (Positive n) =
+  aebScale (iterate (stepAdaptiveEb cfg 0) initialAdaptiveEbState !! n) === 1
  where
   cfg = defaultLeiosAdaptiveEbConfig
 
--- | Without an I term, the capacity settles at @exp (-gainP * shortfall)@
--- rather than sinking to its minimum.
-prop_persistentShortfall :: Property
-prop_persistentShortfall =
-  forAll (choose (0, 0.4)) $ \shortfall ->
-    let participation = aebTargetParticipation cfg - shortfall
-        settled = aebScale (iterate (stepAdaptiveEb cfg participation) initialAdaptiveEbState !! 500)
-        expected = max (aebMinScale cfg) (exp (negate (aebGainP cfg) * shortfall))
-     in counterexample (show (settled, expected)) $ abs (settled - expected) < 1e-6
+-- | Without an I term, the capacity settles at @exp (-gainP * loss)@ rather
+-- than sinking to its minimum.
+prop_persistentLoss :: Stake -> Property
+prop_persistentLoss (Stake loss) =
+  counterexample (show (settled, expected)) $ abs (settled - expected) < 1e-6
  where
   cfg = defaultLeiosAdaptiveEbConfig
+  settled = aebScale (iterate (stepAdaptiveEb cfg (negate loss)) initialAdaptiveEbState !! 1000)
+  expected = max (aebMinScale cfg) (exp (negate (aebGainP cfg) * loss))
+
+prop_lostMarginShareBounded :: Stake -> Stake -> Stake -> Property
+prop_lostMarginShareBounded (Stake threshold) (Stake alive) (Stake participation) =
+  participation <= alive ==>
+    let e = lostMarginShare threshold alive participation
+     in counterexample (show e) $ e >= -1 && e <= 0
+
+prop_noMargin :: Stake -> Stake -> Property
+prop_noMargin (Stake alive) (Stake participation) =
+  forAll (choose (alive, 1)) $ \threshold ->
+    lostMarginShare threshold alive participation === -1
