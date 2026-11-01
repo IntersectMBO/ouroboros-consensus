@@ -37,10 +37,14 @@ import Ouroboros.Consensus.Block
   , ConvertRawHash
   , HasHeader
   , Header
+  , Point (GenesisPoint)
   , Proxy (..)
   , SlotNo (..)
   , WithOrigin (..)
+  , blockPoint
+  , castPoint
   , headerHash
+  , pointSlot
   , withOrigin
   )
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), CurrentSlot (..))
@@ -54,6 +58,7 @@ import Ouroboros.Consensus.HeaderValidation
   ( AnnTip (..)
   , HeaderState (..)
   , HeaderWithTime (..)
+  , headerStatePoint
   )
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
@@ -133,9 +138,9 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer)
 import System.Random (StdGen)
 
 -- | The node's LeiosFetch state, which all its LeiosFetch clients share.
-data LeiosFetchKernel m peer = MkLeiosFetchKernel
+data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   { lfkContext :: !(LeiosFetchClientContext m peer)
-  , lfkPeers :: !(StrictTVar m (Map.Map peer (LeiosFetchPeer m)))
+  , lfkPeers :: !(StrictTVar m (Map.Map peer (LeiosFetchPeer m blk)))
   -- ^ The upstream peers the decision loop assigns requests to; see
   -- 'withLeiosFetchPeer'.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
@@ -145,7 +150,7 @@ data LeiosFetchKernel m peer = MkLeiosFetchKernel
   }
 
 -- | What the node's LeiosFetch state holds about one upstream peer.
-data LeiosFetchPeer m = MkLeiosFetchPeer
+data LeiosFetchPeer m blk = MkLeiosFetchPeer
   { lfpIsBigLedgerPeer :: !IsBigLedgerPeer
   -- ^ Fixed for the connection's lifetime. The decision logic fetches more
   -- aggressively from a big-ledger peer.
@@ -159,9 +164,9 @@ data LeiosFetchPeer m = MkLeiosFetchPeer
   , lfpCertificationClaims :: !(StrictTVar m (Map.Map ElectionId EndorserBlockHash))
   -- ^ The endorser block the peer's ChainSync roll-forwards claim is certified,
   -- per election; see 'recordLeiosCertOffer'.
-  , lfpJumpedThrough :: !(StrictTVar m (WithOrigin SlotNo))
-  -- ^ The slot of the newest header of the ChainSync jumps the peer has
-  -- accepted; see 'recordLeiosJumpOffers'.
+  , lfpJumpedThrough :: !(StrictTVar m (Point blk))
+  -- ^ The newest header of the latest ChainSync jump the peer accepted; see
+  -- 'recordLeiosJumpOffers'.
   }
 
 -- | The node's LeiosFetch state, seeded with the complete closures its LeiosDB
@@ -175,7 +180,7 @@ newLeiosFetchKernel ::
   StdGen ->
   -- | Everything of the clients' context but the state this creates.
   (StrictMVar m (LeiosOutstanding peer) -> StrictMVar m () -> LeiosFetchClientContext m peer) ->
-  m (LeiosFetchKernel m peer)
+  m (LeiosFetchKernel m peer blk)
 newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   immTipSlot <-
     atomically $
@@ -206,10 +211,10 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
 -- key.
 withLeiosFetchPeer ::
   (IOLike m, Ord peer) =>
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   peer ->
   IsBigLedgerPeer ->
-  (LeiosFetchPeer m -> m a) ->
+  (LeiosFetchPeer m blk -> m a) ->
   m a
 withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
  where
@@ -221,7 +226,7 @@ withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
         <$> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM Seq.empty
         <*> uncheckedNewTVarM Map.empty
-        <*> uncheckedNewTVarM Origin
+        <*> uncheckedNewTVarM GenesisPoint
     atomically $ do
       peers <- readTVar lfkPeers
       case Map.lookup peer peers of
@@ -240,8 +245,8 @@ withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
 -- decision loop.
 recordLeiosOffer ::
   IOLike m =>
-  LeiosFetchKernel m peer ->
-  LeiosFetchPeer m ->
+  LeiosFetchKernel m peer blk ->
+  LeiosFetchPeer m blk ->
   LeiosPoint ->
   PeerOffer ->
   m ()
@@ -264,8 +269,8 @@ recordLeiosCertOffer ::
   forall m peer blk.
   (IOLike m, BlockSupportsProtocol blk) =>
   TopLevelConfig blk ->
-  LeiosFetchKernel m peer ->
-  LeiosFetchPeer m ->
+  LeiosFetchKernel m peer blk ->
+  LeiosFetchPeer m blk ->
   Header blk ->
   -- | The state as of the header's predecessor
   HeaderStateWithTime blk ->
@@ -317,7 +322,7 @@ leiosEbBounds llv = MkLeiosEbBounds (llvMaxEbBodySize llv) (llvMaxEbTxsSize llv)
 -- A claim for an election older than what has been pruned is not counted.
 noteCertificationClaim ::
   IOLike m =>
-  LeiosFetchKernel m peer -> LeiosFetchPeer m -> ElectionId -> EndorserBlockHash -> m ()
+  LeiosFetchKernel m peer blk -> LeiosFetchPeer m blk -> ElectionId -> EndorserBlockHash -> m ()
 noteCertificationClaim kernel MkLeiosFetchPeer{lfpCertificationClaims} elId ebHash = do
   conflict <- atomically $ do
     prunedSlot <- readTVar (lfkPrunedSlot kernel)
@@ -340,15 +345,14 @@ instance Exception ExnLeiosTwoCertificationClaims
 -- | 'recordLeiosCertOffer' for each header of a ChainSync jump the peer
 -- accepted that its earlier jumps did not already cover.
 --
--- Successive jumps overlap in all but their newest headers. Skipping the
--- headers up to the newest of the previous jump is sound because a dynamo may
--- not roll back past the last jump it requested: ChainSync jumping disengages
--- one that tries.
+-- Successive jumps along one chain overlap in all but their newest headers. If
+-- this jump's fragment holds the newest header of the previous jump, it holds
+-- the same headers before that one too, so those are skipped.
 recordLeiosJumpOffers ::
   (IOLike m, LedgerSupportsProtocol blk) =>
   TopLevelConfig blk ->
-  LeiosFetchKernel m peer ->
-  LeiosFetchPeer m ->
+  LeiosFetchKernel m peer blk ->
+  LeiosFetchPeer m blk ->
   JumpInfo blk ->
   m ()
 recordLeiosJumpOffers cfg kernel peerVars jumpInfo = do
@@ -356,19 +360,19 @@ recordLeiosJumpOffers cfg kernel peerVars jumpInfo = do
   forM_ (headersWithPredecessorStates jumpedThrough jumpInfo) $
     uncurry (recordLeiosCertOffer cfg kernel peerVars)
   atomically $
-    modifyTVar (lfpJumpedThrough peerVars) (max (AF.headSlot (jTheirFragment jumpInfo)))
+    writeTVar (lfpJumpedThrough peerVars) (castPoint (AF.headPoint (jTheirFragment jumpInfo)))
 
--- | The headers of the jump's fragment newer than the given slot, each with the
+-- | The headers of the jump's fragment after the given point, each with the
 -- state as of its predecessor.
 --
 -- The history holds the state after each header of the fragment and after its
--- anchor, so splitting both after the same slot leaves the history's anchor
+-- anchor, so splitting both after the same point leaves the history's anchor
 -- holding the state before the first remaining header. If neither holds that
--- slot, which needs the peer to have accepted jumps onto two different chains,
--- all of the fragment is walked.
+-- point, all of the fragment is walked.
 headersWithPredecessorStates ::
+  forall blk.
   LedgerSupportsProtocol blk =>
-  WithOrigin SlotNo ->
+  Point blk ->
   JumpInfo blk ->
   [(Header blk, HeaderStateWithTime blk)]
 headersWithPredecessorStates jumpedThrough jumpInfo =
@@ -378,12 +382,20 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
  where
   past ::
     AS.Anchorable (WithOrigin SlotNo) a b =>
+    (Either a b -> Point blk) ->
     AS.AnchoredSeq (WithOrigin SlotNo) a b ->
     AS.AnchoredSeq (WithOrigin SlotNo) a b
-  past s = maybe s snd $ AS.splitAfterMeasure jumpedThrough (const True) s
+  past pointOf s =
+    maybe s snd $
+      AS.splitAfterMeasure (pointSlot jumpedThrough) ((== jumpedThrough) . pointOf) s
 
-  fragment = past $ jTheirFragment jumpInfo
-  history = past $ unHeaderStateHistory $ jTheirHeaderStateHistory jumpInfo
+  fragment =
+    past (either (castPoint . AF.anchorToPoint) (castPoint . blockPoint)) $
+      jTheirFragment jumpInfo
+  history =
+    past (headerStatePoint . hswtHeaderState . either id id) $
+      unHeaderStateHistory $
+        jTheirHeaderStateHistory jumpInfo
 
 -- | List the endorser block a new announcement names as one to fetch, if it
 -- takes its election's focus, and register the announcement with the
@@ -402,7 +414,7 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 onNewLeiosAnnouncement ::
   forall m peer blk.
   (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   ValidAnnouncement blk ->
   m ()
 onNewLeiosAnnouncement kernel valid = do
@@ -446,7 +458,7 @@ leiosFetchDecisionLoop ::
   TopLevelConfig blk ->
   ChainDB m blk ->
   BlockchainTime m ->
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   m Void
 leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
   () <- takeMVar lfcReady
@@ -517,7 +529,7 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 leiosFetchFocuser ::
   IOLike m =>
   ChainDB m blk ->
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   m Void
 leiosFetchFocuser chainDB kernel = go Map.empty
  where
@@ -561,7 +573,7 @@ leiosFetchPruner ::
   forall m peer blk.
   (IOLike m, LedgerSupportsProtocol blk) =>
   ChainDB m blk ->
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   m Void
 leiosFetchPruner chainDB kernel = go (SlotNo 0)
  where

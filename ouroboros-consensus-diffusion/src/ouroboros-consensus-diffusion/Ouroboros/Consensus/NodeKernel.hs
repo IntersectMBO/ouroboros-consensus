@@ -238,7 +238,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- them it relays.
   , getLeiosNotifyLog :: NotifyLog m blk
   -- ^ What the node relays to its downstream peers over LeiosNotify.
-  , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN)
+  , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
   }
 

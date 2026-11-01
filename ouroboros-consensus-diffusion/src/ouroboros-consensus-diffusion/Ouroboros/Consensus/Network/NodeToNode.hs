@@ -263,7 +263,7 @@ data Handlers m addr blk = Handlers
       CsClient.DynamicEnv m blk ->
       -- \| The peer's LeiosFetch state, if the version has the Leios
       -- mini-protocols
-      Maybe (LeiosFetchPeer m) ->
+      Maybe (LeiosFetchPeer m blk) ->
       ChainSyncClientPipelined
         (Header blk)
         (Point blk)
@@ -351,7 +351,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      LeiosFetchPeer m ->
+      LeiosFetchPeer m blk ->
       StrictTVar m (LeiosNotifyPeerState blk) ->
       LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosNotifyServer ::
@@ -362,7 +362,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      LeiosFetchPeer m ->
+      LeiosFetchPeer m blk ->
       LeiosFetchClientPeerPipelined LeiosPoint EndorserBlock LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->

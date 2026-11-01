@@ -71,10 +71,10 @@ import Ouroboros.Network.Mux
 -- decision loop assigns to the peer, and ends when the node demotes the peer.
 leiosFetchClient ::
   (IOLike m, Ord peer) =>
-  LeiosFetchKernel m peer ->
+  LeiosFetchKernel m peer blk ->
   ControlMessageSTM m ->
   peer ->
-  LeiosFetchPeer m ->
+  LeiosFetchPeer m blk ->
   LeiosFetchClientPeerPipelined LeiosPoint EndorserBlock LeiosTx m ()
 leiosFetchClient kernel controlMessageSTM peer peerVars =
   toLeiosFetchClientPeerPipelined $

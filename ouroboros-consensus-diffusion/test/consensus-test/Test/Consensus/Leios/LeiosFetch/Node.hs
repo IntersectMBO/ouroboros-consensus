@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Block
   , blockHash
   , blockPoint
   , blockSlot
+  , pointSlot
   , withOrigin
   , pattern GenesisPoint
   )
@@ -726,13 +727,14 @@ nodeFetchesFromJumperInSteps = withJumpingNode 1 $ \nut -> do
       addBlocks nut jumpedChain
       (,) reached <$> awaitTip nut (lastPoint jumpedChain)
 
--- | The slot the node takes the peer at the address to have jumped through.
+-- | The slot of the header the node takes the peer at the address to have
+-- jumped through.
 jumpedThrough :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s (WithOrigin SlotNo)
 jumpedThrough nut addr = IOLike.atomically $ do
   peers <- IOLike.readTVar (lfkPeers (getLeiosFetchKernel (nutKernel nut)))
   case [peer | (connId, peer) <- Map.toList peers, remoteAddress connId == addr] of
     [] -> pure Origin
-    peer : _ -> IOLike.readTVar (lfpJumpedThrough peer)
+    peer : _ -> pointSlot <$> IOLike.readTVar (lfpJumpedThrough peer)
 
 -- | Once the node has pruned its peers' offers to a slot, it records only the
 -- offers at or after that slot. The slots of the offers it records.
