@@ -484,6 +484,7 @@ initNodeKernel
           , lfcReady = ready
           , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
+          , lfcLeiosDb = leiosDB
           , lfcNotify = announceLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
           , lfcTracer = leiosFetchClientTracer tracers

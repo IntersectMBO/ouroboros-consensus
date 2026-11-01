@@ -20,6 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   ) where
 
+import Cardano.Slotting.Slot (SlotNo)
 import Control.Monad (foldM, forM_, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
@@ -86,8 +87,11 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchClientEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbWriter (..)
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , Promise (..)
+  , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -117,6 +121,8 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   -- ^ Filled by anything that might unblock a new fetch decision.
   , lfcTxCache :: !(LeiosTxCache m () ProtVerParity PackedTxReferences)
   , lfcWriter :: !(LeiosDbWriter m)
+  , lfcLeiosDb :: !(LeiosDbHandle m)
+  -- ^ What 'lfcWriter' writes to, for reading back what it wrote.
   , lfcNotify :: !(LeiosEbNotification -> STM m ())
   -- ^ Announce an acquisition to the rest of the node.
   , lfcSystemTime :: !(SystemTime m)
@@ -328,6 +334,7 @@ processLeiosBlock ctx peer req eb = do
     , lfcReady
     , lfcTxCache
     , lfcWriter
+    , lfcLeiosDb
     , lfcNotify
     , lfcSystemTime
     , lfcTracer
@@ -353,35 +360,70 @@ processLeiosBlock ctx peer req eb = do
   settleBody now pointWritten bodyWritten = do
     () <- await pointWritten
     (_completed, filledOffs) <- await bodyWritten
-    acquired <- modifyMVar lfcOutstanding $ \outstanding ->
-      case Map.lookup ebHash (ebState outstanding) of
-        Just (MkEbState slot onset NoBody) -> do
-          let acquiredPoint = MkLeiosPoint slot ebHash
-              (jobPool, outstanding') =
-                newLeiosJobPool
-                  lfcStaticEnv
-                  (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
-                  outstanding
-          atomically $ do
-            lfcNotify $ AcquiredEb acquiredPoint sizes
-            when (Jobs.nullLeiosJobPool jobPool) $
-              lfcNotify $
-                AcquiredEbTxs acquiredPoint sizes
-          pure
-            ( acquireEbBody ebHash (FetchedBody sizes) jobPool outstanding'
-            , Just (acquiredPoint, onset, jobPool)
-            )
-        -- Pruned meanwhile, or another delivery of it settled first.
-        _ -> pure (outstanding, Nothing)
+    (filled, acquired) <- claimBody filledOffs (pointSlotNo point)
     -- These bytes are durable now: advertise them as fill sources for later
     -- endorser blocks referencing the same txs.
-    setTxLocations lfcTxCache ebHash [(off, fst (refs IntMap.! off)) | off <- filledOffs]
+    setTxLocations lfcTxCache ebHash [(off, fst (refs IntMap.! off)) | off <- filled]
     void $ tryPutMVar lfcReady ()
     forM_ acquired $ \(acquiredPoint, onset, jobPool) -> do
       traceWith lfcTracer $ TraceLeiosFetchClientBlockAcquired acquiredPoint (ageAt now onset)
       when (Jobs.nullLeiosJobPool jobPool) $
         traceWith lfcTracer $
           TraceLeiosFetchClientBlockTxsAcquired acquiredPoint (ageAt now onset)
+
+  -- Claim the body at the slot the endorser block is tracked at, provided the
+  -- LeiosDb holds the point of the given slot and the txs at the given offsets.
+  -- Returns the offsets whose txs it holds, and what it claimed.
+  --
+  -- An election may have focused the endorser block at a newer slot while the
+  -- body was being written: that point is written first, and then the body and
+  -- those txs are read back. Meanwhile pruning may have passed the older point
+  -- and the LeiosDb collected the endorser block, after which another delivery
+  -- may have written the body again, without those txs. What the reads find
+  -- stays, since the LeiosDb holds the newer point.
+  claimBody filledOffs writtenSlot = do
+    settlement <- modifyMVar lfcOutstanding $ \outstanding ->
+      case Map.lookup ebHash (ebState outstanding) of
+        Just (MkEbState slot onset NoBody)
+          | slot /= writtenSlot -> pure (outstanding, BodyTrackedAt slot)
+          | otherwise -> do
+              let acquiredPoint = MkLeiosPoint slot ebHash
+                  (jobPool, outstanding') =
+                    newLeiosJobPool
+                      lfcStaticEnv
+                      (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
+                      outstanding
+              atomically $ do
+                lfcNotify $ AcquiredEb acquiredPoint sizes
+                when (Jobs.nullLeiosJobPool jobPool) $
+                  lfcNotify $
+                    AcquiredEbTxs acquiredPoint sizes
+              pure
+                ( acquireEbBody ebHash (FetchedBody sizes) jobPool outstanding'
+                , BodyClaimed (acquiredPoint, onset, jobPool)
+                )
+        _ -> pure (outstanding, BodyNotWanted)
+    case settlement of
+      BodyClaimed claimed -> pure (filledOffs, Just claimed)
+      BodyNotWanted -> pure (filledOffs, Nothing)
+      BodyTrackedAt slot -> do
+        await =<< writeEbPoint lfcWriter (MkLeiosPoint slot ebHash) ebBytesSize
+        (held, stillFilled) <- withReader lfcLeiosDb $ \reader -> do
+          body <- lookupEbBody reader ebHash
+          txs <- batchRetrieveTxs reader ebHash filledOffs
+          pure (not (null body), [off | (off, _txHash, Just _bytes) <- txs])
+        if held then claimBody stillFilled slot else pure ([], Nothing)
+
+-- | What settling a body finds, holding the lock on the fetch state.
+data BodySettlement a
+  = -- | It claimed the body.
+    BodyClaimed a
+  | -- | The endorser block is tracked at this slot, whose point the LeiosDb may
+    -- not hold yet.
+    BodyTrackedAt !SlotNo
+  | -- | The endorser block was pruned meanwhile, or another delivery of it
+    -- settled first.
+    BodyNotWanted
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
