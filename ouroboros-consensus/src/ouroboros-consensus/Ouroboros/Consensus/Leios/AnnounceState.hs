@@ -33,9 +33,9 @@ import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RankingBlockH
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
+  , LeiosAnnouncementAgeLimits (..)
   , ValidAnnouncement (..)
   , announcingRbHash
-  , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -53,14 +53,20 @@ data AnnounceState m blk = MkAnnounceState
   , prunedTo :: !(StrictTVar m SlotNo)
   -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
+  , ageLimits :: !LeiosAnnouncementAgeLimits
   }
 
 newAnnounceState ::
   (IOLike m, NoThunks (Header blk)) =>
+  LeiosAnnouncementAgeLimits ->
   NotifyLog m blk ->
   m (AnnounceState m blk)
-newAnnounceState notifyLog =
-  MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
+newAnnounceState limits notifyLog =
+  MkAnnounceState
+    <$> newTVarIO Announcements.empty
+    <*> newTVarIO 0
+    <*> pure notifyLog
+    <*> pure limits
 
 -- | Whether the node accepted an announcement it had not accepted before.
 data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
@@ -85,16 +91,16 @@ onValidAnnouncement st valid = do
         Left _repeatedOrThird -> pure NotNewAnnouncement
         Right seen' -> do
           writeTVar announced seen'
-          when (announcementAge <= maxAnnouncementAgeSend) $
+          when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
             appendNotifyLog
               relayLog
               (NotifyAnnouncement announcingHeader)
-              (addRelTime maxAnnouncementAgeSend announcementOnset)
+              (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
           pure NewAnnouncement
  where
   electionId = ancElectionId announcingHeader
 
-  MkAnnounceState{prunedTo, announced, relayLog} = st
+  MkAnnounceState{prunedTo, announced, relayLog, ageLimits} = st
 
   MkValidAnnouncement
     { announcingHeader

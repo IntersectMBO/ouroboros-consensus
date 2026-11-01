@@ -95,6 +95,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , leiosFetchPruner
   , newLeiosFetchKernel
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( LeiosAnnouncementAgeLimits
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
@@ -240,6 +243,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ What the node relays to its downstream peers over LeiosNotify.
   , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
+  , getLeiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
+  -- ^ How old an announcement the node relays or accepts.
   }
 
 -- | Arguments required when initializing a node
@@ -257,6 +262,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Where the node's LeiosFetch announces what it acquires.
   , leiosFetchRng :: StdGen
   -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
+  , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
+  -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
   , maxClockSkew :: ClockSkew
@@ -301,6 +308,7 @@ initNodeKernel
     , leiosDB
     , leiosAcquisitions
     , leiosFetchRng
+    , leiosAnnouncementAgeLimits
     , initChainDB
     , blockFetchConfiguration
     , btime
@@ -435,7 +443,7 @@ initNodeKernel
           blockFetchConfiguration
 
     leiosNotifyLog <- newNotifyLog
-    leiosAnnounceState <- newAnnounceState leiosNotifyLog
+    leiosAnnounceState <- newAnnounceState leiosAnnouncementAgeLimits leiosNotifyLog
     leiosVoteState <- newVoteState (leiosVoteStateTracer tracers) leiosAnnounceState leiosNotifyLog
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
@@ -518,6 +526,7 @@ initNodeKernel
         , getLeiosVoteState = leiosVoteState
         , getLeiosNotifyLog = leiosNotifyLog
         , getLeiosFetchKernel = leiosFetchKernel
+        , getLeiosAnnouncementAgeLimits = leiosAnnouncementAgeLimits
         }
    where
     blockForgingController ::
