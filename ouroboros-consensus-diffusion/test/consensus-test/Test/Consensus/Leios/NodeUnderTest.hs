@@ -132,7 +132,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Network.ConnectionId (ConnectionId)
+import Ouroboros.Network.ConnectionId (ConnStateId (..), ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mux (OuroborosBundleWithExpandedCtx)
@@ -213,6 +213,9 @@ data NodeUnderTest m = NodeUnderTest
   , nutLeiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where a test announces the endorser blocks and closures the node
   -- acquires, as the node's LeiosFetch would.
+  , nutNextConnStateId :: StrictTVar m ConnStateId
+  -- ^ The 'ConnStateId' of the node's next connection: like the connection
+  -- manager, the tests never reuse one.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -380,6 +383,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 peerMetrics
                 (const encodePeerAddr)
                 (const decodePeerAddr)
+        nextConnStateId <- newTVarIO (ConnStateId 0)
         body
           NodeUnderTest
             { nutChainDB = chainDB
@@ -395,6 +399,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   apps
             , nutSeeds = seeds
             , nutLeiosAcquisitions = leiosAcquisitions
+            , nutNextConnStateId = nextConnStateId
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
