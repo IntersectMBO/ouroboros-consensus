@@ -1699,13 +1699,15 @@ data TraceLeiosKernel
       , appliedSteps :: Natural
       , appliedMem :: Natural
       , appliedRefScriptBytes :: Word32
-        }
+      }
   | -- | The block after an announcement arrived, so the node took the vote
     -- weight the announcement had collected. Only an announcement whose
     -- certification was possible moves the endorser-block capacity scale.
     TraceLeiosAdaptiveEb
       { ebPoint :: LeiosPoint
       , participation :: Double
+      , aliveStake :: Double
+      , marginShare :: Double
       , certifiable :: Bool
       , ebCapacityScale :: Double
       }
@@ -2088,6 +2090,8 @@ traceLeiosKernelToObject = \case
   TraceLeiosAdaptiveEb
     { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
     , participation
+    , aliveStake
+    , marginShare
     , certifiable
     , ebCapacityScale
     } ->
@@ -2096,6 +2100,8 @@ traceLeiosKernelToObject = \case
         , "ebHash" .= prettyEbHash ebHash
         , "ebSlot" .= ebSlot
         , "participation" .= participation
+        , "aliveStake" .= aliveStake
+        , "marginShare" .= marginShare
         , "certifiable" .= certifiable
         , "ebCapacityScale" .= ebCapacityScale
         ]
@@ -2483,11 +2489,15 @@ traceLeiosKernelForHuman = \case
       <> showT voteIn
       <> ", deadline in "
       <> showT deadlineIn
-  TraceLeiosAdaptiveEb{ebPoint, participation, certifiable, ebCapacityScale} ->
+  TraceLeiosAdaptiveEb{ebPoint, participation, aliveStake, marginShare, certifiable, ebCapacityScale} ->
     "Leios adaptive EB: "
       <> T.pack (show ebPoint)
       <> " participation "
       <> showT participation
+      <> " of alive "
+      <> showT aliveStake
+      <> ", margin share "
+      <> showT marginShare
       <> (if certifiable then "" else " (not certifiable)")
       <> ", capacity scale "
       <> showT ebCapacityScale

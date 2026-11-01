@@ -49,9 +49,9 @@ data LeiosVoteState m = LeiosVoteState
   , queryCert :: RbHash -> m (Maybe LeiosCert)
   -- ^ Look up the assembled certificate for a 'RbHash', or 'Nothing' if its
   -- collected votes haven't crossed 'ppLeiosQuorumStakeThresholdL'.
-  , queryTally :: RbHash -> m Weight
-  -- ^ The summed weight of the votes counted so far for a 'RbHash'; zero
-  -- for one without votes.
+  , queryVoters :: RbHash -> m (Map LeiosSeatId Weight)
+  -- ^ The weight of each seat whose vote was counted so far for a 'RbHash';
+  -- empty for one without votes.
   }
 
 data AddVoteResult
@@ -241,7 +241,7 @@ newLeiosVoteState getCommittee = do
       , queryCert = \pt -> atomically $ do
           states <- readTVar pointStates
           pure $ Map.lookup pt states >>= psCert
-      , queryTally = \pt -> atomically $ do
+      , queryVoters = \pt -> atomically $ do
           states <- readTVar pointStates
-          pure $ maybe 0 psTotal $ Map.lookup pt states
+          pure $ maybe Map.empty (fmap fst . psVoters) $ Map.lookup pt states
       }
