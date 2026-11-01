@@ -307,10 +307,8 @@ processLeiosBlock ctx peer req eb = do
     pointWritten <- writeEbPoint lfcWriter point ebBytesSize
     bodyWritten <- writeEbBody lfcWriter point eb localFills
     -- Off this thread, but linked to it, so a failed write still brings the
-    -- node down rather than being silently dropped.
-    --
-    -- TODO Like the worker that 'processLeiosBlockTxs' forks to settle a
-    -- reply's txs, this one is orphaned at teardown; see the TODO there.
+    -- node down rather than being silently dropped. Like the worker that
+    -- 'processLeiosBlockTxs' forks, it may outlive the peer.
     link =<< async (settleBody now pointWritten bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
@@ -339,6 +337,10 @@ processLeiosBlock ctx peer req eb = do
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   closureBytesSize :: Word64
   closureBytesSize = sum (fromIntegral . snd <$> refs)
+  -- TODO The node does not vote yet. Voting must check the endorser block
+  -- against the limits of the election it votes in: these are the limits of
+  -- whichever election the request was made for, and a later election that
+  -- names the same endorser block may have smaller ones.
   MkLeiosEbBounds{lebMaxBodySize, lebMaxTxsSize} = lbrEbBounds req
   bodyTooBig = ebBytesSize > lebMaxBodySize
   closureTooBig = closureBytesSize > fromIntegral lebMaxTxsSize
@@ -432,10 +434,9 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- picked by this peer, which others may already be asked for too, and
   -- which its disconnection releases.
   --
-  -- TODO: the worker's lifetime is unbounded -- 'link' propagates its
-  -- exceptions but does not tie it to the peer, so on teardown it is orphaned
-  -- and keeps touching shared state. Fork it in the peer's ResourceRegistry
-  -- (or move to a writer-run completion callback) so it dies with the peer.
+  -- The worker may outlive the peer, harmlessly: it settles only what is now
+  -- durable, and never recreates the peer's state that its disconnection
+  -- removed. It ends once the write lands, which closing the LeiosDB ensures.
   link =<< async (settleTxs now txsWritten toIngest)
  where
   MkLeiosFetchClientContext
