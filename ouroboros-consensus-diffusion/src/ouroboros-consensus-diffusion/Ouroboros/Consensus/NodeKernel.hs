@@ -1,4 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -9,6 +12,7 @@
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
     MempoolCapacityBytesOverride (..)
+  , LeiosPeerKey (..)
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , TraceForgeEvent (..)
@@ -52,6 +56,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -141,6 +146,7 @@ import Ouroboros.Network.BlockFetch.ClientState
 import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
   )
+import Ouroboros.Network.ConnectionId (ConnStateId)
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -179,6 +185,13 @@ import System.Random (StdGen, splitGen, uniform)
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
+
+-- | How the node's Leios state for an upstream peer is keyed: by the
+-- 'ConnStateId' of the connection, which unlike its 'ConnectionId' is never
+-- reused.
+data LeiosPeerKey addr = MkLeiosPeerKey !(ConnectionId addr) !ConnStateId
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass NoThunks
 
 -- | Interface against running relay node
 data NodeKernel m addrNTN addrNTC blk = NodeKernel
@@ -231,7 +244,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
   , getLeiosNotifyClientStates ::
-      StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
+      StrictTVar m (Map (LeiosPeerKey addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
   -- ^ The state of each LeiosNotify client, by upstream peer, which
   -- 'leiosNotifyPruner' prunes.
   , getLeiosAnnounceState :: AnnounceState m blk
@@ -241,7 +254,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- them it relays.
   , getLeiosNotifyLog :: NotifyLog m blk
   -- ^ What the node relays to its downstream peers over LeiosNotify.
-  , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
+  , getLeiosFetchKernel :: LeiosFetchKernel m (LeiosPeerKey addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
   , getLeiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
