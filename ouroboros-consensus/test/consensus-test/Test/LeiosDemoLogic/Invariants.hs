@@ -36,11 +36,11 @@ import Control.Concurrent.Class.MonadMVar
   , readMVar
   )
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, tryReadTChan)
-import Control.Monad (forever)
-import Control.Monad.Class.MonadAsync (concurrently_)
+import Control.Monad (forever, void)
+import Control.Monad.Class.MonadAsync (async, concurrently_, wait)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
-import Control.Monad.Class.MonadTimer (threadDelay)
+import Control.Monad.Class.MonadTimer (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
@@ -63,8 +63,8 @@ import LeiosDemoLogic
   , LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
-  , mkAnnouncingHeader
   , maxAnnouncementAgeSend
+  , mkAnnouncingHeader
   , noMempoolPull
   , processAnnouncementCentrally
   , processLeiosBlock
@@ -157,7 +157,7 @@ tests =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                   (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           -- Only an announcement so far: the body is not held, so a fetch is due.
-          -- There is no in-flight state; the body write is enqueued before any
+          -- There is no in-flight state; the body is written before any
           -- claim, and the claim ('BodyAcquired') is made only once it is durable.
           fetchStateOf announced @?= Just Leios.NoBody
           -- The write landed: claim 'BodyAcquired' with the settled write's pool,
@@ -536,9 +536,8 @@ data Cmd
   | -- | The peer disconnects: @removePeerFromOutstanding@. Subsequent commands
     -- reuse the same peer id, so this also covers reconnection.
     Disconnect
-  | -- | The EB body arrives, but its LeiosDb body write never lands -- what a
-    -- peer killed while parked on a full writer queue leaves behind: the point
-    -- row written, the body not. The state still reads 'BodyAcquired'.
+  | -- | The EB body arrives, but the peer is killed while its LeiosDb body
+    -- write is pending: the point row written, the body not, nothing claimed.
     ArriveBodyLostWrite TestEb Word
   | -- | The forge produces this EB: drives 'processLeiosBlock'/'processLeiosBlockTxs'
     -- with 'ForgedBlock'/'ForgedTxs' (as 'onForgedLeiosEb' does), reconciling the
@@ -754,20 +753,20 @@ applyCmd centralVar conn txCache freshBytes kv peerVars peerId = \case
   ArriveBodyLostWrite ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb) maxBound
-        -- The body write is never enqueued, so its promise never resolves and
-        -- the acquisition is never confirmed.
+        -- The body write never lands, and the peer is killed waiting for it.
         lostConn = conn{LeiosDb.writeEbBody = \_ _ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
-    processLeiosBlock
-      nullTracer
-      nullTracer
-      kv
-      txCache
-      freshBytes
-      lostConn
-      dummySystemTime
-      noMempoolPull
-      (ReceivedBlockFrom peerId req)
-      eb
+    void . timeout 1 $
+      processLeiosBlock
+        nullTracer
+        nullTracer
+        kv
+        txCache
+        freshBytes
+        lostConn
+        dummySystemTime
+        noMempoolPull
+        (ReceivedBlockFrom peerId req)
+        eb
     pure []
   Forge ids slot -> do
     let eb = ebOf ids
@@ -1176,7 +1175,7 @@ announcementOf point size =
 ------------------------------------------------------------
 
 -- | Distinct txs; deliveries of the body while the first one's write is still
--- pending (at least one); deliveries after it settled.
+-- pending (at least one); deliveries after it landed.
 data ClosureDeliveries = ClosureDeliveries TestEb Int Int
   deriving Show
 
@@ -1192,8 +1191,8 @@ instance Arbitrary ClosureDeliveries where
       ++ [ClosureDeliveries ids pending released' | released' <- shrink released]
 
 -- | A fresh EB's closure bytes are credited to the egress count once, however
--- many peers deliver its body: a delivery while another's write is pending
--- still reads as novel, and one after the claim is not persisted at all.
+-- many peers deliver its body: deliveries while the first write is pending
+-- write it too but claim nothing, and one after the claim is not written.
 prop_closureCreditedOnce :: ClosureDeliveries -> Property
 prop_closureCreditedOnce (ClosureDeliveries ids pending released) = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
@@ -1231,11 +1230,12 @@ prop_closureCreditedOnce (ClosureDeliveries ids pending released) = runSimOrThro
             eb
     -- announced at the stub clock's instant, so every delivery is fresh
     recordAnnouncedEb kv (SJust (RelativeTime 0)) (announcementOf point ebBytesSize)
-    mapM_ deliver [1 .. pending]
+    -- each pending delivery waits on its write, so they run concurrently
+    pendingDeliveries <- mapM (async . deliver) [1 .. pending]
+    threadDelay 1 -- every pending delivery is waiting on its write
     atomically (writeTVar gate True)
-    threadDelay 1 -- the pending writes settle
+    mapM_ wait pendingDeliveries
     mapM_ deliver [pending + 1 .. pending + released]
-    threadDelay 1
     credited <- atomically (readFreshBytes freshBytes)
     pure $
       counterexample ("credited " <> show credited <> " for a closure of " <> show closureBytes) $

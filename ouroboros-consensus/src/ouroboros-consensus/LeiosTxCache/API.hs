@@ -75,23 +75,16 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- index first is what guarantees it can never report a hit for a tx the LeiosDb
   -- has already dropped. Reverse the order and you arm the hit-prune hazard: a
   -- false hit ⇒ a skipped fetch ⇒ a silently-incomplete EB closure.
-  , insertBody ::
-      forall w.
-      EbHash ->
-      b ->
-      w ->
-      (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
-      m (Maybe (LeiosTxCacheInsertBodySummary, w))
+  , insertBody :: EbHash -> b -> m (Maybe LeiosTxCacheInsertBodySummary)
   -- ^ Record that we hold this EB's body, bumping the refcount of each tx it
-  -- references. In the same pass, fold a caller-supplied accumulator over /every/
-  -- referenced tx: starting from the nil @w@ and extending it with the snoc @w ->
-  -- offset -> 'TxHash' -> 'BytesSize' -> 'Maybe' 'TxLocation' -> w@, where @offset@
-  -- is the tx's position in the body and the location is 'Just' iff some held EB
-  -- durably holds the tx's bytes ('setTxLocations'), i.e. it can serve a cross-EB
-  -- fill. The entry is already in hand for the refcount bump, so this location read
-  -- rides that pass rather than costing a second one. Returns the summary and the
-  -- built @w@, or 'Nothing' when the EB is unannounced or its body is already
-  -- inserted (a no-op, so nothing is folded).
+  -- references. Returns the summary, or 'Nothing' when the EB is unannounced or
+  -- its body is already inserted (a no-op).
+  , lookupTxLocations :: b -> m [(TxOffset, TxLocation)]
+  -- ^ Where some held EB durably holds the bytes of the txs this body
+  -- references, by their offset in it: the cross-EB fills for writing it. The
+  -- read side of 'setTxLocations', and it inserts nothing. A location may be
+  -- stale (the source swept, its ring slot reused): the LeiosDb fill guards
+  -- make that a no-op, so staleness costs a fetch, never corruption.
   , lookupBody :: EbHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
@@ -122,10 +115,7 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- EB costs one slot however many batches deliver it -- claiming a slot per call
   -- would wrap the ring every @maxAnnouncementCount@ batches rather than EBs.
   --
-  -- The read side is 'insertBody': the next body to reference a tx observes its
-  -- location in the same pass it bumps refcounts. A location so observed may be
-  -- stale (the source swept, its ring slot reused): the LeiosDb fill guards make
-  -- that a no-op, so staleness costs a fetch, never corruption.
+  -- The read side is 'lookupTxLocations'.
   }
 
 -- | A body @b@ from which the referenced txs can be enumerated, each paired with

@@ -800,15 +800,8 @@ summarizeDecisions decs =
   reqs = concatMap toList (Map.elems decs)
 
 -- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
--- of jobs the settled write still leaves to fetch.
---
--- There is no intermediate "write in flight" state. During the (brief, async)
--- write window the EB reads as not-held ('ebStateHasBody' is 'False'), so a
--- concurrent offer may redundantly re-fetch the body -- cheaper than tracking an
--- in-flight state and reverting it on a lost write, which with the single writer
--- cannot happen without bringing the node down anyway. The body write is only
--- enqueued before this is reached, and the enqueue only parks on a free queue
--- slot, so a cancellation there leaves no claim to strand.
+-- of jobs the write still leaves to fetch. A body is received only once it is
+-- written, so there is no state in between.
 acquireEbBody ::
   EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
 acquireEbBody ebHash jobPool =
@@ -819,8 +812,8 @@ acquireEbBody ebHash jobPool =
     Just (MkEbState slot onset fetchState) -> case fetchState of
       NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
       BodyImminent -> Just $ MkEbState slot onset (BodyAcquired jobPool)
-      -- Already acquired -- e.g. a concurrent redundant delivery landed
-      -- first; keep the existing pool rather than clobbering it.
+      -- Already acquired -- e.g. a concurrent delivery claimed it first; keep
+      -- the existing pool rather than clobbering it.
       BodyAcquired{} -> Nothing
 
 -- | Record that our own forge is producing this EB

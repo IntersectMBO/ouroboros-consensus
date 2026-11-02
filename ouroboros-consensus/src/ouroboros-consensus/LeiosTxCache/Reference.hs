@@ -68,7 +68,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash, TxLocation (..), TxOffset)
+import LeiosDemoTypes (EbHash, RbHash, TxHash, TxLocation (..), TxOffset)
 import LeiosTxCache.API
   ( BodyState (..)
   , EbRingIndex (UnsafeEbRingIndex)
@@ -358,16 +358,14 @@ insertBody ::
   Int ->
   EbHash ->
   b ->
-  w ->
-  (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
   LeiosTxCacheIndex a v b ->
-  (LeiosTxCacheIndex a v b, Maybe (LeiosTxCacheInsertBodySummary, w))
-insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
+  (LeiosTxCacheIndex a v b, Maybe LeiosTxCacheInsertBodySummary)
+insertBody loadCapacity ebh body idx = case Map.lookup ebh (bodyState idx) of
   Nothing -> (idx, Nothing)
   Just BodyAlreadyInserted{} -> (idx, Nothing)
   Just (BodyNotYetInserted rc) ->
-    let ((n, tracked, acquired, validated, w), txState') =
-          foldTxReferences bumpTx ((0, 0, 0, 0, nil), txState idx) body
+    let ((n, tracked, acquired, validated), txState') =
+          foldTxReferences bumpTx ((0, 0, 0, 0), txState idx) body
         idx' =
           MkLeiosTxCacheIndex
             { announcementState = announcementState idx
@@ -380,24 +378,19 @@ insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState i
             , locNext = locNext idx
             }
      in ( idx'
-        , Just
-            ( mkLeiosTxCacheInsertBodySummary
-                loadCapacity
-                n
-                tracked
-                acquired
-                validated
-                (Map.size txState')
-            , w
-            )
+        , Just $
+            mkLeiosTxCacheInsertBodySummary
+              loadCapacity
+              n
+              tracked
+              acquired
+              validated
+              (Map.size txState')
         )
  where
   -- Bump each tx's refcount and, in the same pass, classify its /prior/ state
-  -- (the counts feed the summary) and read its durable location, snoc'ing every
-  -- referenced tx onto the caller's accumulator at its body offset ('nn'). The
-  -- location is 'Just' iff a held EB owns the tx's bytes, so the fill lookup
-  -- needs no second traversal.
-  bumpTx ((!nn, !tt, !aa, !vv, !w), ts) txh sz =
+  -- (the counts feed the summary).
+  bumpTx ((!nn, !tt, !aa, !vv), ts) txh _sz =
     let (dt, da, dv) = case Map.lookup txh ts of
           Nothing -> (0, 0, 0) -- new: not yet tracked
           Just (TxNotYetInserted _) -> (1, 0, 0) -- tracked, not acquired
@@ -408,8 +401,7 @@ insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState i
             (Just . maybe (TxNotYetInserted (MkRefCount 1)) (L.over txRefCountL incRefCount))
             txh
             ts
-        w' = snoc w nn txh sz (lookupTxLocation txh idx)
-     in ((nn + 1, tt + dt, aa + da, vv + dv, w'), ts')
+     in ((nn + 1, tt + dt, aa + da, vv + dv), ts')
 
 -- | Record the payload of a fetched-but-not-yet-applied tx
 insertUnappliedTx ::

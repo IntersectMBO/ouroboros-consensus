@@ -128,8 +128,6 @@ body e ts idx =
         (2 ^ defaultLeiosTxCacheShift)
         (ebhOf e)
         (TestBody (map txhOf ts))
-        ()
-        (\() _ _ _ _ -> ())
         idx
     )
 
