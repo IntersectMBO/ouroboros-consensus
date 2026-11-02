@@ -22,7 +22,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus, configLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb (..), encodeEndorserBlockSize)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..), encodeEndorserBlockSize)
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos

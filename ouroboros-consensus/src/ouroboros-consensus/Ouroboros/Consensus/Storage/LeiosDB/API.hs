@@ -37,7 +37,7 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
-  , ForgedLeiosEb
+  , ForgedEndorserBlock
   , LeiosPoint (..)
   , TxHash
   , TxOffset
@@ -211,7 +211,7 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 -- This function does not await the writes. On SQLite, it blocks while the
 -- write queue is full. If a write fails, the node stops. Peers can get the
 -- header before the endorser block is stored.
-storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedLeiosEb -> m ()
+storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
 storeForgedEb writer slot forgedEb = do
   _ <- writeEbPoint writer point (encodeEndorserBlockSize body)
   _ <- writeEbBody writer point body

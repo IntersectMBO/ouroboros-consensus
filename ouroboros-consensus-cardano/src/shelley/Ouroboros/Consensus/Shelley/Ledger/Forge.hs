@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Leios.Types
-  ( ForgedLeiosEb (..)
+  ( ForgedEndorserBlock (..)
   , encodeEndorserBlockSize
   , endorserBlockHash
   , forgeLeiosEb
@@ -102,7 +102,7 @@ forgeShelleyBlock
     -- protocols build no endorser block. CIP-0164 does not allow an empty
     -- endorser block. A protocol with Leios on an era without 'LeiosEraDict'
     -- is a bug in how the eras are put together, so we fail loudly.
-    forgedEb :: WhenLeios proto (Maybe ForgedLeiosEb)
+    forgedEb :: WhenLeios proto (Maybe ForgedEndorserBlock)
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
         Just LeiosEraDict -> forgeLeiosEb . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
