@@ -40,7 +40,7 @@ import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR, serialize')
+import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError), ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
@@ -54,7 +54,6 @@ import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
   )
-import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -63,7 +62,6 @@ import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
-import Data.ByteString (ByteString)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
@@ -158,20 +156,6 @@ class
   -- 'defaultBlockBodyLeiosCert'.
   blockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
 
-  -- | The bytes of a transaction that an endorser block references.
-  --
-  -- These bytes must keep the @is_valid@ flag, because a peer cannot get it
-  -- from anywhere else.
-  --
-  -- Their length must not exceed 'txByteSizeWithOverhead'. Otherwise the
-  -- endorser block can exceed the size that 'txEbMeasureDijkstra' reserved
-  -- for it, and header validation rejects the block with 'LeiosEbTooBig'.
-  --
-  -- Only Dijkstra forges endorser blocks. The other eras need an instance
-  -- because 'forgeShelleyBlock' is polymorphic in the era, and they define
-  -- this as 'defaultEbTxBytes'.
-  ebTxBytes :: Core.Tx TopTx era -> ByteString
-
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
@@ -215,11 +199,6 @@ defaultGetLeiosEraDict _ = Nothing
 defaultBlockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
 defaultBlockBodyLeiosCert _ = SNothing
 
--- | The encoding of 'EncCBOR'. From Alonzo to Conway it holds the @is_valid@
--- flag, and before Alonzo there is no flag.
-defaultEbTxBytes :: forall era. ShelleyBasedEra era => Core.Tx TopTx era -> ByteString
-defaultEbTxBytes = serialize' (eraProtVerLow @era)
-
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
@@ -230,8 +209,6 @@ instance ShelleyBasedEra ShelleyEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
-
-  ebTxBytes = defaultEbTxBytes
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -244,8 +221,6 @@ instance ShelleyBasedEra AllegraEra where
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
-  ebTxBytes = defaultEbTxBytes
-
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
@@ -256,8 +231,6 @@ instance ShelleyBasedEra MaryEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
-
-  ebTxBytes = defaultEbTxBytes
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -270,8 +243,6 @@ instance ShelleyBasedEra AlonzoEra where
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
-  ebTxBytes = defaultEbTxBytes
-
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
@@ -282,8 +253,6 @@ instance ShelleyBasedEra BabbageEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
-
-  ebTxBytes = defaultEbTxBytes
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -296,8 +265,6 @@ instance ShelleyBasedEra ConwayEra where
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
 
   blockBodyLeiosCert = defaultBlockBodyLeiosCert
-
-  ebTxBytes = defaultEbTxBytes
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -314,10 +281,6 @@ instance ShelleyBasedEra DijkstraEra where
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
 
   blockBodyLeiosCert bb = bb ^. leiosCertBlockBodyL
-
-  -- 'EncCBOR' drops the @is_valid@ flag in Dijkstra, so we use the
-  -- block-body encoding.
-  ebTxBytes = serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
 
 applyAlonzoBasedTx ::
   forall era.
