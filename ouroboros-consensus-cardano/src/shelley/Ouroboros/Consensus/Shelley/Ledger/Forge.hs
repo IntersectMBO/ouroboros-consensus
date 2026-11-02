@@ -102,10 +102,7 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe ForgedLeiosEb)
     forgedEb =
       pureLeiosOnly @proto $
-        -- This switch on Dijkstra is only needed because we don't have a
-        -- era-polymorphic "serialize to block" function.
-        maybeDijkstra @era $
-          forgeLeiosEb . fmap extractTx <$> nonEmpty fbEbTxs
+        forgeLeiosEb . fmap extractTx <$> nonEmpty fbEbTxs
 
     -- TODO Forging does not yet certify endorser blocks.
     leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
@@ -132,14 +129,3 @@ forgeShelleyBlock
         . castHash
         . getTipHash
         $ fbCurrentTickedLedgerState
-
--- | Maybe provide a value when @era@ is @DijkstraEra@.
-maybeDijkstra ::
-  forall era a.
-  Typeable era =>
-  (era ~ DijkstraEra => Maybe a) ->
-  Maybe a
-maybeDijkstra ma =
-  case eqT @era @DijkstraEra of
-    Nothing -> Nothing
-    Just Refl -> ma

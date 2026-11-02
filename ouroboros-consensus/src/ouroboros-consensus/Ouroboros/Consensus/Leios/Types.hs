@@ -320,7 +320,7 @@ data ForgedLeiosEb = ForgedLeiosEb
 -- | The endorser block that references the given transactions, in the given
 -- order. The reference to a transaction holds the Blake2b-256 hash and the
 -- length of its bytes.
-forgeLeiosEb :: NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
+forgeLeiosEb :: NonEmpty (Tx TopTx era) -> ForgedLeiosEb
 forgeLeiosEb txs =
   ForgedLeiosEb
     { forgedEbBody = endorserBlockFromTxBytes txBytes
@@ -332,7 +332,7 @@ forgeLeiosEb txs =
 -- | A Dijkstra tx as an endorser block carries it. Since Dijkstra, this is a
 -- special block-body encoding which includes an @is_valid@ flag. This is
 -- deliberately monomorphic in the only era that supports Leios.
-serializeTxForLeios :: Tx TopTx DijkstraEra -> ByteString
+serializeTxForLeios :: Tx TopTx era -> ByteString
 serializeTxForLeios =
   serialize' (eraProtVerLow @DijkstraEra) . toCBORForBlockInclusion
 
