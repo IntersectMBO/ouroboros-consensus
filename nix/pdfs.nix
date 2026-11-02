@@ -9,7 +9,6 @@ inputs: final: prev: {
           collection-latexextra
           collection-latexrecommended
           collection-mathscience
-          bclogo
           latexmk;
       })
     ];
@@ -29,17 +28,11 @@ inputs: final: prev: {
       cd ..
 
       cd ..
-
-      cd formal-spec
-      make
-      cd ..
     '';
     installPhase = ''
       mkdir -p $out
 
       cp tech-reports/**/*.pdf $out/
-      cp formal-spec/consensus-spec.pdf $out/
-      cp ${final.agda-spec.docs}/pdfs/consensus-spec.pdf $out/consensus-spec-agda.pdf
 
       mkdir -p $out/nix-support
       for pdf in $out/*.pdf; do

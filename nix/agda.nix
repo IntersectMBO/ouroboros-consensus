@@ -54,37 +54,20 @@ let
   attrs = pkgs.recurseIntoAttrs rec {
     agda = agdaWithPkgs deps;
 
-    latex = pkgs.texlive.combine {
-      inherit (pkgs.texlive)
-        scheme-small
-        xits
-        collection-latexextra
-        collection-latexrecommended
-        collection-mathscience
-        bclogo
-        latexmk;
-    };
-
-    docs = pkgs.stdenv.mkDerivation {
+    typecheck = pkgs.stdenv.mkDerivation {
       inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
-      pname = "docs";
+      pname = "agda-spec-typecheck";
       version = "0.1";
       src = ../docs/agda-spec;
       meta = { };
-      buildInputs = [ agda latex pkgs.python3 ];
-      buildPhase = ''
-        OUT_DIR=$out make docs
-      '';
-      doCheck = true;
-      checkPhase = ''
-        test -n "$(find $out/pdfs/ -type f -name '*.pdf')"
-      '';
-      dontInstall = true;
+      nativeBuildInputs = [ agda ];
+      buildPhase = "make check";
+      installPhase = "touch $out";
     };
 
     # this derivation generates the Haskell code from the Agda spec, but does
     # not build or test it.
-    # TODO(georgy.lukyanov): share agda typechecking with the docs derivation
+    # TODO(georgy.lukyanov): share agda typechecking with the typecheck derivation
     hsSrc = pkgs.stdenv.mkDerivation {
       inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
       pname = "agda-spec-hs-src";
@@ -108,7 +91,7 @@ let
     hsExe = customAgda.haskell.lib.disableLibraryProfiling (customAgda.haskellPackages.callCabal2nixWithOptions "cardano-consensus-executable-spec" "${hsSrc}/haskell/Spec" "--no-haddock" { });
 
     shell = pkgs.mkShell {
-      packages = [ agda latex customAgda.ghc customAgda.cabal-install ];
+      packages = [ agda customAgda.ghc customAgda.cabal-install ];
     };
   };
 in

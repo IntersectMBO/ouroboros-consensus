@@ -1,136 +1,131 @@
 # Agda specification of the Consensus Layer
 
-This directory contains the Agda specification of the Consensus Layer. The current version of the specification only covers block header validation but, since this is work in progress, the specification will eventually cover other consensus-related features such as chain selection, HFC, mempools, etc.
+Read the [formal specification](SPECIFICATION.md) directly in this repository.
+It currently covers block header validation, including Leios endorser block
+announcement and certification, but will eventually cover other consensus-related
+features such as chain selection, HFC, mempools, etc. The specification is machine-checkable and
+executable as a reference implementation for conformance testing.
 
-The specification is both *formal* (meaning that is machine-checked and amenable to formal proofs of properties) and *executable* (meaning that can be used as a reference implementation for conformance testing against the real implementation).
+## Source layout
 
-## Directory structure
+- `src/Axiom`: The Agda set theory library.
+- `src/Data`: Extensions to the Agda standard library.
+- `src/Foreign`: General utilities to generate Haskell code from Agda code.
+- `src/Interface`: General-purpose type classes not included in the Agda standard library.
+- `src/InterfaceLibrary`: Interfaces exposed by other Cardano components,
+  currently the ledger.
 
-The project is comprised by the following subdirectories:
+  - `Common`: Component-agnostic features, such as stake pool distributions.
 
-* `Axiom`: The Agda set theory library
+- `src/Ledger`: Components borrowed from the ledger specification, including
+  shared types, slots, epochs, cryptographic primitives, and protocol parameters.
+- `src/Reflection`: Extensions to the Agda standard library's reflection support.
+- `src/Tactic`: General-purpose tactics not included in the Agda standard library.
+- `src/Spec`: Root directory of the consensus specification.
 
-* `Data`: Extensions to the Agda standard library
+  - `<STS>.lagda.md` (e.g. `TickNonce.lagda.md` for TICKN): The definition of
+    `<STS>` alongside its human-readable Markdown explanation.
+  - `<STS>/Properties.agda` (e.g. `TickNonce/Properties.agda` for TICKN): Proofs
+    of properties about `<STS>`, including a computation and a proof that it
+    agrees with the transition rules.
+  - `Specification.agda`: Imports the formal specification and its computation
+    proofs for typechecking.
+  - `Foreign`: Machinery for generating the executable Haskell specification.
 
-* `Foreign`: General utilities to automatically generate Haskell code from Agda code
+    - `HSConsensus/<STS>.agda` (e.g. `HSConsensus/TickNonce.agda` for TICKN):
+      Generates Haskell types for `<STS>` and a `*Step` function to execute it.
+    - `ExternalFunctions.agda`: Defines the generated Haskell record of external
+      functions whose implementations are supplied by the calling environment.
+      Dummy implementations are also available.
+    - `HSTypes.agda`: Generates Haskell versions of common Agda types, such as
+      sets and maps.
+    - `HSConsensus.agda`: Top-level module for extracting the executable specification.
 
-* `Interface`: General-purpose type classes not included in the Agda standard library
+  - `hs-src`: Haskell library exports and tests for the executable specification.
 
-* `InterfaceLibrary`: Interfaces exposed by other Cardano components, currently only for the Ledger Layer
+    - `Lib.hs`: Exposes the generated Haskell types and transition functions.
+    - `test/<STS>Spec.hs` (e.g. `test/TickNonceSpec.hs` for TICKN): Tests the
+      executable version of `<STS>`.
 
-  - `Common`: Component-agnostic features (e.g. stake pool distributions)
+- `src/Everything.agda`: Typechecking entry point for the specification and
+  Haskell interface.
+- `SPECIFICATION.md`: Reading index for the Markdown specification.
+- `docs`: Additional specification prose, equations, dependency diagram, and references.
 
-* `Ledger`: Components borrowed from the Ledger specification, most of them actually not Ledger-specific (e.g. slots, epochs, cryptographic primitives)
+## Checking the specification
 
-* `Reflection`: Extensions to the reflection support in the Agda standard library
+From the repository root, enter the development shell:
 
-* `Tactic`: General-purpose tactics not included in the Agda standard library
-
-* `latex`: Auxiliary $$\LaTeX$$-related files required to generate the PDF version of the specification (e.g. fonts, references and static content)
-
-* `Spec`: Root directory of the specification
-
-  - `<STS>.lagda` (e.g. `TickNonce.lagda` for TICKN): The definition of `<STS>` in a human-readable format
-
-  - `<STS>/Properties.agda` (e.g. `TickNonce/Properties.agda` for TICKN): Proofs of properties about `<STS>`. In particular, this file contains a proof that `<STS>` can be 'computed' by a given function. This means that we have an executable version of `<STS>` which is guaranteed to be correct
-
-  - `PDF.lagda`: Source Agda file from which the corresponding PDF file is generated
-
-  - `Foreign`: Machinery required for the automatic generation of an executable (Haskell) version of the Agda specification
-
-    - `HSConsensus/<STS>.agda` (e.g. `HSConsensus/TickNonce.agda` for TICKN): Contains the code to automatically generate the Haskell types used by `<STS>` and a \*`Step` Haskell function to execute `<STS>`
-
-    - `ExternalFunctions.agda`: Automatically generates a Haskell record of 'external functions'. An external function is a function used by the Agda specification whose Haskell version should be provided by the calling environment. Dummy external functions are also available
-
-    - `HSTypes.agda`: Generates Haskell versions for common Agda types used in the specification, such as sets and maps
-
-    - `HSConsensus.agda`: Top-level Agda module from which the executable specification is generated
-
-  - `hs-src`: A Haskell test suite for the executable specification
-
-  	- `test/<STS>Spec.hs` (e.g. `test/TickNonceSpec.hs` for TICKN): A Haskell program that tests the executable version of `<STS>`
-
-## Generating the PDF file
-
-To generate the specification in PDF format, one can use:
-
-``` bash
-> nix build .#agda-spec.docs
+```bash
+nix develop .#agda-spec
 ```
 
-This command generates the `consensus-spec.pdf` file inside the resulting `pdfs` directory. Alternatively, one can enter the Nix shell:
+From `docs/agda-spec`, run:
 
-``` bash
-> nix develop .#agda-spec
+```bash
+make check
 ```
 
-and then use:
+This checks `src/Everything.agda`, including the formal specification, computation
+proofs, and Haskell interface. `make docs` runs the same check; there is no rendering
+step or LaTeX dependency. Alternatively, run the typecheck job from the repository
+root:
 
-``` bash
-> make docs
+```bash
+nix build .#agda-spec.typecheck
 ```
 
-This command generates the `consensus-spec.pdf` file inside the resulting `src/dist/pdfs` directory. Also, temporary artifacts resulting from the build (such as `.aux` and `.bbl` files) are stored in `src/latex`. To remove these temporary files, one can use:
+This job produces only a success marker; read the Markdown specification directly
+in the repository.
 
-``` bash
-> make clean
+## Editing the specification
+
+Edit the `.lagda.md` sources directly. Agda checks fenced blocks marked `agda`,
+including blocks inside HTML comments. Use comments for imports, module parameters,
+and other support code that should be hidden in the rendered specification.
+Preserve indentation across code blocks: together they form a single Agda module.
+
+Use relative Markdown links for local references, direct links for citations,
+GitHub math syntax for equations, and Mermaid fences for diagrams. After editing,
+run `make check`. A rule change may also require updating its `Properties.agda`
+computation and proof, the corresponding `Spec/Foreign/HSConsensus` wrapper, and
+its Haskell tests.
+
+## Generating and testing the executable specification
+
+From the repository root:
+
+```bash
+nix build .#agda-spec.hsSrc
+nix build .#agda-spec.hsExe --rebuild --print-build-logs 2>&1
 ```
 
-## Generating the executable specification
+The first command extracts Haskell through Agda's MAlonzo backend, copies
+`src/Spec/hs-src`, and fills the Cabal file's generated module list. The second
+builds and tests that executable specification.
 
-### Building
+Alternatively, inside the development shell, from `docs/agda-spec`:
 
-To build the executable (Haskell) specification, one can use:
-
-``` bash
-> nix build .#agda-spec.hsSrc
+```bash
+make hs
+make hsTest
 ```
 
-This command compiles the Agda code into Haskell code using the MAlonzo backend, placing the files in the resulting subdirectory `haskell/Spec/MAlonzo/Code`. In addition, it copies the contents of `src/Spec/hs-src` to `haskell/Spec` and completes the `library.other-modules` section of the `cardano-consensus-executable-spec.cabal` file with the names of the Haskell modules just generated.
+The generated project is in `src/dist/haskell/Spec`. To remove the generated
+Haskell sources and build artifacts after building or testing, run the following
+from `docs/agda-spec`:
 
-Alternatively, one can enter the Nix shell:
-
-``` bash
-> nix develop .#agda-spec
+```bash
+make clean
 ```
 
-and then use:
-
-``` bash
-> make hs
-```
-
-This command generates the same results as the previous alternative but using the directory `src/dist` as the temporary directory. As before, one can remove these temporary files by using:
-
-``` bash
-> make clean
-```
-
-### Testing
-
-To run the test suite for the executable (Haskell) specification, one can use:
-
-``` bash
-> nix build .#agda-spec.hsExe --rebuild --print-build-logs 2>&1
-```
-
-The test results should show up near the end of the output. Alternatively, one can enter the Nix shell:
-
-``` bash
-> nix develop .#agda-spec
-```
-
-and then use:
-
-``` bash
-> make hsTest
-```
+This removes `src/dist/`. Agda's typechecking cache in `_build/` is retained,
+so subsequent checks can reuse it. Checking the Markdown specification with
+`make check` or `make docs` does not produce documentation artifacts to clean up.
 
 ## Setup without Nix
 
-It is possible to perform the above-mentioned tasks without the use of Nix, using the instructions below:
-
-- Install [latexmk](https://ctan.org/pkg/latexmk/) and [XeTeX](https://xetex.sourceforge.net/)
+It is possible to perform the Agda checks and Haskell extraction without the use of Nix, using the instructions below:
 
 - Install Agda version `2.7.0` (e.g. follow the instructions in <https://agda.readthedocs.io/en/v2.7.0/getting-started/installation.html#step-1-install-agda>
 )
@@ -156,7 +151,7 @@ It is possible to perform the above-mentioned tasks without the use of Nix, usin
   agda --library-file <LIB>/libraries Everything.agda
   ```
 
-  To build targets from the Makefile (e.g. `docs`), use:
+  To build targets from the Makefile (e.g. `check`), use:
   ```
   AGDA="agda --library-file <LIB>/libraries" make <TARGET>
   ```
