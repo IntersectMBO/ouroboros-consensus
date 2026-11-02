@@ -627,21 +627,9 @@ data EbState
     MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
   deriving (Eq, Show)
 
--- | Whether we hold an EB's body, plus the forge's imminent case.
+-- | Whether we hold an EB's body.
 data EbFetchState
-  = -- | Our own forge is producing this EB
-    --
-    -- Its body and closure are in our store already or will be imminently. The
-    -- fetch logic issues no requests for it and treats any peer offer as dead.
-    --
-    -- Distinct from 'NoBody' so we never fetch it, yet (like 'NoBody') reports
-    -- no body held, so the forged body is still recognised as novel and
-    -- persisted when it arrives; it becomes an ordinary 'BodyAcquired' at that
-    -- point. This lets "EB arriving from forge" and "EB arriving from peer" be
-    -- treated mostly the same way.
-    BodyImminent
-  | -- | We've only ever received an announcement, and our forge hasn't issued
-    -- this EB (though it potentially could in the future!)
+  = -- | We've only ever received an announcement.
     NoBody
   | -- | The job pool: the jobs not yet /requested/ (NB this can be empty even
     -- before jobs have /arrived/).
@@ -671,7 +659,6 @@ ebStateOnset (MkEbState _slot onset _fetchState) = onset
 ebStateHasBody :: EbState -> Bool
 ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> False
-  BodyImminent -> False
   BodyAcquired{} -> True
 
 -- | A size summary of the LeiosFetch decision loop's working set
@@ -811,23 +798,22 @@ acquireEbBody ebHash jobPool =
     Nothing -> Nothing
     Just (MkEbState slot onset fetchState) -> case fetchState of
       NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
-      BodyImminent -> Just $ MkEbState slot onset (BodyAcquired jobPool)
       -- Already acquired -- e.g. a concurrent delivery claimed it first; keep
       -- the existing pool rather than clobbering it.
       BodyAcquired{} -> Nothing
 
--- | Record that our own forge is producing this EB
-markBodyImminent ::
+-- | Our forge wrote this body and writes its closure next, so nothing is left
+-- to fetch, even jobs already pending from a peer's copy.
+acquireForgedEbBody ::
   EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
-markBodyImminent ebHash slot =
+acquireForgedEbBody ebHash slot =
   alterEbState ebHash $ \case
-    -- A self-forged EB records no onset: we produced it, so its arrival age is a
-    -- trivial ~0, not a diffusion-latency data point.
-    Nothing -> Just $ MkEbState slot SNothing BodyImminent
-    Just (MkEbState oldSlot onset fetchState) -> case fetchState of
-      NoBody -> Just $ MkEbState oldSlot onset BodyImminent
-      BodyImminent -> Nothing
-      BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+    -- A self-forged EB records no onset: its arrival age is a trivial ~0, not a
+    -- diffusion-latency data point.
+    Nothing -> Just $ MkEbState slot SNothing done
+    Just (MkEbState oldSlot onset _fetchState) -> Just $ MkEbState (max oldSlot slot) onset done
+ where
+  done = BodyAcquired Jobs.emptyLeiosJobPool
 
 -- | Record that the EB with this hash is referenced --- announced, or named by
 -- a verified certificate --- at this slot, along with that slot's wall-clock
@@ -1006,7 +992,6 @@ isFocusedEb ebHash = MultiSet.member ebHash . focusedEbs
 wantsBody :: EbState -> Int
 wantsBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> 1
-  BodyImminent -> 0 -- our own forge is producing it
   BodyAcquired{} -> 0
 
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step

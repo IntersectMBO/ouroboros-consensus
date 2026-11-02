@@ -36,7 +36,7 @@ import Control.Concurrent.Class.MonadMVar
   , readMVar
   )
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, tryReadTChan)
-import Control.Monad (forever, void)
+import Control.Monad (forM_, forever, void)
 import Control.Monad.Class.MonadAsync (async, concurrently_, wait)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
@@ -145,6 +145,10 @@ tests =
               runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
+          , testCase "a forged EB leaves nothing to fetch, even mid-fetch" $
+              forM_ [[Forge [0, 1] 12], [Offer [0, 1] 10, ArriveBody [0, 1] 10, Forge [0, 1] 12]] $ \cmds ->
+                fetchStateAfter cmds (hashLeiosEb (ebOf [0, 1]))
+                  @?= Just (Leios.BodyAcquired Jobs.emptyLeiosJobPool)
           ]
       , testProperty "a closure is credited once, however many peers deliver it" prop_closureCreditedOnce
       , testCase "a body is claimed acquired only by a settled write" $ do
@@ -192,10 +196,11 @@ tests =
               -- forge at slot 5, then a peer announces the same EB at the later slot 10
               o =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                  Leios.markBodyImminent h (SlotNo 5) $
+                  Leios.acquireForgedEbBody h (SlotNo 5) $
                     (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           -- the announcement raised the slot to 10, keeping the forged state
-          Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) SNothing Leios.BodyImminent)
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 10) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
           -- so it survives pruning up to slot 9, and is dropped only past slot 10
           Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
           Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
@@ -221,7 +226,7 @@ tests =
             )
             @?= Just (SJust t5)
           -- a self-forged EB records no onset (kept out of the age panels)
-          onsetOf (Leios.markBodyImminent h (SlotNo 5) base)
+          onsetOf (Leios.acquireForgedEbBody h (SlotNo 5) base)
             @?= Just SNothing
       , testCase "start-up seeding marks each completed EB held, with an empty pool" $ do
           let ebA = [0, 1] :: TestEb
@@ -646,6 +651,33 @@ runCmdsCollision cmds = runSimOrThrow go
     notifs <- drain []
     pure (sort points, [p | LeiosDb.AcquiredEbTxs p <- notifs])
 
+-- | Run a command sequence and report this EB's fetch state at the end.
+fetchStateAfter :: [Cmd] -> EbHash -> Maybe Leios.EbFetchState
+fetchStateAfter cmds h = runSimOrThrow go
+ where
+  go :: forall s. IOSim s (Maybe Leios.EbFetchState)
+  go = do
+    dbHandle <- LeiosDb.newLeiosDBInMemory
+    withWriter dbHandle $ \conn -> do
+      outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+      readyVar <- newEmptyMVar
+      peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      freshBytes <- newFreshBytes maxAnnouncementAgeSend Origin
+      centralVar <- newMVar Announcements.emptyCentralState
+      mapM_
+        ( applyCmd
+            centralVar
+            conn
+            nullLeiosTxCache
+            freshBytes
+            (outstandingVar, readyVar)
+            peerVars
+            (MkPeerId (0 :: Int))
+        )
+        cmds
+      o <- readMVar outstandingVar
+      pure $ (\(Leios.MkEbState _ _ fs) -> fs) <$> Map.lookup h (Leios.ebState o)
+
 -- | Like 'runCmds', but on success also return the EB bodies that the fetch
 -- logic requested despite already holding them (i.e. despite 'ebStateHasBody'),
 -- gathered across all 'Decide's. That list is the
@@ -771,11 +803,8 @@ applyCmd centralVar conn txCache freshBytes kv peerVars peerId = \case
   Forge ids slot -> do
     let eb = ebOf ids
         point = pointOf ids slot
-    -- Replicate 'onForgedLeiosEb''s effect on 'outstanding': its 'ForgedLocally'
-    -- announcement marks the EB 'BodyImminent' (via 'markBodyImminent'), then the
-    -- body and closure arrive. That mark is what stops a later peer offer of our
-    -- own EB from being re-fetched -- without it a forge-first sequence would leave
-    -- 'ebState' untouched (as it did pre-fix, causing the crash).
+    -- Replicate 'onForgedLeiosEb' past its announcement, which leaves
+    -- 'outstanding' alone: the body and closure arrive.
     --
     -- We can't just call 'onForgedLeiosEb' because it needs a concrete @blk@ with a
     -- real 'AnnouncingHeader' and a 'CentralState' -- the whole announcement stack
@@ -784,7 +813,6 @@ applyCmd centralVar conn txCache freshBytes kv peerVars peerId = \case
     -- WARNING: this hand-replicates 'onForgedLeiosEb'; if that function's effect on
     -- 'outstanding' changes, mirror it here or this regression coverage goes stale
     -- silently.
-    modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
     processLeiosBlock
       nullTracer
       nullTracer
@@ -956,9 +984,8 @@ reproForgeAfterOffer =
   ]
 
 -- | The devnet crash order: we forge an EB, then a peer offers that same EB back
--- (e.g. relaying our own announcement). The forge marked it 'BodyImminent' (the
--- body arrival then makes it 'BodyAcquired'), so the offer must be dropped, never
--- re-fetched. Pre-fix the re-fetch re-acquired the closure, emitting a duplicate
+-- (e.g. relaying our own announcement). The forge claimed it 'BodyAcquired' with
+-- nothing to fetch, so the offer must be dropped, never re-fetched. Pre-fix the re-fetch re-acquired the closure, emitting a duplicate
 -- 'AcquiredEbTxs' that killed 'runLeiosVoting' with 'AlreadyKnown'.
 reproForgeThenOffer :: [Cmd]
 reproForgeThenOffer =

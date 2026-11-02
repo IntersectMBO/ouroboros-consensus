@@ -486,11 +486,6 @@ assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peerId offers acc =
         -- prune it now.
         pruneThisOffer
       Just (Leios.MkEbState slot _onset fetchState) -> case (fetchState, Leios.poClosure offerKind) of
-        (Leios.BodyImminent, _) ->
-          -- Our forge is producing this EB, so we hold the whole datum (even
-          -- though it might not be inserted yet): never request it, and the
-          -- peer's offer is dead.
-          pruneThisOffer
         (Leios.NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
@@ -595,7 +590,6 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState _slot _onset Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState _slot _onset Leios.BodyImminent) -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState slot onset (Leios.BodyAcquired jobPool)) ->
       assignInto slot onset jobPool Leios.BodyAcquired
  where
@@ -937,7 +931,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
   -- this records nothing about it yet: two deliveries arriving together both
   -- write it, which is idempotent, and only the first claims it below.
   --
-  -- A body already held, too old to matter (its slot is below the pruned
+  -- A received body already held, too old to matter (its slot is below the pruned
   -- watermark, so its state can't be trusted), or over its closure bound is
   -- not written. The latter is recorded as held-with-nothing-to-fetch, so that
   -- neither its closure nor a re-send of the same bytes costs us anything more.
@@ -969,7 +963,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
             ( Leios.acquireEbBody ebHash Jobs.emptyLeiosJobPool outstandingCleaned
             , Just (fetchArrivalInvalid ebBytesSize')
             )
-        | held -> (outstandingCleaned, Just (fetchArrivalExtra ebBytesSize'))
+        | held, ReceivedBlockFrom{} <- source -> (outstandingCleaned, Just (fetchArrivalExtra ebBytesSize'))
         | otherwise -> (outstandingCleaned, Nothing)
   mbMempoolTxs <- case mbRejected of
     Just bodyClass -> do
@@ -1025,7 +1019,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
           closureBytes = V.foldl' (\acc (_, sz) -> acc + fromIntegral sz) 0 ebv
       (claimed, mbBodyTxCacheSummary, credited) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
         mbInsertBody <- insertBody txCache ebHash (Leios.serializeEbBody eb)
-        let outstanding' = Leios.acquireEbBody ebHash jobPool outstanding
+        let outstanding' = case source of
+              -- The forge holds the whole closure: nothing to fetch, whatever
+              -- a peer's copy left pending.
+              ForgedBlock{} -> Leios.acquireForgedEbBody ebHash point.pointSlotNo outstanding
+              ReceivedBlockFrom{} -> Leios.acquireEbBody ebHash jobPool outstanding
             held = maybe False Leios.ebStateHasBody . Map.lookup ebHash . Leios.ebState
             claimed = held outstanding' && not (held outstanding)
             -- The claim is where the closure's bytes refill the egress credit,
@@ -1163,7 +1161,6 @@ removePeerFromOutstanding peerId o =
   releaseJobs jobIds (Leios.MkEbState slot onset fetchState) =
     Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool -> Leios.BodyAcquired $! release jobPool
    where
     release jobPool =
@@ -1250,7 +1247,6 @@ adjustOutstandingTxRequest onJob peerId ebHash jobIds o =
   completeInJobPool (Leios.MkEbState slot onset fetchState) =
     Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool -> Leios.BodyAcquired $! complete jobPool
    where
     complete jobPool =
@@ -1398,8 +1394,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
           Nothing ->
             IntMap.empty
           Just (Leios.MkEbState _slot _onset Leios.NoBody) ->
-            IntMap.empty
-          Just (Leios.MkEbState _slot _onset Leios.BodyImminent) ->
             IntMap.empty
           Just (Leios.MkEbState _slot _onset (Leios.BodyAcquired jobPool)) ->
             Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
@@ -1731,13 +1725,11 @@ processAnnouncementCentrally
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
         ( \_elSt -> do
-            -- A received announcement lists the EB for fetching; one we forged is
-            -- instead marked 'BodyImminent' in 'ebState' so the fetch logic never
-            -- requests it -- even after a peer relays our own announcement back to
-            -- us. Marking it here, at announcement time, closes the window before
-            -- the body is persisted and before any such relay can arrive.
+            -- A received announcement lists the EB for fetching. One we forged
+            -- is claimed by its body's write right after: no peer can offer it
+            -- before that, as they can only get it from us.
             case provenance of
-              ForgedLocally -> markForged
+              ForgedLocally -> pure ()
               ReceivedViaChainSync -> recordAnnounced
               ReceivedViaLeiosNotify -> recordAnnounced
             recordAnnouncementInTxCache txCache announcerRbHash point
@@ -1760,9 +1752,6 @@ processAnnouncementCentrally
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
     announcerRbHash = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
     recordAnnounced = recordAnnouncedEb kernelVars onset fields
-    markForged =
-      MVar.modifyMVar_ (fst kernelVars) $
-        pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
