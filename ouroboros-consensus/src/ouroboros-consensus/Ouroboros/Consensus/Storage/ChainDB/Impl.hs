@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -93,8 +92,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
-  , LeiosDbReader (..)
+  ( LeiosDbReader (..)
   , withReader
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -240,10 +238,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    -- Subscribe before seeding, so that no closure acquired in between is
-    -- missed. The seed is every closure the LeiosDB holds that a block the
-    -- initial chain selection could select may certify.
-    nextLeiosEbNotification <- readTChan <$> subscribeEbNotifications leiosDb
+    -- The seed is every closure the LeiosDB holds that a block the initial
+    -- chain selection could select may certify.
+    --
+    -- TODO Grow it as the node acquires closures. The LeiosDB no longer tells
+    -- what is written to it, so nothing does until LeiosFetch announces its
+    -- acquisitions.
+    let nextAcquiredLeiosClosure = retry
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
@@ -409,7 +410,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env nextLeiosEbNotification
+    when launchBgTasks $ Background.launchBgTasks env nextAcquiredLeiosClosure
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually

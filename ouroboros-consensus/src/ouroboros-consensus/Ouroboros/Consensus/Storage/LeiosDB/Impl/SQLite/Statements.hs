@@ -141,10 +141,7 @@ data VolStmts = VolStmts
   , stInsertEbBodyBytes :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stPreallocEbTxBytes :: !DB.Statement
-  , stInitMissingCount :: !DB.Statement
   , stFillEbTxBytes :: !DB.Statement
-  , stDecrMissingCount :: !DB.Statement
-  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -187,10 +184,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stInsertEbBodyBytes <- prep sql_insert_eb_body_bytes
   stInsertEbTxsRow <- prep sql_insert_ebBody
   stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
-  stInitMissingCount <- prep sql_init_missing_tx_count
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
-  stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stMarkPointNotified <- prep sql_mark_point_notified
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
   stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
@@ -206,10 +200,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stInsertEbBodyBytes
   dbFinalize stInsertEbTxsRow
   dbFinalize stPreallocEbTxBytes
-  dbFinalize stInitMissingCount
   dbFinalize stFillEbTxBytes
-  dbFinalize stDecrMissingCount
-  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince
