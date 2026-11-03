@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Peras.Voting.Rules
   )
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertSeenView (..)
+  , PerasCandidate (..)
   , PerasVotingView (..)
   )
 import Ouroboros.Consensus.Util.Pred (Evidence (..), explainShallow)
@@ -60,7 +61,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.Orphans.Arbitrary (genNominalDiffTime50Years)
-import Test.Util.Peras (genPointTestBlock)
+import Test.Util.Peras (genPerasCandidateWith, genPointTestBlock)
 import Test.Util.QuickCheck (geometric)
 import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -116,7 +117,7 @@ isPerasVotingAllowedModel
       }
    where
     shouldVote
-      | (vr1a && vr1b) || (vr2a && vr2b) = Just candidateBlock
+      | (vr1a && vr1b) || (vr2a && vr2b) = Just $ pcCandidate candidateBlock
       | otherwise = Nothing
 
     vr1a =
@@ -327,7 +328,7 @@ genPerasVotingView = do
   currRoundNo <- genPerasRoundNo
   latestCertSeen <- genWithOrigin (genLatestCertSeenView currRoundNo)
   latestCertOnChainRound <- genWithOrigin (genLatestCertOnChainRound currRoundNo)
-  candidateBlock <- genPointTestBlock
+  candidateBlock <- genPerasCandidateWith genPointTestBlock
   pure
     PerasVotingView
       { perasParams
