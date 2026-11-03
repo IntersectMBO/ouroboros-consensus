@@ -29,7 +29,6 @@ import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
-import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
@@ -46,8 +45,7 @@ import Ouroboros.Consensus.Leios.Types
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
@@ -77,24 +75,12 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbPoints :: !(Map LeiosPoint BytesSize)
   -- ^ Inserted EB points with their expected sizes. The same EB
   -- content can be inserted at multiple slots; each
-  -- @(slot, hash)@ point has its own entry and completes
-  -- independently.
-  , imEbBodiesDownloaded :: !(Set LeiosPoint)
-  -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
-  -- called, or which the garbage collection carried that over to from an older
-  -- point of the same EB. Only these points are considered for completion.
+  -- @(slot, hash)@ point has its own entry.
   , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by EB hash. Shared across every
   -- point that references the same EB.
   , imEbBodyBytes :: !(Map EndorserBlockHash ByteString)
   -- ^ The bodies of 'imEbBodies' in the bytes they arrived in.
-  , imCompletedEbs :: !(Set LeiosPoint)
-  -- ^ Points a write has already reported complete. The completion predicate
-  -- stays true once an EB is complete, so any later batch containing one of
-  -- its txs would report it again without this guard. Each point carries the
-  -- EB's hash and its announcer slot, so this is also the source for
-  -- 'scanCompleteEbClosuresNotOlderThanSlot'. Like 'imEbBodiesDownloaded', it
-  -- gets what the garbage collection carries over.
   , imImmutableEbBodies :: !(Map EndorserBlockHash (IntMap EbTxEntry))
   -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
   -- collection evicts such an EB from the other fields like any other, and the
@@ -108,7 +94,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -178,33 +164,17 @@ imPromoteToImmutable stateVar points = do
 -- | Evict every EB all of whose points are older than the slot, with its body
 -- and tx bytes, and drop the older points of every other EB. A promoted EB
 -- keeps its copy in 'imImmutableEbBodies' and 'imImmutableEbTxBytes'.
---
--- What a dropped point records towards its EB's completion is carried over to
--- the EB's points that stay, as the SQLite backend carries its closure count.
 imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
   let newestPoints =
         Map.fromListWith max [(pointEbHash p, p) | p <- Map.keys (imEbPoints s)]
       evicted = Map.keysSet (Map.filter ((< slot) . pointSlotNo) newestPoints)
       kept p = pointSlotNo p >= slot
-      keptPoints =
-        Map.fromListWith (<>) [(pointEbHash p, [p]) | p <- Map.keys (imEbPoints s), kept p]
-      carried points =
-        Set.filter kept $
-          points
-            <> Set.fromList
-              [ q
-              | p <- Set.toList points
-              , not (kept p)
-              , q <- Map.findWithDefault [] (pointEbHash p) keptPoints
-              ]
    in s
         { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
-        , imEbBodiesDownloaded = carried (imEbBodiesDownloaded s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbBodyBytes = Map.withoutKeys (imEbBodyBytes s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
-        , imCompletedEbs = carried (imCompletedEbs s)
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -289,7 +259,7 @@ imInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   [LocalFill] ->
-  m (CompletedEbs, [TxOffset])
+  m [TxOffset]
 imInsertEbBody stateVar point eb fills = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
   when (null items) $
@@ -320,32 +290,12 @@ imInsertEbBody stateVar point eb fills = do
               (pointEbHash point)
               (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
               (imEbBodyBytes s)
-        , -- Mark this point as downloaded. Other points referencing
-          -- the same EB hash are unaffected; each needs its own
-          -- 'writeEbBody' to be considered complete.
-          imEbBodiesDownloaded =
-            Set.insert point (imEbBodiesDownloaded s)
         }
     filled <- fillLocally <$> readTVar stateVar
     unless (IntMap.null filled) $
       modifyTVar stateVar $ \s ->
         s{imEbTxBytes = Map.insertWith IntMap.union (pointEbHash point) filled (imEbTxBytes s)}
-    -- If every tx referenced by this body is already present, the closure
-    -- is complete the moment the body lands — no subsequent 'writeTxs' will
-    -- complete it. Only for a novel point ('imCompletedEbs' is our
-    -- idempotency guard). This mirrors what 'imInsertTxs' does when the last
-    -- missing tx of an already-downloaded body arrives.
-    state <- readTVar stateVar
-    let allTxsPresent = hashCompleteIn state (pointEbHash point)
-        alreadyNotified = Set.member point (imCompletedEbs state)
-    completed <-
-      if allTxsPresent && not alreadyNotified
-        then do
-          modifyTVar stateVar $ \s ->
-            s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-          pure [point]
-        else pure []
-    pure (completed, IntMap.keys filled)
+    pure (IntMap.keys filled)
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
   -- declared and has no bytes for yet, and only from a source holding bytes of
@@ -384,7 +334,7 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m CompletedEbs
+  m ()
 imInsertTxs stateVar point offBytes = atomically $ do
   let ebHash = pointEbHash point
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
@@ -404,48 +354,17 @@ imInsertTxs stateVar point offBytes = atomically $ do
      in if IntMap.null accepted
           then s
           else s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
-  state <- readTVar stateVar
-  -- Candidates: every point of THIS EB whose body has been downloaded and
-  -- whose closure is now complete. Tx bytes are not shared among overlapping
-  -- EBs, so no other hash can have been affected.
-  --
-  -- 'hashCompleteIn' does not depend on the point, so judge the closure once
-  -- rather than once per downloaded point. A batch that does not complete the
-  -- closure -- the common case while a multi-batch fetch is in flight -- then
-  -- scans nothing, which keeps the growth of the 'imEbBodiesDownloaded' set
-  -- from increasing the per-write cost.
-  let candidates
-        | hashCompleteIn state ebHash =
-            [ p
-            | p <- Set.toList (imEbBodiesDownloaded state)
-            , pointEbHash p == ebHash
-            ]
-        | otherwise = []
-      completed =
-        filter
-          (\p -> not (Set.member p (imCompletedEbs state)))
-          candidates
-  modifyTVar stateVar $ \s ->
-    s
-      { imCompletedEbs =
-          foldr Set.insert (imCompletedEbs s) completed
-      }
-  pure completed
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each EB whose closure
 -- is complete, at its youngest point no older than the given slot, as in the
--- SQLite backend.
---
--- The point that proves the closure complete need not be that recent one: an
--- EB announced again after it was acquired gets only the new point written.
--- A promoted EB is complete too, since only complete EBs are promoted.
+-- SQLite backend. A promoted EB is complete too, since only complete EBs are
+-- promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
-  let completed = Set.map pointEbHash (imCompletedEbs s)
-      isComplete ebHash =
-        Set.member ebHash completed || Map.member ebHash (imImmutableEbBodies s)
+  let isComplete ebHash =
+        hashCompleteIn s ebHash || Map.member ebHash (imImmutableEbBodies s)
       youngest =
         Map.fromListWith
           max

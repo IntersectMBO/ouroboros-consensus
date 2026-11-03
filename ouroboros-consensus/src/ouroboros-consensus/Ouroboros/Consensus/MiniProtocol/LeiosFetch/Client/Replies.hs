@@ -398,7 +398,7 @@ processEndorserBlock ctx peer req eb = do
   -- write's fills left to fetch, and announce what is acquired.
   settleBody now pointWritten bodyWritten = do
     () <- await pointWritten
-    (_completed, filledOffs) <- await bodyWritten
+    filledOffs <- await bodyWritten
     (filled, acquired) <- claimBody filledOffs (pointSlotNo point)
     -- These bytes are durable now: advertise them as fill sources for later
     -- endorser blocks referencing the same txs.
@@ -549,7 +549,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     throwIO exn
 
   settleTxs now txsWritten toIngest = do
-    _completed <- await txsWritten
+    () <- await txsWritten
     completed <- modifyMVar lfcOutstanding $ \outstanding -> do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup ebHash (ebState outstanding), Map.lookup ebHash (ebState outstanding')) of

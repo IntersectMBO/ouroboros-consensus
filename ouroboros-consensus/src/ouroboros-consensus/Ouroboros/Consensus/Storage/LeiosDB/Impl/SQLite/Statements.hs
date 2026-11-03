@@ -87,8 +87,6 @@ data GcStmts = GcStmts
   -- ^ 'sql_gc_has_work'
   , gsMarkEbForGC :: !DB.Statement
   -- ^ 'sql_gc_mark'
-  , gsCarryMissingTxCount :: !DB.Statement
-  -- ^ 'sql_gc_carry_missing_tx_count'
   , gsDropSuperseded :: !DB.Statement
   -- ^ 'sql_gc_drop_superseded'
   }
@@ -97,7 +95,6 @@ prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
 prepareGcStmts db = preparingStmts db $ \prep -> do
   gsHasWork <- prep sql_gc_has_work
   gsMarkEbForGC <- prep sql_gc_mark
-  gsCarryMissingTxCount <- prep sql_gc_carry_missing_tx_count
   gsDropSuperseded <- prep sql_gc_drop_superseded
   pure GcStmts{..}
 
@@ -105,7 +102,6 @@ finalizeGcStmts :: GcStmts -> IO ()
 finalizeGcStmts GcStmts{..} = do
   dbFinalize gsHasWork
   dbFinalize gsMarkEbForGC
-  dbFinalize gsCarryMissingTxCount
   dbFinalize gsDropSuperseded
 
 -- | The sweep statements, prepared on the writer's volatile connection;
@@ -149,11 +145,8 @@ data VolStmts = VolStmts
   , stInsertEbBodyBytes :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stPreallocEbTxBytes :: !DB.Statement
-  , stInitMissingCount :: !DB.Statement
   , stFillEbTxBytes :: !DB.Statement
   , stFillEbTxBytesLocally :: !DB.Statement
-  , stDecrMissingCount :: !DB.Statement
-  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -196,11 +189,8 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stInsertEbBodyBytes <- prep sql_insert_eb_body_bytes
   stInsertEbTxsRow <- prep sql_insert_ebBody
   stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
-  stInitMissingCount <- prep sql_init_missing_tx_count
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
   stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
-  stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stMarkPointNotified <- prep sql_mark_point_notified
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
   stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
@@ -216,11 +206,8 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stInsertEbBodyBytes
   dbFinalize stInsertEbTxsRow
   dbFinalize stPreallocEbTxBytes
-  dbFinalize stInitMissingCount
   dbFinalize stFillEbTxBytes
   dbFinalize stFillEbTxBytesLocally
-  dbFinalize stDecrMissingCount
-  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince

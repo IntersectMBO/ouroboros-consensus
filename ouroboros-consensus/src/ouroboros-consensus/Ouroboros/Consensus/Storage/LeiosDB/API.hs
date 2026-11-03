@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
-  , CompletedEbs
   , LocalFill
   , TxOffset
   ) where
@@ -93,6 +92,9 @@ data LeiosDbReader m = LeiosDbReader
       SlotNo -> m [LeiosPoint]
   -- ^ EBs whose closure is complete and whose announcer is no older than the
   -- given slot. Seeds the ChainDB's acquired-closures set at startup.
+  --
+  -- The LeiosDB does not track completeness, so this infers it from the txs
+  -- it holds. Startup only.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 
@@ -108,22 +110,19 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Record an announced EB's point and expected size.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
+      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
   -- ^ Persist an EB body, and fill what it can from local bytes: each
   -- 'LocalFill' pairs an offset in this body with the 'TxLocation' of another
-  -- EB durably holding the same tx, copied in the same transaction. Returns any
-  -- EBs whose closure this completed and the offsets that actually filled: a
-  -- fill whose source does not hold the tx this body lists at its offset fills
-  -- nothing, and that tx stays fetchable.
-  --
-  -- The returned EBs are only used for tracing and too broad: they can actually
-  -- only be this same EB which got completed.
+  -- EB durably holding the same tx, copied in the same transaction. Returns the
+  -- offsets that actually filled: a fill whose source does not hold the tx this
+  -- body lists at its offset fills nothing, and that tx stays fetchable.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'. Whether that
+  -- completes the EB is for the caller to know: the LeiosDB does not track it.
   --
   -- No backend uses the point's slot: the tx bytes belong to the EB body,
   -- which every point with the same EB hash shares.
@@ -154,9 +153,6 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
-
--- | EBs whose tx closure became complete as a result of a write.
-type CompletedEbs = [LeiosPoint]
 
 -- | A cross-EB fill: fill the EB's tx at 'TxOffset' from the tx's durable
 -- 'TxLocation' in another EB. See 'writeEbBody'.
