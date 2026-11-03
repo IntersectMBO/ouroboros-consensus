@@ -37,9 +37,10 @@ module Ouroboros.Consensus.Leios.NotifyLog
   , pruneNotifyLog
   ) where
 
-import Control.Monad (forever, unless)
+import Control.Monad (forM_, forever, unless)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
@@ -201,22 +202,19 @@ leiosOfferRelay acquisitions notifyLog = do
     acquired <- next
     entries <- readTVar (notifyEntries notifyLog)
     expiries <- readTVar (notifyExpiry notifyLog)
-    let announced point =
-          Map.toList $
-            Map.fromList
-              [ (point, expires)
-              | (expires, ats) <- Map.toList expiries
-              , at <- ats
-              , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
-              , MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
-                  == point
-              ]
-    sequence_ $ case acquired of
+    -- When the log's announcements at this point expire, if it holds any.
+    -- They share the point's slot, so they expire together.
+    let announcedUntil point =
+          listToMaybe
+            [ expires
+            | (expires, ats) <- Map.toList expiries
+            , at <- ats
+            , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
+            , MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
+                == point
+            ]
+    case acquired of
       AcquiredEb point bodySize ->
-        [ appendNotifyLog notifyLog (NotifyBlockOffer p bodySize) expires
-        | (p, expires) <- announced point
-        ]
+        forM_ (announcedUntil point) $ appendNotifyLog notifyLog (NotifyBlockOffer point bodySize)
       AcquiredEbTxs point ->
-        [ appendNotifyLog notifyLog (NotifyBlockTxsOffer p) expires
-        | (p, expires) <- announced point
-        ]
+        forM_ (announcedUntil point) $ appendNotifyLog notifyLog (NotifyBlockTxsOffer point)
