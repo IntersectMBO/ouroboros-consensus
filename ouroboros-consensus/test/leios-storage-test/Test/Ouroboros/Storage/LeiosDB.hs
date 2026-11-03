@@ -21,7 +21,7 @@ import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
-import Data.List (sort)
+import Data.List (mapAccumL, sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -166,8 +166,8 @@ withFreshDb SQLite action = withFreshSQLiteDb action
 
 -- | 'withFreshDb', with a wait for the SQLite implementation's background work
 -- to catch up (see 'withSettle'). The in-memory implementation has none.
-withSettledDb :: DbImpl -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
-withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (pure ())
+withSettledDb :: DbImpl -> (LeiosDbHandle IO -> (SlotNo -> IO ()) -> IO a) -> IO a
+withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (const (pure ()))
 withSettledDb SQLite action =
   withFreshSQLiteFile $ \volDbPath _immDbPath db -> withSettle volDbPath (action db)
 
@@ -635,9 +635,9 @@ test_readsFallBackToImmutable impl = withSettledDb impl $ \db settle -> withRW d
       point = mkTestPoint 5 1
   writeWholeEb con [point] eb
   leiosDbPromoteToImmutable db [point]
-  settle
+  settle 0
   garbageCollect db 6
-  settle
+  settle 6
   rwScanEbPoints con >>= (@?= [])
   rwLookupEbBody con point >>= (@?= endorserBlockReferences eb)
   holdsClosure con point >>= (@?= True)
@@ -668,7 +668,7 @@ test_gcKeepsNewerPoint impl = withSettledDb impl $ \db settle -> withRW db $ \co
       newer = mkTestPoint 10 1
   writeWholeEb con [older, newer] eb
   garbageCollect db 6
-  settle
+  settle 6
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
   rwLookupEbBody con older >>= (@?= [])
   holdsClosure con older >>= (@?= False)
@@ -829,7 +829,6 @@ test_schemaAtHandleCreation volDbPath immDbPath =
         assertBool (file <> " has " <> name) (name `elem` objs)
     forM_
       [ "idx_ebs_sweepable"
-      , "idx_ebs_markedForGc"
       , "idx_ebs_pinned"
       ]
       $ \name -> do
@@ -938,7 +937,7 @@ prop_implementationsAgree =
     forAllShrinkShow (genOps bodies) (shrinkList (const [])) show $ \ops ->
       ioProperty $ do
         ((nPinned, nEvicted), inMemory) <-
-          withFreshDb InMemory $ \db -> observe db (pure ()) bodies ops
+          withFreshDb InMemory $ \db -> observe db (const (pure ())) bodies ops
         (_, sqlite) <-
           withFreshSQLiteFile $ \volDbPath _immDbPath db ->
             withSettle volDbPath $ \settle -> observe db settle bodies ops
@@ -966,8 +965,14 @@ genBodies =
 -- | Writes, with tx offsets up to one past the largest body, so that some are
 -- not in the body they are written for.
 genOps :: Bodies -> Gen [Op]
-genOps bodies = concat <$> listOf (frequency [(3, pure <$> genOp), (1, genWhole)])
+genOps bodies =
+  monotoneGc . concat <$> listOf (frequency [(3, pure <$> genOp), (1, genWhole)])
  where
+  -- The node's garbage collection never moves back.
+  monotoneGc = snd . mapAccumL raise 0
+  raise frontier = \case
+    OpGc slot -> let frontier' = max frontier slot in (frontier', OpGc frontier')
+    op -> (frontier, op)
   genPointOf = elements (allPoints bodies)
   -- Mostly from a source that lists the same tx, which is the only kind that
   -- can land, possibly another point of the same endorser block; otherwise from
@@ -1017,7 +1022,9 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- point. Also how many points the operations pinned and evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
--- body is written once per point; and a point
+-- body is written once per point, and only at a point no older than the last
+-- garbage collection's slot, as the node fetches only points newer than its
+-- immutable tip; and a point
 -- is promoted only with a complete closure, as the node pins only what an
 -- immutable block certifies, and its ChainSel adopts a block certifying an
 -- endorser block only once it holds that point's closure. So this tracks which
@@ -1027,10 +1034,10 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- A point is also promoted at most once: the node pins only what the immutable
 -- chain certifies, and a chain cannot certify the same point twice.
 --
--- @settle@ runs after each operation.
+-- @settle@ runs after each operation, with the slot of a garbage collection.
 observe ::
   LeiosDbHandle IO ->
-  IO () ->
+  (SlotNo -> IO ()) ->
   Bodies ->
   [Op] ->
   IO
@@ -1044,7 +1051,7 @@ observe ::
       )
     )
 observe db settle bodies ops = withRW db $ \rw -> do
-  (counts, writes) <- go rw [] [] 0 ops
+  (counts, writes) <- go rw 0 [] [] 0 ops
   seen <- forM (allPoints bodies) $ \point ->
     (,,)
       <$> rwLookupEbBody rw point
@@ -1055,16 +1062,16 @@ observe db settle bodies ops = withRW db $ \rw -> do
         [0 .. length (endorserBlockReferences (fst (bodies Map.! pointEbHash point)))]
   pure (counts, (writes, seen))
  where
-  go _rw _bodied pinned nEvicted [] = pure ((length pinned, nEvicted), [])
-  go rw bodied pinned nEvicted (op : rest) = case op of
+  go _rw _frontier _bodied pinned nEvicted [] = pure ((length pinned, nEvicted), [])
+  go rw frontier bodied pinned nEvicted (op : rest) = case op of
     OpBody point fills
-      | point `notElem` bodied -> do
+      | point `notElem` bodied && pointSlotNo point >= frontier -> do
           filled <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
-          settle
+          settle 0
           complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
           fmap ((sort filled, complete) :)
-            <$> go rw (point : bodied) pinned nEvicted rest
-      | otherwise -> go rw bodied pinned nEvicted rest
+            <$> go rw frontier (point : bodied) pinned nEvicted rest
+      | otherwise -> go rw frontier bodied pinned nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
       rwInsertTxs
@@ -1073,50 +1080,52 @@ observe db settle bodies ops = withRW db $ \rw -> do
         [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
         | offset <- offsets
         ]
-      settle
+      settle 0
       complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
-      fmap (([], complete) :) <$> go rw bodied pinned nEvicted rest
+      fmap (([], complete) :) <$> go rw frontier bodied pinned nEvicted rest
     OpPromote point
       | point `elem` bodied && point `notElem` pinned -> do
           complete <- isJust <$> rwLookupEbClosure rw point
           if complete
             then do
               leiosDbPromoteToImmutable db [point]
-              settle
-              go rw bodied (point : pinned) nEvicted rest
-            else go rw bodied pinned nEvicted rest
-      | otherwise -> go rw bodied pinned nEvicted rest
+              settle 0
+              go rw frontier bodied (point : pinned) nEvicted rest
+            else go rw frontier bodied pinned nEvicted rest
+      | otherwise -> go rw frontier bodied pinned nEvicted rest
     OpGc slot -> do
       garbageCollect db slot
-      settle
+      settle slot
       let kept p = pointSlotNo p >= slot
       go
         rw
+        slot
         (filter kept bodied)
         pinned
         (nEvicted + length (filter (not . kept) bodied))
         rest
 
 -- | Hand the action a wait for the SQLite implementation's background work to
--- catch up: for its sweep to have evicted every row the garbage collection
--- marked, and the transactions that left orphaned, and for its copier to have
--- copied every pinned endorser block.
-withSettle :: FilePath -> (IO () -> IO a) -> IO a
+-- catch up: for its copier to have copied every pinned endorser block, and
+-- for its sweep to have evicted every point older than the given slot that is
+-- not pinned. That slot must be no later than the last garbage collection's.
+withSettle :: FilePath -> ((SlotNo -> IO ()) -> IO a) -> IO a
 withSettle volDbPath action =
   bracket (SQL.open (T.pack volDbPath)) SQL.close $ \conn -> do
     SQL.exec conn (T.pack "pragma busy_timeout = 1000;")
     bracket (SQL.prepare conn sqlBackgroundWork) SQL.finalize $ \stmt -> do
-      let backlog = do
+      let backlog (SlotNo slot) = do
+            SQL.bindInt64 stmt 1 (fromIntegral slot)
             _ <- SQL.step stmt
             n <- SQL.columnInt64 stmt 0
             SQL.reset stmt
             pure n
-          poll =
-            backlog >>= \case
+          poll slot =
+            backlog slot >>= \case
               0 -> pure ()
-              _ -> threadDelay 1_000 >> poll
-          settle =
-            Timeout.timeout settleTimeoutMicros poll >>= \case
+              _ -> threadDelay 1_000 >> poll slot
+          settle slot =
+            Timeout.timeout settleTimeoutMicros (poll slot) >>= \case
               Just () -> pure ()
               Nothing -> assertFailure "the SQLite implementation's background work did not catch up"
       action settle
@@ -1124,7 +1133,8 @@ withSettle volDbPath action =
   settleTimeoutMicros = 10_000_000
 
 -- | How many rows the SQLite implementation's background work has yet to deal
--- with: those pinned (status 1) or marked for the sweep (status 3).
+-- with: those pinned (status 1), and those older than the slot @?1@ and not
+-- pinned.
 sqlBackgroundWork :: T.Text
 sqlBackgroundWork =
-  T.pack "SELECT COUNT(*) FROM ebs WHERE status IN (1, 3)"
+  T.pack "SELECT COUNT(*) FROM ebs WHERE status = 1 OR (status IN (0, 2) AND ebSlot < ?1)"

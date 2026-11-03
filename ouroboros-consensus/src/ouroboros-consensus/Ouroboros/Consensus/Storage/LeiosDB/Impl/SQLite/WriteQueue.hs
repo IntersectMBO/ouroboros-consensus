@@ -91,12 +91,13 @@ data WriteJob
       ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
-  | -- | The GC MARK phase; see 'gcMark'.
-    GcMark
+  | -- | Raise the GC frontier to this slot: the worker's sweep then evicts
+    -- every point older than it that is not pinned; see 'sweepEbBatch'.
+    GarbageCollect
       -- | the GC frontier slot
       !SlotNo
-      -- | where the worker puts the number of 'ebs' rows marked
-      !(WriteResult Int)
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
@@ -172,7 +173,7 @@ describeJob = \case
   Flush _ -> "Flush"
   PinEb points _ -> "PinEb (" <> show (length points) <> " points)"
   MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " points)"
-  GcMark slot _ -> "GcMark " <> show slot
+  GarbageCollect slot _ -> "GarbageCollect " <> show slot
   Shutdown _ -> "Shutdown"
 
 -- | How many queued jobs the writer serves back-to-back before it takes a

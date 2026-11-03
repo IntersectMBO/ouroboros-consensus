@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ) where
 
 import Cardano.Prelude (forM_, when)
+import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , check
@@ -237,7 +238,6 @@ data WriterConns = WriterConns
   , wcImmDb :: !DB.Database
   , wcConn :: !Conn
   , wcSweeperConn :: !SweeperConn
-  , wcGcStmts :: !GcStmts
   , wcPinStmt :: !DB.Statement
   -- ^ 'sql_pin_eb'
   , wcMarkCopiedStmt :: !DB.Statement
@@ -260,19 +260,17 @@ withWriterConns tracer statsVar volPath immPath k =
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
       bracket (mkConn tracer statsVar volDb immDb) finalizeConnStmts $ \conn ->
         bracket (prepareSweeperStmts volDb) finalizeSweeperStmts $ \sweeperStmts ->
-          bracket (prepareGcStmts volDb) finalizeGcStmts $ \gcStmts ->
-            withStmt volDb sql_pin_eb $ \pinStmt ->
-              withStmt volDb sql_mark_as_copied $ \markCopiedStmt ->
-                k
-                  WriterConns
-                    { wcVolDb = volDb
-                    , wcImmDb = immDb
-                    , wcConn = conn
-                    , wcSweeperConn = SweeperConn volDb sweeperStmts
-                    , wcGcStmts = gcStmts
-                    , wcPinStmt = pinStmt
-                    , wcMarkCopiedStmt = markCopiedStmt
-                    }
+          withStmt volDb sql_pin_eb $ \pinStmt ->
+            withStmt volDb sql_mark_as_copied $ \markCopiedStmt ->
+              k
+                WriterConns
+                  { wcVolDb = volDb
+                  , wcImmDb = immDb
+                  , wcConn = conn
+                  , wcSweeperConn = SweeperConn volDb sweeperStmts
+                  , wcPinStmt = pinStmt
+                  , wcMarkCopiedStmt = markCopiedStmt
+                  }
 
 -- | Start the worker draining the write queue. The worker opens the write
 -- connections itself, on its own thread ('withWriterConns'), and closes them
@@ -301,10 +299,9 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
           , wcImmDb = immDb
           , wcConn = conn
           , wcSweeperConn = sweeperConn
-          , wcGcStmts = gcStmts
           , wcPinStmt = pinStmt
           , wcMarkCopiedStmt = markCopiedStmt
-          } = serve 0 (Just 0)
+          } = serve 0 (SlotNo 0) Nothing
          where
           -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
           -- and maintenance jobs.
@@ -312,12 +309,12 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
           -- between is the time to do maintenance. But a burst can go on for as
           -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
           --
-          -- The second argument is the state of the GC sweep pass: 'Nothing'
-          -- when no sweep is in progress; 'Just' the EBs evicted so far while a
-          -- pass is in progress. It starts as 'Just', to continue a sweep pass
-          -- potentially interrupted by a node restart.
-          serve :: Int -> Maybe Int -> IO ()
-          serve served sweep = do
+          -- The second argument is the GC frontier: the sweep evicts the
+          -- points older than it that are not pinned. The third is the state
+          -- of the GC sweep pass: 'Nothing' when no sweep is in progress;
+          -- 'Just' the EBs evicted so far while a pass is in progress.
+          serve :: Int -> SlotNo -> Maybe Int -> IO ()
+          serve served frontier sweep = do
             mJob <-
               if served >= maxJobsBetweenMaintenance
                 then
@@ -333,15 +330,16 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
                 traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
                 case next of
                   Stop -> pure ()
-                  Continue -> serve (served + 1) sweep
-                  ContinueAndSweep -> serve (served + 1) (Just (fromMaybe 0 sweep))
+                  Continue -> serve (served + 1) frontier sweep
+                  ContinueAndSweepBefore slot ->
+                    serve (served + 1) (max frontier slot) (Just (fromMaybe 0 sweep))
               -- do maintenance
               Nothing -> do
-                sweep' <- stepMaintenance sweep
+                sweep' <- stepMaintenance frontier sweep
                 case sweep' of
                   Nothing -> blockUntilJob
                   Just _ -> pure ()
-                serve 0 sweep'
+                serve 0 frontier sweep'
 
           runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
@@ -379,9 +377,9 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
                       dbBindPoint markCopiedStmt point
                       dbStep1Safe markCopiedStmt
               pure Continue
-            GcMark slot resultVar -> do
-              nEbsMarked <- publish resultVar (gcMark volDb gcStmts slot)
-              pure $ if nEbsMarked > 0 then ContinueAndSweep else Continue
+            GarbageCollect slot resultVar -> do
+              publish resultVar (pure ())
+              pure (ContinueAndSweepBefore slot)
 
           -- Nothing queued and no sweep outstanding: wait for a job.
           blockUntilJob = IO.atomically $ do
@@ -394,8 +392,8 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
           -- bring the work back. Hence 'catch' rather than 'bracket': the
           -- exception must stop here, not take the writer down, and the
           -- cleanup is for failure only.
-          stepMaintenance :: Maybe Int -> IO (Maybe Int)
-          stepMaintenance sweep =
+          stepMaintenance :: SlotNo -> Maybe Int -> IO (Maybe Int)
+          stepMaintenance frontier sweep =
             step `catch` \(e :: LeiosDbException) -> do
               _ <- DB.exec volDb "ROLLBACK"
               _ <- DB.exec immDb "ROLLBACK"
@@ -406,7 +404,7 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               case sweep of
                 Nothing -> pure Nothing
                 Just nEbs -> do
-                  evicted <- sweepEbBatch sweeperConn gcBatchSize
+                  evicted <- sweepEbBatch sweeperConn frontier gcBatchSize
                   if evicted == 0
                     then do
                       when (nEbs > 0) $ do
@@ -461,5 +459,6 @@ data WhetherContinueServing
     Stop
   | -- | Keep serving.
     Continue
-  | -- | Keep serving, and start a GC sweep pass or extend the one in progress.
-    ContinueAndSweep
+  | -- | Keep serving, raise the GC frontier to this slot, and start a GC sweep
+    -- pass or extend the one in progress.
+    ContinueAndSweepBefore !SlotNo

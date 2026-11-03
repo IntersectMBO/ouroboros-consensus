@@ -52,12 +52,11 @@ data LeiosDbHandle m = LeiosDbHandle
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
-  -- ^ Trigger garbage collection of the LeiosDB.
+  -- ^ Evict every point older than the slot, except one pinned and still
+  --   awaiting its copy into the immutable partition.
   --
-  --   This function does not do have to do the actual GC, but rather
-  --   act as the MARK phase of GC and "create work" for a background SWEEP thread.
-  --
-  --   See 'sqlGarbageCollect' for the SQL backend implementation.
+  --   An implementation may evict in the background, after this returns. See
+  --   'sqlGarbageCollect' for the SQL backend implementation.
   , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()
   -- ^ Promote the given EBs' bodies and tx closures from volatile into immutable
   --   LeiosDb. Takes a batch: the caller holds the ImmutableDB write lock and

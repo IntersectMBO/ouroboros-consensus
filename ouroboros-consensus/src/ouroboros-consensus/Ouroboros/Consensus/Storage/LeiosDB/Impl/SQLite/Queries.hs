@@ -24,9 +24,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_copy_insert_ebTxs
   , sql_copy_insert_ebTxBytes
   , sql_next_pinned_eb
-  , sql_gc_has_work
-  , sql_gc_mark
-  , sql_sweep_pick_marked
+  , sql_sweep_pick
   , sql_gc_ebTxBytes
   , sql_gc_ebTxs
   , sql_gc_ebs
@@ -177,12 +175,10 @@ sql_lookup_eb_closure =
 -- ** Promoting a point to the immutable partition
 
 -- | Pin the point: certified, awaiting copy, never evicted. The durable record
--- that survives a crash before the copy lands. Also rescues a GC-marked row
--- (@status = 3@): a promotion arriving between mark and sweep unmarks it, and
--- the sweeper then skips it.
+-- that survives a crash before the copy lands.
 sql_pin_eb :: String
 sql_pin_eb =
-  "UPDATE ebs SET status = 1 WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND status IN (0, 3)"
+  "UPDATE ebs SET status = 1 WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND status = 0"
 
 -- | Mark a pinned point as copied (evictable). A volatile write, so it goes
 -- through the writer as @MarkCopied@ -- only ever strictly after the
@@ -245,23 +241,14 @@ sql_next_pinned_eb =
 
 -- ** Garbage collection of the volatile partition
 
--- | Whether a GC at slot @?1@ has any work, i.e. if there are any old volatile
--- points, already copied points or points left over from an interrupted GC
--- pass.
-sql_gc_has_work :: String
-sql_gc_has_work =
-  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2, 3) AND ebSlot < ?1)"
-
--- | Mark for GC (@status = 3@) every point older than the GC frontier @?1@ that
--- is volatile (status 0) or already copied (status 2).
-sql_gc_mark :: String
-sql_gc_mark =
-  "UPDATE ebs SET status = 3 WHERE status IN (0, 2) AND ebSlot < ?1"
-
--- | Up to @?1@ GC-marked points ready to sweep.
-sql_sweep_pick_marked :: String
-sql_sweep_pick_marked =
-  "SELECT ebSlot, ebHashBytes FROM ebs WHERE status = 3 LIMIT ?1"
+-- | Up to @?2@ of the points older than the GC frontier @?1@ that are not
+-- pinned: volatile (status 0) or already copied (status 2). Oldest first, and
+-- covered by @idx_ebs_sweepable@.
+sql_sweep_pick :: String
+sql_sweep_pick =
+  "SELECT ebSlot, ebHashBytes FROM ebs WHERE status IN (0, 2) AND ebSlot < ?1\n\
+  \ORDER BY ebSlot LIMIT ?2\n\
+  \"
 
 -- | Evict the point's 'ebTxBytes' rows.
 sql_gc_ebTxBytes :: String

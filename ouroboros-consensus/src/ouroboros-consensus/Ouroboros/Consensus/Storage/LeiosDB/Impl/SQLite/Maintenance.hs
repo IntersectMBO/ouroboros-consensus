@@ -13,9 +13,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
     sqlPromoteToImmutable
   , startCopier
 
-    -- * GC mark
+    -- * GC
   , sqlGarbageCollect
-  , gcMark
 
     -- * GC sweep
   , SweeperConn (..)
@@ -269,45 +268,18 @@ copyBatchSize = 32
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the MARK phase of GC mark-and-sweep,
--- as a 'GcMark' job on the writer (see 'gcMark').
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': a
+-- 'GarbageCollect' job that raises the writer's GC frontier. The writer then
+-- evicts what is older one batch per turn ('sweepEbBatch'), so an insert waits
+-- for a batch at most.
+--
+-- The frontier lives only in the writer, so after a restart what an
+-- interrupted sweep left waits for the next call.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
-  void . await =<< submitJob writeQueue (GcMark gcSlot)
+  await =<< submitJob writeQueue (GarbageCollect gcSlot)
 
--- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every
--- point older than the given slot that is not pinned (@status = 1@). Returns
--- the number of 'ebs' rows marked.
---
--- Runs on the writer. It does not do much work, but rather primes the state
--- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
--- marked EBs one batch per turn, so an insert waits for a batch at most.
-gcMark ::
-  HasCallStack =>
-  DB.Database ->
-  GcStmts ->
-  SlotNo ->
-  IO Int
-gcMark db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
-  -- check if GC has any work to do
-  hasWork <-
-    useStmt gsHasWork $ do
-      dbBindInt64 gsHasWork 1 slot
-      (/= 0) <$> readSingleInt64 gsHasWork
-  if hasWork
-    then
-      -- mark EBs that are ready to be garbage collected
-      dbWithWriteTransactionRaw db $ do
-        useStmt gsMarkEbForGC $ do
-          dbBindInt64 gsMarkEbForGC 1 slot
-          dbStep1Safe gsMarkEbForGC
-        DB.changes db
-    else pure 0
- where
-  slot = fromIntegral (unSlotNo gcSlot)
-
--- * Sweeping GC-marked rows out of the volatile partition
+-- * Sweeping old points out of the volatile partition
 
 -- | The sweeper's connection and its prepared statements.
 data SweeperConn = SweeperConn
@@ -317,24 +289,25 @@ data SweeperConn = SweeperConn
   -- ^ Precompiled statements used by the sweeper.
   }
 
--- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
--- points, with their bodies and tx bytes -- three range deletes per point.
--- Returns the number of evicted 'ebs' rows. Runs on the writer.
-sweepEbBatch :: SweeperConn -> Int64 -> IO Int
-sweepEbBatch conn batchSize = do
+-- | One sweep transaction: evict up to the given number of the points older
+-- than the GC frontier that are not pinned, with their bodies and tx bytes --
+-- three range deletes per point. Returns the number of evicted 'ebs' rows.
+-- Runs on the writer.
+sweepEbBatch :: SweeperConn -> SlotNo -> Int64 -> IO Int
+sweepEbBatch conn frontier batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
+      SweeperStmts{swPick, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
-    -- check if any EBs are ready to be evicted
-    evictable <- useStmt swPickMarked $ do
+    evictable <- useStmt swPick $ do
+      dbBindInt64 swPick 1 (fromIntegral (unSlotNo frontier))
       -- batchSize will never be negative, but we handle a negative batch size
       -- gracefully here with a negative LIMIT, which means no limit in SQLite.
-      dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
+      dbBindInt64 swPick 2 (if batchSize <= 0 then -1 else batchSize)
       let loop acc =
-            dbStepSafe swPickMarked >>= \case
+            dbStepSafe swPick >>= \case
               DB.Done -> pure (reverse acc)
               DB.Row -> do
-                point <- dbColumnPoint swPickMarked 0
+                point <- dbColumnPoint swPick 0
                 loop (point : acc)
       loop []
     forM_ evictable $ \point ->

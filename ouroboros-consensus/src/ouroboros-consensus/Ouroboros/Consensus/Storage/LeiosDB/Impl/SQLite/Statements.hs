@@ -13,9 +13,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , ImmStmts (..)
   , prepareImmStmts
   , finalizeImmStmts
-  , GcStmts (..)
-  , prepareGcStmts
-  , finalizeGcStmts
   , CopierStmts (..)
   , prepareCopierStmts
   , finalizeCopierStmts
@@ -76,31 +73,11 @@ finalizeCopierStmts CopierStmts{..} = do
   dbFinalize ccInsertEbTxs
   dbFinalize ccInsertEbTxBytes
 
--- | The GC tick's prepared statements, prepared once on the writer's
--- volatile connection.
-data GcStmts = GcStmts
-  { gsHasWork :: !DB.Statement
-  -- ^ 'sql_gc_has_work'
-  , gsMarkEbForGC :: !DB.Statement
-  -- ^ 'sql_gc_mark'
-  }
-
-prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
-prepareGcStmts db = preparingStmts db $ \prep -> do
-  gsHasWork <- prep sql_gc_has_work
-  gsMarkEbForGC <- prep sql_gc_mark
-  pure GcStmts{..}
-
-finalizeGcStmts :: GcStmts -> IO ()
-finalizeGcStmts GcStmts{..} = do
-  dbFinalize gsHasWork
-  dbFinalize gsMarkEbForGC
-
 -- | The sweep statements, prepared on the writer's volatile connection;
 -- lifecycle mirrors 'CopierStmts'.
 data SweeperStmts = SweeperStmts
-  { swPickMarked :: !DB.Statement
-  -- ^ 'sql_sweep_pick_marked'
+  { swPick :: !DB.Statement
+  -- ^ 'sql_sweep_pick'
   , swEvictEbTxBytes :: !DB.Statement
   -- ^ 'sql_gc_ebTxBytes'
   , swEvictEbTxs :: !DB.Statement
@@ -112,7 +89,7 @@ data SweeperStmts = SweeperStmts
 -- | Prepare the sweep statements on the writer's volatile connection.
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
-  swPickMarked <- prep sql_sweep_pick_marked
+  swPick <- prep sql_sweep_pick
   swEvictEbTxBytes <- prep sql_gc_ebTxBytes
   swEvictEbTxs <- prep sql_gc_ebTxs
   swEvictEbs <- prep sql_gc_ebs
@@ -120,7 +97,7 @@ prepareSweeperStmts db = preparingStmts db $ \prep -> do
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
-  dbFinalize swPickMarked
+  dbFinalize swPick
   dbFinalize swEvictEbTxBytes
   dbFinalize swEvictEbTxs
   dbFinalize swEvictEbs
