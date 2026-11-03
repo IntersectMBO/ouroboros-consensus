@@ -9,7 +9,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 data TraceLeiosFetchServerEvent
   = -- | The client requested an endorser block.
     TraceLeiosFetchServerBlockRequested !LeiosPoint
-  | -- | The server sent it, which references this many transactions.
+  | -- | The server sent it, this many bytes.
     TraceLeiosFetchServerBlockServed !LeiosPoint !Int
   | -- | The client requested this many of an endorser block's transactions.
     TraceLeiosFetchServerTxsRequested !LeiosPoint !Int

@@ -130,7 +130,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       pure True
  where
   CopierConn{ccDb, ccStmts} = conn
-  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
+  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbBody, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
 
   -- Attempt to do the actual copying.
   --
@@ -173,6 +173,10 @@ copyEbToImmutable tracer statsVar conn ebHash =
           useStmt ccInsertEb $ do
             dbBindHash ccInsertEb 1 ebHash
             dbStep1Safe ccInsertEb
+          -- copy the body
+          useStmt ccInsertEbBody $ do
+            dbBindHash ccInsertEbBody 1 ebHash
+            dbStep1Safe ccInsertEbBody
           -- copy the eb-to-transactions mapping
           useStmt ccInsertEbTxs $ do
             dbBindHash ccInsertEbTxs 1 ebHash
@@ -324,7 +328,7 @@ data SweeperConn = SweeperConn
 sweepEbBatch :: SweeperConn -> Int64 -> IO Int
 sweepEbBatch conn batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
+      SweeperStmts{swPickMarked, swEvictEbBodies, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
@@ -337,6 +341,7 @@ sweepEbBatch conn batchSize = do
       then pure 0
       else do
         let evictableEbsJson = jsonHexArray evictableEbs
+        execJson swEvictEbBodies evictableEbsJson
         execJson swEvictEbTxBytes evictableEbsJson
         execJson swEvictEbTxs evictableEbsJson
         -- last, so 'DB.changes' counts the evicted 'ebs' rows

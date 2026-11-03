@@ -69,6 +69,7 @@ import Data.Functor ((<&>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort, sortOn)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import Data.Time.Clock (DiffTime)
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
 import Ouroboros.Consensus.Leios.Types
@@ -375,7 +376,7 @@ servePeer seed r BenchEb{beIdx, beHash, beMeasured} completed record missing = d
   t <- getMonotonicTime
   body <- lookupEbBody r beHash
   t' <- getMonotonicTime
-  if length body /= txsPerEb
+  if isNothing body
     then missing
     else when beMeasured $ record ServeBody (diffTime t' t)
   forM_ (requests seed beIdx) $ \offsets -> do
