@@ -16,7 +16,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM, forM_, replicateM, replicateM_, unless, void)
 import Control.Monad.Class.MonadAsync (withAsync)
 import Control.Monad.Class.MonadThrow
-import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), diffTime, getMonotonicTime)
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), addTime, diffTime, getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.Except (runExcept, runExceptT)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -194,6 +194,7 @@ import Test.Tasty.QuickCheck
   , suchThat
   , tabulate
   , testProperty
+  , withNumTests
   , (===)
   )
 import Test.Util.ChainDB (emptyNodeDBs)
@@ -403,23 +404,9 @@ tests =
         "the node does not offer the closure of an endorser block that misstates the size of a transaction the node fetches afterwards"
         $ runSimFinishing (nodeOffersLyingEb BodyBeforeTx)
           >>= (@?= relayedLyingEb <> relayedHonestEb)
-    , testCase "the node relays to a listener whose immutable tip is ahead of its own" $
-        runSimFinishing (listenerHears immutableTipInSlot5 0)
-          >>= (@?= relayedFetchedAt laterPoint)
-    , testCase "the node relays to a listener whose clock is two seconds ahead of its own" $
-        runSimFinishing (listenerHears GenesisPoint 2) >>= (@?= relayedFetchedAt laterPoint)
-    , testCase "the node relays to a listener whose clock is two seconds behind its own" $
-        runSimFinishing (listenerHears GenesisPoint (-2)) >>= (@?= relayedFetchedAt laterPoint)
-    , testCase
-        "the node relays an announcement, and offers at its point, to a listener that connects just before the node stops relaying it"
-        $ runSimFinishingWithin 400 (listenerJoinsAtAge (maxAgeSend - 1))
-          >>= (@?= relayedFetchedAt fetchedPoint)
-    , testCase
-        "the node relays nothing of an announcement to a listener that connects once the node has stopped relaying it"
-        $ runSimFinishingWithin
-          400
-          (listenerJoinsAtAge (maxAgeSend + realToFrac NotifyLog.notifyLogPruneCadence + 1))
-          >>= (@?= [])
+    , testProperty
+        "the node relays an announcement, and offers at its point, to a listener that connects before the node stops relaying it, and nothing to one that connects after, whatever the listener's immutable tip and clock"
+        prop_listenerReach
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on, and not before" $
         forM_ [minBound .. maxBound] $ \ntnVersion -> do
           let runs = ntnVersion >= NodeToNodeV_16
@@ -1859,39 +1846,90 @@ announcingLater =
 laterPoint :: LeiosPoint
 laterPoint = MkLeiosPoint (blockSlot announcingLater) (endorserBlockHash fetchedEb)
 
--- | A listener with this immutable tip, and with its clock this far ahead of
--- the node's, or behind if negative, connects. At the onset of the slot of
--- 'announcingLater', by the node's clock, a holder announces 'fetchedEb' there,
--- offers its body and its closure, and serves both. The notifications the
--- listener records, by 'relayHorizon' after the third.
-listenerHears :: Point LeiosTestBlock -> NominalDiffTime -> IOSim s [Relayed]
-listenerHears immTip offset = withNode $ \nut -> do
-  listener <- newListenerWith nut immTip offset
-  notifications <- newTQueueIO
-  withNodeVsEnvConnection nut (PeerAddr 2) (listening nut listener) $ \_listenerConn -> do
-    threadDelay 15
-    atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingLater)
-    withNodeVsEnvConnection nut (PeerAddr 1) (holdingFetched nut notifications) $ \_holderConn ->
-      relayedBy listener 3
+-- | Property: a listener hears the announcement of 'fetchedEb' in
+-- 'announcingLater', and the offers at its point, if it connects while the
+-- announcement is at most a second younger than 'maxAgeSend', and hears nothing
+-- if it connects once the announcement is older than that by more than the
+-- NotifyLog's prune cadence. Between the two, whether the node's NotifyLog has
+-- pruned the announcement yet decides. That holds whatever the listener's
+-- immutable tip, and however far its clock is from the node's within the clock
+-- skew that the node allows.
+prop_listenerReach :: Property
+prop_listenerReach =
+  withNumTests 50 $
+    forAll genReach $ \(immTip, offset, age) ->
+      let expected
+            | age <= maxAgeSend - 1 = relayedFetchedAt laterPoint
+            | otherwise = []
+       in ioProperty $ do
+            relays <-
+              runSimFinishingWithin
+                (realToFrac (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits) + 100)
+                (listenerReach immTip offset age (length expected))
+            pure $
+              tabulate "listener connects" [connects age] $
+                tabulate "listener's clock" [clock offset] $
+                  relays === expected
+ where
+  connects age
+    | age < 0 = "before the announcement"
+    | age <= maxAgeSend - 1 = "while the node relays it"
+    | otherwise = "once the node no longer relays it"
+  clock offset
+    | offset == 0 = "the node's"
+    | abs offset == realToFrac (InFutureCheck.unClockSkew InFutureCheck.defaultClockSkew) =
+        "at the allowed skew"
+    | otherwise = "within the allowed skew"
 
--- | A holder announces 'fetchedEb' in 'announcingFetched', offers its body and
--- its closure, serves both, and disconnects once the node has acquired them.
--- Then a listener connects, once that announcement is this old, by the onset
--- of its slot. The notifications the listener records, by 'relayHorizon' after
--- that.
-listenerJoinsAtAge :: DiffTime -> IOSim s [Relayed]
-listenerJoinsAtAge age = withNode $ \nut -> do
+-- | A listener's immutable tip, how far its clock is ahead of the node's (or
+-- behind, if negative), and how old the announcement is when it connects, by
+-- the onset of its slot (negative if before that onset). The ages skip the
+-- band in which the node's NotifyLog may or may not have pruned it yet.
+genReach :: Gen (Point LeiosTestBlock, NominalDiffTime, DiffTime)
+genReach = do
+  immTip <- elements [GenesisPoint, immutableTipInSlot5]
+  offset <- realToFrac <$> oneof [elements [-skew, 0, skew], choose (-skew, skew)]
+  age <-
+    fromInteger
+      <$> oneof
+        [ choose (-slot, -1)
+        , choose (0, lastRelayed)
+        , elements [lastRelayed, firstUnrelayed]
+        , choose (firstUnrelayed, 2 * firstUnrelayed)
+        ]
+  pure (immTip, offset, age)
+ where
+  skew :: Double
+  skew = realToFrac (InFutureCheck.unClockSkew InFutureCheck.defaultClockSkew)
+  slot = fromIntegral (unSlotNo (blockSlot announcingLater))
+  lastRelayed = round (maxAgeSend - 1)
+  firstUnrelayed = round (maxAgeSend + realToFrac NotifyLog.notifyLogPruneCadence + 1)
+
+-- | A listener with this immutable tip, and with its clock this far ahead of
+-- the node's, or behind if negative, connects when the announcement of
+-- 'fetchedEb' in 'announcingLater' is this old, by the onset of its slot. At
+-- that onset, by the node's clock, a holder announces 'fetchedEb' there,
+-- offers its body and its closure, serves both, and disconnects once the node
+-- has acquired them. The notifications the listener records, by 'relayHorizon'
+-- after the given number.
+listenerReach :: Point LeiosTestBlock -> NominalDiffTime -> DiffTime -> Int -> IOSim s [Relayed]
+listenerReach immTip offset age expected = withNode $ \nut -> do
   next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
   notifications <- newTQueueIO
-  atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
-  withNodeVsEnvConnection nut (PeerAddr 1) (holdingFetched nut notifications) $ \_holderConn ->
-    replicateM_ 2 $ atomically next
-  now <- getMonotonicTime
-  -- A slot's onset is as many seconds into the simulation as its number.
-  threadDelay $ diffTime (Time (fromIntegral (unSlotNo (blockSlot announcingFetched)) + age)) now
-  listener <- newListener nut
-  withNodeVsEnvConnection nut (PeerAddr 2) (listening nut listener) $ \_listenerConn ->
-    relayedBy listener 0
+  listener <- newListenerWith nut immTip offset
+  let
+    -- A slot's onset is as many seconds into the simulation as its number.
+    onset = Time (fromIntegral (unSlotNo (blockSlot announcingLater)))
+    waitUntil t = getMonotonicTime >>= threadDelay . diffTime t
+    holder = do
+      waitUntil onset
+      atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingLater)
+      withNodeVsEnvConnection nut (PeerAddr 1) (holdingFetched nut notifications) $ \_holderConn ->
+        replicateM_ 2 $ atomically next
+  withAsync holder $ \_ -> do
+    waitUntil (addTime age onset)
+    withNodeVsEnvConnection nut (PeerAddr 2) (listening nut listener) $ \_listenerConn ->
+      relayedBy listener expected
 
 -- | How old an announcement the node relays.
 maxAgeSend :: DiffTime
