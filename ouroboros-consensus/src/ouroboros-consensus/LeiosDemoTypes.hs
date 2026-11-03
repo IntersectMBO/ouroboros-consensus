@@ -1706,8 +1706,7 @@ data TraceLeiosKernel
     TraceLeiosAdaptiveEb
       { ebPoint :: LeiosPoint
       , participation :: Double
-      , aliveStake :: Double
-      , marginShare :: Double
+      , missedQuorum :: Bool
       , certifiable :: Bool
       , ebCapacityScale :: Double
       }
@@ -2090,8 +2089,7 @@ traceLeiosKernelToObject = \case
   TraceLeiosAdaptiveEb
     { ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash
     , participation
-    , aliveStake
-    , marginShare
+    , missedQuorum
     , certifiable
     , ebCapacityScale
     } ->
@@ -2100,8 +2098,7 @@ traceLeiosKernelToObject = \case
         , "ebHash" .= prettyEbHash ebHash
         , "ebSlot" .= ebSlot
         , "participation" .= participation
-        , "aliveStake" .= aliveStake
-        , "marginShare" .= marginShare
+        , "missedQuorum" .= missedQuorum
         , "certifiable" .= certifiable
         , "ebCapacityScale" .= ebCapacityScale
         ]
@@ -2489,15 +2486,12 @@ traceLeiosKernelForHuman = \case
       <> showT voteIn
       <> ", deadline in "
       <> showT deadlineIn
-  TraceLeiosAdaptiveEb{ebPoint, participation, aliveStake, marginShare, certifiable, ebCapacityScale} ->
+  TraceLeiosAdaptiveEb{ebPoint, participation, missedQuorum, certifiable, ebCapacityScale} ->
     "Leios adaptive EB: "
       <> T.pack (show ebPoint)
       <> " participation "
       <> showT participation
-      <> " of alive "
-      <> showT aliveStake
-      <> ", margin share "
-      <> showT marginShare
+      <> (if missedQuorum then " (missed quorum)" else "")
       <> (if certifiable then "" else " (not certifiable)")
       <> ", capacity scale "
       <> showT ebCapacityScale
