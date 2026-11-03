@@ -113,6 +113,7 @@ data VolStmts = VolStmts
   , stFillEbTxBytes :: !DB.Statement
   , stFillEbTxBytesLocally :: !DB.Statement
   , stHeldOffsets :: !DB.Statement
+  , stDeclaredTxSize :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
@@ -156,6 +157,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
   stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
   stHeldOffsets <- prep sql_held_offsets
+  stDeclaredTxSize <- prep sql_declared_tx_size
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
@@ -175,6 +177,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stFillEbTxBytes
   dbFinalize stFillEbTxBytesLocally
   dbFinalize stHeldOffsets
+  dbFinalize stDeclaredTxSize
   dbFinalize stDecrMissingCount
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure

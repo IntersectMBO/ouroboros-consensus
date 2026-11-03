@@ -116,7 +116,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- nothing, and that tx stays fetchable.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
   -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
@@ -130,6 +130,10 @@ data LeiosDbWriter m = LeiosDbWriter
   -- - is not in the body,
   -- - or it is already stored,
   -- - or its size is not the declared one.
+  --
+  -- Returns the offsets of the transactions dropped because the EB referenced
+  -- them with the wrong size: no such closure can be stored, and an honest
+  -- peer never serves one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 

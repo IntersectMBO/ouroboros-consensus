@@ -14,6 +14,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM, forM_, when)
 import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
@@ -128,6 +129,9 @@ sqlInsertEbBody tracer conn point eb fills = do
 -- * its offset is not in the body;
 -- * its offset is already filled (@filled = 1@);
 -- * or its size is not the declared one.
+--
+-- Returns the offsets of those dropped because the EB referenced them with the
+-- wrong size.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -135,32 +139,46 @@ sqlInsertTxs ::
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   [(TxOffset, ByteString)] ->
-  IO ()
+  IO [TxOffset]
 sqlInsertTxs _tracer conn point txBytesWithOffsets = do
   dbWithWriteTransaction conn $ do
-    -- Fill the pre-allocated rows of the ebTxBytes table.
-    -- Count how many txs were successfully filled (i.e. not dropped).
-    nFilled <-
+    -- Fill the pre-allocated rows of the ebTxBytes table, counting how many
+    -- txs filled, and collecting those dropped because the EB referenced them
+    -- with the wrong size.
+    (nFilled, wrongSize) <-
       foldM
-        ( \acc (txOffset, txBytes) -> do
+        ( \(n, wrong) (txOffset, txBytes) -> do
             useStmt stFillEbTxBytes $ do
               dbBindPoint stFillEbTxBytes point
               dbBindInt64 stFillEbTxBytes 3 (fromIntegral txOffset)
               dbBindBlob stFillEbTxBytes 4 txBytes
               dbStep1 stFillEbTxBytes
             changed <- DB.changes db
-            pure (acc + fromIntegral changed)
+            if changed > 0
+              then pure (n + fromIntegral changed, wrong)
+              else do
+                declared <- useStmt stDeclaredTxSize $ do
+                  dbBindPoint stDeclaredTxSize point
+                  dbBindInt64 stDeclaredTxSize 3 (fromIntegral txOffset)
+                  dbStep stDeclaredTxSize >>= \case
+                    DB.Done -> pure Nothing
+                    DB.Row -> Just <$> DB.columnInt64 stDeclaredTxSize 0
+                pure $ case declared of
+                  Just size | size /= fromIntegral (BS.length txBytes) -> (n, txOffset : wrong)
+                  _ -> (n, wrong)
         )
-        (0 :: Int64)
+        (0 :: Int64, [])
         txBytesWithOffsets
     when (nFilled > 0) $
       useStmt stDecrMissingCount $ do
         dbBindPoint stDecrMissingCount point
         dbBindInt64 stDecrMissingCount 3 nFilled
         dbStep1 stDecrMissingCount
+    pure (reverse wrongSize)
  where
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
     { stFillEbTxBytes
     , stDecrMissingCount
+    , stDeclaredTxSize
     } = connVolStmts

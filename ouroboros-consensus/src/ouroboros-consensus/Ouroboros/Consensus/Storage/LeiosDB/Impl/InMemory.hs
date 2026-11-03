@@ -18,6 +18,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , modifyTVar
   , newTVarIO
   , readTVar
+  , stateTVar
   , writeTVar
   )
 import Data.ByteString (ByteString)
@@ -308,12 +309,12 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m ()
+  m [TxOffset]
 imInsertTxs stateVar point offBytes = atomically $
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
   -- pre-allocated row, i.e. an offset the body declared, once, at the declared
   -- size. Anything else changes nothing.
-  modifyTVar stateVar $ \s ->
+  stateTVar stateVar $ \s ->
     let declared = Map.findWithDefault IntMap.empty point (imEbBodies s)
         held = volatileTxBytes s point
         accepted =
@@ -324,9 +325,17 @@ imInsertTxs stateVar point offBytes = atomically $
             , fromIntegral (BS.length bytes) == eteTxBytesSize e
             , not (IntMap.member off held)
             ]
-     in if IntMap.null accepted
-          then s
-          else s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
+        wrongSize =
+          [ off
+          | (off, bytes) <- offBytes
+          , Just e <- [IntMap.lookup off declared]
+          , fromIntegral (BS.length bytes) /= eteTxBytesSize e
+          ]
+     in ( wrongSize
+        , if IntMap.null accepted
+            then s
+            else s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
+        )
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete, as in the SQLite backend.

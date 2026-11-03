@@ -399,7 +399,7 @@ populateDb opts db =
           txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
       bodyWritten <- writeEbBody writer point eb []
       txsWritten <- writeTxs writer point txs
-      awaitAll [void bodyWritten, txsWritten]
+      awaitAll [void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- * Deterministic data generation (as in leios-db-bench)
@@ -495,7 +495,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                   bodyWritten <- writeEbBody w point eb []
                   txsWritten <- writeTxs w point txs
                   -- Awaiting both times them to durability.
-                  awaitAll [void bodyWritten, txsWritten]
+                  awaitAll [void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup

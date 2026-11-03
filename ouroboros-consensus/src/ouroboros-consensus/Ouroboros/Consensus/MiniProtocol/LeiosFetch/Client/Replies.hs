@@ -21,7 +21,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , acquireCachedBody
   ) where
 
-import Control.Monad (foldM, forM_, void, when)
+import Control.Monad (foldM, forM_, unless, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
@@ -171,6 +171,11 @@ data ExnLeiosFetchInvalidReply
   | -- | The transactions that arrived for a job are not the ones its
     -- endorser block lists.
     ExnLeiosBlockTxsJobMismatch !LeiosPoint !Jobs.LeiosJobId !JobMismatch
+  | -- | Transactions arrived whose sizes are not the ones their endorser block
+    -- declares, at these offsets, so the LeiosDB took none of them. An honest
+    -- peer offers only a closure it holds, and its LeiosDB would not have taken
+    -- these either.
+    ExnLeiosBlockTxsWrongSize !LeiosPoint ![TxOffset]
   deriving Show
 
 instance Exception ExnLeiosFetchInvalidReply
@@ -433,7 +438,7 @@ processLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
+processLeiosBlockTxs ctx peer (MkLeiosBlockTxsRequest point jobs) txs = do
   now <- systemTimeCurrent lfcSystemTime
   when (V.length txs /= IntSet.size offsetsSet) $
     invalidReply $
@@ -508,9 +513,16 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     throwIO exn
 
   settleTxs now txsWritten toIngest = do
-    await txsWritten
+    wrongSize <- IntSet.fromList <$> await txsWritten
+    -- A job with a tx the LeiosDB dropped because the EB referenced it with the
+    -- wrong size stays to be fetched, and picked by this peer until its
+    -- disconnection, below, releases it.
+    let settled =
+          NEIntMap.filter (\(Jobs.MkLeiosJob offs _ _) -> IntSet.disjoint offs wrongSize) jobs
     completed <- modifyMVar lfcOutstanding $ \outstanding -> do
-      let outstanding' = completeTxRequest peer req outstanding
+      let outstanding' = case NEIntMap.nonEmptyMap settled of
+            Nothing -> outstanding
+            Just settledJobs -> completeTxRequest peer (MkLeiosBlockTxsRequest point settledJobs) outstanding
       case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
         ( Just (MkEbState _ (BodyAcquired before))
           , Just (MkEbState onset (BodyAcquired after))
@@ -522,11 +534,19 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
         _ -> pure (outstanding', Nothing)
     -- These bytes are durable now: advertise them as fill sources for later
     -- endorser blocks referencing the same txs.
-    setTxLocations lfcTxCache point [(off, txHash) | (off, txHash, _bytes) <- toIngest]
+    setTxLocations
+      lfcTxCache
+      point
+      [(off, txHash) | (off, txHash, _bytes) <- toIngest, not (IntSet.member off wrongSize)]
     void $ tryPutMVar lfcReady ()
     forM_ completed $ \(acquiredPoint, onset) ->
       traceWith lfcTracer $
         TraceLeiosFetchClientBlockTxsAcquired acquiredPoint (ageAt now onset)
+    -- Through the link to the client's thread, this disconnects the peer, if
+    -- the client still runs.
+    unless (IntSet.null wrongSize) $
+      throwIO $
+        ExnLeiosBlockTxsWrongSize point (IntSet.toList wrongSize)
 
 -- | How long after this onset @now@ is, if there is an onset.
 ageAt :: RelativeTime -> StrictMaybe RelativeTime -> Maybe NominalDiffTime

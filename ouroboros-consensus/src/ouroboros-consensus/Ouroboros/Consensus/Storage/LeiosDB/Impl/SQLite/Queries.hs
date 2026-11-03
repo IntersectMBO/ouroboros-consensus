@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_fill_ebTxBytes
   , sql_fill_ebTxBytes_locally
   , sql_held_offsets
+  , sql_declared_tx_size
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
   , sql_retrieve_from_ebTxs_json
@@ -124,6 +125,11 @@ sql_held_offsets =
   \WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND filled = 1\n\
   \ORDER BY txOffset\n\
   \"
+
+-- | The size the point's body declares for its tx at offset @?3@.
+sql_declared_tx_size :: String
+sql_declared_tx_size =
+  "SELECT txBytesSize FROM ebTxs WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND txOffset = ?3"
 
 -- | Decrement the point's missingTxCount, if it has one, by the number of
 -- tx-bytes rows a batch actually filled.

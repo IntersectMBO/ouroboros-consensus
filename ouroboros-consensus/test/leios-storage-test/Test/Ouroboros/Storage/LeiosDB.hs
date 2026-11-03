@@ -143,7 +143,12 @@ rwInsertEbBodyFilling ::
 rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
-rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
+rwInsertTxs rw point txs = void $ rwInsertTxsDropping rw point txs
+
+-- | 'rwInsertTxs', returning the offsets of the txs dropped because the EB
+-- referenced them with the wrong size.
+rwInsertTxsDropping :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
+rwInsertTxsDropping rw point txs = await =<< writeTxs (rwWriter rw) point txs
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
@@ -564,19 +569,21 @@ test_malformedTxWritesDropped db = do
       offsets = [0, 1]
   withRW db $ \con -> do
     rwInsertEbBody con point eb
-    -- An offset the body does not declare, and wrong-sized bytes.
-    rwInsertTxs
+    -- An offset the body does not declare, and wrong-sized bytes, which are
+    -- reported.
+    rwInsertTxsDropping
       con
       point
       [ (2, txBytesFor eb 0)
       , (0, BS.snoc (txBytesFor eb 0) 0)
       , (1, BS.take 1 (txBytesFor eb 1))
       ]
+      >>= (@?= [0, 1])
     retrieved <- rwBatchRetrieveTxs con point offsets
     [bytes | (_, _, bytes) <- retrieved] @?= [Nothing, Nothing]
     -- A duplicate delivery keeps the first bytes and does not count twice.
     rwInsertTxs con point [(0, txBytesFor eb 0)]
-    rwInsertTxs con point [(0, BS.map (+ 1) (txBytesFor eb 0))]
+    rwInsertTxsDropping con point [(0, BS.map (+ 1) (txBytesFor eb 0))] >>= (@?= [])
     retrieved' <- rwBatchRetrieveTxs con point [0]
     [bytes | (_, _, bytes) <- retrieved'] @?= [Just (txBytesFor eb 0)]
     holdsClosure con point >>= (@?= False)
@@ -957,8 +964,9 @@ data Op
 type Bodies = Map.Map EndorserBlockHash (EndorserBlock, [Int])
 
 -- | Property: running the same operations against both implementations, a
--- reader sees the same in each, each body write fills the same offsets from
--- other points, and after each write the same points hold complete closures.
+-- reader sees the same in each, each body write reports the same offsets held,
+-- each tx write drops the same txs because the EB referenced them with the
+-- wrong size, and after each write the same points hold complete closures.
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
@@ -1111,15 +1119,16 @@ observe db settle bodies ops = withRW db $ \rw -> do
       | otherwise -> go rw frontier bodied pinned nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
-      rwInsertTxs
-        rw
-        point
-        [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
-        | offset <- offsets
-        ]
+      dropped <-
+        rwInsertTxsDropping
+          rw
+          point
+          [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
+          | offset <- offsets
+          ]
       settle 0
       complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
-      fmap (([], complete) :) <$> go rw frontier bodied pinned nEvicted rest
+      fmap ((sort dropped, complete) :) <$> go rw frontier bodied pinned nEvicted rest
     OpPromote point
       | point `elem` bodied && point `notElem` pinned -> do
           complete <- isJust <$> rwLookupEbClosure rw point

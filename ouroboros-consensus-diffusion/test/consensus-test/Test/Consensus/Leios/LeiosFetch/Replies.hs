@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Tests of how the node's LeiosFetch client takes in replies, against an
 -- in-memory LeiosDB.
@@ -7,6 +8,7 @@ module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , atomically
@@ -19,11 +21,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVar
   , readTVarIO
   )
-import Control.Exception (try)
+import Control.Exception (SomeException, try)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
+import Data.List (isInfixOf)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -47,6 +50,8 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , hashLeiosTx
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
@@ -58,6 +63,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
+  , LeiosBlockTxsRequest
   , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
   , PeerOffer (..)
@@ -98,6 +104,9 @@ tests =
     , testCase
         "the client acquires nothing for a body whose point was pruned while it was being written, and fetches the endorser block again at a newer point"
         test_prunedWhileWriting
+    , testCase
+        "the client acquires no closure whose transactions are not the sizes its endorser block declares, and disconnects the peer that served them"
+        test_wrongSizedTxs
     ]
 
 -- | What a notification says, comparably.
@@ -127,9 +136,13 @@ newContext = newContextHolding (pure ())
 
 -- | 'newContext', whose body writes are not done until this returns.
 newContextHolding :: IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
-newContextHolding release = do
-  let (point, _eb, _txs) = fixture
-      MkLeiosPoint slot ebHash = point
+newContextHolding = let (point, _eb, _txs) = fixture in newContextAt point
+
+-- | 'newContextHolding', fetching the endorser block at this point instead.
+newContextAt ::
+  LeiosPoint -> IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+newContextAt point release = do
+  let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
   txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
@@ -181,7 +194,13 @@ test_acquisitions = do
   (ctx, notes) <- newContext
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
-  -- The peer offers the closure, so the decision logic asks it for the jobs.
+  closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | The one request the decision logic makes of a peer that offers the closure
+-- of the endorser block at this point, whose body the client holds.
+closureRequest :: LeiosFetchClientContext IO Int -> LeiosPoint -> IO LeiosBlockTxsRequest
+closureRequest ctx point = do
   reqs <-
     modifyMVar (lfcOutstanding ctx) $ \outstanding -> do
       let (outstanding', decisions, _drops) =
@@ -194,9 +213,35 @@ test_acquisitions = do
               outstanding
       pure (outstanding', [r | LeiosBlockTxsRequest r <- foldMap toList decisions])
   case reqs of
-    [req] -> processLeiosBlockTxs ctx peer req (V.fromList txs)
+    [req] -> pure req
     _ -> assertFailure $ "expected one request, got " <> show (length reqs)
-  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | An endorser block that misstates the sizes of its two transactions, by
+-- amounts that cancel out, so that their job's count, total size and hashes
+-- all check out. The LeiosDB drops both, so the client acquires no closure, and
+-- its settlement throws, through its link to the client's thread.
+test_wrongSizedTxs :: Assertion
+test_wrongSizedTxs = do
+  let tx0 = MkLeiosTx (BS8.pack "tx zero")
+      tx1 = MkLeiosTx (BS8.pack "tx one")
+      eb = mkEndorserBlock [(hashLeiosTx tx0, 6), (hashLeiosTx tx1, 7)]
+      point = MkLeiosPoint (SlotNo 5) (endorserBlockHash eb)
+      expected = ExnLeiosBlockTxsWrongSize point [0, 1]
+  (ctx, notes) <- newContextAt point (pure ())
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  result <-
+    try $ do
+      processLeiosBlockTxs ctx peer req (V.fromList [tx0, tx1])
+      -- Until the settlement's exception interrupts this.
+      threadDelay 2000000
+  case result of
+    Left (exn :: SomeException)
+      | show expected `isInfixOf` show exn -> pure ()
+      | otherwise -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client settled the transactions without disconnecting the peer"
+  readTVarIO notes >>= (@?= [AcquiredBody point])
 
 test_wrongHash :: Assertion
 test_wrongHash = do

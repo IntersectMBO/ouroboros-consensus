@@ -73,8 +73,9 @@ data WriteJob
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
-      -- | where the worker puts the result
-      !(WriteResult ())
+      -- | where the worker puts the offsets dropped because the EB referenced
+      -- them with the wrong size
+      !(WriteResult [TxOffset])
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
