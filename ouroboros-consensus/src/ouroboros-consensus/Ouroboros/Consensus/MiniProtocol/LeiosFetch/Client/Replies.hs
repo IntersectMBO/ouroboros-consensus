@@ -95,6 +95,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
+  , unwrittenTx
   , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -450,7 +451,7 @@ processEndorserBlock ctx peer req eb = do
         (held, stillFilled) <- withReader lfcLeiosDb $ \reader -> do
           body <- lookupEbBody reader ebHash
           txs <- batchRetrieveTxs reader ebHash filledOffs
-          pure (isJust body, [off | (off, _txHash, Just _bytes) <- txs])
+          pure (isJust body, [off | (off, bytes) <- txs, not (unwrittenTx bytes)])
         if held then claimBody stillFilled slot else pure ([], Nothing)
 
 -- | What settling a body finds, holding the lock on the fetch state.

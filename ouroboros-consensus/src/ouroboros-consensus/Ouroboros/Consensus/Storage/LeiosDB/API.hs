@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
     -- * Reading
   , LeiosDbReader (..)
   , withReader
+  , unwrittenTx
   , allocateReader
 
     -- * Writing
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
 import Cardano.Slotting.Slot (SlotNo)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Foldable (traverse_)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
@@ -34,14 +36,13 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint
-  , TxHash
   , TxLocation
   , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
--- | The Leios database. Hands out readers, writers and subscriptions.
+-- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
   { closeLeiosDbHandle :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs
@@ -74,14 +75,17 @@ data LeiosDbReader m = LeiosDbReader
   , lookupEbBody :: HasCallStack => EndorserBlockHash -> m (Maybe ByteString)
   -- ^ The EB "body" in its envelope, in the bytes it arrived in
   -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), to serve as
-  -- is, or 'Nothing' if the LeiosDB does not hold it.
-  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
-  -- not complete.
+  -- is.
+  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [ByteString])
+  -- ^ The EB "closure": the bytes of its txs in body order, or 'Nothing' if
+  -- the EB body is not stored. Txs not written yet are zeroes ('unwrittenTx'): whether the EB
+  -- is complete, and whether the bytes match the body's hashes, is for the
+  -- caller to know.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EndorserBlockHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EndorserBlockHash -> [Int] -> m [(Int, ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, in ascending order: the
+  -- offsets the body declares, each with its bytes, zeroes if not written yet ('unwrittenTx').
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every announced EB point.
   --
@@ -91,10 +95,10 @@ data LeiosDbReader m = LeiosDbReader
       HasCallStack =>
       SlotNo -> m [LeiosPoint]
   -- ^ EBs whose closure is complete and whose announcer is no older than the
-  -- given slot. Seeds the ChainDB's acquired-closures set at startup.
+  -- given slot. Seeds the acquired-closures sets at startup.
   --
-  -- The LeiosDB does not track completeness, so this infers it from the txs
-  -- it holds. Startup only.
+  -- The LeiosDB does not track completeness, so this hashes the txs of every
+  -- such EB against its body. Startup only.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 
@@ -113,9 +117,10 @@ data LeiosDbWriter m = LeiosDbWriter
       LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
   -- ^ Persist an EB body, and fill what it can from local bytes: each
   -- 'LocalFill' pairs an offset in this body with the 'TxLocation' of another
-  -- EB durably holding the same tx, copied in the same transaction. Returns the
-  -- offsets that actually filled: a fill whose source does not hold the tx this
-  -- body lists at its offset fills nothing, and that tx stays fetchable.
+  -- EB holding the same tx, copied in the same transaction. Returns the
+  -- offsets that actually filled: a fill whose source does not hold bytes
+  -- hashing to the tx this body lists at its offset fills nothing, and that tx
+  -- stays fetchable.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
@@ -136,8 +141,9 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- A transaction may be dropped by the implementation if:
   -- - is not in the body,
-  -- - or it is already stored,
   -- - or its size is not the declared one.
+  --
+  -- A transaction written again overwrites itself, with the same bytes.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -157,6 +163,13 @@ awaitAll = traverse_ await
 -- | A cross-EB fill: fill the EB's tx at 'TxOffset' from the tx's durable
 -- 'TxLocation' in another EB. See 'writeEbBody'.
 type LocalFill = (TxOffset, TxLocation)
+
+-- | Whether a tx read back may never have been written: the reads return
+-- zeroes for those. A tx's real bytes may be zeroes too, so use this only
+-- where taking such a tx as unwritten is harmless, eg to read it from another
+-- copy instead.
+unwrittenTx :: ByteString -> Bool
+unwrittenTx = BS.all (== 0)
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader

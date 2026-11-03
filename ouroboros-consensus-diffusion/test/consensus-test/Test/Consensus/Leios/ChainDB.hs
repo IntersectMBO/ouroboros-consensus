@@ -13,6 +13,7 @@ import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
   ( Point
@@ -102,17 +103,10 @@ bodiesAfterGc :: IOSim s (Maybe BS.ByteString, Maybe BS.ByteString)
 bodiesAfterGc = withNode $ \nut -> do
   let leiosDb = getLeiosDB (nutKernel nut)
   withWriter leiosDb $ \writer ->
-    forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
+    forM_ [(pointA, ebA, txA), (pointB, ebB, txB)] $ \(point, eb, tx) -> do
       await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
       void $ await =<< writeEbBody writer point eb []
-      void $
-        await
-          =<< writeTxs
-            writer
-            point
-            [ (offset, BS.replicate (fromIntegral size) 0)
-            | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
-            ]
+      void $ await =<< writeTxs writer point [(0, tx)]
   atomically $
     mapM_
       ( \(point, eb) -> announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs point (leiosEbSizes eb))
@@ -167,9 +161,7 @@ heldAcrossRestart whatOfA = do
             =<< writeTxs
               writer
               pointA
-              [ (offset, BS.replicate (fromIntegral size) 0)
-              | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
-              ]
+              [(0, txA)]
   beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \nut -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
@@ -225,9 +217,14 @@ certifyingA =
 announcingB =
   setAnnouncement (pointEbHash pointB) (encodeEndorserBlockSize ebB) (successorLeiosBlock certifyingA)
 
+-- | A and B each name one transaction of ten bytes.
 ebA, ebB :: EndorserBlock
-ebA = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 1), 10)]
-ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
+ebA = endorserBlockFromTxBytes (txA :| [])
+ebB = endorserBlockFromTxBytes (txB :| [])
+
+txA, txB :: BS.ByteString
+txA = BS.replicate 10 1
+txB = BS.replicate 10 2
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
 -- body but not its transactions. The tip of the selected chain before they
@@ -250,9 +247,7 @@ tipsAroundClosure = withNode $ \nut -> do
         =<< writeTxs
           writer
           pointA
-          [ (offset, BS.replicate (fromIntegral size) 0)
-          | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
-          ]
+          [(0, txA)]
   atomically $
     announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs pointA (leiosEbSizes ebA))
   threadDelay 1
@@ -272,9 +267,7 @@ tipWithClosureBeforeStart = do
         =<< writeTxs
           writer
           pointA
-          [ (offset, BS.replicate (fromIntegral size) 0)
-          | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
-          ]
+          [(0, txA)]
   withNodeOver leiosDb $ \nut -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20

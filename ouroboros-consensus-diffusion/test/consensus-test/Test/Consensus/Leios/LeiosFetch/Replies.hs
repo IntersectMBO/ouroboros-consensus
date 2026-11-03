@@ -404,7 +404,7 @@ test_collectedAndRewrittenWhileWriting filled = do
       V.fromList [txs !! off | off <- IntSet.toAscList (foldMap (\(MkLeiosJob offs _ _) -> offs) jobs)]
   awaitNotes notes 2 >>= (@?= [AcquiredBody newer, AcquiredClosure newer])
   closure <- withReader (lfcLeiosDb ctx) $ \reader -> lookupEbClosure reader ebHash
-  fmap (map snd) closure @?= Just (map leiosTxBytes txs)
+  closure @?= Just (map leiosTxBytes txs)
 
 -- | Another endorser block, announced in slot 3, holding these txs after one
 -- of its own: the LeiosDB holds its closure, and the tx cache knows where.

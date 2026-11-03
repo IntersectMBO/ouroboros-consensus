@@ -363,7 +363,7 @@ timedStep BenchEb{beMeasured} metric record action = do
 closureRead :: LeiosDbReader IO -> BenchEb -> Metric -> Record -> IO () -> IO ()
 closureRead r BenchEb{beHash, beMeasured} metric record missing = do
   t <- getMonotonicTime
-  mClosure <- lookupEbClosure r beHash
+  mClosure <- evaluate . force =<< lookupEbClosure r beHash
   t' <- getMonotonicTime
   case mClosure of
     Nothing -> missing
@@ -374,16 +374,16 @@ closureRead r BenchEb{beHash, beMeasured} metric record missing = do
 servePeer :: Int -> LeiosDbReader IO -> BenchEb -> Time -> Record -> IO () -> IO ()
 servePeer seed r BenchEb{beIdx, beHash, beMeasured} completed record missing = do
   t <- getMonotonicTime
-  body <- lookupEbBody r beHash
+  body <- evaluate . force =<< lookupEbBody r beHash
   t' <- getMonotonicTime
   if isNothing body
     then missing
     else when beMeasured $ record ServeBody (diffTime t' t)
   forM_ (requests seed beIdx) $ \offsets -> do
     u <- getMonotonicTime
-    txs <- batchRetrieveTxs r beHash offsets
+    txs <- evaluate . force =<< batchRetrieveTxs r beHash offsets
     u' <- getMonotonicTime
-    if length [() | (_, _, Just _) <- txs] /= length offsets
+    if length txs /= length offsets
       then missing
       else when beMeasured $ record ServeTxs (diffTime u' u)
   done <- getMonotonicTime

@@ -130,18 +130,20 @@ serveTxs ::
 serveTxs tracer reader point bitmaps = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  -- One row for each requested offset that the endorser block has, with its
-  -- bytes if the node holds them.
+  -- One row for each requested offset that the endorser block has. A tx the
+  -- node does not hold yet reads as zeroes: what the node offered, it holds.
+  -- Zeroes can also be a tx's real bytes, so they cannot tell an unheld one.
   rows <- batchRetrieveTxs reader (pointEbHash point) offsets
-  case traverse (\(_offset, _txHash, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
-    Just txs | length txs == length offsets -> do
-      let n = length txs
+  if length rows == length offsets
+    then do
+      let txs = [MkLeiosTx bytes | (_offset, bytes) <- rows]
+          n = length txs
       traceWith tracer $
         TraceLeiosFetchServerTxsServed point n (sum [BS.length (leiosTxBytes tx) | tx <- txs])
       pure $ V.fromListN n txs
-    _ -> do
-      let held = IntSet.fromList [offset | (offset, _txHash, Just _bytes) <- rows]
-      throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` held) offsets)
+    else do
+      let declared = IntSet.fromList [offset | (offset, _bytes) <- rows]
+      throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` declared) offsets)
  where
   offsets = bitmapOffsets bitmaps
 
