@@ -185,7 +185,9 @@ import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
+  , checkCoverage
   , choose
+  , cover
   , elements
   , forAll
   , ioProperty
@@ -343,42 +345,9 @@ tests =
         "the node selects a block certifying an endorser block that another election announced at another size"
         $ runSimFinishing nodeSelectsDespiteMisstatedSize
           >>= (@?= blockPoint certifyingFetched)
-    , testCase
-        "the node disconnects a peer that serves an endorser block referencing more transaction bytes than the ledger allows"
-        $ runSimFinishing (nodeFetchClientFails (oneTxEb (maxEbBodySize + 1)))
-          >>= ( @?=
-                  Just
-                    ( show
-                        ( ExnLeiosClosureTooBig
-                            (oneTxEbPoint (maxEbBodySize + 1))
-                            (fromIntegral maxEbBodySize + 1)
-                            maxEbBodySize
-                        )
-                    )
-              )
-    , testCase
-        "the node fetches an endorser block referencing as many transaction bytes as the ledger allows"
-        $ runSimFinishing (nodeFetchesOneTxEb (oneTxEb maxEbBodySize))
-          >>= ( @?=
-                  [ AcquiredBody (oneTxEbPoint maxEbBodySize)
-                  , AcquiredClosure (oneTxEbPoint maxEbBodySize)
-                  ]
-              )
-    , testCase
-        "the node does not acquire an endorser block larger than the ledger allows, though it references few transaction bytes"
-        $ runSimFinishing nodeRefusesOversizedEb
-          >>= ( @?=
-                  ( Just
-                      ( show
-                          ( ExnLeiosBlockWrongSize
-                              oversizedPoint
-                              maxEbBodySize
-                              (encodeEndorserBlockSize (fst oversizedEb))
-                          )
-                      )
-                  , Nothing
-                  )
-              )
+    , testProperty
+        "the node acquires an endorser block whose body and closure the ledger admits, and otherwise acquires nothing of it and disconnects the peer that served it"
+        prop_boundedEb
     , testCase
         "the node selects a block certifying an endorser block once the block arrives again after a restart forgot it"
         $ runSimFinishing nodeReselectsForgotten
@@ -1170,81 +1139,85 @@ misstating :: LeiosTestBlock -> LeiosTestBlock
 misstating =
   setAnnouncement (endorserBlockHash fetchedEb) (encodeEndorserBlockSize fetchedEb + 1)
 
--- | An endorser block of one transaction of this many bytes, and that
--- transaction.
-oneTxEb :: BytesSize -> (EndorserBlock, V.Vector LeiosTx)
-oneTxEb size = (mkEndorserBlock [(hashLeiosTx tx, size)], V.singleton tx)
+-- | Property: the node acquires the endorser block of 'evenEb' that a peer
+-- announces, offers and serves, as 'expectedBounded' says.
+prop_boundedEb :: Property
+prop_boundedEb =
+  checkCoverage $
+    forAll genEvenEb $ \(count, size) ->
+      let ebAndTxs@(eb, _txs) = evenEb count size
+       in cover
+            10
+            ( fromIntegral count * size == maxEbBodySize
+                && encodeEndorserBlockSize eb <= maxEbBodySize
+            )
+            "transactions totalling the most, in a body the ledger admits"
+            $ ioProperty
+            $ do
+              observed@(_acquired, failure) <- runSimFinishing (nodeTakesEvenEb ebAndTxs)
+              pure $
+                tabulate "the client" [maybe "fetched it" (("failed: " <>) . takeWhile (/= ' ')) failure] $
+                  observed === expectedBounded eb
+
+-- | How many transactions, and how big each, near where the endorser block's
+-- body or the total size of its transactions reaches 'maxEbBodySize', the most
+-- the node's ledger admits of either, and half the time totalling exactly that.
+genEvenEb :: Gen (Int, BytesSize)
+genEvenEb = oneof [near, exact]
  where
-  tx = MkLeiosTx (BS.replicate (fromIntegral size) 7)
+  most = fromIntegral maxEbBodySize :: Int
+  near = do
+    count <- choose (1, 200)
+    let fitting = most `div` count
+    size <- choose (max 1 (fitting - 2), fitting + 2)
+    pure (count, fromIntegral size)
+  exact = do
+    count <- elements [c | c <- [1 .. 200], most `mod` c == 0]
+    pure (count, fromIntegral (most `div` count))
 
--- | Where 'oneTxEbPeer' announces the endorser block of 'oneTxEb'.
-oneTxEbPoint :: BytesSize -> LeiosPoint
-oneTxEbPoint size = MkLeiosPoint 1 (endorserBlockHash (fst (oneTxEb size)))
-
--- | A peer that announces the endorser block, in the slot of 'oneTxEbPoint',
--- offers it and its closure, and serves both.
-oneTxEbPeer ::
-  NodeUnderTest (IOSim s) -> (EndorserBlock, V.Vector LeiosTx) -> IOSim s (EnvPeer (IOSim s))
-oneTxEbPeer nut (eb, txs) = do
-  notifications <- newTQueueIO
-  atomically $
-    mapM_ (writeTQueue notifications) $
-      announcingAndOffering eb $
-        setAnnouncement (endorserBlockHash eb) (encodeEndorserBlockSize eb) (firstLeiosBlock 0)
-  pure
-    EnvPeer
-      { epChainSyncServer = quietChainSyncServer
-      , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-      , epLeiosNotifyClient = Nothing
-      , epLeiosFetchServer = serving eb txs nut
-      , epLeiosFetchClient = Nothing
-      }
-
--- | The node's acquisitions, as it announces them, from 'oneTxEbPeer'.
-nodeFetchesOneTxEb :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s [Acquired]
-nodeFetchesOneTxEb ebAndTxs = withNode $ \nut -> do
-  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
-  envPeer <- oneTxEbPeer nut ebAndTxs
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
-    replicateM 2 $ acquiredOf <$> atomically next
-
--- | Why the node's LeiosFetch client for 'oneTxEbPeer' failed, if it did.
-nodeFetchClientFails :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s (Maybe String)
-nodeFetchClientFails ebAndTxs = withNode $ \nut -> do
-  envPeer <- oneTxEbPeer nut ebAndTxs
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
-    client <-
-      maybe (throwIO $ userError "the node does not run a LeiosFetch client") pure $
-        Map.lookup leiosFetchMiniProtocolNum (connNodeInitiators conn)
-    atomically client <&> \case
-      Left e -> Just (show e)
-      Right _ -> Nothing
-
--- | An endorser block larger than the ledger allows, referencing only one byte
--- per transaction, and those transactions.
-oversizedEb :: (EndorserBlock, V.Vector LeiosTx)
-oversizedEb = (mkEndorserBlock [(hashLeiosTx tx, 1) | tx <- V.toList txs], txs)
+-- | An endorser block of this many transactions, each of this many bytes, and
+-- those transactions.
+evenEb :: Int -> BytesSize -> (EndorserBlock, V.Vector LeiosTx)
+evenEb count size = (mkEndorserBlock [(hashLeiosTx tx, size) | tx <- V.toList txs], txs)
  where
-  txs = V.fromList [MkLeiosTx (BS.singleton w) | w <- [0 .. 199]]
+  txs =
+    V.fromList
+      [MkLeiosTx (BS.replicate (fromIntegral size) (fromIntegral i)) | i <- [0 .. count - 1]]
 
-oversizedPoint :: LeiosPoint
-oversizedPoint = MkLeiosPoint 1 (endorserBlockHash (fst oversizedEb))
+-- | Where 'nodeTakesEvenEb' announces the endorser block.
+evenEbPoint :: EndorserBlock -> LeiosPoint
+evenEbPoint eb = MkLeiosPoint 1 (endorserBlockHash eb)
 
--- | Why the node's LeiosFetch client failed for a peer that announces
--- 'oversizedEb' and offers it at the most the ledger allows, and what the node
--- announces acquiring, if anything, by a second later.
-nodeRefusesOversizedEb :: IOSim s (Maybe String, Maybe Acquired)
-nodeRefusesOversizedEb = withNode $ \nut -> do
+-- | What the node acquires of the endorser block, and why its LeiosFetch client
+-- fails, if it does. A body the ledger admits, of transactions the ledger
+-- admits, it acquires, and then their closure. A body the ledger does not
+-- admit, which a peer can only offer at the most the ledger admits, is not the
+-- size offered; a closure the ledger does not admit is too big. Either way,
+-- the node acquires nothing of it, and disconnects the peer that served it.
+expectedBounded :: EndorserBlock -> ([Acquired], Maybe String)
+expectedBounded eb
+  | bodySize > maxEbBodySize =
+      ([], Just (show (ExnLeiosBlockWrongSize point maxEbBodySize bodySize)))
+  | closureSize > fromIntegral maxEbBodySize =
+      ([], Just (show (ExnLeiosClosureTooBig point closureSize maxEbBodySize)))
+  | otherwise = ([AcquiredBody point, AcquiredClosure point], Nothing)
+ where
+  point = evenEbPoint eb
+  bodySize = encodeEndorserBlockSize eb
+  closureSize = sum [fromIntegral size | (_txHash, size) <- endorserBlockReferences eb]
+
+-- | A peer announces the endorser block, offers its body and its closure,
+-- offering the body at its size or the most the ledger admits, whichever is
+-- smaller, and serves both. What the node announces acquiring by
+-- 'relayHorizon', and why its LeiosFetch client failed, if it did by then.
+nodeTakesEvenEb :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s ([Acquired], Maybe String)
+nodeTakesEvenEb (eb, txs) = withNode $ \nut -> do
   next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
   notifications <- newTQueueIO
-  atomically $
-    mapM_
-      (writeTQueue notifications)
-      [ MsgLeiosBlockAnnouncement (ltbHeader announcing)
-      , MsgLeiosBlockOffer oversizedPoint maxEbBodySize
-      , MsgLeiosBlockTxsOffer oversizedPoint
-      ]
-  let envPeer =
+  let offered = min maxEbBodySize (encodeEndorserBlockSize eb)
+      point = evenEbPoint eb
+      announcing = setAnnouncement (endorserBlockHash eb) offered (firstLeiosBlock 0)
+      envPeer =
         EnvPeer
           { epChainSyncServer = quietChainSyncServer
           , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
@@ -1252,18 +1225,24 @@ nodeRefusesOversizedEb = withNode $ \nut -> do
           , epLeiosFetchServer = serving eb txs nut
           , epLeiosFetchClient = Nothing
           }
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcing)
+      , MsgLeiosBlockOffer point offered
+      , MsgLeiosBlockTxsOffer point
+      ]
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     client <-
       maybe (throwIO $ userError "the node does not run a LeiosFetch client") pure $
         Map.lookup leiosFetchMiniProtocolNum (connNodeInitiators conn)
-    failure <- atomically client <&> either (Just . show) (const Nothing)
-    -- The client settles a write on another thread.
-    threadDelay 1
-    acquired <- atomically $ (Just . acquiredOf <$> next) `orElse` pure Nothing
-    pure (failure, acquired)
- where
-  (eb, txs) = oversizedEb
-  announcing = setAnnouncement (endorserBlockHash eb) maxEbBodySize (firstLeiosBlock 0)
+    threadDelay relayHorizon
+    let drain acquired =
+          atomically ((Just . acquiredOf <$> next) `orElse` pure Nothing)
+            >>= maybe (pure (reverse acquired)) (drain . (: acquired))
+    acquired <- drain []
+    failure <- atomically $ (either (Just . show) (const Nothing) <$> client) `orElse` pure Nothing
+    pure (acquired, failure)
 
 -- | A chain without certificates, on a fork of its own, longer than
 -- 'certifyingFetched''s.
