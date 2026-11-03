@@ -286,15 +286,14 @@ processLeiosBlock ctx peer req eb = do
             -- Register the body's transactions in the tx cache, and read where
             -- some recent point durably holds any of them, so that the body
             -- write copies those rather than us fetching them again.
-            mbInserted <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
-            case mbInserted of
-              Just (_summary, located) -> pure (cleaned, (Just located, fetchArrivalGood ebBytesSize))
-              -- The cache already holds the body, taken in for another point,
-              -- or it does not track this endorser block's announcement,
-              -- perhaps since evicted. Either way, its txs may have locations.
-              Nothing -> do
-                located <- locateTxs lfcTxCache (packTxReferences eb) [] snocLocated
-                pure (cleaned, (Just located, fetchArrivalEvicted ebBytesSize))
+            (mbSummary, located) <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
+            let arrival = case mbSummary of
+                  Just _summary -> fetchArrivalGood ebBytesSize
+                  -- The cache already holds the body, taken in for another
+                  -- point, or it does not track this endorser block's
+                  -- announcement, perhaps since evicted.
+                  Nothing -> fetchArrivalEvicted ebBytesSize
+            pure (cleaned, (Just located, arrival))
   void $ tryPutMVar lfcReady ()
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   forM_ fills $ \localFills -> do
@@ -409,7 +408,7 @@ acquireCachedBody ctx point bounds =
       | not (admitsSizes bounds (leiosEbSizes eb)) -> pure ()
       | otherwise -> do
           now <- systemTimeCurrent lfcSystemTime
-          localFills <- locateTxs lfcTxCache packed [] snocLocated
+          (_noSummary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
           bodyWritten <- writeEbBody lfcWriter point eb localFills
           link =<< async (settleBody ctx point eb now bodyWritten)
      where

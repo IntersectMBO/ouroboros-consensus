@@ -47,7 +47,6 @@ module Ouroboros.Consensus.Leios.TxCache.Reference
   , lookupBody
   , setTxLocations
   , lookupTxLocation
-  , locateTxs
 
     -- * Internal state (exposed for testing)
   , TxState (..)
@@ -348,7 +347,8 @@ decTx (ts, evTxs) txh =
 
 -- | Record that we now hold the body of this EB, bumping the refcount of each tx
 -- it references. Idempotent, and a no-op if no announcement references this EB
--- (its refcount would be zero).
+-- (its refcount would be zero). Either way, fold over its txs with their
+-- locations.
 insertBody ::
   ReferencesTxsByHash b =>
   -- | Capacity 'ibsCacheLoad' is reported against; the pure index has no
@@ -359,10 +359,10 @@ insertBody ::
   w ->
   (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
   LeiosTxCacheIndex a v b ->
-  (LeiosTxCacheIndex a v b, Maybe (LeiosTxCacheInsertBodySummary, w))
+  (LeiosTxCacheIndex a v b, (Maybe LeiosTxCacheInsertBodySummary, w))
 insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
-  Nothing -> (idx, Nothing)
-  Just BodyAlreadyInserted{} -> (idx, Nothing)
+  Nothing -> (idx, (Nothing, locateTxs body nil snoc idx))
+  Just BodyAlreadyInserted{} -> (idx, (Nothing, locateTxs body nil snoc idx))
   Just (BodyNotYetInserted rc) ->
     let ((n, tracked, acquired, validated, w), txState') =
           foldTxReferences bumpTx ((0, 0, 0, 0, nil), txState idx) body
@@ -372,16 +372,17 @@ insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState i
             , txState = txState'
             }
      in ( idx'
-        , Just
-            ( mkLeiosTxCacheInsertBodySummary
+        ,
+          ( Just $
+              mkLeiosTxCacheInsertBodySummary
                 loadCapacity
                 n
                 tracked
                 acquired
                 validated
                 (Map.size txState')
-            , w
-            )
+          , w
+          )
         )
  where
   -- Bump each tx's refcount and, in the same pass, classify its /prior/ state
@@ -481,7 +482,7 @@ lookupTxLocation txh idx = do
   Just (MkTxLocation src off)
 
 -- | Fold over the txs this body references, each with its durable location if
--- the index knows one, without changing the index. See 'insertBody'.
+-- the index knows one: what 'insertBody' does for a body it does not insert.
 locateTxs ::
   ReferencesTxsByHash b =>
   b ->

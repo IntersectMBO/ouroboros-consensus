@@ -143,27 +143,24 @@ sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 sweepBody :: H -> [Word8] -> IO [Maybe TestBody]
 sweepBody h ebs = mapM (lookupBody h . ebhOf) ebs
 
--- | Observe each tx's durable location the way production now does -- through a
--- body insert's per-tx callback, the sole location oracle. Announce a throwaway
--- probe EB over the txs and insert it, collecting the locations it reports. Run
--- after the op sequence, so the probe's own state churn is unobservable, and
--- driven identically on both handles so any location disagreement still shows.
+-- | Observe each tx's durable location the way production does -- through a
+-- body insert's per-tx callback, the sole location oracle. The probe EB is never
+-- announced, so inserting its body changes nothing and only reports the
+-- locations. Driven identically on both handles so any location disagreement
+-- shows.
 probeEb :: Word8
 probeEb = 255
 
 sweepLoc :: H -> [Word8] -> IO [Maybe TxLocation]
 sweepLoc h txs = do
-  _ <- insertAnnouncement h (SlotNo maxBound) (rbhOf probeEb) (ebhOf probeEb)
-  mb <-
+  (_noSummary, locs) <-
     insertBody
       h
       (ebhOf probeEb)
       (TestBody (map txhOf txs))
       []
       (\acc _off _txh _sz mbLoc -> mbLoc : acc)
-  pure $ case mb of
-    Just (_summary, locs) -> reverse locs
-    Nothing -> map (const Nothing) txs
+  pure (reverse locs)
 
 -- | The EB-hash domain the generators draw from (see 'genOps'): announcements
 -- and bodies use ebs @1..20@.

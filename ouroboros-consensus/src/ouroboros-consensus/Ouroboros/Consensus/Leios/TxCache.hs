@@ -98,9 +98,6 @@ newPureLeiosTxCache nshift = do
              in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b nil snoc ->
           MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) ebh b nil snoc idx)
-      , locateTxs = \b nil snoc -> do
-          idx <- MVar.readMVar var
-          pure $ Pure.locateTxs b nil snoc idx
       , lookupBody = \ebh -> do
           idx <- MVar.readMVar var
           pure $! Pure.lookupBody ebh idx
@@ -124,7 +121,8 @@ newPureLeiosTxCache nshift = do
       }
 
 -- | A handle whose every operation is inert: announcements evict nothing, bodies
--- are never summarised, tx insertions do nothing, and lookups always miss. For
+-- are never summarised nor their txs folded over, tx insertions do nothing, and
+-- lookups always miss. For
 -- contexts that don't maintain the cache, such as tools that replay or forge
 -- blocks.
 nullLeiosTxCache :: Applicative m => LeiosTxCache m a v b
@@ -132,8 +130,7 @@ nullLeiosTxCache =
   LeiosTxCache
     { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
     , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
-    , insertBody = \_ebh _b _nil _snoc -> pure Nothing
-    , locateTxs = \_b nil _snoc -> pure nil
+    , insertBody = \_ebh _b nil _snoc -> pure (Nothing, nil)
     , lookupBody = \_ebh -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k mempty (\fab _txh sz _a -> pure (fab <> bucketTxArrival TxWasUntracked sz))
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)

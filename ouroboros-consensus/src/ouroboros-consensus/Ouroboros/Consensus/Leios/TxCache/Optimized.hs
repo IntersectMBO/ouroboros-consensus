@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Leios.Types
   , RankingBlockHash
   , TxHash
   , TxLocation (..)
+  , TxOffset
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
@@ -119,8 +120,8 @@ newHashTableLeiosTxCache nshift k0 k1 = do
       , insertBody = \ebh b nil snoc ->
           MVar.modifyMVarMasked stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
-              Nothing -> pure (st, Nothing)
-              Just BodyAlreadyInserted{} -> pure (st, Nothing)
+              Nothing -> (,) st . (,) Nothing <$> locateTxs ht st b nil snoc
+              Just BodyAlreadyInserted{} -> (,) st . (,) Nothing <$> locateTxs ht st b nil snoc
               Just (BodyNotYetInserted rc) -> do
                 -- bump each tx's refcount and classify its prior state in one
                 -- pass; snoc every referenced tx onto the caller's accumulator at
@@ -146,24 +147,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
                 pure
                   ( st'
-                  , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount, w)
+                  ,
+                    ( Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount)
+                    , w
+                    )
                   )
-      , locateTxs = \b nil snoc ->
-          MVar.withMVar stateVar $ \st -> do
-            (_n, w) <-
-              foldTxReferences
-                ( \acc txh sz -> do
-                    (!nn, !w) <- acc
-                    mv <- HT.lookup ht (toKey txh)
-                    let mbLoc = do
-                          (ringIdx, off) <- valLoc =<< mv
-                          src <- Map.lookup ringIdx (hsLocRing st)
-                          Just (MkTxLocation src off)
-                    pure (nn + 1 :: Int, snoc w nn txh sz mbLoc)
-                )
-                (pure (0, nil))
-                b
-            pure w
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of
@@ -215,6 +203,40 @@ newHashTableLeiosTxCache nshift k0 k1 = do
 -- ring, at most 'maxAnnouncementCount' entries.
 ringSlotOf :: LeiosPoint -> HtState b -> Maybe EbRingIndex
 ringSlotOf point = fmap fst . F.find ((== point) . snd) . Map.toList . hsLocRing
+
+-- | Fold over the txs this body references, each with its durable location if
+-- the table knows one: what 'insertBody' does for a body it does not insert.
+locateTxs ::
+  (PrimMonad m, ReferencesTxsByHash b) =>
+  HT.MutableHashTable (PrimState m) ->
+  HtState b ->
+  b ->
+  w ->
+  (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
+  m w
+{-# SPECIALIZE locateTxs ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  HtState b ->
+  b ->
+  w ->
+  (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
+  IO w
+  #-}
+locateTxs ht st b nil snoc =
+  snd
+    <$> foldTxReferences
+      ( \acc txh sz -> do
+          (!nn, !w) <- acc
+          mv <- HT.lookup ht (toKey txh)
+          let mbLoc = do
+                (ringIdx, off) <- valLoc =<< mv
+                src <- Map.lookup ringIdx (hsLocRing st)
+                Just (MkTxLocation src off)
+          pure (nn + 1 :: Int, snoc w nn txh sz mbLoc)
+      )
+      (pure (0, nil))
+      b
 
 announcementPresent :: SlotNo -> RankingBlockHash -> HtState b -> Bool
 announcementPresent slot rbh st =

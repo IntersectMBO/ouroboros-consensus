@@ -85,26 +85,19 @@ data LeiosTxCache m a v b = LeiosTxCache
       b ->
       w ->
       (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
-      m (Maybe (LeiosTxCacheInsertBodySummary, w))
-  -- ^ Record that we hold this EB's body, bumping the refcount of each tx it
-  -- references. In the same pass, fold a caller-supplied accumulator over /every/
-  -- referenced tx: starting from the nil @w@ and extending it with the snoc @w ->
-  -- offset -> 'TxHash' -> 'BytesSize' -> 'Maybe' 'TxLocation' -> w@, where @offset@
-  -- is the tx's position in the body and the location is 'Just' iff some held EB
-  -- durably holds the tx's bytes ('setTxLocations'), i.e. it can serve a cross-EB
-  -- fill. The entry is already in hand for the refcount bump, so this location read
-  -- rides that pass rather than costing a second one. Returns the summary and the
-  -- built @w@, or 'Nothing' when the EB is unannounced or its body is already
-  -- inserted (a no-op, so nothing is folded).
-  , locateTxs ::
-      forall w.
-      b ->
-      w ->
-      (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
-      m w
-  -- ^ Fold over the txs this body references, as 'insertBody' does, each with
-  -- its durable location if the cache knows one, but without inserting
-  -- anything: for a body the cache already holds, taken in for another point.
+      m (Maybe LeiosTxCacheInsertBodySummary, w)
+  -- ^ Take in this EB's body: record that we hold it, bumping the refcount of
+  -- each tx it references, and summarise that. Nothing changes, and there is no
+  -- summary, when the EB is unannounced or its body is already inserted.
+  --
+  -- Either way, fold a caller-supplied accumulator over /every/ referenced tx:
+  -- starting from the nil @w@ and extending it with the snoc @w -> offset ->
+  -- 'TxHash' -> 'BytesSize' -> 'Maybe' 'TxLocation' -> w@, where @offset@ is the
+  -- tx's position in the body and the location is 'Just' iff some held EB
+  -- durably holds the tx's bytes ('setTxLocations'), i.e. it can serve a
+  -- cross-EB fill. When the body is inserted, the entry is already in hand for
+  -- the refcount bump, so this location read rides that pass rather than
+  -- costing a second one.
   , lookupBody :: EndorserBlockHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
