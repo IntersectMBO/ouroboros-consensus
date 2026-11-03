@@ -420,10 +420,10 @@ tests =
           400
           (listenerJoinsAtAge (maxAgeSend + realToFrac NotifyLog.notifyLogPruneCadence + 1))
           >>= (@?= [])
-    , testCase "the node runs LeiosFetch from NodeToNodeV_16 on" $
-        runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_16) >>= (@?= (True, True))
-    , testCase "the node does not run LeiosFetch before NodeToNodeV_16" $
-        runSimFinishing (nodeRunsLeiosFetch NodeToNodeV_15) >>= (@?= (False, False))
+    , testCase "the node runs LeiosFetch from NodeToNodeV_16 on, and not before" $
+        forM_ [minBound .. maxBound] $ \ntnVersion -> do
+          let runs = ntnVersion >= NodeToNodeV_16
+          runSimFinishing (nodeRunsLeiosFetch ntnVersion) >>= assertEqual (show ntnVersion) (runs, runs)
     ]
 
 -- | Run the simulation, and fail the test if it has not finished after 100
