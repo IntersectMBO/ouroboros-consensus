@@ -137,7 +137,6 @@ import Ouroboros.Network.BlockFetch
   , TraceLabelPeer (..)
   )
 import Ouroboros.Network.Channel
-import Ouroboros.Network.ConnectionId (ConnStateId (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
@@ -1354,12 +1353,11 @@ directedEdge ::
   (CoreNodeId, VertexStatusVar m blk) ->
   m ()
 directedEdge registry tr version cfg clock edgeStatusVar client server =
-  loop (ConnStateId 0)
+  loop
  where
-  -- Each run of the edge's mini-protocols is a new connection.
-  loop connStateId = do
+  loop = do
     restart <-
-      directedEdgeInner registry clock version cfg edgeStatusVar connStateId client server
+      directedEdgeInner registry clock version cfg edgeStatusVar client server
         `catch` hUnexpected
     atomically $ writeTVar edgeStatusVar EDown
     case restart of
@@ -1371,7 +1369,7 @@ directedEdge registry tr version cfg clock edgeStatusVar client server =
         traceWith tr (s, MiniProtocolDelayed)
         void $ OracularClock.blockUntilSlot clock s'
         traceWith tr (s', MiniProtocolRestarting)
-    loop (succ connStateId)
+    loop
    where
     -- Wrap synchronous exceptions in 'MiniProtocolFatalException'
     --
@@ -1400,7 +1398,6 @@ directedEdgeInner ::
   (NodeToNodeVersion, BlockNodeToNodeVersion blk) ->
   (CodecConfig blk, CalcMessageDelay blk) ->
   EdgeStatusVar m ->
-  ConnStateId ->
   -- | client threads on this node
   (CoreNodeId, VertexStatusVar m blk) ->
   -- | server threads on this node
@@ -1412,7 +1409,6 @@ directedEdgeInner
   (version, blockVersion)
   (cfg, calcMessageDelay)
   edgeStatusVar
-  connStateId
   (node1, vertexStatusVar1)
   (node2, vertexStatusVar2) = do
     -- block until both nodes are 'VUp'
@@ -1453,7 +1449,6 @@ directedEdgeInner
           initiatorCtx =
             ExpandedInitiatorContext
               { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
-              , eicConnStateId = connStateId
               , eicControlMessage = return Continue
               , eicIsBigLedgerPeer = IsNotBigLedgerPeer
               , eicExtraFlags = IsNotTrustable

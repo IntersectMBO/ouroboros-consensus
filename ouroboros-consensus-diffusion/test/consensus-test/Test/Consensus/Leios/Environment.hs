@@ -196,10 +196,6 @@ withNodeVsEnvConnection nut addr envPeer body = do
       peerBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = nodeToPeer, writeQueue = peerToNode}
       nodeConnId = ConnectionId{localAddress = nodeAddr, remoteAddress = addr}
       peerConnId = ConnectionId{localAddress = addr, remoteAddress = nodeAddr}
-  connStateId <- atomically $ do
-    next <- readTVar (nutNextConnStateId nut)
-    writeTVar (nutNextConnStateId nut) (succ next)
-    pure next
   (bundle, version) <-
     concurrently
       (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nutVersions nut))
@@ -260,7 +256,6 @@ withNodeVsEnvConnection nut addr envPeer body = do
                       initiator
                       ExpandedInitiatorContext
                         { eicConnectionId = nodeConnId
-                        , eicConnStateId = connStateId
                         , eicControlMessage = Strict.readTVar controlMessage
                         , eicIsBigLedgerPeer = IsBigLedgerPeer
                         , eicExtraFlags = IsNotTrustable

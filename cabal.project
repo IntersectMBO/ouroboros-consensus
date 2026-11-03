@@ -70,16 +70,6 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
--- Points to ouroboros-network 2.0.0.0 plus the ConnStateId in
--- ExpandedInitiatorContext
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  --sha256: sha256-lYlBMErXuFVaFo1M/DO3s94zbLmSVNMhYgSz/4Syp1Q=
-  tag: 16b80abe6e66e4165eb0213eb2680918ab284c54
-  subdir:
-    ouroboros-network
-
 allow-newer:
     , cardano-keys:cardano-ledger-core
     , cardano-keys:cardano-ledger-shelley
