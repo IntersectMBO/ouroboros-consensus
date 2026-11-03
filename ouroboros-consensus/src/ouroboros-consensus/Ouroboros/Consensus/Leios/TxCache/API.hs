@@ -100,9 +100,9 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- costing a second one.
   , lookupBody :: EndorserBlockHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
-  -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
-  -- pins itself: a hit means it is in the LeiosDb and stays there until the EB is
-  -- pruned, so no cross-object reasoning is needed.
+  -- 'Nothing' if the EB is untracked or only announced. A hit means only that
+  -- the body was taken in for some point of the EB: it says nothing about what
+  -- the LeiosDb holds at any point.
   , withLockedInsertUnappliedTx ::
       (forall w. w -> (w -> TxHash -> BytesSize -> a -> m w) -> m w) ->
       m FetchArrivalBytes
