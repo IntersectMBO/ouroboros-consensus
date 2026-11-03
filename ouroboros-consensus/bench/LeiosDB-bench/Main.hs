@@ -373,9 +373,9 @@ servePeer seed r BenchEb{beIdx, beMeasured} point completed record missing = do
   t <- getMonotonicTime
   body <- lookupEbBody r point
   t' <- getMonotonicTime
-  if length body /= txsPerEb
-    then missing
-    else when beMeasured $ record ServeBody (diffTime t' t)
+  case body of
+    Nothing -> missing
+    Just _ -> when beMeasured $ record ServeBody (diffTime t' t)
   forM_ (requests seed beIdx) $ \offsets -> do
     u <- getMonotonicTime
     txs <- batchRetrieveTxs r point offsets

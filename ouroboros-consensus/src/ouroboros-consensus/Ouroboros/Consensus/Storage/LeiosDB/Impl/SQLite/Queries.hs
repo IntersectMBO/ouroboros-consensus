@@ -48,14 +48,11 @@ sql_scan_complete_ebs_since =
 
 sql_insert_eb :: String
 sql_insert_eb =
-  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes) VALUES (?1, ?2)"
+  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytes) VALUES (?1, ?2, ?3)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
-  "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
-  \WHERE ebSlot = ?1 AND ebHashBytes = ?2\n\
-  \ORDER BY txOffset ASC\n\
-  \"
+  "SELECT ebBytes FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
 
 -- | Parameters: 3 = txOffset, 4 = txHashBytes, 5 = txBytesSize
 sql_insert_ebBody :: String
@@ -205,8 +202,8 @@ sql_copy_completeness =
 -- repeats the copy on the next start.
 sql_copy_insert_eb :: String
 sql_copy_insert_eb =
-  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes)\n\
-  \SELECT ebSlot, ebHashBytes FROM vol.ebs\n\
+  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytes)\n\
+  \SELECT ebSlot, ebHashBytes, ebBytes FROM vol.ebs\n\
   \WHERE ebSlot = ?1 AND ebHashBytes = ?2\n\
   \"
 

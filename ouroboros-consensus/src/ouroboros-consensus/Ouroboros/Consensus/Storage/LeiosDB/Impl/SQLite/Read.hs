@@ -17,8 +17,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Data.ByteString (ByteString)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlockHash
+  ( EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
   )
@@ -53,35 +52,31 @@ sqlScanCompleteEbPointsSince conn sinceSlot =
         point <- dbColumnPoint stmt 0
         loop (point : acc)
 
-sqlLookupEbBody :: Conn -> LeiosPoint -> IO [(TxHash, BytesSize)]
+sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe ByteString)
 sqlLookupEbBody conn point = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
       dbBindPoint stmt point
-      bodyLoop stmt []
-  -- Bodies insert atomically, so the empty list is a complete miss: the point
-  -- may have been copied to the immutable partition and evicted.
-  if null vol then immLookupEbBody conn point else pure vol
+      bodyBytes stmt
+  -- A miss may be a point copied to the immutable partition and evicted.
+  maybe (immLookupEbBody conn point) (pure . Just) vol
  where
   Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbBody = stmt}} = conn
 
 -- | Immutable-partition fallback of 'sqlLookupEbBody'.
-immLookupEbBody :: Conn -> LeiosPoint -> IO [(TxHash, BytesSize)]
+immLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe ByteString)
 immLookupEbBody conn point =
   useStmt stmt $ do
     dbBindPoint stmt point
-    bodyLoop stmt []
+    bodyBytes stmt
  where
   Conn{connImmStmts = ImmStmts{immStLookupEbBody = stmt}} = conn
 
-bodyLoop :: DB.Statement -> [(TxHash, BytesSize)] -> IO [(TxHash, BytesSize)]
-bodyLoop stmt acc =
+bodyBytes :: DB.Statement -> IO (Maybe ByteString)
+bodyBytes stmt =
   dbStep stmt >>= \case
-    DB.Done -> pure (reverse acc)
-    DB.Row -> do
-      txHash <- dbColumnHash stmt 0
-      size <- fromIntegral <$> DB.columnInt64 stmt 1
-      bodyLoop stmt ((txHash, size) : acc)
+    DB.Done -> pure Nothing
+    DB.Row -> Just <$> DB.columnBlob stmt 0
 
 -- | Retrieve tx bytes for a batch of offsets into one point's body. Passes
 -- the offsets list as a JSON int array bound to a single parameter;

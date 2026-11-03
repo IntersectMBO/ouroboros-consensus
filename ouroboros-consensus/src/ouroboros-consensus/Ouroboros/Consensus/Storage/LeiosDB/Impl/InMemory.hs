@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -69,6 +70,8 @@ import Ouroboros.Consensus.Util.IOLike
 data InMemoryLeiosDb = InMemoryLeiosDb
   { imEbBodies :: !(Map LeiosPoint (IntMap {- txOffset -} EbTxEntry))
   -- ^ The tx-hash list written at each point, by offset.
+  , imEbBytes :: !(Map LeiosPoint ByteString)
+  -- ^ The bytes the body written at each point was received in.
   , imEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes written at each point, by offset -- mirrors the SQLite
   -- backend's @ebTxBytes@ table. A tx shared by two points is stored twice,
@@ -79,12 +82,14 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- other, and the reads fall back to this and 'imImmutableEbTxBytes'.
   , imImmutableEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
+  , imImmutableEbBytes :: !(Map LeiosPoint ByteString)
+  -- ^ The bytes of the bodies in 'imImmutableEbBodies'.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -141,6 +146,8 @@ imPromoteToImmutable stateVar points = do
         s
           { imImmutableEbBodies = imImmutableEbBodies s <> fmap fst copied
           , imImmutableEbTxBytes = imImmutableEbTxBytes s <> fmap snd copied
+          , imImmutableEbBytes =
+              imImmutableEbBytes s <> Map.restrictKeys (imEbBytes s) (Map.keysSet copied)
           }
     pure incomplete
   unless (null incomplete) $
@@ -154,6 +161,7 @@ imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
   s
     { imEbBodies = kept (imEbBodies s)
+    , imEbBytes = kept (imEbBytes s)
     , imEbTxBytes = kept (imEbTxBytes s)
     }
  where
@@ -222,16 +230,10 @@ imScanEbPoints stateVar = atomically $ do
     ]
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m [(TxHash, BytesSize)]
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe ByteString)
 imLookupEbBody stateVar point = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup point (imEbBodies state) <|> Map.lookup point (imImmutableEbBodies state) of
-    Nothing -> pure []
-    Just offsetMap ->
-      pure
-        [ (eteTxHash e, eteTxBytesSize e)
-        | e <- IntMap.elems offsetMap
-        ]
+  pure $ Map.lookup point (imEbBytes state) <|> Map.lookup point (imImmutableEbBytes state)
 
 imInsertEbBody ::
   IOLike m =>
@@ -259,6 +261,7 @@ imInsertEbBody stateVar point eb fills = do
       s
         { -- A second delivery of the body at the same point is a no-op.
           imEbBodies = Map.insertWith (\_ old -> old) point entries (imEbBodies s)
+        , imEbBytes = Map.insertWith (\_ old -> old) point (endorserBlockBytes eb) (imEbBytes s)
         }
     filled <- fillLocally <$> readTVar stateVar
     unless (IntMap.null filled) $

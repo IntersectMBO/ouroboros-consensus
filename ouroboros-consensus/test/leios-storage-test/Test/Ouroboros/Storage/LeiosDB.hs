@@ -9,7 +9,7 @@
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
@@ -28,13 +28,14 @@ import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Database.SQLite3 as SQL
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , deserialiseEndorserBlock
+  , endorserBlockBytes
   , endorserBlockReferences
   , mkEndorserBlock
   )
@@ -147,7 +148,7 @@ rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
 
-rwLookupEbBody :: RW -> LeiosPoint -> IO [(TxHash, BytesSize)]
+rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe BS.ByteString)
 rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [(TxHash, BS.ByteString)])
@@ -214,6 +215,8 @@ mkTestGroups impl =
       "ebs"
       [ testProperty "insert then lookup" $ prop_ebsInsertThenLookup impl
       , testProperty "lookup missing returns empty" $ prop_ebsLookupMissing impl
+      , testCase "a body is stored in the bytes it was received in" $
+          withFreshDb impl test_bodyKeepsReceivedBytes
       ]
   , testGroup
       "transactions"
@@ -396,30 +399,49 @@ prop_pointsAccumulate impl =
 
 -- * Property tests for EBs
 
--- | Property: inserting an EB body and looking it up returns the correct txs.
+-- | Property: inserting an EB body and looking it up returns its bytes.
 prop_ebsInsertThenLookup :: DbImpl -> Property
 prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-        let expectedTxs = endorserBlockReferences eb
+        let expected = Just (endorserBlockBytes eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
         (result, lookupTime) <- timed $ rwLookupEbBody con point
         pure $
-          result == expectedTxs
-            & counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result)
+          result == expected
+            & counterexample ("Expected: " ++ show expected ++ "\nGot: " ++ show result)
             & tabulate "insertEbBody" [timeBucket insertTime]
             & tabulate "lookupEbBody" [timeBucket lookupTime]
 
--- | Property: looking up a non-existent point returns empty list.
+-- | Property: looking up a non-existent point returns nothing.
 prop_ebsLookupMissing :: DbImpl -> Property
 prop_ebsLookupMissing impl =
   forAll genPoint $ \missing ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
       (result, lookupTime) <- timed $ rwLookupEbBody con missing
       pure $
-        result === []
+        result === Nothing
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
+
+-- | A body is stored in the bytes it was received in, even when those are not
+-- the ledger's encoding of its references.
+test_bodyKeepsReceivedBytes :: LeiosDbHandle IO -> IO ()
+test_bodyKeepsReceivedBytes db = do
+  let
+    -- A map of one reference, whose size takes five bytes where the ledger
+    -- would write two.
+    received =
+      BS.concat
+        [BS.pack [0xa1, 0x58, 0x20], hashToBytes (mkTestTxHash 1), BS.pack [0x1a, 0, 0, 0, 101]]
+    point = mkTestPoint (SlotNo 1) 1
+  eb <- either (assertFailure . show) pure (deserialiseEndorserBlock received)
+  assertBool
+    "the ledger encodes these references in other bytes"
+    (endorserBlockBytes (mkEndorserBlock (endorserBlockReferences eb)) /= received)
+  withRW db $ \con -> do
+    rwInsertEbBody con point eb
+    rwLookupEbBody con point >>= (@?= Just received)
 
 -- * Property tests for transactions
 
@@ -639,7 +661,7 @@ test_readsFallBackToImmutable impl = withSettledDb impl $ \db settle -> withRW d
   garbageCollect db 6
   settle 6
   rwScanEbPoints con >>= (@?= [])
-  rwLookupEbBody con point >>= (@?= endorserBlockReferences eb)
+  rwLookupEbBody con point >>= (@?= Just (endorserBlockBytes eb))
   holdsClosure con point >>= (@?= True)
   rwBatchRetrieveTxs con point [0, 1]
     >>= (@?= [(off, mkTestTxHash (fromIntegral off), Just (txBytesFor eb off)) | off <- [0, 1]])
@@ -655,7 +677,7 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
   writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
   garbageCollect db 6
-  rwLookupEbBody con (mkTestPoint 5 1) >>= (@?= [])
+  rwLookupEbBody con (mkTestPoint 5 1) >>= (@?= Nothing)
   holdsClosure con (mkTestPoint 5 1) >>= (@?= False)
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
   holdsClosure con (mkTestPoint 10 2) >>= (@?= True)
@@ -670,7 +692,7 @@ test_gcKeepsNewerPoint impl = withSettledDb impl $ \db settle -> withRW db $ \co
   garbageCollect db 6
   settle 6
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
-  rwLookupEbBody con older >>= (@?= [])
+  rwLookupEbBody con older >>= (@?= Nothing)
   holdsClosure con older >>= (@?= False)
   holdsClosure con newer >>= (@?= True)
   scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 6 >>= (@?= [newer])
@@ -786,9 +808,9 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     points <- rwScanEbPoints con
     points @?= [(5, mkTestEbHash 1)]
     keptBody <- rwLookupEbBody con kept
-    keptBody @?= endorserBlockReferences eb
+    keptBody @?= Just (endorserBlockBytes eb)
     forM_ [droppedAgain, dropped] $ \point ->
-      rwLookupEbBody con point >>= (@?= [])
+      rwLookupEbBody con point >>= (@?= Nothing)
     keptClosure <- rwLookupEbClosure con kept
     fmap (map snd) keptClosure @?= Just (map snd (allTxsFor eb))
 
@@ -1043,7 +1065,7 @@ observe ::
   IO
     ( (Int, Int)
     , ( [([TxOffset], [LeiosPoint])]
-      , [ ( [(TxHash, BytesSize)]
+      , [ ( Maybe BS.ByteString
           , Maybe [(TxHash, BS.ByteString)]
           , [(Int, TxHash, Maybe BS.ByteString)]
           )

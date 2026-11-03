@@ -30,8 +30,7 @@ import Data.Foldable (traverse_)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , EndorserBlockHash
   , LeiosPoint
   , TxHash
@@ -70,14 +69,8 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => LeiosPoint -> m [(TxHash, BytesSize)]
-  -- ^ The EB "body" written at this point: tx hashes and sizes in order, no tx
-  -- bytes.
-  --
-  -- TODO FIXME Store and return the bytes the EB arrived in. An EB rebuilt
-  -- from these references has this node's preferred encoding, so one that
-  -- arrived in another encoding would no longer match the hash its ranking
-  -- block announced.
+  , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)
+  -- ^ The original encoding of the EB body that was written to the database.
   , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure" at this point: tx hashes /and/ their bytes, or 'Nothing'
   -- if it is not complete there.

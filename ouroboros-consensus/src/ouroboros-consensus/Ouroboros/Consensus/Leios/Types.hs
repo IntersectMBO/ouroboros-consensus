@@ -53,6 +53,12 @@ module Ouroboros.Consensus.Leios.Types
   , decodeEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
+  , endorserBlockBytes
+  , endorserBlockShortBytes
+  , deserialiseEndorserBlock
+  , TemporaryEndorserBlockOnlyForEncode
+  , temporaryEndorserBlockFromBytes
+  , unsafeEndorserBlockForEncodeOnly
   , LeiosEbSizes (..)
   , leiosEbSizes
   , LeiosEbBounds (..)
@@ -83,9 +89,11 @@ import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
+  , DecoderError
   , EncCBOR (..)
   , FullByteString (..)
   , Version
+  , decodeFullAnnotator
   , getVersion64
   , toPlainDecoder
   , toPlainEncoding
@@ -99,12 +107,13 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
-  , SafeToHash (originalBytesSize)
+  , SafeToHash (originalBytes, originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
   )
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.MemoBytes (MemoBytes (Memo))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
@@ -117,6 +126,7 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
@@ -443,6 +453,53 @@ maxTxsPerEndorserBlock =
 -- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
+
+-- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
+-- received in, or the ledger's encoding of one this node built.
+endorserBlockBytes :: EndorserBlock -> ByteString
+endorserBlockBytes (MkEndorserBlock references) = originalBytes references
+
+-- | 'endorserBlockBytes', sharing the endorser block's own array of them rather
+-- than copying them.
+endorserBlockShortBytes :: EndorserBlock -> SBS.ShortByteString
+endorserBlockShortBytes (MkEndorserBlock (Ledger.MkEbReferences (Memo _references bytes))) = bytes
+
+-- | Decode an endorser block from exactly the bytes 'endorserBlockBytes'
+-- gives. It keeps those bytes.
+deserialiseEndorserBlock :: ByteString -> Either DecoderError EndorserBlock
+deserialiseEndorserBlock =
+  fmap MkEndorserBlock
+    . decodeFullAnnotator endorserBlockVersion (T.pack "EndorserBlock") decCBOR
+    . BSL.fromStrict
+
+-- | An 'EndorserBlock' made from just the bytes it was received in, without
+-- decoding them, for the LeiosFetch server to send. It encodes to exactly
+-- those bytes, and its hash and size are theirs, but it references no
+-- transactions, so nothing may inspect it:
+-- 'unsafeEndorserBlockForEncodeOnly' is only for putting it in a message to
+-- send.
+--
+-- TODO Temporary, until the LeiosFetch server runs a variant of the protocol
+-- whose endorser blocks are their bytes, as the BlockFetch server's blocks are
+-- ('Ouroboros.Network.Block.Serialised'), so that it needs no 'EndorserBlock'.
+newtype TemporaryEndorserBlockOnlyForEncode
+  = MkTemporaryEndorserBlockOnlyForEncode EndorserBlock
+
+-- | The bytes must be ones 'endorserBlockBytes' gave.
+temporaryEndorserBlockFromBytes :: ByteString -> TemporaryEndorserBlockOnlyForEncode
+temporaryEndorserBlockFromBytes bytes =
+  MkTemporaryEndorserBlockOnlyForEncode $
+    MkEndorserBlock $
+      Ledger.MkEbReferences $
+        Memo noReferences (SBS.toShort bytes)
+ where
+  -- The ledger's representation of the references holds them decoded beside
+  -- their bytes, but encodes and hashes only the bytes.
+  Ledger.MkEbReferences (Memo noReferences _) =
+    Ledger.mkEbReferences endorserBlockVersion (IsList.fromList [])
+
+unsafeEndorserBlockForEncodeOnly :: TemporaryEndorserBlockOnlyForEncode -> EndorserBlock
+unsafeEndorserBlockForEncodeOnly (MkTemporaryEndorserBlockOnlyForEncode eb) = eb
 
 -- | What the ledger's bounds on an endorser block measure.
 data LeiosEbSizes = MkLeiosEbSizes

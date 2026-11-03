@@ -20,6 +20,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
@@ -48,6 +49,7 @@ sqlInsertEbBody tracer conn point eb fills = do
   (inserted, filledOffs) <- dbWithWriteTransaction conn $ do
     inserted <- useStmt stInsertEbPoint $ do
       dbBindPoint stInsertEbPoint point
+      dbBindBlob stInsertEbPoint 3 (endorserBlockBytes eb)
       dbStep1 stInsertEbPoint
       DB.changes db
     forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do

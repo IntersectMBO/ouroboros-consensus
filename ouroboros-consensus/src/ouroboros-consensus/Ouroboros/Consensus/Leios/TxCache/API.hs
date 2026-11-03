@@ -11,8 +11,9 @@ module Ouroboros.Consensus.Leios.TxCache.API
 
     -- * Body payloads
   , ReferencesTxsByHash (..)
-  , PackedTxReferences
-  , packTxReferences
+  , PackedEndorserBlock
+  , pebBytes
+  , packEndorserBlock
 
     -- * Shared refcount \/ body state
   , RefCount (..)
@@ -54,6 +55,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxLocation
   , TxOffset
   , endorserBlockReferences
+  , endorserBlockShortBytes
   , maxTxsPerEndorserBlock
   )
 
@@ -145,22 +147,38 @@ data LeiosTxCache m a v b = LeiosTxCache
 class ReferencesTxsByHash b where
   foldTxReferences :: (r -> TxHash -> BytesSize -> r) -> r -> b -> r
 
--- | The node's body payload: each referenced tx's hash and size, packed, in
--- body order, at 36 bytes per tx. The cache retains up to
--- 'maxAnnouncementCount' bodies, so a decoded 'EndorserBlock' would cost
--- several times more.
-newtype PackedTxReferences = MkPackedTxReferences SBS.ShortByteString
+-- | The node's body payload: the bytes the endorser block was received in, and
+-- each referenced tx's hash and size, packed, in body order, at 36 bytes per
+-- tx. The cache retains up to 'maxAnnouncementCount' bodies, so a decoded
+-- 'EndorserBlock' would cost several times more.
+--
+-- TODO The received bytes take about as much as the packed references, 35 to
+-- 39 bytes per reference against 36, so keeping both doubles what the bodies
+-- cost: up to 'maxAnnouncementCount' (128) bodies of up to
+-- 'Ouroboros.Consensus.Leios.Types.maxEndorserBlockBytesSize' (600 kB) each is
+-- about 77 MB at worst for either half, and so about 154 MB for both. Keeping
+-- only the bytes would instead decode them on every fold over the references,
+-- ie on every 'insertBody' and every eviction.
+data PackedEndorserBlock = MkPackedEndorserBlock
+  { pebBytes :: !SBS.ShortByteString
+  -- ^ the bytes the endorser block was received in
+  , pebReferences :: !SBS.ShortByteString
+  -- ^ each tx's hash, then its size in four big-endian bytes
+  }
 
-packTxReferences :: EndorserBlock -> PackedTxReferences
-packTxReferences eb =
-  MkPackedTxReferences $
-    mconcat
-      [ hashToBytesShort txHash <> SBS.pack [fromIntegral (size `shiftR` (8 * i)) | i <- [3, 2, 1, 0]]
-      | (txHash, size) <- endorserBlockReferences eb
-      ]
+packEndorserBlock :: EndorserBlock -> PackedEndorserBlock
+packEndorserBlock eb =
+  MkPackedEndorserBlock
+    { pebBytes = endorserBlockShortBytes eb
+    , pebReferences =
+        mconcat
+          [ hashToBytesShort txHash <> SBS.pack [fromIntegral (size `shiftR` (8 * i)) | i <- [3, 2, 1, 0]]
+          | (txHash, size) <- endorserBlockReferences eb
+          ]
+    }
 
-instance ReferencesTxsByHash PackedTxReferences where
-  foldTxReferences f z (MkPackedTxReferences sbs) = go z 0
+instance ReferencesTxsByHash PackedEndorserBlock where
+  foldTxReferences f z MkPackedEndorserBlock{pebReferences = sbs} = go z 0
    where
     go !acc off
       | off + entryBytes > SBS.length sbs = acc

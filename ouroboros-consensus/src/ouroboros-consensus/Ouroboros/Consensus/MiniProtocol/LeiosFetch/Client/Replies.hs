@@ -24,6 +24,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Control.Monad (foldM, forM_, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (fold)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
@@ -43,13 +44,12 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LeiosTxCache (..)
-  , PackedTxReferences
-  , ReferencesTxsByHash (..)
+  , PackedEndorserBlock (..)
   , fetchArrivalEvicted
   , fetchArrivalExtra
   , fetchArrivalGood
   , fetchArrivalInvalid
-  , packTxReferences
+  , packEndorserBlock
   )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -63,12 +63,12 @@ import Ouroboros.Consensus.Leios.Types
   , TxLocation
   , TxOffset
   , admitsSizes
+  , deserialiseEndorserBlock
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , leiosEbSizes
-  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -121,7 +121,7 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcOutstanding :: !(StrictMVar m (LeiosOutstanding peer))
   , lfcReady :: !(StrictMVar m ())
   -- ^ Filled by anything that might unblock a new fetch decision.
-  , lfcTxCache :: !(LeiosTxCache m () ProtVerParity PackedTxReferences)
+  , lfcTxCache :: !(LeiosTxCache m () ProtVerParity PackedEndorserBlock)
   , lfcWriter :: !(LeiosDbWriter m)
   , lfcNotify :: !(LeiosEbNotification -> STM m ())
   -- ^ Emit an acquisition to the rest of the node.
@@ -286,7 +286,7 @@ processLeiosBlock ctx peer req eb = do
             -- Register the body's transactions in the tx cache, and read where
             -- some recent point durably holds any of them, so that the body
             -- write copies those rather than us fetching them again.
-            (mbSummary, located) <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
+            (mbSummary, located) <- insertBody lfcTxCache ebHash (packEndorserBlock eb) [] snocLocated
             let arrival = case mbSummary of
                   Just _summary -> fetchArrivalGood ebBytesSize
                   -- The cache already holds the body, taken in for another
@@ -391,7 +391,7 @@ settleBody ctx point eb now bodyWritten = do
 
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
 -- holds for it, having taken it in for another point, instead of fetching it
--- again: write the body, filling its txs from where they are
+-- again: decode the bytes it was received in, write the body, filling its txs from where they are
 -- durably held, and settle them as an arrival would.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
@@ -404,15 +404,17 @@ acquireCachedBody ::
 acquireCachedBody ctx point bounds =
   lookupBody lfcTxCache (pointEbHash point) >>= \case
     Nothing -> pure ()
-    Just packed
-      | not (admitsSizes bounds (leiosEbSizes eb)) -> pure ()
-      | otherwise -> do
-          now <- systemTimeCurrent lfcSystemTime
-          (_noSummary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
-          bodyWritten <- writeEbBody lfcWriter point eb localFills
-          link =<< async (settleBody ctx point eb now bodyWritten)
-     where
-      eb = mkEndorserBlock $ reverse $ foldTxReferences (\acc txHash size -> (txHash, size) : acc) [] packed
+    Just packed -> case deserialiseEndorserBlock (SBS.fromShort (pebBytes packed)) of
+      -- They decoded when the body arrived. The point is then fetched like any
+      -- other.
+      Left _failure -> pure ()
+      Right eb
+        | not (admitsSizes bounds (leiosEbSizes eb)) -> pure ()
+        | otherwise -> do
+            now <- systemTimeCurrent lfcSystemTime
+            (_noSummary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
+            bodyWritten <- writeEbBody lfcWriter point eb localFills
+            link =<< async (settleBody ctx point eb now bodyWritten)
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
 
