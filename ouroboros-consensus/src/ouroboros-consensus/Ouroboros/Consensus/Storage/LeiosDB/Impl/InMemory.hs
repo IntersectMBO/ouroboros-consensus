@@ -29,7 +29,6 @@ import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
-import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
@@ -44,8 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
@@ -77,11 +75,6 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- ^ The tx bytes written at each point, by offset -- mirrors the SQLite
   -- backend's @ebTxBytes@ table. A tx shared by two points is stored twice,
   -- deliberately.
-  , imCompletedEbs :: !(Set LeiosPoint)
-  -- ^ Points a write has already reported complete. The completion predicate
-  -- stays true once a point is complete, so any later batch containing one of
-  -- its txs would report it again without this guard. It is also the source
-  -- for 'scanCompleteEbClosuresNotOlderThanSlot'.
   , imImmutableEbBodies :: !(Map LeiosPoint (IntMap EbTxEntry))
   -- ^ The bodies of the points 'leiosDbPromoteToImmutable' promoted. The
   -- garbage collection evicts such a point from the other fields like any
@@ -93,7 +86,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -165,7 +158,6 @@ imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
     { imEbPoints = kept (imEbPoints s)
     , imEbBodies = kept (imEbBodies s)
     , imEbTxBytes = kept (imEbTxBytes s)
-    , imCompletedEbs = Set.dropWhileAntitone old (imCompletedEbs s)
     }
  where
   old point = pointSlotNo point < slot
@@ -259,7 +251,7 @@ imInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   [LocalFill] ->
-  m (CompletedEbs, [TxOffset])
+  m [TxOffset]
 imInsertEbBody stateVar point eb fills = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
   when (null items) $
@@ -287,19 +279,7 @@ imInsertEbBody stateVar point eb fills = do
     unless (IntMap.null filled) $
       modifyTVar stateVar $ \s ->
         s{imEbTxBytes = Map.insertWith IntMap.union point filled (imEbTxBytes s)}
-    -- If every tx referenced by this body is already present, the closure
-    -- is complete the moment the body lands — no subsequent 'writeTxs' will
-    -- complete it. 'imCompletedEbs' is the idempotency guard. This mirrors
-    -- what 'imInsertTxs' does when the last missing tx arrives.
-    state <- readTVar stateVar
-    completed <-
-      if pointCompleteIn state point && not (Set.member point (imCompletedEbs state))
-        then do
-          modifyTVar stateVar $ \s ->
-            s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-          pure [point]
-        else pure []
-    pure (completed, IntMap.keys filled)
+    pure (IntMap.keys filled)
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
   -- declared and has no bytes for yet, and only from a source holding bytes of
@@ -338,8 +318,8 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m CompletedEbs
-imInsertTxs stateVar point offBytes = atomically $ do
+  m ()
+imInsertTxs stateVar point offBytes = atomically $
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
   -- pre-allocated row, i.e. an offset the body declared, once, at the declared
   -- size. Anything else changes nothing.
@@ -357,12 +337,6 @@ imInsertTxs stateVar point offBytes = atomically $ do
      in if IntMap.null accepted
           then s
           else s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
-  state <- readTVar stateVar
-  if pointCompleteIn state point && not (Set.member point (imCompletedEbs state))
-    then do
-      modifyTVar stateVar $ \s -> s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-      pure [point]
-    else pure []
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete, as in the SQLite backend.
@@ -370,7 +344,11 @@ imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
-  pure $ Set.toAscList $ Set.dropWhileAntitone ((< sinceSlot) . pointSlotNo) (imCompletedEbs s)
+  pure
+    [ point
+    | point <- Map.keys (Map.dropWhileAntitone ((< sinceSlot) . pointSlotNo) (imEbBodies s))
+    , pointCompleteIn s point
+    ]
 
 -- | The tx bytes at the point, from the immutable copy if the point was
 -- promoted and then evicted.

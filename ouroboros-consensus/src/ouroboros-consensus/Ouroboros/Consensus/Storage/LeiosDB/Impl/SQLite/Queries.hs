@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_fill_ebTxBytes_locally
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
-  , sql_mark_point_notified
   , sql_retrieve_from_ebTxs_json
   , sql_lookup_eb_closure
   , sql_pin_eb
@@ -45,7 +44,7 @@ sql_scan_ebs =
 sql_scan_complete_ebs_since :: String
 sql_scan_complete_ebs_since =
   "SELECT ebSlot, ebHashBytes FROM ebs\n\
-  \WHERE ebSlot >= ?1 AND missingTxCount IS NOT NULL AND missingTxCount <= 0\n\
+  \WHERE ebSlot >= ?1 AND missingTxCount = 0\n\
   \ORDER BY ebSlot, ebHashBytes\n\
   \"
 
@@ -122,34 +121,24 @@ sql_fill_ebTxBytes_locally =
   \"
 
 -- | Decrement the point's missingTxCount, if it has one, by the number of
--- tx-bytes rows a batch actually filled, returning the new count so the caller
--- can spot that it just completed.
+-- tx-bytes rows a batch actually filled.
 --
 -- Parameters: 3 = rows filled
 sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
   "UPDATE ebs SET missingTxCount = missingTxCount - ?3\n\
   \WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND status = 0 AND missingTxCount IS NOT NULL\n\
-  \RETURNING missingTxCount\n\
   \"
 
 -- | Initialize missingTxCount after a body is inserted: the number of the
--- point's 'ebTxBytes' rows not yet filled. RETURNING lets the caller detect
--- @missingTxCount = 0@.
+-- point's 'ebTxBytes' rows not yet filled.
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
   \    SELECT COUNT(*) FROM ebTxBytes\n\
   \    WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND filled = 0\n\
   \) WHERE ebSlot = ?1 AND ebHashBytes = ?2\n\
-  \RETURNING missingTxCount\n\
   \"
-
--- | Mark a point as notified (@missingTxCount = -1@), once a write completed
--- its closure.
-sql_mark_point_notified :: String
-sql_mark_point_notified =
-  "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ?1 AND ebHashBytes = ?2"
 
 -- | Batch retrieve of tx bytes for a batch of offsets into one point's body;
 -- @?3@ is a JSON int array of offsets. The join uses the PK, so index lookups

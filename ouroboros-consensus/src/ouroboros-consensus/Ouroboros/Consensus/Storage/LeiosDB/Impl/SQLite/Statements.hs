@@ -136,7 +136,6 @@ data VolStmts = VolStmts
   , stFillEbTxBytes :: !DB.Statement
   , stFillEbTxBytesLocally :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
-  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -179,7 +178,6 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
   stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stMarkPointNotified <- prep sql_mark_point_notified
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
   stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
@@ -198,7 +196,6 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stFillEbTxBytes
   dbFinalize stFillEbTxBytesLocally
   dbFinalize stDecrMissingCount
-  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince

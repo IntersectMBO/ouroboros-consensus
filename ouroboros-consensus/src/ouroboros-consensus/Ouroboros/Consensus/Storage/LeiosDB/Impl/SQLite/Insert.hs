@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | The insert writes behind
@@ -25,10 +24,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LocalFill
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -59,7 +55,7 @@ sqlInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   [LocalFill] ->
-  IO (CompletedEbs, [TxOffset])
+  IO [TxOffset]
 sqlInsertEbBody tracer conn point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
@@ -91,22 +87,13 @@ sqlInsertEbBody tracer conn point eb fills = do
         dbStep1 stFillEbTxBytesLocally
       changed <- DB.changes db
       pure [txOffset | changed > 0]
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. If the body was already written at this
-    -- point, by an earlier delivery, the inserts above changed nothing, and the
-    -- count accounts for every tx written since.
-    missingCount <- useStmt stInitMissingCount $ do
+    -- If the body was already written at this point, by an earlier delivery,
+    -- the inserts above changed nothing, and the count accounts for every tx
+    -- written since.
+    useStmt stInitMissingCount $ do
       dbBindPoint stInitMissingCount point
-      readReturningInt64 stInitMissingCount
-    completedNow <-
-      if missingCount == 0
-        then do
-          useStmt stMarkPointNotified $ do
-            dbBindPoint stMarkPointNotified point
-            dbStep1 stMarkPointNotified
-          pure [point]
-        else pure []
-    pure (completedNow, filledOffs)
+      dbStep1 stInitMissingCount
+    pure filledOffs
  where
   items = zip [0 :: Int ..] (endorserBlockReferences eb)
   Conn{conVolDb = db, connVolStmts} = conn
@@ -115,7 +102,6 @@ sqlInsertEbBody tracer conn point eb fills = do
     , stPreallocEbTxBytes
     , stFillEbTxBytesLocally
     , stInitMissingCount
-    , stMarkPointNotified
     } = connVolStmts
 
 -- | Persist tx bytes for one point by filling the rows 'sqlInsertEbBody'
@@ -135,7 +121,7 @@ sqlInsertTxs ::
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   [(TxOffset, ByteString)] ->
-  IO CompletedEbs
+  IO ()
 sqlInsertTxs _tracer conn point txBytesWithOffsets = do
   dbWithWriteTransaction conn $ do
     -- Fill the pre-allocated rows of the ebTxBytes table.
@@ -153,29 +139,14 @@ sqlInsertTxs _tracer conn point txBytesWithOffsets = do
         )
         (0 :: Int64)
         txBytesWithOffsets
-    if nFilled == 0
-      then pure []
-      else do
-        -- Decrement the point's missingTxCount, and see whether this batch
-        -- completed it.
-        completed <- useStmt stDecrMissingCount $ do
-          dbBindPoint stDecrMissingCount point
-          dbBindInt64 stDecrMissingCount 3 nFilled
-          dbStep stDecrMissingCount >>= \case
-            DB.Done -> pure False
-            DB.Row -> (== 0) <$> DB.columnInt64 stDecrMissingCount 0
-        -- Mark it notified so it is not completed twice.
-        if completed
-          then do
-            useStmt stMarkPointNotified $ do
-              dbBindPoint stMarkPointNotified point
-              dbStep1 stMarkPointNotified
-            pure [point]
-          else pure []
+    when (nFilled > 0) $
+      useStmt stDecrMissingCount $ do
+        dbBindPoint stDecrMissingCount point
+        dbBindInt64 stDecrMissingCount 3 nFilled
+        dbStep1 stDecrMissingCount
  where
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
     { stFillEbTxBytes
     , stDecrMissingCount
-    , stMarkPointNotified
     } = connVolStmts

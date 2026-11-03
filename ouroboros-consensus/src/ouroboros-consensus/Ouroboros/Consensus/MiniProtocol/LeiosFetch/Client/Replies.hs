@@ -90,8 +90,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchClientEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosDbWriter (..)
+  ( LeiosDbWriter (..)
   , LocalFill
   , Promise (..)
   )
@@ -357,21 +356,17 @@ settleBody ::
   -- | when the body arrived
   RelativeTime ->
   Promise m () ->
-  Promise m (CompletedEbs, [TxOffset]) ->
+  Promise m [TxOffset] ->
   m ()
 settleBody ctx point eb now pointWritten bodyWritten = do
   () <- await pointWritten
-  (completed, filledOffs) <- await bodyWritten
+  filledOffs <- await bodyWritten
   acquired <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
       Just (MkEbState onset NoBody) -> do
         let
-          -- The LeiosDB may hold the whole closure already, written for
-          -- another point of the same endorser block.
-          misses
-            | point `elem` completed = IntMap.empty
-            | otherwise = refs `IntMap.withoutKeys` IntSet.fromList filledOffs
-          jobPool = newLeiosJobPool lfcStaticEnv misses
+          jobPool =
+            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
         atomically $ do
           lfcNotify $ AcquiredEb point sizes
           when (Jobs.nullLeiosJobPool jobPool) $
@@ -521,7 +516,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     throwIO exn
 
   settleTxs now txsWritten toIngest = do
-    _completed <- await txsWritten
+    await txsWritten
     completed <- modifyMVar lfcOutstanding $ \outstanding -> do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of

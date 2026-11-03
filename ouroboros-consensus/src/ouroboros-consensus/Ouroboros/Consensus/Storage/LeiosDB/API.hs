@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
-  , CompletedEbs
   , LocalFill
   , TxOffset
   ) where
@@ -112,21 +111,21 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Record an announced EB's point and expected size.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
+      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
   -- ^ Persist an EB body at this point, and fill what it can from local bytes:
   -- each 'LocalFill' pairs an offset in this body with the 'TxLocation' of
   -- another point durably holding the same tx, copied in the same transaction.
   -- Every point stores its own body and txs, even when another point names the
   -- same EB.
   --
-  -- Returns this point, if this write completed its closure, and the offsets
-  -- that actually filled: a fill whose source does not hold the tx this body
-  -- lists at its offset fills nothing, and that tx stays fetchable.
+  -- Returns the offsets that actually filled: a fill whose source does not
+  -- hold the tx this body lists at its offset fills nothing, and that tx stays
+  -- fetchable.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
   -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
@@ -155,9 +154,6 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
-
--- | EBs whose tx closure became complete as a result of a write.
-type CompletedEbs = [LeiosPoint]
 
 -- | A cross-point fill: fill the EB's tx at 'TxOffset' from the tx's durable
 -- 'TxLocation' at another point. See 'writeEbBody'.

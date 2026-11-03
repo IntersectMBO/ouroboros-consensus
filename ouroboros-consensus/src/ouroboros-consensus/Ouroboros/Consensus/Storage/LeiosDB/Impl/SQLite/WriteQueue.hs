@@ -42,7 +42,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, LocalFill, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -75,14 +75,14 @@ data WriteJob
       -- | where to fill its txs from
       ![LocalFill]
       -- | where the worker puts the result
-      !(WriteResult (CompletedEbs, [TxOffset]))
+      !(WriteResult [TxOffset])
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult ())
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())

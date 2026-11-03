@@ -26,7 +26,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   , dbStepSafe
   , dbStep1Safe
   , readSingleInt64
-  , readReturningInt64
   , queryInt64
   , collectBlobs
   , execJson
@@ -191,20 +190,6 @@ readSingleInt64 stmt =
       dbStepSafe stmt >>= \case
         DB.Done -> pure n
         DB.Row -> throwLeiosDbException "readSingleInt64: expected exactly one row"
-
--- | Read a single-column @Int64@ from a statement that uses a
--- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
--- row followed by 'DB.Done'). Any other shape is a programmer error.
-readReturningInt64 :: DB.Statement -> IO Int64
-readReturningInt64 stmt =
-  dbStep stmt >>= \case
-    DB.Done ->
-      throwLeiosDbException "readReturningInt64: expected one row from RETURNING, got Done"
-    DB.Row -> do
-      n <- DB.columnInt64 stmt 0
-      dbStep stmt >>= \case
-        DB.Done -> pure n
-        DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
 -- | Run a query that yields exactly one integer column.
 queryInt64 :: HasCallStack => DB.Database -> String -> IO Int64

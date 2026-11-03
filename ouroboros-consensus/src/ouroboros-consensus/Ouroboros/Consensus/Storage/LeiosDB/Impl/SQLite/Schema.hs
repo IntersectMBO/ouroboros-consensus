@@ -17,7 +17,7 @@ sql_schema_vol :: String
 sql_schema_vol =
   unlines
     ( ebsTable
-        [ -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
+        [ -- NULL = no body yet, >0 = txs missing, 0 = closure complete
           "  missingTxCount INTEGER,"
         , -- 0 = volatile, 1 = certified/pinned awaiting copy,
           -- 2 = copied to the immutable partition (evictable),
