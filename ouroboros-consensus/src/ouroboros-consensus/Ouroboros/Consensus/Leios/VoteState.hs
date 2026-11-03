@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Leios.VoteState
   , addVote
   , ValidatedVote (..)
   , validateVote
-  , votePruner
 
     -- * Certificates
   , getCertificate
@@ -58,7 +57,7 @@ import Cardano.Crypto.Leios
   , leiosSignContext
   , resolveLeiosSeat
   )
-import Control.Monad (forever, when)
+import Control.Monad (when)
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
@@ -66,7 +65,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
-import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, SlotNo)
@@ -80,7 +78,6 @@ import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
   , NotifyLog
   , appendNotifyLog
-  , notifyLogPruneCadence
   )
 import Ouroboros.Consensus.Leios.Types (LeiosVote (..), RankingBlockHash)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -380,24 +377,17 @@ recordVote st validatedVote = do
       }
 
 -- | Forget the votes of every election slot whose deadline has passed at the
--- given time, and return them.
+-- given time, and trace the announcements among them that missed their quorum.
 --
 -- 'recordVote' then finds any later copy of their votes 'ArrivedTooLate'.
 pruneVotes ::
   IOLike m =>
-  VoteState m blk -> RelativeTime -> STM m (Map SlotNo SlotVotes)
+  VoteState m blk -> RelativeTime -> m ()
 pruneVotes st now = do
-  MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
-  let (unexpired, expired) = Map.partition ((now <=) . slotRelayUntil) votesBySlot
-  writeTVar (votes st) (MkVotes (max now votesPrunedAt) unexpired)
-  pure expired
-
--- | Prune the votes every 'notifyLogPruneCadence'; see 'pruneVotes'.
-votePruner :: IOLike m => VoteState m blk -> SystemTime m -> m Void
-votePruner st systemTime = forever $ do
-  now <- systemTimeCurrent systemTime
   missed <- atomically $ do
-    expired <- pruneVotes st now
+    MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
+    let (unexpired, expired) = Map.partition ((now <=) . slotRelayUntil) votesBySlot
+    writeTVar (votes st) (MkVotes (max now votesPrunedAt) unexpired)
     certified <- readTVar (certificates st)
     pure
       [ (rbHash, weight)
@@ -406,7 +396,6 @@ votePruner st systemTime = forever $ do
       , Map.notMember rbHash certified
       ]
   for_ missed $ \(rbHash, weight) -> traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
-  threadDelay (nominalDelay notifyLogPruneCadence)
 
 {-------------------------------------------------------------------------------
   Certificates
