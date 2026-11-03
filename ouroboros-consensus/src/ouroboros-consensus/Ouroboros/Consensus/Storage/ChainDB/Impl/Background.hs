@@ -180,8 +180,8 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
           let acquired' = insertAcquiredLeiosEb point acquired
           writeTVar cdbAcquiredLeiosEbs acquired'
           pure $
-            not (isAcquiredLeiosEb (pointEbHash point) acquired)
-              && isAcquiredLeiosEb (pointEbHash point) acquired'
+            not (isAcquiredLeiosEb point acquired)
+              && isAcquiredLeiosEb point acquired'
         -- The set has already grown, so ChainSel sees the closure even while
         -- this enqueue blocks on a full queue.
         when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)

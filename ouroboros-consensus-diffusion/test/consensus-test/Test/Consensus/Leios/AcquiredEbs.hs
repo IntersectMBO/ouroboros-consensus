@@ -18,16 +18,19 @@ tests :: TestTree
 tests =
   testGroup
     "Leios acquired endorser blocks"
-    [ testCase "pruning forgets the endorser blocks all of whose foci are older than the slot" $
-        map (`isAcquiredLeiosEb` pruned) [ebA, ebB] @?= [False, True]
-    , testCase "a focus older than the slot pruned to is not recorded afterwards" $
-        isAcquiredLeiosEb ebA (insertAcquiredLeiosEb (MkLeiosPoint (SlotNo 1) ebA) pruned)
+    [ testCase "pruning forgets the points older than the slot" $
+        map (`isAcquiredLeiosEb` pruned) [pointA, pointB, laterPointA] @?= [False, True, True]
+    , testCase "a point older than the slot pruned to is not recorded afterwards" $
+        isAcquiredLeiosEb pointA (insertAcquiredLeiosEb pointA pruned)
           @?= False
     ]
  where
+  pointA = MkLeiosPoint (SlotNo 1) ebA
+  pointB = MkLeiosPoint (SlotNo 2) ebB
+  laterPointA = MkLeiosPoint (SlotNo 3) ebA
   pruned =
     pruneAcquiredLeiosEbs (SlotNo 2) $
-      mkAcquiredLeiosEbs [MkLeiosPoint (SlotNo 1) ebA, MkLeiosPoint (SlotNo 2) ebB]
+      mkAcquiredLeiosEbs [pointA, pointB, laterPointA]
 
 ebA, ebB :: EndorserBlockHash
 ebA = UnsafeHash (SBS.replicate 32 1)
