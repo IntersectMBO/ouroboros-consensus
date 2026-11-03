@@ -55,13 +55,14 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosBlockRequest (..)
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosBlockRequest (..)
   , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
   , PeerOffer (..)
   , WhetherTxsClosureOffered (..)
   , defaultLeiosFetchStaticEnv
-  , ebStateHasBody
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
@@ -232,7 +233,7 @@ test_announcedAgainWhileWriting = do
   atomically $ putTMVar written ()
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   outstanding <- readMVar (lfcOutstanding ctx)
-  (ebStateHasBody <$> Map.lookup newer (ebState outstanding)) @?= Just False
+  assertNoBody newer outstanding
 
 -- | While the 'fixture''s body is being written, pruning passes its point, and
 -- an election focuses it anew at a newer point, whose point is written.
@@ -256,4 +257,10 @@ test_prunedWhileWriting = do
     >>= maybe (assertFailure "timed out waiting for the body to settle") pure
   readTVarIO notes >>= (@?= [])
   outstanding <- readMVar (lfcOutstanding ctx)
-  (ebStateHasBody <$> Map.lookup newer (ebState outstanding)) @?= Just False
+  assertNoBody newer outstanding
+
+assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
+assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of
+  Just (MkEbState _onset NoBody) -> pure ()
+  Just (MkEbState _onset BodyAcquired{}) -> assertFailure "the point holds a body"
+  Nothing -> assertFailure "the point has no entry"

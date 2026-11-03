@@ -81,7 +81,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , acquireEbBody
   , completeTxRequest
-  , ebStateHasBody
   , newLeiosJobPool
   , offsetsToBitmap
   , refundEbRequest
@@ -262,10 +261,8 @@ processLeiosBlock ctx peer req eb = do
   -- The lock decides whether this is a novel, still relevant body, so two peers
   -- delivering the same body cannot both write it.
   (fills, arrival) <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let tooOld = pointSlotNo point < outstandingPrunedSlot outstanding
-        novel = not $ maybe False ebStateHasBody (Map.lookup point (ebState outstanding))
-        -- This request is no longer in flight, either way.
-        cleaned = refundEbRequest peer point (lbrOfferedSize req) outstanding
+    -- Answered, so this request is no longer in flight.
+    let cleaned = refundEbRequest peer point (lbrOfferedSize req) outstanding
     if
       | tooBig ->
           -- Held with nothing to fetch, so that neither its closure nor a
@@ -280,21 +277,24 @@ processLeiosBlock ctx peer req eb = do
             ( acquireEbBody point sizes Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
-      | tooOld -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))
-      | not novel -> pure (cleaned, (Nothing, fetchArrivalExtra ebBytesSize))
-      | otherwise -> do
-          -- Register the body's transactions in the tx cache, and read where
-          -- some recent point durably holds any of them, so that the body
-          -- write copies those rather than us fetching them again.
-          mbInserted <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
-          case mbInserted of
-            Just (_summary, located) -> pure (cleaned, (Just located, fetchArrivalGood ebBytesSize))
-            -- The cache already holds the body, taken in for another point, or
-            -- it does not track this endorser block's announcement, perhaps
-            -- since evicted. Either way, its txs may have locations.
-            Nothing -> do
-              located <- locateTxs lfcTxCache (packTxReferences eb) [] snocLocated
-              pure (cleaned, (Just located, fetchArrivalEvicted ebBytesSize))
+      | otherwise -> case Map.lookup point (ebState outstanding) of
+          -- Pruned meanwhile.
+          Nothing -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))
+          -- Another delivery got here first.
+          Just (MkEbState _onset BodyAcquired{}) -> pure (cleaned, (Nothing, fetchArrivalExtra ebBytesSize))
+          Just (MkEbState _onset NoBody) -> do
+            -- Register the body's transactions in the tx cache, and read where
+            -- some recent point durably holds any of them, so that the body
+            -- write copies those rather than us fetching them again.
+            mbInserted <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
+            case mbInserted of
+              Just (_summary, located) -> pure (cleaned, (Just located, fetchArrivalGood ebBytesSize))
+              -- The cache already holds the body, taken in for another point,
+              -- or it does not track this endorser block's announcement,
+              -- perhaps since evicted. Either way, its txs may have locations.
+              Nothing -> do
+                located <- locateTxs lfcTxCache (packTxReferences eb) [] snocLocated
+                pure (cleaned, (Just located, fetchArrivalEvicted ebBytesSize))
   void $ tryPutMVar lfcReady ()
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   forM_ fills $ \localFills -> do

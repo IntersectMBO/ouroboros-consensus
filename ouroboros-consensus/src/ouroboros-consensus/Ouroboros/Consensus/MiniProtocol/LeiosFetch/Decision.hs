@@ -20,7 +20,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , EbFetchState (..)
   , ebStateOnset
-  , ebStateHasBody
   , emptyLeiosOutstanding
   , initializeLeiosOutstanding
   , newLeiosJobPool
@@ -336,13 +335,6 @@ data EbFetchState
 ebStateOnset :: EbState -> StrictMaybe RelativeTime
 ebStateOnset (MkEbState onset _fetchState) = onset
 
--- | Whether we already hold the EB's body (the "do we have it?" test that the
--- offer/announcement/arrival paths consult before fetching).
-ebStateHasBody :: EbState -> Bool
-ebStateHasBody (MkEbState _onset fetchState) = case fetchState of
-  NoBody -> False
-  BodyAcquired{} -> True
-
 -- | A pool of jobs to fetch these missing txs of an EB's closure, given as in
 -- 'Jobs.mkLeiosJobPool'.
 newLeiosJobPool ::
@@ -351,11 +343,11 @@ newLeiosJobPool ::
   Jobs.LeiosJobPool
 newLeiosJobPool env = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env)
 
--- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
+-- | The body's LeiosDb write is durable, so record 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.
 --
 -- There is no intermediate "write in flight" state. During the (brief, async)
--- write window the EB reads as not-held ('ebStateHasBody' is 'False'), so a
+-- write window the entry is still 'NoBody', so a
 -- concurrent offer may redundantly re-fetch the body -- cheaper than tracking an
 -- in-flight state and reverting it on a lost write, which with the single writer
 -- cannot happen without bringing the node down anyway. The body write is only
