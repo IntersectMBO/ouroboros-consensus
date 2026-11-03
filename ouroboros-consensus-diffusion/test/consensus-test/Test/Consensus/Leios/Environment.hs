@@ -47,12 +47,14 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion, NodeToNodeVersionD
 import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable (..))
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
+import Control.Monad (when)
 import Control.Monad.IOSim (IOSim)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Traversable (for)
 import qualified Network.Mux as Mx
 import Network.Mux.Bearer.Queues (QueueChannel (..), queueChannelAsBearer)
@@ -189,7 +191,7 @@ withNodeVsEnvConnection ::
   EnvPeer (IOSim s) ->
   (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeVsEnvConnection nut addr envPeer body = do
+withNodeVsEnvConnection nut addr envPeer body = withOnlyConnection nut addr $ do
   nodeToPeer <- Strict.newTBQueueIO bearerQueueCapacity
   peerToNode <- Strict.newTBQueueIO bearerQueueCapacity
   let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerToNode, writeQueue = nodeToPeer}
@@ -281,6 +283,22 @@ withNodeVsEnvConnection nut addr envPeer body = do
       Mx.stop nodeMux
       Mx.stop peerMux
       pure result
+
+-- | Run the action as the node's only connection to the peer at the given
+-- address, as the diffusion layer would: two connections with the same
+-- 'ConnectionId' never run mini-protocols at the same time (see
+-- "Ouroboros.Network.ConnectionId#exclusivity"), and the node relies on that.
+withOnlyConnection :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s a -> IOSim s a
+withOnlyConnection nut addr = bracket_ connect disconnect
+ where
+  connect = atomically $ do
+    connected <- readTVar (nutConnectedPeers nut)
+    when (Set.member addr connected) $
+      throwSTM $
+        userError $
+          "the node connects to " <> show addr <> " while still connected to it"
+    writeTVar (nutConnectedPeers nut) (Set.insert addr connected)
+  disconnect = atomically $ modifyTVar (nutConnectedPeers nut) (Set.delete addr)
 
 -- | The node's own address.
 nodeAddr :: PeerAddr
