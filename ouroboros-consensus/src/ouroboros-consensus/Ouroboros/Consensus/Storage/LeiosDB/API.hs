@@ -7,7 +7,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   ( -- * Handle
     LeiosDbHandle (..)
   , LeiosDbStats (..)
-  , LeiosEbNotification (..)
 
     -- * Reading
   , LeiosDbReader (..)
@@ -21,12 +20,10 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , storeForgedEb
-  , CompletedEbs
   , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
@@ -49,7 +46,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
--- | The Leios database. Hands out readers, writers and subscriptions.
+-- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
   { closeLeiosDbHandle :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs
@@ -59,10 +56,6 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Get a new reader. No interaction between readers or writers.
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
-  , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
-  -- ^ New EBs and EB closures as they are stored, from the moment of
-  -- subscription.
-  -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Trigger garbage collection of the LeiosDB.
   --
@@ -104,6 +97,9 @@ data LeiosDbReader m = LeiosDbReader
       SlotNo -> m [LeiosPoint]
   -- ^ EBs whose closure is complete and whose announcer is no older than the
   -- given slot. Seeds the ChainDB's acquired-closures set at startup.
+  --
+  -- The LeiosDB does not track completeness, so this infers it from the txs
+  -- it holds. Startup only.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 
@@ -117,22 +113,15 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
-  --
-  -- TODO When this 'LeiosPoint' is its election's focus and the DB already
-  -- holds the EB's body, send 'AcquiredEb' for it, and 'AcquiredEbTxs' too if
-  -- the DB holds every tx, as 'LeiosEbNotification' requires. Nothing in the
-  -- node calls 'writeEbPoint' yet.
-  , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
-  --
-  -- The returned EB is only used for tracing and too broad: it can actually only
-  -- be this same EB which got completed.
+  , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m ())
+  -- ^ Persist an EB body.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'. Whether that
+  -- completes the EB is for the caller to know: the LeiosDB does not track it.
   --
   -- No backend uses the point's slot: the tx bytes belong to the EB body,
   -- which every point with the same EB hash shares.
@@ -163,29 +152,6 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
-
--- | EBs whose tx closure became complete as a result of a write.
-type CompletedEbs = [LeiosPoint]
-
--- | What the DB tells its subscribers as it acquires EBs.
---
--- Each notification is sent at every 'LeiosPoint' of the EB that is its
--- election's focus and whose slot is not older than the ImmutableDB tip's, even
--- one that becomes the focus after the EB was acquired. An election's focus is
--- the first announcement in it that the node accepts, until a verified
--- certificate names another, so every point that a block certifies is a focus.
--- So a subscriber hears of the EB's youngest focus.
-data LeiosEbNotification
-  = -- | The DB holds the EB's body.
-    AcquiredEb
-      -- | the EB's point
-      LeiosPoint
-      -- | its size in bytes
-      BytesSize
-  | -- | The DB holds the EB's body and every tx it lists.
-    AcquiredEbTxs
-      -- | the EB's point
-      LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader

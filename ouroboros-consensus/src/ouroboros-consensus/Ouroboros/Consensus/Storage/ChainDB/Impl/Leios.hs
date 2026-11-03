@@ -84,11 +84,11 @@ leiosBlockInfo bcfg blk =
 -------------------------------------------------------------------------------}
 
 -- | The endorser blocks whose closure the LeiosDB holds, each with the slot of
--- its youngest focus (see @LeiosEbNotification@).
+-- its youngest focus (see @launchBgTasks@).
 --
--- That slot is the youngest slot of any 'LeiosPoint' in an @AcquiredEbTxs@
--- notification for the endorser block, since the LeiosDB sends that
--- notification at every focus not older than the ImmutableDB tip.
+-- That slot is the youngest slot of any acquired closure's 'LeiosPoint' of the
+-- endorser block, since the ChainDB hears of a closure at every focus not
+-- older than the ImmutableDB tip.
 --
 -- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
 -- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.

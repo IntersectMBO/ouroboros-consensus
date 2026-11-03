@@ -10,18 +10,14 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, unless, when)
+import Cardano.Prelude (Generic, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Applicative ((<|>))
 import Control.Concurrent.Class.MonadSTM.Strict
-  ( StrictTChan
-  , StrictTVar
-  , dupTChan
+  ( StrictTVar
   , modifyTVar
-  , newBroadcastTChan
   , newTVarIO
   , readTVar
-  , writeTChan
   , writeTVar
   )
 import Data.ByteString (ByteString)
@@ -32,7 +28,6 @@ import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
-import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
@@ -43,17 +38,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , TxHash
   , TxOffset
-  , encodeEndorserBlockSize
   , endorserBlockReferences
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -79,25 +71,12 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbPoints :: !(Map LeiosPoint BytesSize)
   -- ^ Inserted EB points with their expected sizes. The same EB
   -- content can be inserted at multiple slots; each
-  -- @(slot, hash)@ point has its own entry and completes
-  -- independently.
-  , imEbBodiesDownloaded :: !(Set LeiosPoint)
-  -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
-  -- called. Only these points are considered for completion.
+  -- @(slot, hash)@ point has its own entry.
   , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by EB hash. Shared across every
   -- point that references the same EB.
   , imEbBodyBytes :: !(Map EndorserBlockHash ByteString)
   -- ^ The bodies of 'imEbBodies' in the bytes they arrived in.
-  , imCompletedEbs :: !(Set LeiosPoint)
-  -- ^ Points for which 'AcquiredEbTxs' has already been broadcast.
-  -- The completion predicate stays true once an EB is complete, so
-  -- any later batch containing one of its txs would re-trigger it
-  -- without this guard; downstream consumers (e.g. 'runLeiosVoting')
-  -- treat the re-notification as fatal ('AlreadyKnown' from
-  -- 'addVote'). Each point carries the EB's hash and its announcer slot,
-  -- so this is also the source for
-  -- 'scanCompleteEbClosuresNotOlderThanSlot'.
   , imImmutableEbBodies :: !(Map EndorserBlockHash (IntMap EbTxEntry))
   -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
   -- collection evicts such an EB from the other fields like any other, and the
@@ -111,7 +90,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -130,19 +109,16 @@ newLeiosDBInMemory = do
 
 newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
 newLeiosDBInMemoryWith stateVar = do
-  notificationChan <- atomically newBroadcastTChan
   pure $
     LeiosDbHandle
       { -- Nothing to close: the state is a 'StrictTVar'.
         closeLeiosDbHandle = pure ()
-      , subscribeEbNotifications =
-          atomically (dupTChan notificationChan)
       , garbageCollect = imGarbageCollect stateVar
       , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
-      , openWriter = openInMemoryWriter stateVar notificationChan
+      , openWriter = openInMemoryWriter stateVar
       }
 
 -- | Copy the closures of the given EBs to 'imImmutableEbBodies' and
@@ -192,11 +168,9 @@ imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
       kept p = pointEbHash p `Set.notMember` evicted
    in s
         { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
-        , imEbBodiesDownloaded = Set.filter kept (imEbBodiesDownloaded s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbBodyBytes = Map.withoutKeys (imEbBodyBytes s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
-        , imCompletedEbs = Set.filter kept (imCompletedEbs s)
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -222,20 +196,19 @@ openInMemoryWriter ::
   forall m.
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   m (LeiosDbWriter m)
-openInMemoryWriter stateVar notificationChan =
+openInMemoryWriter stateVar =
   pure
     LeiosDbWriter
       { closeWriter = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb)
       , writeTxs = \point txs ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
-            (imInsertTxs stateVar notificationChan point txs)
+            (imInsertTxs stateVar point txs)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -279,13 +252,11 @@ imLookupEbBody stateVar ebHash = atomically $ do
 imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   EndorserBlock ->
-  m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+  m ()
+imInsertEbBody stateVar point eb = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
-      ebBytesSize = encodeEndorserBlockSize eb
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
@@ -314,29 +285,7 @@ imInsertEbBody stateVar notificationChan point eb = do
               (pointEbHash point)
               (serialiseEndorserBlock eb)
               (imEbBodyBytes s)
-        , -- Mark this point as downloaded. Other points referencing
-          -- the same EB hash are unaffected; each needs its own
-          -- 'writeEbBody' to be considered complete.
-          imEbBodiesDownloaded =
-            Set.insert point (imEbBodiesDownloaded s)
         }
-    writeTChan notificationChan $ AcquiredEb point ebBytesSize
-    -- If every tx referenced by this body is already present, the closure
-    -- is complete the moment the body lands — no subsequent
-    -- 'writeTxs' will fire for this point, so we must notify here.
-    -- Only trigger for a novel point ('imCompletedEbs' is our idempotency
-    -- guard). This mirrors what 'imInsertTxs' does when the last missing
-    -- tx of an already-downloaded body arrives.
-    state <- readTVar stateVar
-    let allTxsPresent = hashCompleteIn state (pointEbHash point)
-        alreadyNotified = Set.member point (imCompletedEbs state)
-    if allTxsPresent && not alreadyNotified
-      then do
-        modifyTVar stateVar $ \s ->
-          s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
-        pure [point]
-      else pure []
 
 -- | Whether every offset of this EB body has its bytes.
 hashCompleteIn :: InMemoryLeiosDb -> EndorserBlockHash -> Bool
@@ -349,11 +298,10 @@ hashCompleteIn state h = case Map.lookup h (imEbBodies state) of
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m CompletedEbs
-imInsertTxs stateVar notificationChan point offBytes = atomically $ do
+  m ()
+imInsertTxs stateVar point offBytes = atomically $ do
   let ebHash = pointEbHash point
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
   -- pre-allocated row, i.e. an offset the body declared, once, at the declared
@@ -372,53 +320,28 @@ imInsertTxs stateVar notificationChan point offBytes = atomically $ do
      in if IntMap.null accepted
           then s
           else s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
-  state <- readTVar stateVar
-  -- Candidates: every point of THIS EB whose body has been downloaded and
-  -- whose closure is now complete. Tx bytes are not shared among overlapping
-  -- EBs, so no other hash can have been affected.
-  --
-  -- 'hashCompleteIn' does not depend on the point, so judge the closure once
-  -- rather than once per downloaded point. A batch that does not complete the
-  -- closure -- the common case while a multi-batch fetch is in flight -- then
-  -- scans nothing, which keeps the growth of the 'imEbBodiesDownloaded' set
-  -- from increasing the per-write cost.
-  let candidates
-        | hashCompleteIn state ebHash =
-            [ p
-            | p <- Set.toList (imEbBodiesDownloaded state)
-            , pointEbHash p == ebHash
-            ]
-        | otherwise = []
-      completed =
-        filter
-          (\p -> not (Set.member p (imCompletedEbs state)))
-          candidates
-  modifyTVar stateVar $ \s ->
-    s
-      { imCompletedEbs =
-          foldr Set.insert (imCompletedEbs s) completed
-      }
-  -- Emit a closure-completion notification for each newly-complete EB. The
-  -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  forM_ completed $ \p ->
-    writeTChan notificationChan (AcquiredEbTxs p)
-  pure completed
 
--- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
--- announced no older than the given slot.
---
--- Derived from 'imCompletedEbs': an EB's greatest announcer slot is no older
--- than @sinceSlot@ exactly when at least one of its completed points has a slot
--- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
--- is precise across all of an EB's announcer slots, as in the SQLite backend.
+-- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each EB whose closure
+-- is complete, at its youngest point no older than the given slot, as in the
+-- SQLite backend. A promoted EB is complete too, since only complete EBs are
+-- promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
+  let isComplete ebHash =
+        hashCompleteIn s ebHash || Map.member ebHash (imImmutableEbBodies s)
+      youngest =
+        Map.fromListWith
+          max
+          [ (pointEbHash p, pointSlotNo p)
+          | p <- Map.keys (imEbPoints s)
+          , pointSlotNo p >= sinceSlot
+          ]
   pure
-    [ p
-    | p <- Set.toList (imCompletedEbs s)
-    , pointSlotNo p >= sinceSlot
+    [ MkLeiosPoint slot ebHash
+    | (ebHash, slot) <- Map.toList youngest
+    , isComplete ebHash
     ]
 
 -- | This falls back to the immutable copy only when 'imEbBodies' lacks the

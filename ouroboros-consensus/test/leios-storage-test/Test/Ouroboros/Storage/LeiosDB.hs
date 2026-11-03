@@ -12,12 +12,6 @@ module Test.Ouroboros.Storage.LeiosDB (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Class.MonadSTM.Strict
-  ( StrictTChan
-  , atomically
-  , readTChan
-  , tryReadTChan
-  )
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, try)
@@ -28,7 +22,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
-import Data.List (nub, sortOn)
+import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -52,11 +46,9 @@ import Ouroboros.Consensus.Leios.Types
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( CompletedEbs
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
   , Promise (..)
   , TraceLeiosDb (..)
   , newLeiosDBInMemory
@@ -156,11 +148,14 @@ withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
 rwInsertEbPoint rw point sz = void $ await =<< writeEbPoint (rwWriter rw) point sz
 
-rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO CompletedEbs
+rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO ()
 rwInsertEbBody rw point eb = await =<< writeEbBody (rwWriter rw) point eb
 
-rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO CompletedEbs
+rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
 rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
+
+rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
+rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
@@ -234,19 +229,13 @@ mkTestGroups impl =
           withFreshDb impl test_malformedTxWritesDropped
       ]
   , testGroup
-      "notifications"
-      [ testCase "single subscriber" $ withFreshDb impl test_singleSubscriber
-      , testCase "multiple subscribers" $ withFreshDb impl test_multipleSubscribers
-      , testCase "correct data" $ withFreshDb impl test_correctData
-      , testCase "late subscriber" $ withFreshDb impl test_lateSubscriber
-      , testCase "multiple notifications" $ withFreshDb impl test_multipleNotifications
-      , testCase "no offerBlockTxs before last update" $ withFreshDb impl test_noOfferBlockTxsBeforeComplete
-      , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
-      , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
-      , testCase "no re-notification when re-inserting an EB's own tx" $
-          withFreshDb impl test_noReNotifyOnRelatedTxReinsert
-      , testCase "same EB hash at multiple slots notifies each completion" $
+      "completion"
+      [ testCase "a scan finds an EB once each of its txs is written" $
+          withFreshDb impl test_completion
+      , testCase "a scan finds an EB at its youngest point" $
           withFreshDb impl test_multipleSlotsSameHash
+      , testCase "a scan finds a complete EB at a point written after the closure completed" $
+          withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
       "lookupEbClosure"
@@ -483,258 +472,56 @@ prop_txsRetrieveMissing impl =
         result === []
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
 
--- * Notification tests
+-- * Completion tests
 
--- | Test that a single subscriber receives a notification when rwInsertEbBody is called.
-test_singleSubscriber :: LeiosDbHandle IO -> IO ()
-test_singleSubscriber db = do
-  chan <- subscribeEbNotifications db
+-- | The scan finds an EB once each of its txs is written, and not another EB
+-- whose txs are not.
+test_completion :: LeiosDbHandle IO -> IO ()
+test_completion db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-  notification <- atomically $ readTChan chan
-  case notification of
-    AcquiredEb notifPoint _ ->
-      notifPoint @?= point
-    AcquiredEbTxs _ ->
-      assertFailure "expected AcquiredEb, got AcquiredEbTxs"
-
--- | Test that multiple subscribers each receive the notification.
-test_multipleSubscribers :: LeiosDbHandle IO -> IO ()
-test_multipleSubscribers db = do
-  chan1 <- subscribeEbNotifications db
-  chan2 <- subscribeEbNotifications db
-  chan3 <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 5
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-  -- All subscribers should receive the notification
-  notif1 <- atomically $ readTChan chan1
-  notif2 <- atomically $ readTChan chan2
-  notif3 <- atomically $ readTChan chan3
-  assertOfferBlock point notif1
-  assertOfferBlock point notif2
-  assertOfferBlock point notif3
-
--- | Test that the notification contains the correct AcquiredEb data.
-test_correctData :: LeiosDbHandle IO -> IO ()
-test_correctData db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 10
-      expectedSize = encodeEndorserBlockSize eb
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-  notification <- atomically $ readTChan chan
-  case notification of
-    AcquiredEb notifPoint notifSize -> do
-      pointSlotNo notifPoint @?= pointSlotNo point
-      pointEbHash notifPoint @?= pointEbHash point
-      notifSize @?= expectedSize
-    AcquiredEbTxs _ ->
-      assertFailure "expected AcquiredEb, got AcquiredEbTxs"
-
--- | Test that a subscriber who subscribes after an insertion does not receive
--- the past notification.
-test_lateSubscriber :: LeiosDbHandle IO -> IO ()
-test_lateSubscriber db = do
-  -- Insert before subscribing
-  let point1 = mkTestPoint (SlotNo 1) 1
-      eb1 = mkTestEb 2
-  withRW db $ \con -> do
-    rwInsertEbPoint con point1 (encodeEndorserBlockSize eb1)
-    void $ rwInsertEbBody con point1 eb1
-  -- Now subscribe
-  chan <- subscribeEbNotifications db
-  -- The channel should be empty (no past notifications)
-  maybeNotif <- atomically $ tryReadTChan chan
-  case maybeNotif of
-    Nothing -> pure () -- Expected: no notification
-    Just _ -> assertFailure "late subscriber should not receive past notifications"
-  -- But new insertions should be received
-  let point2 = mkTestPoint (SlotNo 2) 2
-      eb2 = mkTestEb 3
-  withRW db $ \con -> do
-    rwInsertEbPoint con point2 (encodeEndorserBlockSize eb2)
-    void $ rwInsertEbBody con point2 eb2
-  notification <- atomically $ readTChan chan
-  assertOfferBlock point2 notification
-
--- | Test that multiple insertions yield multiple notifications in order.
-test_multipleNotifications :: LeiosDbHandle IO -> IO ()
-test_multipleNotifications db = do
-  chan <- subscribeEbNotifications db
-  let points =
-        [ mkTestPoint (SlotNo i) (fromIntegral i)
-        | i <- [1 .. 5]
-        ]
-      ebs = [mkTestEb i | i <- [1 .. 5]]
-  -- Insert all (point then body for each)
-  withRW db $ \con ->
-    forM_ (zip points ebs) $ \(point, eb) -> do
-      rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-      void $ rwInsertEbBody con point eb
-  -- Read all notifications and verify order
-  notifications <- replicateM 5 (atomically $ readTChan chan)
-  mapM_
-    (uncurry assertOfferBlock)
-    (zip points notifications)
-
--- | Test that no AcquiredEbTxs notification is produced when only some
--- transactions have been inserted via rwInsertTxs.
-test_noOfferBlockTxsBeforeComplete :: LeiosDbHandle IO -> IO ()
-test_noOfferBlockTxsBeforeComplete db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 3 -- 3 transactions
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-    -- Consume the LeiosOfferBlock notification
-    _ <- atomically $ readTChan chan
-    -- Insert only 2 of 3 txs
-    _ <- rwInsertTxs con point (take 2 (allTxsFor eb))
-    -- No LeiosOfferBlockTxs notification should be available
-    maybeNotif <- atomically $ tryReadTChan chan
-    case maybeNotif of
-      Nothing -> pure ()
-      Just _ -> assertFailure "should not notify before all txs are inserted"
-
--- | Test that a AcquiredEbTxs notification is produced when all
--- transactions are inserted via rwInsertTxs.
-test_offerBlockTxs :: LeiosDbHandle IO -> IO ()
-test_offerBlockTxs db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 3 -- 3 transactions
-  withRW db $ \con -> do
-    -- Insert the EB (point then body)
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-    -- Consume the LeiosOfferBlock notification
-    _ <- atomically $ readTChan chan
-    -- Insert all txs
-    _ <- rwInsertTxs con point (allTxsFor eb)
-    -- FIXME: blocks forever if impl not working
-    notification <- atomically $ readTChan chan
-    assertOfferBlockTxs point notification
-
--- | Test that completed EBs are not re-notified when subsequent unrelated
--- transactions are inserted: in this test specifically, it's for another EB
--- whose closure they complete.
-test_noReNotifyCompletedEbs :: LeiosDbHandle IO -> IO ()
-test_noReNotifyCompletedEbs db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 2
       otherPoint = mkTestPoint (SlotNo 2) 2
-      otherEb = mkTestEb 3
+      otherEb = mkTestEb 2
   withRW db $ \con -> do
-    -- Insert and complete the EB
     rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-    -- Consume the AcquiredEb notification
-    acquiredEb <- atomically $ tryReadTChan chan
-    case acquiredEb of
-      Just (AcquiredEb{}) -> pure ()
-      _ -> assertFailure "expected AcquiredEb notification"
-    _ <- rwInsertTxs con point (allTxsFor eb)
-    -- Consume the AcquiredEbTxs notification
-    acquiredTxs <- atomically $ tryReadTChan chan
-    case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
-      _ -> assertFailure "expected AcquiredEbTxs notification"
-    -- Complete an unrelated EB
     rwInsertEbPoint con otherPoint (encodeEndorserBlockSize otherEb)
-    void $ rwInsertEbBody con otherPoint otherEb
-    completed <- rwInsertTxs con otherPoint (allTxsFor otherEb)
-    completed @?= [otherPoint]
-    -- Only the unrelated EB is notified, not the already-completed one again
-    notifs <- drainChan chan
-    [p | AcquiredEbTxs p <- notifs] @?= [otherPoint]
-
--- | Re-inserting a tx that is _referenced_ by an already-completed EB
--- must not re-fire 'AcquiredEbTxs'. This is the practical case where
--- the previous 'no re-notification' check (which only used an unrelated
--- tx) lets a bug through: the completion predicate
--- @any (\\e -> eteTxHash e \`elem\` insertedTxHashes)@ matches again on
--- any subsequent batch containing an EB-referenced tx, since the
--- 'all txs present' clause remains true once the EB is complete.
--- The voting layer treats the duplicate 'AcquiredEbTxs' as a fatal
--- 'AlreadyKnown' from 'addVote'.
-test_noReNotifyOnRelatedTxReinsert :: LeiosDbHandle IO -> IO ()
-test_noReNotifyOnRelatedTxReinsert db = do
-  chan <- subscribeEbNotifications db
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 2
-  withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
     void $ rwInsertEbBody con point eb
-    acquiredEb <- atomically $ tryReadTChan chan
-    case acquiredEb of
-      Just (AcquiredEb{}) -> pure ()
-      _ -> assertFailure "expected AcquiredEb notification"
-    -- Insert all EB-referenced txs → EB completes, one AcquiredEbTxs.
-    _ <- rwInsertTxs con point (allTxsFor eb)
-    acquiredTxs <- atomically $ tryReadTChan chan
-    case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
-      _ -> assertFailure "expected AcquiredEbTxs notification"
-    -- Re-insert one of the EB's own txs (a no-op at the tx storage
-    -- level — it's already present). The completed EB must NOT be
-    -- re-notified.
-    completed <- rwInsertTxs con point (take 1 (allTxsFor eb))
-    completed @?= []
-    maybeNotif <- atomically $ tryReadTChan chan
-    case maybeNotif of
-      Nothing -> pure ()
-      Just _ ->
-        assertFailure
-          "completed EB should not be re-notified on re-insert of its own tx"
+    void $ rwInsertEbBody con otherPoint otherEb
+    rwInsertTxs con point (take 2 (allTxsFor eb))
+    rwScanComplete con 0 >>= (@?= [])
+    rwInsertTxs con point (drop 2 (allTxsFor eb))
+    rwScanComplete con 0 >>= (@?= [point])
 
--- | The same EB content can be forged at multiple slots; the DB must
--- track each 'LeiosPoint' independently and emit one 'AcquiredEbTxs'
--- per (slot, hash) when the closure completes, regardless of how many
--- slots reference the same hash. Conflating the slots loses a
--- notification.
+-- | The same EB content can be announced at several slots; the DB keeps each
+-- 'LeiosPoint', and the scan finds the EB at its youngest.
 test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
 test_multipleSlotsSameHash db = do
-  chan <- subscribeEbNotifications db
   let hashSeed = 1
       point1 = mkTestPoint (SlotNo 1) hashSeed
       point2 = mkTestPoint (SlotNo 2) hashSeed
       eb = mkTestEb 2 -- same content at both points (deterministic from numTxs)
-      drainNotifications = drainChan chan
   withRW db $ \con -> do
-    -- Announce the same EB at two slots and insert the body twice.
     rwInsertEbPoint con point1 (encodeEndorserBlockSize eb)
     rwInsertEbPoint con point2 (encodeEndorserBlockSize eb)
     void $ rwInsertEbBody con point1 eb
     void $ rwInsertEbBody con point2 eb
-    -- Drain the two AcquiredEb notifications (order matches insertion).
-    acquiredEbs <- drainNotifications
-    let acquiredEbPoints =
-          [p | AcquiredEb p _ <- acquiredEbs]
-    acquiredEbPoints `setEquals` [point1, point2]
-    -- Insert every tx the EB references, naming only one of its points. The
-    -- tx bytes belong to the EB, not to a point, so the closure completes for
-    -- both points.
-    completed <- rwInsertTxs con point1 (allTxsFor eb)
-    -- The write returns both points ...
-    completed `setEquals` [point1, point2]
-    -- ... and notifies each completion, once.
-    completionNotifs <- drainNotifications
-    let completionPoints =
-          [p | AcquiredEbTxs p <- completionNotifs]
-    completionPoints `setEquals` [point1, point2]
-    length completionNotifs @?= 2
- where
-  setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
+    rwInsertTxs con point1 (allTxsFor eb)
+    rwScanComplete con 0 >>= (@?= [point2])
+
+-- | An EB announced again after its closure completed gets only the new point
+-- written. Once the scan's slot is past the point it completed at, the scan
+-- still finds it, at the new point.
+test_scanFindsLaterPoint :: LeiosDbHandle IO -> IO ()
+test_scanFindsLaterPoint db = do
+  let older = mkTestPoint (SlotNo 10) 1
+      younger = mkTestPoint (SlotNo 30) 1
+      eb = mkTestEb 2
+  withRW db $ \con -> do
+    rwInsertEbPoint con older (encodeEndorserBlockSize eb)
+    void $ rwInsertEbBody con older eb
+    rwInsertTxs con older (allTxsFor eb)
+    rwInsertEbPoint con younger (encodeEndorserBlockSize eb)
+    rwScanComplete con 20 >>= (@?= [younger])
 
 -- | A body can only be written for a point already written, by 'writeEbPoint'
 -- on the announcement path.
@@ -762,35 +549,22 @@ test_malformedTxWritesDropped db = do
     rwInsertEbPoint con point (encodeEndorserBlockSize eb)
     void $ rwInsertEbBody con point eb
     -- An offset the body does not declare, and wrong-sized bytes.
-    dropped <-
-      rwInsertTxs
-        con
-        point
-        [ (2, txBytesFor eb 0)
-        , (0, BS.snoc (txBytesFor eb 0) 0)
-        , (1, BS.take 1 (txBytesFor eb 1))
-        ]
-    dropped @?= []
+    rwInsertTxs
+      con
+      point
+      [ (2, txBytesFor eb 0)
+      , (0, BS.snoc (txBytesFor eb 0) 0)
+      , (1, BS.take 1 (txBytesFor eb 1))
+      ]
     retrieved <- rwBatchRetrieveTxs con (pointEbHash point) offsets
     [bytes | (_, _, bytes) <- retrieved] @?= [Nothing, Nothing]
-    -- A duplicate delivery keeps the first bytes and does not count twice.
-    first <- rwInsertTxs con point [(0, txBytesFor eb 0)]
-    first @?= []
-    duplicate <- rwInsertTxs con point [(0, BS.map (+ 1) (txBytesFor eb 0))]
-    duplicate @?= []
+    -- A duplicate delivery keeps the first bytes.
+    rwInsertTxs con point [(0, txBytesFor eb 0)]
+    rwInsertTxs con point [(0, BS.map (+ 1) (txBytesFor eb 0))]
     retrieved' <- rwBatchRetrieveTxs con (pointEbHash point) [0]
     [bytes | (_, _, bytes) <- retrieved'] @?= [Just (txBytesFor eb 0)]
-    completed <- rwInsertTxs con point [(1, txBytesFor eb 1)]
-    completed @?= [point]
-
--- | Every notification queued on the channel, in order.
-drainChan :: StrictTChan IO LeiosEbNotification -> IO [LeiosEbNotification]
-drainChan chan = go []
- where
-  go acc =
-    atomically (tryReadTChan chan) >>= \case
-      Nothing -> pure (reverse acc)
-      Just n -> go (n : acc)
+    rwInsertTxs con point [(1, txBytesFor eb 1)]
+    rwScanComplete con 0 >>= (@?= [point])
 
 -- * Garbage collection
 
@@ -799,7 +573,7 @@ writeWholeEb :: RW -> [LeiosPoint] -> EndorserBlock -> IO ()
 writeWholeEb con points eb = do
   forM_ points $ \point -> rwInsertEbPoint con point (encodeEndorserBlockSize eb)
   forM_ points $ \point -> void $ rwInsertEbBody con point eb
-  forM_ (take 1 points) $ \point -> void $ rwInsertTxs con point (allTxsFor eb)
+  forM_ (take 1 points) $ \point -> rwInsertTxs con point (allTxsFor eb)
 
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> EndorserBlockHash -> IO Bool
@@ -845,24 +619,6 @@ test_promoteIncompleteFails db = withRW db $ \con -> do
  where
   tryDb :: IO a -> IO (Either LeiosDbException a)
   tryDb = try
-
--- * Test utilities
-
--- | Assert that a notification is AcquiredEb with the expected point.
-assertOfferBlock :: LeiosPoint -> LeiosEbNotification -> IO ()
-assertOfferBlock expectedPoint = \case
-  AcquiredEb actualPoint _ ->
-    actualPoint @?= expectedPoint
-  AcquiredEbTxs _ ->
-    assertFailure "expected AcquiredEb, got AcquiredEbTxs"
-
--- | Assert that a notification is AcquiredEbTxs with the expected point.
-assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
-assertOfferBlockTxs expectedPoint = \case
-  AcquiredEbTxs actualPoint ->
-    actualPoint @?= expectedPoint
-  AcquiredEb _ _ ->
-    assertFailure "expected AcquiredEbTxs, got AcquiredEb"
 
 -- * Property tests for lookupEbClosure
 
@@ -1123,8 +879,8 @@ prop_storeForgedEbThenLookup impl =
             ]
 
 -- | Property: running the same operations against both implementations, a
--- reader sees the same in each, and each write completes the same endorser
--- blocks.
+-- reader sees the same in each, and the scan finds the same endorser blocks
+-- complete.
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
@@ -1210,24 +966,25 @@ observe ::
   [Op] ->
   IO
     ( (Int, Int)
-    , ( [CompletedEbs]
-      , [ ( Maybe BS.ByteString
+    , ( [ ( Maybe BS.ByteString
           , Maybe [(TxHash, BS.ByteString)]
           , [(Int, TxHash, Maybe BS.ByteString)]
           )
         ]
+      , [LeiosPoint]
       )
     )
 observe db settle bodies ops = withRW db $ \rw -> do
-  (counts, completed) <- go rw [] [] [] 0 ops
+  counts <- go rw [] [] [] 0 ops
   seen <- forM (Map.toList bodies) $ \(ebHash, (eb, _)) ->
     (,,)
       <$> rwLookupEbBody rw ebHash
       <*> rwLookupEbClosure rw ebHash
       <*> rwBatchRetrieveTxs rw ebHash [0 .. length (endorserBlockReferences eb)]
-  pure (counts, (completed, seen))
+  complete <- rwScanComplete rw 0
+  pure (counts, (seen, complete))
  where
-  go _rw _points _bodied pinned nEvicted [] = pure ((length pinned, nEvicted), [])
+  go _rw _points _bodied pinned nEvicted [] = pure (length pinned, nEvicted)
   go rw points bodied pinned nEvicted (op : rest) = case op of
     OpPoint point -> do
       rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
@@ -1235,21 +992,20 @@ observe db settle bodies ops = withRW db $ \rw -> do
       go rw (point : points) bodied pinned nEvicted rest
     OpBody point
       | point `elem` points && point `notElem` bodied -> do
-          done <- rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
+          rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
           settle
-          fmap (sortOn show done :) <$> go rw points (point : bodied) pinned nEvicted rest
+          go rw points (point : bodied) pinned nEvicted rest
       | otherwise -> go rw points bodied pinned nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
-      done <-
-        rwInsertTxs
-          rw
-          point
-          [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
-          | offset <- offsets
-          ]
+      rwInsertTxs
+        rw
+        point
+        [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
+        | offset <- offsets
+        ]
       settle
-      fmap (sortOn show done :) <$> go rw points bodied pinned nEvicted rest
+      go rw points bodied pinned nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` pinned] of
       point : _ -> do
         complete <- isJust <$> rwLookupEbClosure rw ebHash
