@@ -59,11 +59,8 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
-  , LeiosEbBounds
-  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosVote
-  , admitsSizes
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
@@ -84,9 +81,8 @@ import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | A notification the node relays.
 data Notification blk
-  = -- | An announcement, with the ledger's bounds on its endorser block as of
-    -- its slot.
-    NotifyAnnouncement !(AnnouncingHeader blk) !LeiosEbBounds
+  = -- | An announcement.
+    NotifyAnnouncement !(AnnouncingHeader blk)
   | NotifyVote !LeiosVote
   | -- | An offer of an endorser block's body, at its size.
     NotifyBlockOffer !LeiosPoint !BytesSize
@@ -192,9 +188,6 @@ notifyLogPruneCadence = 1
 -- if the log still holds an announcement at that point, and only then: a
 -- downstream peer that reads the log has then received the announcement before
 -- the offer. Each offer is worth relaying exactly as long as its announcement.
--- It skips a point whose bounds do not admit the endorser block, since a
--- downstream peer holds an offer to the bounds as of its point.
---
 -- The node acquires a body, and a closure, at most once per point, so this
 -- offers each at a point at most once, as a downstream peer requires.
 leiosOfferRelay ::
@@ -211,21 +204,19 @@ leiosOfferRelay acquisitions notifyLog = do
     let announced point =
           Map.toList $
             Map.fromList
-              [ (point, (expires, bounds))
+              [ (point, expires)
               | (expires, ats) <- Map.toList expiries
               , at <- ats
-              , Just (NotifyAnnouncement anc bounds) <- [Map.lookup at entries]
+              , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
               , MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
                   == point
               ]
     sequence_ $ case acquired of
-      AcquiredEb point sizes ->
-        [ appendNotifyLog notifyLog (NotifyBlockOffer p (lesBodySize sizes)) expires
-        | (p, (expires, bounds)) <- announced point
-        , admitsSizes bounds sizes
+      AcquiredEb point bodySize ->
+        [ appendNotifyLog notifyLog (NotifyBlockOffer p bodySize) expires
+        | (p, expires) <- announced point
         ]
-      AcquiredEbTxs point sizes ->
+      AcquiredEbTxs point ->
         [ appendNotifyLog notifyLog (NotifyBlockTxsOffer p) expires
-        | (p, (expires, bounds)) <- announced point
-        , admitsSizes bounds sizes
+        | (p, expires) <- announced point
         ]

@@ -143,8 +143,8 @@ newContextHolding release = do
   ready <- uncheckedNewEmptyMVar
   notes <- newTVarIO []
   let note = \case
-        AcquiredEb p _sizes -> AcquiredBody p
-        AcquiredEbTxs p _sizes -> AcquiredClosure p
+        AcquiredEb p _bodySize -> AcquiredBody p
+        AcquiredEbTxs p -> AcquiredClosure p
   pure
     ( MkLeiosFetchClientContext
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound

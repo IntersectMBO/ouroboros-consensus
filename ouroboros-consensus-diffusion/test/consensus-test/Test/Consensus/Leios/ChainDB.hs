@@ -114,9 +114,8 @@ bodiesAfterGc = withNode $ \nut -> do
             ]
   atomically $
     mapM_
-      ( \(point, eb) -> announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs point (leiosEbSizes eb))
-      )
-      [(pointA, ebA), (pointB, ebB)]
+      (announceLeiosAcquisition (nutLeiosAcquisitions nut) . AcquiredEbTxs)
+      [pointA, pointB]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks nut chain
@@ -253,7 +252,7 @@ tipsAroundClosure = withNode $ \nut -> do
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
   atomically $
-    announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs pointA (leiosEbSizes ebA))
+    announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs pointA)
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)

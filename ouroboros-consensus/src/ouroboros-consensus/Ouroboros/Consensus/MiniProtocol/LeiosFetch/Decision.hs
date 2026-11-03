@@ -77,7 +77,6 @@ import Ouroboros.Consensus.Leios.Types
   , ElectionId (..)
   , EndorserBlockHash
   , LeiosEbBounds (..)
-  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , TxHash
   )
@@ -311,8 +310,7 @@ data EbState
 data EbFetchState
   = -- | We've only ever received an announcement.
     NoBody
-  | -- | The body's sizes, and the job pool: the jobs whose txs are not yet
-    -- durably written.
+  | -- | The job pool: the jobs whose txs are not yet durably written.
     --
     -- A body too big for the point's bounds is held with an empty pool too. It
     -- is never written, and nothing more is fetched or emitted for it at this
@@ -327,7 +325,7 @@ data EbFetchState
     -- locking, at the cost of an 'm' parameter on
     -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
     -- deferred.
-    BodyAcquired !LeiosEbSizes !Jobs.LeiosJobPool
+    BodyAcquired !Jobs.LeiosJobPool
   deriving (Eq, Show)
 
 -- | The recorded onset of the point's slot, if any (see 'MkEbState'); the
@@ -355,17 +353,16 @@ newLeiosJobPool env = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount e
 -- slot, so a cancellation there leaves no claim to strand.
 acquireEbBody ::
   LeiosPoint ->
-  LeiosEbSizes ->
   Jobs.LeiosJobPool ->
   LeiosOutstanding peer ->
   LeiosOutstanding peer
-acquireEbBody point sizes jobPool =
+acquireEbBody point jobPool =
   alterEbState point $ \case
     -- Pruned before the write landed (we could not have requested it
     -- without an announcement, and that was since evicted): ignore.
     Nothing -> Nothing
     Just (MkEbState onset fetchState) -> case fetchState of
-      NoBody -> Just $ MkEbState onset (BodyAcquired sizes jobPool)
+      NoBody -> Just $ MkEbState onset (BodyAcquired jobPool)
       -- Already acquired -- e.g. a concurrent redundant delivery landed
       -- first; keep the existing pool rather than clobbering it.
       BodyAcquired{} -> Nothing
@@ -417,14 +414,14 @@ recordReferencedPoint point onset =
 -- The per-peer request-tracking fields must start empty regardless: there are
 -- no connections yet and nothing is in flight.
 initializeLeiosOutstanding ::
-  StdGen -> [(LeiosPoint, LeiosEbSizes)] -> SlotNo -> LeiosOutstanding peer
+  StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstanding peer
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
   -- These points were read back out of the LeiosDb, so the body is durable
   -- already: settle it at once.
-  seed1 (point, sizes) =
-    acquireEbBody point sizes Jobs.emptyLeiosJobPool
+  seed1 point =
+    acquireEbBody point Jobs.emptyLeiosJobPool
       . recordReferencedPoint point SNothing
 
 -- | Make this endorser block the one this election is fetching, unless the
@@ -602,7 +599,7 @@ removePeerFromOutstanding peer o =
   releaseJobs jobIds (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
-      BodyAcquired sizes jobPool -> BodyAcquired sizes $! release jobPool
+      BodyAcquired jobPool -> BodyAcquired $! release jobPool
    where
     release jobPool =
       NEIntSet.foldl' (flip $ Jobs.unpickJob . Jobs.MkLeiosJobId) jobPool jobIds
@@ -673,7 +670,7 @@ completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
   completeInJobPool (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
-      BodyAcquired sizes jobPool -> BodyAcquired sizes $! complete jobPool
+      BodyAcquired jobPool -> BodyAcquired $! complete jobPool
    where
     complete jobPool =
       NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
@@ -904,11 +901,11 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
           -- closure from this peer once we hold the body.
           let (acc2, dec2) = assignBody forecastEbBounds peer point offerKind (acc1, dec1)
            in (acc2, dec2, drops)
-        (BodyAcquired _sizes _jobPool, TxsClosureNotOffered) ->
+        (BodyAcquired _jobPool, TxsClosureNotOffered) ->
           -- We hold the body and the peer never offered the closure, so it can
           -- no longer help.
           pruneThisOffer
-        (BodyAcquired _sizes jobPool, TxsClosureOffered)
+        (BodyAcquired jobPool, TxsClosureOffered)
           | Jobs.nullLeiosJobPool jobPool ->
               -- Nothing left to fetch --- the whole datum is in hand, or we
               -- rejected the endorser block on arrival --- so the closure offer
@@ -1005,7 +1002,7 @@ assignClosure env isBig peer point st@(acc, dec) =
   case Map.lookup point (ebState acc) of
     Nothing -> (st, PeerEbNotExhausted)
     Just (MkEbState _onset NoBody) -> (st, PeerEbNotExhausted)
-    Just (MkEbState onset (BodyAcquired sizes jobPool)) ->
+    Just (MkEbState onset (BodyAcquired jobPool)) ->
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $
               Map.lookup point =<< Map.lookup peer (requestedJobsPerPeer acc)
@@ -1027,7 +1024,7 @@ assignClosure env isBig peer point st@(acc, dec) =
                       { ebState =
                           Map.insert
                             point
-                            (MkEbState onset (BodyAcquired sizes jobPool'))
+                            (MkEbState onset (BodyAcquired jobPool'))
                             (ebState acc)
                       , requestedJobsPerPeer =
                           Map.insertWith

@@ -847,7 +847,7 @@ seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
 nameOf :: NotifyLog.Notification Blk -> Char
 nameOf = \case
   NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
-  NotifyLog.NotifyAnnouncement _ _ -> '?'
+  NotifyLog.NotifyAnnouncement _ -> '?'
   NotifyLog.NotifyBlockOffer _ _ -> '?'
   NotifyLog.NotifyBlockTxsOffer _ -> '?'
 

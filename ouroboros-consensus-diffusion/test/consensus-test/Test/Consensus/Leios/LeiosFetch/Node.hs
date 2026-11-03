@@ -71,8 +71,6 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
-  , LeiosEbBounds (..)
-  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
@@ -81,7 +79,6 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
-  , leiosEbSizes
   , mkEndorserBlock
   , toRankingBlockHash
   )
@@ -220,8 +217,8 @@ tests =
                   )
               )
     , testCase
-        "the node offers an endorser block it acquires only at the announcements whose bounds admit it"
-        $ runSimFinishing relayOffersWhereAdmitted
+        "the node offers an endorser block it acquires only at the point it acquires it at"
+        $ runSimFinishing relayOffersAtAcquiredPoint
           >>= ( @?=
                   [ RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
                   , RelayedBlockTxsOffer fetchedPoint
@@ -600,38 +597,31 @@ nodeFetchesOffered = withNode $ \nut -> do
     relays <- relayedBy listener 3
     pure (acquired, relays)
 
--- | The log holds three announcements of 'fetchedEb', with bounds that admit
--- it, that admit its body but not its transactions, and that do not admit its
--- body. The node then acquires 'fetchedEb' and its closure. The offers the
--- relay adds to the log.
-relayOffersWhereAdmitted :: IOSim s [Relayed]
-relayOffersWhereAdmitted = withNode $ \nut -> do
+-- | The log holds three announcements of 'fetchedEb', at three points. The node
+-- then acquires 'fetchedEb' and its closure at the first. The offers the relay
+-- adds to the log.
+relayOffersAtAcquiredPoint :: IOSim s [Relayed]
+relayOffersAtAcquiredPoint = withNode $ \nut -> do
   notifyLog <- NotifyLog.newNotifyLog
   acquisitions <- newLeiosAcquisitions
-  let sizes = leiosEbSizes fetchedEb
-      bodySize = lesBodySize sizes
-      txsSize = fromIntegral (lesTxsSize sizes)
-      announce blk bounds =
+  let announce blk =
         forM_ (mkAnnouncingHeader (nutTopLevelConfig nut) (ltbHeader blk)) $ \anc ->
-          NotifyLog.appendNotifyLog
-            notifyLog
-            (NotifyLog.NotifyAnnouncement anc bounds)
-            (RelativeTime 1000)
+          NotifyLog.appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
       announcingAgain =
         setAnnouncement
           (endorserBlockHash fetchedEb)
           (encodeEndorserBlockSize fetchedEb)
           (successorLeiosBlock reannouncingFetched)
   atomically $ do
-    announce announcingFetched (MkLeiosEbBounds bodySize txsSize)
-    announce reannouncingFetched (MkLeiosEbBounds bodySize (txsSize - 1))
-    announce announcingAgain (MkLeiosEbBounds (bodySize - 1) txsSize)
+    announce announcingFetched
+    announce reannouncingFetched
+    announce announcingAgain
   withAsync (NotifyLog.leiosOfferRelay acquisitions notifyLog) $ \_ -> do
     -- Until the relay has subscribed.
     threadDelay 1
     atomically $ do
-      announceLeiosAcquisition acquisitions (AcquiredEb fetchedPoint sizes)
-      announceLeiosAcquisition acquisitions (AcquiredEbTxs fetchedPoint sizes)
+      announceLeiosAcquisition acquisitions (AcquiredEb fetchedPoint (encodeEndorserBlockSize fetchedEb))
+      announceLeiosAcquisition acquisitions (AcquiredEbTxs fetchedPoint)
     threadDelay 1
     offersFrom notifyLog NotifyLog.notifyLogStart
  where
@@ -1036,8 +1026,8 @@ nodeKeepsHeldAtStartRefocusedThroughGc = do
     withNodeVsEnvConnection
       nut
       (PeerAddr 1)
-      ((servingChain nut chain){epLeiosFetchServer = servingFetched nut}) $
-      \_conn -> do
+      ((servingChain nut chain){epLeiosFetchServer = servingFetched nut})
+      $ \_conn -> do
         addBlocks nut gcRestartChain
         _ <- awaitTip nut (lastPoint gcRestartChain)
         -- Past the ChainDB's delay before it collects garbage, and its interval.
@@ -1617,8 +1607,8 @@ lastPoint = maybe GenesisPoint blockPoint . listToMaybe . reverse
 
 acquiredOf :: LeiosEbNotification -> Acquired
 acquiredOf = \case
-  AcquiredEb point _sizes -> AcquiredBody point
-  AcquiredEbTxs point _sizes -> AcquiredClosure point
+  AcquiredEb point _bodySize -> AcquiredBody point
+  AcquiredEbTxs point -> AcquiredClosure point
 
 -- | A peer listening to what the node relays, as a receiving node would.
 --

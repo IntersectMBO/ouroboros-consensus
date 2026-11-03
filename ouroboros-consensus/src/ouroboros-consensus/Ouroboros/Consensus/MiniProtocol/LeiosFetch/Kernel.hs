@@ -75,8 +75,6 @@ import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
   , LeiosPoint (..)
-  , leiosEbSizes
-  , mkEndorserBlock
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
@@ -212,9 +210,8 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   immTipSlot <-
     atomically $
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
-  acquired <- withReader leiosDb $ \reader -> do
-    points <- scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
-    concat <$> mapM (\point -> withSize point <$> lookupEbBody reader point) points
+  acquired <- withReader leiosDb $ \reader ->
+    scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty
@@ -227,13 +224,6 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
       , lfkNextLifetimeId
       , lfkPrunedSlot
       }
- where
-  -- The sizes of the body as the node serves it, rebuilt from its references.
-  -- A stored body is never empty, so no references means the LeiosDb no longer
-  -- holds it, and the endorser block starts afresh.
-  withSize point refs = case refs of
-    [] -> []
-    _ : _ -> [(point, leiosEbSizes (mkEndorserBlock refs))]
 
 -- | Run the action with this peer's LeiosFetch state and the
 -- 'LeiosPeerLifetimeId' of its registration, registering it with the decision

@@ -94,7 +94,7 @@ onValidAnnouncement st valid = do
           when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
             appendNotifyLog
               relayLog
-              (NotifyAnnouncement announcingHeader announcementEbBounds)
+              (NotifyAnnouncement announcingHeader)
               (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
           pure NewAnnouncement
  where
@@ -107,7 +107,6 @@ onValidAnnouncement st valid = do
     , announcementOnset
     , announcementAge
     , announcementStaleness
-    , announcementEbBounds
     } = valid
 
 -- | Whether the node accepted the announcement of this announcing block, in an

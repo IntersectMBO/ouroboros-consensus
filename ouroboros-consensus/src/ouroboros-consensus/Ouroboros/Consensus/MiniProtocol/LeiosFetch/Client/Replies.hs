@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxLocation
   , TxOffset
   , admitsSizes
+  , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
@@ -273,7 +274,7 @@ processLeiosBlock ctx peer req eb = do
           -- the pruning window forfeits this, costing one more body fetch from
           -- the next peer to serve it.
           pure
-            ( acquireEbBody point sizes Jobs.emptyLeiosJobPool cleaned
+            ( acquireEbBody point Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
       | otherwise -> case Map.lookup point (ebState outstanding) of
@@ -368,12 +369,12 @@ settleBody ctx point eb now pointWritten bodyWritten = do
           jobPool =
             newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
         atomically $ do
-          lfcNotify $ AcquiredEb point sizes
+          lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
           when (Jobs.nullLeiosJobPool jobPool) $
             lfcNotify $
-              AcquiredEbTxs point sizes
+              AcquiredEbTxs point
         pure
-          ( acquireEbBody point sizes jobPool outstanding
+          ( acquireEbBody point jobPool outstanding
           , Just (onset, jobPool)
           )
       _ -> pure (outstanding, Nothing)
@@ -395,7 +396,6 @@ settleBody ctx point eb now pointWritten bodyWritten = do
     , lfcNotify
     , lfcTracer
     } = ctx
-  sizes = leiosEbSizes eb
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
 
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
@@ -459,7 +459,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- and writing a transaction again is harmless.
   outstanding0 <- readMVar lfcOutstanding
   let pendingJobs = case Map.lookup point (ebState outstanding0) of
-        Just (MkEbState _onset (BodyAcquired _sizes jobPool)) ->
+        Just (MkEbState _onset (BodyAcquired jobPool)) ->
           Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         Just (MkEbState _onset NoBody) -> IntMap.empty
         Nothing -> IntMap.empty
@@ -520,12 +520,12 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     completed <- modifyMVar lfcOutstanding $ \outstanding -> do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
-        ( Just (MkEbState _ (BodyAcquired _ before))
-          , Just (MkEbState onset (BodyAcquired sizes after))
+        ( Just (MkEbState _ (BodyAcquired before))
+          , Just (MkEbState onset (BodyAcquired after))
           )
             | not (Jobs.nullLeiosJobPool before)
             , Jobs.nullLeiosJobPool after -> do
-                atomically $ lfcNotify $ AcquiredEbTxs point sizes
+                atomically $ lfcNotify $ AcquiredEbTxs point
                 pure (outstanding', Just (point, onset))
         _ -> pure (outstanding', Nothing)
     -- These bytes are durable now: advertise them as fill sources for later

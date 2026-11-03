@@ -174,7 +174,7 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
   forever $
     atomically nextNotification >>= \case
       AcquiredEb{} -> pure ()
-      AcquiredEbTxs point _sizes -> do
+      AcquiredEbTxs point -> do
         novel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs
           let acquired' = insertAcquiredLeiosEb point acquired
