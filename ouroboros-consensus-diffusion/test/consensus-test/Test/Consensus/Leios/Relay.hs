@@ -67,6 +67,11 @@ import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), addRelTime)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  , newLeiosAcquisitions
+  )
 import Ouroboros.Consensus.Leios.AnnounceState
   ( hasAnnouncement
   , newAnnounceState
@@ -76,6 +81,7 @@ import Ouroboros.Consensus.Leios.AnnounceState
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , appendNotifyLog
+  , leiosOfferRelay
   , newNotifyLog
   , nextNotifyLog
   , notifyLogPruneCadence
@@ -85,7 +91,9 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint
+  ( BytesSize
+  , EndorserBlockHash
+  , LeiosPoint (..)
   , LeiosVote (..)
   , RankingBlockHash
   , milliseconds32ToNominalDiffTime
@@ -156,6 +164,7 @@ import Test.Consensus.Leios.TestBlock
   , setCounterBelowImmTips
   , setSlot
   , singleNodeLeiosTestConfig
+  , successorLeiosBlock
   )
 import Test.QuickCheck
   ( Gen
@@ -228,6 +237,10 @@ tests =
     , testProperty
         "the log is pruned far more often than a downstream peer's grace"
         prop_notifyLogPruneCadence
+    , testCase
+        "the relay offers an acquisition only at its own point, though the log holds announcements of the endorser block at others"
+        $ offersRelayed
+          @?= [OfferedBody somePoint 1000, OfferedClosure somePoint]
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -836,6 +849,38 @@ prop_notifyLogPruneCadence =
  where
   farBelow a b = 10 * a <= b
 
+-- | An offer the relay adds to the log.
+data Offered = OfferedBody LeiosPoint BytesSize | OfferedClosure LeiosPoint
+  deriving (Eq, Show)
+
+-- | The log holds announcements of the endorser block of
+-- 'someAnnouncingBlock' there and at the next two slots. Then the relay sees
+-- it acquired, body and closure, at 'someAnnouncingBlock'. The offers the
+-- relay adds to the log.
+offersRelayed :: [Offered]
+offersRelayed = runSimOrThrow $ do
+  notifyLog <- newNotifyLog @_ @Blk
+  acquisitions <- newLeiosAcquisitions
+  atomically $
+    for_ (take 3 (iterate reannouncing someAnnouncingBlock)) $ \blk ->
+      for_ (mkAnnouncingHeader topLevelConfig (ltbHeader blk)) $ \anc ->
+        appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
+  withAsync (leiosOfferRelay acquisitions notifyLog) $ \_ -> do
+    -- Until the relay has subscribed.
+    threadDelay 1
+    atomically $ do
+      announceLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
+      announceLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+    threadDelay 1
+    atomically $ concatMap offered <$> notifyLogNotifications notifyLog
+ where
+  reannouncing blk = setAnnouncement someEbHash 1000 (successorLeiosBlock blk)
+  offered = \case
+    NotifyLog.NotifyBlockOffer p size -> [OfferedBody p size]
+    NotifyLog.NotifyBlockTxsOffer p -> [OfferedClosure p]
+    NotifyLog.NotifyAnnouncement _ -> []
+    NotifyLog.NotifyVote _ -> []
+
 -- | The seat a name stands for in a log, 'a' for seat 0.
 seatOf :: Char -> Word16
 seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
@@ -916,9 +961,16 @@ announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
 rbHashOf :: Header Blk -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
 
--- | Announces an endorser block in slot 1.
+-- | Announces 'someEbHash' in slot 1.
 someAnnouncingBlock :: LeiosTestBlock
-someAnnouncingBlock = setAnnouncement (UnsafeHash (SBS.replicate 32 1)) 1000 (firstLeiosBlock 0)
+someAnnouncingBlock = setAnnouncement someEbHash 1000 (firstLeiosBlock 0)
+
+someEbHash :: EndorserBlockHash
+someEbHash = UnsafeHash (SBS.replicate 32 1)
+
+-- | Where 'someAnnouncingBlock' announces 'someEbHash'.
+somePoint :: LeiosPoint
+somePoint = MkLeiosPoint (blockSlot someAnnouncingBlock) someEbHash
 
 -- | Another announcement in the election of 'someAnnouncingBlock'.
 equivocation :: LeiosTestBlock

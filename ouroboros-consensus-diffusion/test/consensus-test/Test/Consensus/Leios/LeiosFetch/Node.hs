@@ -52,10 +52,7 @@ import Ouroboros.Consensus.Block
   , pattern GenesisPoint
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( RelativeTime (..)
-  , SystemStart (SystemStart)
-  )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemStart (SystemStart))
 import Ouroboros.Consensus.Config (configBlock, configLedger)
 import Ouroboros.Consensus.Config.SupportsNode (getSystemStart)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
@@ -63,7 +60,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisitions (..)
   , LeiosEbNotification (..)
-  , newLeiosAcquisitions
   )
 import Ouroboros.Consensus.Leios.AnnounceState (newAnnounceState)
 import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
@@ -114,7 +110,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits (..)
   , defaultLeiosAnnouncementAgeLimits
-  , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidOffer (..)
@@ -208,14 +203,6 @@ tests =
     [ testProperty
         "the node's server serves what it holds, disconnects a client that requests anything else, and ends when the client sends MsgDone"
         prop_serverAnswers
-    , testCase
-        "the node offers an endorser block it acquires only at the point it acquires it at"
-        $ runSimFinishing relayOffersAtAcquiredPoint
-          >>= ( @?=
-                  [ RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-                  , RelayedBlockTxsOffer fetchedPoint
-                  ]
-              )
     , testCase
         "the node announces its acquisition again, and offers it there, each time a later election focuses an endorser block it holds"
         $ runSimFinishing nodeReacquiresHeld
@@ -509,45 +496,6 @@ nodeFetchesCertifiedThird = withNode $ \nut -> do
       threadDelay 1
       addBlocks nut [announcingFetched, certifyingFetched]
       (,) <$> awaitTip nut (blockPoint certifyingFetched) <*> relayedBy heard 2
-
--- | The log holds three announcements of 'fetchedEb', at three points. The node
--- then acquires 'fetchedEb' and its closure at the first. The offers the relay
--- adds to the log.
-relayOffersAtAcquiredPoint :: IOSim s [Relayed]
-relayOffersAtAcquiredPoint = withNode $ \nut -> do
-  notifyLog <- NotifyLog.newNotifyLog
-  acquisitions <- newLeiosAcquisitions
-  let announce blk =
-        forM_ (mkAnnouncingHeader (nutTopLevelConfig nut) (ltbHeader blk)) $ \anc ->
-          NotifyLog.appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
-      announcingAgain =
-        setAnnouncement
-          (endorserBlockHash fetchedEb)
-          (encodeEndorserBlockSize fetchedEb)
-          (successorLeiosBlock reannouncingFetched)
-  atomically $ do
-    announce announcingFetched
-    announce reannouncingFetched
-    announce announcingAgain
-  withAsync (NotifyLog.leiosOfferRelay acquisitions notifyLog) $ \_ -> do
-    -- Until the relay has subscribed.
-    threadDelay 1
-    atomically $ do
-      announceLeiosAcquisition acquisitions (AcquiredEb fetchedPoint (encodeEndorserBlockSize fetchedEb))
-      announceLeiosAcquisition acquisitions (AcquiredEbTxs fetchedPoint)
-    threadDelay 1
-    offersFrom notifyLog NotifyLog.notifyLogStart
- where
-  offersFrom notifyLog cursor =
-    atomically ((Just <$> NotifyLog.nextNotifyLog notifyLog cursor) `orElse` pure Nothing) >>= \case
-      Nothing -> pure []
-      Just (notification, cursor') ->
-        let rest = offersFrom notifyLog cursor'
-         in case notification of
-              NotifyLog.NotifyBlockOffer p size -> (RelayedBlockOffer p size :) <$> rest
-              NotifyLog.NotifyBlockTxsOffer p -> (RelayedBlockTxsOffer p :) <$> rest
-              NotifyLog.NotifyAnnouncement{} -> rest
-              NotifyLog.NotifyVote{} -> rest
 
 -- | The peer announces 'fetchedEb', offers its body and its closure, and
 -- serves both. Then it announces 'fetchedEb' again, in 'reannouncingFetched'
