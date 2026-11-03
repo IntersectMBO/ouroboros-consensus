@@ -240,15 +240,13 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- its certificate is verified, not its header, which only records an offer.
   -- Pruning is the only other writer, and it just drops the elections below
   -- the immutable tip.
-  , ebFocusingElections :: !(Map LeiosPoint (NESet ElectionId))
-  -- ^ The inverse of 'elFocus': the elections fetching each point, which are
-  -- all in the point's slot.
   --
-  -- Unless a point is in here, the decision logic asks no peer for anything
-  -- about it: neither its body nor any of its closure's jobs, since this is
-  -- what filters a peer's offers before either is considered. A body we
-  -- already hold stays held and its job pool stays as it is, so an election
-  -- that focuses it later resumes rather than restarts.
+  -- A point is focused when an election in its slot is fetching its endorser
+  -- block ('isFocusedPoint'). Unless a point is focused, the decision logic
+  -- asks no peer for anything about it: neither its body nor any of its
+  -- closure's jobs, since this is what filters a peer's offers before either is
+  -- considered. A body we already hold stays held and its job pool stays as it
+  -- is, so an election that focuses it later resumes rather than restarts.
   , outstandingPrunedSlot :: !SlotNo
   -- ^ The slot this whole 'LeiosOutstanding' has most recently been pruned up
   -- to: 'pruneOutstandingToImmTip' moves it in the same record it prunes
@@ -290,7 +288,6 @@ emptyLeiosOutstanding prng prunedSlot =
   MkLeiosOutstanding
     { ebState = Map.empty
     , elFocus = Map.empty
-    , ebFocusingElections = Map.empty
     , outstandingPrunedSlot = prunedSlot
     , numMissingBodies = 0
     , requestedEbPeers = Map.empty
@@ -511,20 +508,19 @@ focusElection ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of
   Just oldEbHash | oldEbHash == ebHash -> outstanding
-  mbOldEbHash ->
-    outstanding
-      { elFocus = Map.insert elId ebHash (elFocus outstanding)
-      , ebFocusingElections =
-          Map.insertWith NESet.union (pointOf ebHash) (NESet.singleton elId) $
-            maybe id (unfocusing . pointOf) mbOldEbHash (ebFocusingElections outstanding)
-      }
- where
-  pointOf = MkLeiosPoint (electionSlot elId)
-  unfocusing = Map.update (NESet.nonEmptySet . NESet.delete elId)
+  _ -> outstanding{elFocus = Map.insert elId ebHash (elFocus outstanding)}
 
--- | Whether some election is currently fetching this point.
+-- | Whether some election is currently fetching this point: one in the point's
+-- slot that focuses its endorser block. 'ElectionId' orders slot-first, so the
+-- elections of a slot are a range of 'elFocus'. A slot has at most one election
+-- per leader of that slot, and rarely has more than one leader, so the range is
+-- short.
 isFocusedPoint :: LeiosPoint -> LeiosOutstanding peer -> Bool
-isFocusedPoint point = Map.member point . ebFocusingElections
+isFocusedPoint (MkLeiosPoint slot ebHash) =
+  elem ebHash
+    . Map.takeWhileAntitone ((== slot) . electionSlot)
+    . Map.dropWhileAntitone ((< slot) . electionSlot)
+    . elFocus
 
 -- | Whether this EB's body is one we are still trying to fetch: the per-entry
 -- contribution to 'numMissingBodies'.
@@ -569,8 +565,6 @@ pruneOutstandingToImmTip immTipSlot outstanding =
   , outstanding
       { ebState = atOrAbove
       , elFocus = Map.dropWhileAntitone ((< immTipSlot) . electionSlot) (elFocus outstanding)
-      , ebFocusingElections =
-          Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo) (ebFocusingElections outstanding)
       , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
       , numMissingBodies = numMissingBodies outstanding - F.foldl' (\n st -> n + wantsBody st) 0 below
       }
@@ -891,7 +885,7 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
       -- election onto it.
       [ (pointSlotNo point, (point, offer))
       | (point, offer) <- Map.toList offers
-      , Map.member point (ebFocusingElections acc)
+      , isFocusedPoint point acc
       ]
 
   go st@(acc', _dec, _drops) = \case
