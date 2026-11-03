@@ -115,9 +115,9 @@ serveEb ::
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
-  -- The one body's tx references, in order. A stored body is never empty, so
-  -- no references means the node does not hold the body.
-  lookupEbBody reader (pointEbHash point) >>= \case
+  -- The body's tx references at this point, in order. A stored body is never
+  -- empty, so no references means the node does not hold the body there.
+  lookupEbBody reader point >>= \case
     [] -> throwIO $ ExnLeiosUnknownBlockRequested point
     refs -> do
       let n = length refs
@@ -135,9 +135,9 @@ serveTxs ::
 serveTxs tracer reader point bitmaps = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  -- One row for each requested offset that the endorser block has, with its
-  -- bytes if the node holds them.
-  rows <- batchRetrieveTxs reader (pointEbHash point) offsets
+  -- One row for each requested offset that the endorser block at this point
+  -- has, with its bytes if the node holds them there.
+  rows <- batchRetrieveTxs reader point offsets
   case traverse (\(_offset, _txHash, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
     Just txs | length txs == length offsets -> do
       let n = length txs

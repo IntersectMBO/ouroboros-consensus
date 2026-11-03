@@ -47,6 +47,7 @@ module Ouroboros.Consensus.Leios.TxCache.Reference
   , lookupBody
   , setTxLocations
   , lookupTxLocation
+  , locateTxs
 
     -- * Internal state (exposed for testing)
   , TxState (..)
@@ -83,6 +84,7 @@ import Ouroboros.Consensus.Leios.TxCache.API
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
+  , LeiosPoint (..)
   , RankingBlockHash
   , TxHash
   , TxLocation (..)
@@ -123,8 +125,8 @@ data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex
   -- become durable, never for a 'TxNotYetInserted' tx, which has no bytes to
   -- point at. Eviction then prunes this map by 'txState' refcount, so the subset
   -- claim is what holds in general.
-  , locRing :: !(Map EbRingIndex EndorserBlockHash)
-  -- ^ The EBs recent tx locations point into, keyed by ring slot
+  , locRing :: !(Map EbRingIndex LeiosPoint)
+  -- ^ The points recent tx locations point into, keyed by ring slot
   -- (@'locNext' \`mod\` 'maxAnnouncementCount'@ at claim time). Slot reuse
   -- makes a stored location stale, not wrong: the db fill guards it.
   , locNext :: !Int
@@ -300,17 +302,16 @@ evictOldest idx =
   (bodyState', txState', evEbs, evTxs) =
     decBody ebhEvicted (bodyState idx) (txState idx)
 
-  -- Evicting a body prunes the EB's LeiosDb rows, so its ring slot no longer
-  -- names a durable fill source: free it. A tx still held by a younger EB keeps
-  -- that EB's location (set by 'setTxLocations' when the younger body landed); a
-  -- tx that lived only in the evicted EB now resolves to /no/ location and is
-  -- fetched, rather than to a pruned source (or, once 'locNext' reuses the slot,
-  -- a different EB). Only a genuine body eviction frees the slot; dropping one of
-  -- several announcements of a still-held EB leaves it in place.
+  -- Evicting a body prunes the LeiosDb rows of its points, so their ring slots
+  -- no longer name durable fill sources: free them. A tx still held by a
+  -- younger point keeps that point's location (set by 'setTxLocations' when the
+  -- younger body landed); a tx that lived only in the evicted points now
+  -- resolves to /no/ location and is fetched, rather than to a pruned source
+  -- (or, once 'locNext' reuses the slot, a different point). Only a genuine body
+  -- eviction frees the slots; dropping one of several announcements of a
+  -- still-held EB leaves them in place.
   locRing'
-    | Set.member ebhEvicted evEbs
-    , Just evSlot <- ringSlotOf ebhEvicted idx =
-        Map.delete evSlot (locRing idx)
+    | Set.member ebhEvicted evEbs = Map.filter ((/= ebhEvicted) . pointEbHash) (locRing idx)
     | otherwise = locRing idx
 
 -- | Decrement a body's refcount; if it reaches zero, remove it and (if it had
@@ -441,39 +442,56 @@ lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
   Just (BodyAlreadyInserted _ b) -> Just b
 
 -- | Record where each tx's durable bytes now live: point each /tracked/ tx at
--- the source EB's ring slot. The latest location wins -- the newest source EB
--- outlives older ones in both the ring and the db.
+-- the source point's ring slot. The latest location wins -- the newest source
+-- point outlives older ones in both the ring and the db.
 --
--- An EB's closure arrives over one or more batches, each a separate call here;
--- all of them must land in the single slot the EB holds. So a new slot is
--- claimed only the first time an EB is seen (while it still occupies the ring);
--- claiming one per batch would wrap the ring every 'maxAnnouncementCount'
--- /batches/ rather than EBs, overwriting slots still referenced by recent EBs.
+-- A point's closure arrives over one or more batches, each a separate call
+-- here; all of them must land in the single slot the point holds. So a new slot
+-- is claimed only the first time a point is seen (while it still occupies the
+-- ring); claiming one per batch would wrap the ring every
+-- 'maxAnnouncementCount' /batches/ rather than points, overwriting slots still
+-- referenced by recent points.
 setTxLocations ::
-  EndorserBlockHash -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
-setTxLocations ebh offTxs idx =
+  LeiosPoint -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
+setTxLocations point offTxs idx =
   idx
-    { locRing = Map.insert slot ebh (locRing idx)
+    { locRing = Map.insert slot point (locRing idx)
     , locNext = locNext'
     , txLocState = List.foldl' upd (txLocState idx) offTxs
     }
  where
-  (slot, locNext') = case ringSlotOf ebh idx of
+  (slot, locNext') = case ringSlotOf point idx of
     Just s -> (s, locNext idx)
     Nothing -> (UnsafeEbRingIndex (locNext idx `mod` maxAnnouncementCount), locNext idx + 1)
   upd m (off, txh)
     | Map.member txh (txState idx) = Map.insert txh (slot, off) m
     | otherwise = m
 
--- | The ring slot an EB currently occupies, if it still does. Scans the ring,
--- at most 'maxAnnouncementCount' entries.
-ringSlotOf :: EndorserBlockHash -> LeiosTxCacheIndex a v b -> Maybe EbRingIndex
-ringSlotOf ebh = fmap fst . find ((== ebh) . snd) . Map.toList . locRing
+-- | The ring slot a point currently occupies, if it still does. Scans the
+-- ring, at most 'maxAnnouncementCount' entries.
+ringSlotOf :: LeiosPoint -> LeiosTxCacheIndex a v b -> Maybe EbRingIndex
+ringSlotOf point = fmap fst . find ((== point) . snd) . Map.toList . locRing
 
 -- | Where this tx's durable bytes live, if a tracked tx has a recorded location
 -- whose ring slot is still populated. Possibly stale (see 'locRing').
 lookupTxLocation :: TxHash -> LeiosTxCacheIndex a v b -> Maybe TxLocation
 lookupTxLocation txh idx = do
   (ringIdx, off) <- Map.lookup txh (txLocState idx)
-  srcEb <- Map.lookup ringIdx (locRing idx)
-  Just (MkTxLocation srcEb off)
+  src <- Map.lookup ringIdx (locRing idx)
+  Just (MkTxLocation src off)
+
+-- | Fold over the txs this body references, each with its durable location if
+-- the index knows one, without changing the index. See 'insertBody'.
+locateTxs ::
+  ReferencesTxsByHash b =>
+  b ->
+  w ->
+  (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
+  LeiosTxCacheIndex a v b ->
+  w
+locateTxs b nil snoc idx =
+  snd $
+    foldTxReferences
+      (\(nn, w) txh sz -> (nn + 1, snoc w nn txh sz (lookupTxLocation txh idx)))
+      (0, nil)
+      b

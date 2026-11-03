@@ -308,12 +308,12 @@ endorserBlockFromTxBytes =
 -- | The position of a transaction in its endorser block.
 type TxOffset = Int
 
--- | Where a transaction's durable bytes live: an endorser block that references
--- it, and its offset there. A later endorser block referencing the same
--- transaction copies the bytes from there rather than fetching them again. A
--- stale location is harmless: if the bytes are gone, nothing is copied and the
--- transaction is fetched.
-data TxLocation = MkTxLocation !EndorserBlockHash !TxOffset
+-- | Where a transaction's durable bytes live: an endorser block point that
+-- references it, and its offset there. A later endorser block point referencing
+-- the same transaction copies the bytes from there rather than fetching them
+-- again. A stale location is harmless: if the bytes are gone, nothing is copied
+-- and the transaction is fetched.
+data TxLocation = MkTxLocation !LeiosPoint !TxOffset
   deriving stock (Eq, Show)
 
 -- | The protocol version a tx was validated under, modulo 2. A tx stays

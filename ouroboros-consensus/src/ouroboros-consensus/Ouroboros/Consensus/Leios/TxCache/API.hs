@@ -48,6 +48,7 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
+  , LeiosPoint
   , RankingBlockHash
   , TxHash
   , TxLocation
@@ -95,6 +96,15 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- rides that pass rather than costing a second one. Returns the summary and the
   -- built @w@, or 'Nothing' when the EB is unannounced or its body is already
   -- inserted (a no-op, so nothing is folded).
+  , locateTxs ::
+      forall w.
+      b ->
+      w ->
+      (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
+      m w
+  -- ^ Fold over the txs this body references, as 'insertBody' does, each with
+  -- its durable location if the cache knows one, but without inserting
+  -- anything: for a body the cache already holds, taken in for another point.
   , lookupBody :: EndorserBlockHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
@@ -111,19 +121,20 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Has exclusive write-access
   , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
   -- ^ Also holds the lock
-  , setTxLocations :: EndorserBlockHash -> [(TxOffset, TxHash)] -> m ()
-  -- ^ Advertise where these txs' DURABLE bytes live -- the given EB's rows at
-  -- the given offsets -- for cross-EB fill. Call this on write confirmation
+  , setTxLocations :: LeiosPoint -> [(TxOffset, TxHash)] -> m ()
+  -- ^ Advertise where these txs' DURABLE bytes live -- the given point's rows
+  -- at the given offsets -- for cross-point fill. Call this on write confirmation
   -- only: a location must never name bytes that could still be lost. A tx the
   -- cache no longer tracks is skipped, never resurrected. Latest location wins:
-  -- a tx held by several EBs points at the most recently advertised one (evicted
-  -- last).
+  -- a tx held by several points points at the most recently advertised one
+  -- (evicted last).
   --
-  -- MAY be called repeatedly for one EB: its closure arrives over many
-  -- 'MsgLeiosBlockTxs', and each batch confirms a slice. The EB claims a single
-  -- ring slot the first time it is seen and every later call reuses it, so one
-  -- EB costs one slot however many batches deliver it -- claiming a slot per call
-  -- would wrap the ring every @maxAnnouncementCount@ batches rather than EBs.
+  -- MAY be called repeatedly for one point: its closure arrives over many
+  -- 'MsgLeiosBlockTxs', and each batch confirms a slice. The point claims a
+  -- single ring slot the first time it is seen and every later call reuses it,
+  -- so one point costs one slot however many batches deliver it -- claiming a
+  -- slot per call would wrap the ring every @maxAnnouncementCount@ batches
+  -- rather than points.
   --
   -- The read side is 'insertBody': the next body to reference a tx observes its
   -- location in the same pass it bumps refcounts. A location so observed may be

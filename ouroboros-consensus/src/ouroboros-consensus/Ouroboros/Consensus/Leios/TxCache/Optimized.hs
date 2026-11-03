@@ -52,6 +52,7 @@ import qualified Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable as
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
+  , LeiosPoint (..)
   , ProtVerParity (..)
   , RankingBlockHash
   , TxHash
@@ -68,9 +69,9 @@ data HtState b = HtState
   , hsPrunedSlot :: !SlotNo
   -- ^ Greatest slot 'evictOlderThan' has pruned to; 'insertAnnouncement' ignores
   -- any EB strictly older. Mirrors 'Ouroboros.Consensus.Leios.TxCache.Reference.prunedSlot'.
-  , hsLocRing :: !(Map EbRingIndex EndorserBlockHash)
-  -- ^ The source-EB ring the packed tx locations index into: slot @i@ holds
-  -- the @i@-th (mod 'maxAnnouncementCount') EB advertised via
+  , hsLocRing :: !(Map EbRingIndex LeiosPoint)
+  -- ^ The source-point ring the packed tx locations index into: slot @i@ holds
+  -- the @i@-th (mod 'maxAnnouncementCount') point advertised via
   -- 'setTxLocations'. Reuse makes a stored location stale, not wrong: the
   -- LeiosDb fill guards reject a mismatched source.
   , hsLocNext :: !Int
@@ -134,8 +135,8 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                         let (dt, da, dv) = priorClass mv
                             mbLoc = do
                               (ringIdx, off) <- valLoc =<< mv
-                              srcEb <- Map.lookup ringIdx (hsLocRing st)
-                              Just (MkTxLocation srcEb off)
+                              src <- Map.lookup ringIdx (hsLocRing st)
+                              Just (MkTxLocation src off)
                             w' = snoc w nn txh sz mbLoc
                         pure (nn + 1, tt + dt, aa + da, vv + dv, w')
                     )
@@ -147,6 +148,22 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                   ( st'
                   , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount, w)
                   )
+      , locateTxs = \b nil snoc ->
+          MVar.withMVar stateVar $ \st -> do
+            (_n, w) <-
+              foldTxReferences
+                ( \acc txh sz -> do
+                    (!nn, !w) <- acc
+                    mv <- HT.lookup ht (toKey txh)
+                    let mbLoc = do
+                          (ringIdx, off) <- valLoc =<< mv
+                          src <- Map.lookup ringIdx (hsLocRing st)
+                          Just (MkTxLocation src off)
+                    pure (nn + 1 :: Int, snoc w nn txh sz mbLoc)
+                )
+                (pure (0, nil))
+                b
+            pure w
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of
@@ -162,28 +179,28 @@ newHashTableLeiosTxCache nshift k0 k1 = do
             pure st
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
-      , setTxLocations = \ebh offTxs ->
+      , setTxLocations = \point offTxs ->
           MVar.modifyMVarMasked stateVar $ \st -> do
-            -- An EB's closure arrives over one or more batches, each a separate
-            -- call; all must land in the single slot the EB holds. Claim a new
-            -- slot only the first time an EB is seen (while it still occupies the
-            -- ring); claiming one per batch would wrap the ring every
-            -- 'maxAnnouncementCount' /batches/ rather than EBs, overwriting slots
-            -- still referenced by recent EBs.
-            let (slot, locNext') = case ringSlotOf ebh st of
+            -- A point's closure arrives over one or more batches, each a separate
+            -- call; all must land in the single slot the point holds. Claim a new
+            -- slot only the first time a point is seen (while it still occupies
+            -- the ring); claiming one per batch would wrap the ring every
+            -- 'maxAnnouncementCount' /batches/ rather than points, overwriting
+            -- slots still referenced by recent points.
+            let (slot, locNext') = case ringSlotOf point st of
                   Just s -> (s, hsLocNext st)
                   Nothing ->
                     (UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount), hsLocNext st + 1)
             F.for_ offTxs $ \(off, txh) -> do
               let key = toKey txh
               mv <- HT.lookup ht key
-              -- NOTE: Latest location wins: the newest source EB outlives older
-              -- ones in both the ring and the db
+              -- NOTE: Latest location wins: the newest source point outlives
+              -- older ones in both the ring and the db
               F.for_ mv $ \w ->
                 HT.insert ht key (encodeLoc slot off .|. (w .&. 0xFFFFFFFF))
             pure
               ( st
-                  { hsLocRing = Map.insert slot ebh (hsLocRing st)
+                  { hsLocRing = Map.insert slot point (hsLocRing st)
                   , hsLocNext = locNext'
                   }
               , ()
@@ -194,10 +211,10 @@ newHashTableLeiosTxCache nshift k0 k1 = do
   Announcement \/ body state (mirrors LeiosTxCacheIndex, txs excepted)
 -------------------------------------------------------------------------------}
 
--- | The ring slot an EB currently occupies, if it still does. Scans the ring,
--- at most 'maxAnnouncementCount' entries.
-ringSlotOf :: EndorserBlockHash -> HtState b -> Maybe EbRingIndex
-ringSlotOf ebh = fmap fst . F.find ((== ebh) . snd) . Map.toList . hsLocRing
+-- | The ring slot a point currently occupies, if it still does. Scans the
+-- ring, at most 'maxAnnouncementCount' entries.
+ringSlotOf :: LeiosPoint -> HtState b -> Maybe EbRingIndex
+ringSlotOf point = fmap fst . F.find ((== point) . snd) . Map.toList . hsLocRing
 
 announcementPresent :: SlotNo -> RankingBlockHash -> HtState b -> Bool
 announcementPresent slot rbh st =
@@ -275,13 +292,12 @@ evictOldest ht st = do
         Nothing -> Map.delete slotMin (hsAnnouncements st)
         Just nem' -> Map.insert slotMin nem' (hsAnnouncements st)
   (bodies', evEbs, evTxs) <- decBody ht ebhEvicted (hsBodies st)
-  -- Mirror 'Ouroboros.Consensus.Leios.TxCache.Reference.evictOldest': a body eviction prunes the EB's
-  -- rows, so free its ring slot. Txs held only by the evicted EB then resolve to
-  -- no location (and are fetched) rather than to a pruned/stale source.
+  -- Mirror 'Ouroboros.Consensus.Leios.TxCache.Reference.evictOldest': a body
+  -- eviction prunes the rows of its points, so free their ring slots. Txs held
+  -- only by those points then resolve to no location (and are fetched) rather
+  -- than to a pruned/stale source.
   let hsLocRing'
-        | Set.member ebhEvicted evEbs
-        , Just evSlot <- ringSlotOf ebhEvicted st =
-            Map.delete evSlot (hsLocRing st)
+        | Set.member ebhEvicted evEbs = Map.filter ((/= ebhEvicted) . pointEbHash) (hsLocRing st)
         | otherwise = hsLocRing st
   pure
     ( HtState

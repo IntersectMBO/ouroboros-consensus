@@ -9,6 +9,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   , dbBindBlob
   , dbBindHash
   , dbColumnHash
+  , dbBindPoint
+  , dbColumnPoint
   , dbBindUtf8
   , dbBindInt64
   , dbExec
@@ -40,6 +42,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   ) where
 
 import Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes, hashToBytes)
+import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Exception (SomeException, throwIO)
 import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow (bracket, catch, finally, generalBracket)
@@ -53,6 +56,7 @@ import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbFailure (..)
@@ -81,6 +85,20 @@ dbColumnHash q c =
   hashFromBytes <$> DB.columnBlob q c >>= \case
     Nothing -> throwLeiosDbException "a hash column of the wrong size"
     Just h -> pure h
+
+-- | Bind a point as parameters 1 (its slot) and 2 (its hash), which is how
+-- every statement about a point takes it.
+dbBindPoint :: HasCallStack => DB.Statement -> LeiosPoint -> IO ()
+dbBindPoint q point = do
+  dbBindInt64 q 1 (fromIntegral (unSlotNo (pointSlotNo point)))
+  dbBindHash q 2 (pointEbHash point)
+
+-- | Read a point from this column, its slot, and the next, its hash.
+dbColumnPoint :: HasCallStack => DB.Statement -> DB.ColumnIndex -> IO LeiosPoint
+dbColumnPoint q c =
+  MkLeiosPoint
+    <$> (SlotNo . fromIntegral <$> DB.columnInt64 q c)
+    <*> dbColumnHash q (c + 1)
 
 -- | Bind as TEXT. Needed for JSON1 payloads: 'json_each' interprets BLOB
 -- arguments as JSONB (SQLite ≥ 3.45), our payload is ASCII JSON.

@@ -124,8 +124,8 @@ bodiesAfterGc = withNode $ \nut -> do
   threadDelay 100
   withReader leiosDb $ \reader ->
     (,)
-      <$> lookupEbBody reader (pointEbHash pointA)
-      <*> lookupEbBody reader (pointEbHash pointB)
+      <$> lookupEbBody reader pointA
+      <*> lookupEbBody reader pointB
  where
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.

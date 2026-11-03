@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosTx (..)
   , ProtVerParity
   , TxHash
+  , TxLocation
   , TxOffset
   , admitsSizes
   , endorserBlockHash
@@ -93,6 +94,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( CompletedEbs
   , LeiosDbWriter (..)
+  , LocalFill
   , Promise (..)
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -283,27 +285,17 @@ processLeiosBlock ctx peer req eb = do
       | not novel -> pure (cleaned, (Nothing, fetchArrivalExtra ebBytesSize))
       | otherwise -> do
           -- Register the body's transactions in the tx cache, and read where
-          -- some recent endorser block durably holds any of them, so that the
-          -- body write copies those rather than us fetching them again.
-          mbInserted <-
-            insertBody
-              lfcTxCache
-              ebHash
-              (packTxReferences eb)
-              []
-              ( \acc off _txh _sz -> \case
-                  Just loc -> (off, loc) : acc
-                  Nothing -> acc
-              )
-          pure
-            ( cleaned
-            , case mbInserted of
-                Just (_summary, located) -> (Just located, fetchArrivalGood ebBytesSize)
-                -- The cache does not track this endorser block's announcement,
-                -- perhaps since evicted, or it holds the body already, from
-                -- another point, so it locates nothing.
-                Nothing -> (Just [], fetchArrivalEvicted ebBytesSize)
-            )
+          -- some recent point durably holds any of them, so that the body
+          -- write copies those rather than us fetching them again.
+          mbInserted <- insertBody lfcTxCache ebHash (packTxReferences eb) [] snocLocated
+          case mbInserted of
+            Just (_summary, located) -> pure (cleaned, (Just located, fetchArrivalGood ebBytesSize))
+            -- The cache already holds the body, taken in for another point, or
+            -- it does not track this endorser block's announcement, perhaps
+            -- since evicted. Either way, its txs may have locations.
+            Nothing -> do
+              located <- locateTxs lfcTxCache (packTxReferences eb) [] snocLocated
+              pure (cleaned, (Just located, fetchArrivalEvicted ebBytesSize))
   void $ tryPutMVar lfcReady ()
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   forM_ fills $ \localFills -> do
@@ -393,7 +385,7 @@ settleBody ctx point eb now pointWritten bodyWritten = do
       _ -> pure (outstanding, Nothing)
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache (pointEbHash point) [(off, fst (refs IntMap.! off)) | off <- filledOffs]
+  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- filledOffs]
   void $ tryPutMVar lfcReady ()
   forM_ acquired $ \(onset, jobPool) -> do
     traceWith lfcTracer $ TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
@@ -414,7 +406,8 @@ settleBody ctx point eb now pointWritten bodyWritten = do
 
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
 -- holds for it, having taken it in for another point, instead of fetching it
--- again: write the point and the body, and settle them as an arrival would.
+-- again: write the point and the body, filling its txs from where they are
+-- durably held, and settle them as an arrival would.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
 acquireCachedBody ::
@@ -430,13 +423,20 @@ acquireCachedBody ctx point bounds =
       | not (admitsSizes bounds (leiosEbSizes eb)) -> pure ()
       | otherwise -> do
           now <- systemTimeCurrent lfcSystemTime
+          localFills <- locateTxs lfcTxCache packed [] snocLocated
           pointWritten <- writeEbPoint lfcWriter point (lesBodySize (leiosEbSizes eb))
-          bodyWritten <- writeEbBody lfcWriter point eb []
+          bodyWritten <- writeEbBody lfcWriter point eb localFills
           link =<< async (settleBody ctx point eb now pointWritten bodyWritten)
      where
       eb = mkEndorserBlock $ reverse $ foldTxReferences (\acc txHash size -> (txHash, size) : acc) [] packed
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
+
+-- | Prepend a tx's location, if it has one, as a fill of its offset.
+snocLocated :: [LocalFill] -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> [LocalFill]
+snocLocated acc off _txh _sz = \case
+  Just loc -> (off, loc) : acc
+  Nothing -> acc
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
@@ -508,7 +508,6 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     , lfcTracer
     } = ctx
 
-  ebHash = pointEbHash point
   txBytess = V.map leiosTxBytes txs
   batchBytes = V.sum (V.map BS.length txBytess)
   -- The union of the covered jobs' offsets, ascending: the order the peer
@@ -537,7 +536,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
         _ -> pure (outstanding', Nothing)
     -- These bytes are durable now: advertise them as fill sources for later
     -- endorser blocks referencing the same txs.
-    setTxLocations lfcTxCache ebHash [(off, txHash) | (off, txHash, _bytes) <- toIngest]
+    setTxLocations lfcTxCache point [(off, txHash) | (off, txHash, _bytes) <- toIngest]
     void $ tryPutMVar lfcReady ()
     forM_ completed $ \(acquiredPoint, onset) ->
       traceWith lfcTracer $

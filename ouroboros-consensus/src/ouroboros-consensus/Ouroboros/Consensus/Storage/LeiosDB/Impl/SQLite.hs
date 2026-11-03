@@ -360,26 +360,26 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               publish resultVar (sqlInsertTxs tracer conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
-            PinEb ebHashes resultVar -> do
+            PinEb points resultVar -> do
               -- One transaction for the batch: the submitter awaits this while
-              -- holding the ImmutableDB write lock, so a round-trip per EB throttles
-              -- block immutalisation to this queue's drain rate.
+              -- holding the ImmutableDB write lock, so a round-trip per point
+              -- throttles block immutalisation to this queue's drain rate.
               publish resultVar $
                 dbWithWriteTransactionRaw volDb $
-                  forM_ ebHashes $ \ebHash ->
+                  forM_ points $ \point ->
                     useStmt pinStmt $ do
-                      dbBindHash pinStmt 1 ebHash
+                      dbBindPoint pinStmt point
                       dbStep1Safe pinStmt
               pure Continue
-            MarkCopied ebHashes resultVar -> do
-              -- One transaction for the batch: the mark is what makes a copied EB
-              -- evictable, and under sync it otherwise costs a queue round-trip
-              -- per EB behind a saturated insert FIFO.
+            MarkCopied points resultVar -> do
+              -- One transaction for the batch: the mark is what makes a copied
+              -- point evictable, and under sync it otherwise costs a queue
+              -- round-trip per point behind a saturated insert FIFO.
               publish resultVar $
                 dbWithWriteTransactionRaw volDb $
-                  forM_ ebHashes $ \ebHash ->
+                  forM_ points $ \point ->
                     useStmt markCopiedStmt $ do
-                      dbBindHash markCopiedStmt 1 ebHash
+                      dbBindPoint markCopiedStmt point
                       dbStep1Safe markCopiedStmt
               pure Continue
             GcMark slot resultVar -> do

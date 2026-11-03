@@ -214,7 +214,7 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
   acquired <- withReader leiosDb $ \reader -> do
     points <- scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
-    concat <$> mapM (\point -> withSize point <$> lookupEbBody reader (pointEbHash point)) points
+    concat <$> mapM (\point -> withSize point <$> lookupEbBody reader point) points
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty

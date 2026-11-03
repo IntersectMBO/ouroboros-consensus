@@ -83,26 +83,18 @@ data GcStmts = GcStmts
   -- ^ 'sql_gc_has_work'
   , gsMarkEbForGC :: !DB.Statement
   -- ^ 'sql_gc_mark'
-  , gsCarryMissingTxCount :: !DB.Statement
-  -- ^ 'sql_gc_carry_missing_tx_count'
-  , gsDropSuperseded :: !DB.Statement
-  -- ^ 'sql_gc_drop_superseded'
   }
 
 prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
 prepareGcStmts db = preparingStmts db $ \prep -> do
   gsHasWork <- prep sql_gc_has_work
   gsMarkEbForGC <- prep sql_gc_mark
-  gsCarryMissingTxCount <- prep sql_gc_carry_missing_tx_count
-  gsDropSuperseded <- prep sql_gc_drop_superseded
   pure GcStmts{..}
 
 finalizeGcStmts :: GcStmts -> IO ()
 finalizeGcStmts GcStmts{..} = do
   dbFinalize gsHasWork
   dbFinalize gsMarkEbForGC
-  dbFinalize gsCarryMissingTxCount
-  dbFinalize gsDropSuperseded
 
 -- | The sweep statements, prepared on the writer's volatile connection;
 -- lifecycle mirrors 'CopierStmts'.
@@ -114,7 +106,7 @@ data SweeperStmts = SweeperStmts
   , swEvictEbTxs :: !DB.Statement
   -- ^ 'sql_gc_ebTxs'
   , swEvictEbs :: !DB.Statement
-  -- ^ 'sql_gc_ebs_by_hash'
+  -- ^ 'sql_gc_ebs'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
@@ -123,7 +115,7 @@ prepareSweeperStmts db = preparingStmts db $ \prep -> do
   swPickMarked <- prep sql_sweep_pick_marked
   swEvictEbTxBytes <- prep sql_gc_ebTxBytes
   swEvictEbTxs <- prep sql_gc_ebTxs
-  swEvictEbs <- prep sql_gc_ebs_by_hash
+  swEvictEbs <- prep sql_gc_ebs
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
@@ -152,14 +144,13 @@ data VolStmts = VolStmts
 
 -- | Prepared statements of the fallback reads into the immutable partition.
 -- The partitions share one schema, so these are the volatile SQL strings
--- prepared against the immutable connection (plus the presence probe).
+-- prepared against the immutable connection.
 -- Lifecycle mirrors 'VolStmts': prepared at open time, finalized in 'close'
 -- before their connection.
 data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
   , immStLookupEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
-  , immStFilterPresent :: !DB.Statement
   }
 
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
@@ -167,7 +158,6 @@ prepareImmStmts db = preparingStmts db $ \prep -> do
   immStLookupEbBody <- prep sql_lookup_ebBodies
   immStLookupEbClosure <- prep sql_lookup_eb_closure
   immStBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
-  immStFilterPresent <- prep sql_imm_filter_present
   pure ImmStmts{..}
 
 -- | Same use-after-free discipline as 'finalizeVolStmts'.
@@ -176,7 +166,6 @@ finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
   dbFinalize immStLookupEbClosure
   dbFinalize immStBatchRetrieveTxs
-  dbFinalize immStFilterPresent
 
 -- | Prepare every statement 'VolStmts' names. Order is not observable.
 prepareVolStmts :: DB.Database -> IO VolStmts

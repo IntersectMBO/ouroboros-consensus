@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Leios.TxCache.Optimized (newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
+  , LeiosPoint (..)
   , ProtVerParity (..)
   , RankingBlockHash (..)
   , TxHash
@@ -125,7 +126,7 @@ applyOp h op = case op of
     withLockedInsertAppliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) parity) z ts)
       >> pure (Nothing, Nothing)
   OpSetLocs e offTxs ->
-    setTxLocations h (ebhOf e) [(off, txhOf t) | (off, t) <- offTxs]
+    setTxLocations h (MkLeiosPoint (SlotNo 0) (ebhOf e)) [(off, txhOf t) | (off, t) <- offTxs]
       >> pure (Nothing, Nothing)
  where
   evicted x = (Just x, Nothing)

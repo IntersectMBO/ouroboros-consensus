@@ -98,6 +98,9 @@ newPureLeiosTxCache nshift = do
              in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b nil snoc ->
           MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) ebh b nil snoc idx)
+      , locateTxs = \b nil snoc -> do
+          idx <- MVar.readMVar var
+          pure $ Pure.locateTxs b nil snoc idx
       , lookupBody = \ebh -> do
           idx <- MVar.readMVar var
           pure $! Pure.lookupBody ebh idx
@@ -116,8 +119,8 @@ newPureLeiosTxCache nshift = do
       , withLookupTx = \k -> do
           idx <- MVar.readMVar var
           k $ \txh -> pure $! Pure.lookupTx txh idx
-      , setTxLocations = \ebh offTxs ->
-          MVar.modifyMVar_ var $ \idx -> pure $! Pure.setTxLocations ebh offTxs idx
+      , setTxLocations = \point offTxs ->
+          MVar.modifyMVar_ var $ \idx -> pure $! Pure.setTxLocations point offTxs idx
       }
 
 -- | A handle whose every operation is inert: announcements evict nothing, bodies
@@ -130,9 +133,10 @@ nullLeiosTxCache =
     { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
     , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
     , insertBody = \_ebh _b _nil _snoc -> pure Nothing
+    , locateTxs = \_b nil _snoc -> pure nil
     , lookupBody = \_ebh -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k mempty (\fab _txh sz _a -> pure (fab <> bucketTxArrival TxWasUntracked sz))
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
     , withLookupTx = \k -> k (\_txh -> pure Nothing)
-    , setTxLocations = \_ebh _offTxs -> pure ()
+    , setTxLocations = \_point _offTxs -> pure ()
     }

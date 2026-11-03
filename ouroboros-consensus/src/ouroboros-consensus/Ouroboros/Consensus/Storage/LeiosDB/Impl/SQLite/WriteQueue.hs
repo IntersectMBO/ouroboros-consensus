@@ -38,7 +38,6 @@ import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
-  , EndorserBlockHash
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
@@ -87,17 +86,17 @@ data WriteJob
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
+  | -- | Pin points for promotion; see 'sqlPromoteToImmutable'.
     PinEb
-      -- | the EBs to pin
-      ![EndorserBlockHash]
+      -- | the points to pin
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
-  | -- | The volatile half of a copy: the EB is in the immutable partition
+  | -- | The volatile half of a copy: the point is in the immutable partition
     -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
     MarkCopied
-      -- | the EBs now in the immutable partition
-      ![EndorserBlockHash]
+      -- | the points now in the immutable partition
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
@@ -180,8 +179,8 @@ describeJob = \case
   WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
-  MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
+  PinEb points _ -> "PinEb (" <> show (length points) <> " points)"
+  MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " points)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 

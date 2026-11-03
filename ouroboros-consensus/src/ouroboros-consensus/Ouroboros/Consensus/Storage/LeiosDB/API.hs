@@ -72,20 +72,21 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m [(TxHash, BytesSize)]
-  -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
+  , lookupEbBody :: HasCallStack => LeiosPoint -> m [(TxHash, BytesSize)]
+  -- ^ The EB "body" written at this point: tx hashes and sizes in order, no tx
+  -- bytes.
   --
   -- TODO FIXME Store and return the bytes the EB arrived in. An EB rebuilt
   -- from these references has this node's preferred encoding, so one that
   -- arrived in another encoding would no longer match the hash its ranking
   -- block announced.
-  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
-  -- not complete.
+  , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
+  -- ^ The EB "closure" at this point: tx hashes /and/ their bytes, or 'Nothing'
+  -- if it is not complete there.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EndorserBlockHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      LeiosPoint -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into the EB at one point.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every announced EB point.
   --
@@ -112,24 +113,21 @@ data LeiosDbWriter m = LeiosDbWriter
   , writeEbBody ::
       HasCallStack =>
       LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
-  -- ^ Persist an EB body, and fill what it can from local bytes: each
-  -- 'LocalFill' pairs an offset in this body with the 'TxLocation' of another
-  -- EB durably holding the same tx, copied in the same transaction. Returns any
-  -- EBs whose closure this completed and the offsets that actually filled: a
-  -- fill whose source does not hold the tx this body lists at its offset fills
-  -- nothing, and that tx stays fetchable.
+  -- ^ Persist an EB body at this point, and fill what it can from local bytes:
+  -- each 'LocalFill' pairs an offset in this body with the 'TxLocation' of
+  -- another point durably holding the same tx, copied in the same transaction.
+  -- Every point stores its own body and txs, even when another point names the
+  -- same EB.
   --
-  -- The returned EBs are only used for tracing and too broad: they can actually
-  -- only be this same EB which got completed.
+  -- Returns this point, if this write completed its closure, and the offsets
+  -- that actually filled: a fill whose source does not hold the tx this body
+  -- lists at its offset fills nothing, and that tx stays fetchable.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
-  --
-  -- No backend uses the point's slot: the tx bytes belong to the EB body,
-  -- which every point with the same EB hash shares.
+  -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
   --
@@ -161,8 +159,8 @@ awaitAll = traverse_ await
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
 
--- | A cross-EB fill: fill the EB's tx at 'TxOffset' from the tx's durable
--- 'TxLocation' in another EB. See 'writeEbBody'.
+-- | A cross-point fill: fill the EB's tx at 'TxOffset' from the tx's durable
+-- 'TxLocation' at another point. See 'writeEbBody'.
 type LocalFill = (TxOffset, TxLocation)
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
