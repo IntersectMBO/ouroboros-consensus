@@ -241,25 +241,22 @@ tests =
     , testCase "the node relays only the first vote of a seat in an election" $ do
         down <- relayToOne 0 [votedFor0, [announce equivocation, (5.5, vote equivocation 0)]]
         votes down @?= [voteOf someAnnouncingBlock 0]
-    , testCase "the node disconnects a peer that sends a badly signed vote, and does not relay it" $ do
-        (ups, downs) <- relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock 0)]]) [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, False]
-    , testCase "the node disconnects a peer that sends a vote from a seat outside the committee" $ do
-        (ups, downs) <-
-          relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock seatOutside)]]) [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, False]
-    , testCase "the node disconnects a peer that sends a vote from a seat without a key" $ do
-        (ups, downs) <-
-          relay
-            20
-            ( withControl
-                [[(5, vote someAnnouncingBlock seatNoKey)], [(5, vote someAnnouncingBlock seatBadPoP)]]
-            )
-            [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, True, False]
+    , testCase
+        "the node disconnects each peer that sends an invalid vote, and relays none of them: badly signed, from a seat outside the committee, from a seat without a key, or from one whose key's proof of possession fails"
+        $ do
+          (ups, downs) <-
+            relay
+              20
+              ( withControl
+                  [ [(5, badlySignedVote someAnnouncingBlock 0)]
+                  , [(5, badlySignedVote someAnnouncingBlock seatOutside)]
+                  , [(5, vote someAnnouncingBlock seatNoKey)]
+                  , [(5, vote someAnnouncingBlock seatBadPoP)]
+                  ]
+              )
+              [0]
+          concatMap votes downs @?= [control]
+          map invalidVoteDisconnected ups @?= [True, True, True, True, False]
     , testCase "the node does not verify a vote of a seat it already has a vote of" $ do
         (ups, downs) <-
           relay
