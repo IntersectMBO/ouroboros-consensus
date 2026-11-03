@@ -64,7 +64,6 @@ ebsTable extraColumns =
   [ "CREATE TABLE IF NOT EXISTS ebs ("
   , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
-  , "  ebBytesSize INTEGER NOT NULL,"
   ]
     <> extraColumns
     <> [ "  PRIMARY KEY (ebSlot, ebHashBytes)"

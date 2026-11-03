@@ -36,8 +36,7 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
@@ -60,14 +59,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
-  = WriteEbPoint
-      -- | the announced EB
-      !LeiosPoint
-      -- | its announced size
-      !BytesSize
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | WriteEbBody
+  = WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
@@ -175,7 +167,6 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 -- never its payload.
 describeJob :: WriteJob -> String
 describeJob = \case
-  WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
   WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"

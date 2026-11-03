@@ -236,7 +236,7 @@ test_announcedAgainWhileWriting = do
   assertNoBody newer outstanding
 
 -- | While the 'fixture''s body is being written, pruning passes its point, and
--- an election focuses it anew at a newer point, whose point is written.
+-- an election focuses it anew at a newer point.
 test_prunedWhileWriting :: Assertion
 test_prunedWhileWriting = do
   let (point, eb, _txs) = fixture
@@ -249,7 +249,6 @@ test_prunedWhileWriting = do
   -- the body's settlement.
   takeMVar (lfcReady ctx)
   modifyMVar_ (lfcOutstanding ctx) $ pure . snd . pruneOutstandingToImmTip (SlotNo 6)
-  await =<< writeEbPoint (lfcWriter ctx) newer (encodeEndorserBlockSize eb)
   modifyMVar_ (lfcOutstanding ctx) $
     pure . recordReferencedPoint newer SNothing
   atomically $ putTMVar written ()

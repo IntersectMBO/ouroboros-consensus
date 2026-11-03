@@ -87,7 +87,7 @@ data LeiosDbReader m = LeiosDbReader
       LeiosPoint -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   -- ^ Tx bytes for a batch of offsets into the EB at one point.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
-  -- ^ Every announced EB point.
+  -- ^ Every point a body was written at.
   --
   -- Not used in production, only used in tests to observe point
   -- writes and truncation.
@@ -107,12 +107,11 @@ data LeiosDbReader m = LeiosDbReader
 data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
-  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size.
   , writeEbBody ::
       HasCallStack =>
       LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
-  -- ^ Persist an EB body at this point, and fill what it can from local bytes:
+  -- ^ Persist an EB body at this point, recording the point, and fill what it
+  -- can from local bytes:
   -- each 'LocalFill' pairs an offset in this body with the 'TxLocation' of
   -- another point durably holding the same tx, copied in the same transaction.
   -- Every point stores its own body and txs, even when another point names the
@@ -121,8 +120,6 @@ data LeiosDbWriter m = LeiosDbWriter
   -- Returns the offsets that actually filled: a fill whose source does not
   -- hold the tx this body lists at its offset fills nothing, and that tx stays
   -- fetchable.
-  --
-  -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())

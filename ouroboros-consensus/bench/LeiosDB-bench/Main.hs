@@ -7,7 +7,7 @@
 --
 -- Every EB goes through:
 --
--- * __Fetch__: 'writeEbPoint' and 'writeEbBody', then its Txs in 'writeTxs'
+-- * __Fetch__: 'writeEbBody', then its Txs in 'writeTxs'
 --   chunks of contiguous offsets (at most 'requestBytes', in whole 'jobBytes'
 --   jobs), in random order and spread over 'numUpstreamPeers'. The EB is
 --   complete once every chunk is written: the fetch logic knows that, not the
@@ -87,7 +87,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosDbWriter (..)
   , Promise (..)
   , allocateReader
-  , awaitAll
   , newLeiosDBSQLite
   , withWriter
   )
@@ -334,13 +333,11 @@ drainWith q k = loop
       Nothing -> pure ()
       Just x -> k x >> loop
 
--- | Write an EB's point and body, as the fetch logic does on receiving it.
+-- | Write an EB's body, as the fetch logic does on receiving it.
 writeBody :: LeiosDbWriter IO -> LeiosPoint -> BenchEb -> Record -> IO ()
 writeBody w point eb@BenchEb{beEb} record =
   timedStep eb FetchBody record $ do
-    pointWritten <- writeEbPoint w point (encodeEndorserBlockSize beEb)
-    bodyWritten <- writeEbBody w point beEb []
-    awaitAll [pointWritten, void bodyWritten]
+    void . await =<< writeEbBody w point beEb []
 
 -- | Write a chunk of an EB's Txs, as the fetch logic does on receiving it.
 writeChunk :: LeiosDbWriter IO -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()

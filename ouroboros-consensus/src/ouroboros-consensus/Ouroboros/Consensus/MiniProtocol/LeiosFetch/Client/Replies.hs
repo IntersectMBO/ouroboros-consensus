@@ -298,17 +298,11 @@ processLeiosBlock ctx peer req eb = do
   void $ tryPutMVar lfcReady ()
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   forM_ fills $ \localFills -> do
-    -- The LeiosDB writes a body only for a point it holds. The announcement
-    -- path writes the point, but not every endorser block fetched has had its
-    -- announcement processed by this node with this code.
-    --
-    -- TODO Remove this once that is so.
-    pointWritten <- writeEbPoint lfcWriter point ebBytesSize
     bodyWritten <- writeEbBody lfcWriter point eb localFills
     -- Off this thread, but linked to it, so a failed write still brings the
     -- node down rather than being silently dropped. Like the worker that
     -- 'processLeiosBlockTxs' forks, it may outlive the peer.
-    link =<< async (settleBody ctx point eb now pointWritten bodyWritten)
+    link =<< async (settleBody ctx point eb now bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
@@ -356,11 +350,9 @@ settleBody ::
   EndorserBlock ->
   -- | when the body arrived
   RelativeTime ->
-  Promise m () ->
   Promise m [TxOffset] ->
   m ()
-settleBody ctx point eb now pointWritten bodyWritten = do
-  () <- await pointWritten
+settleBody ctx point eb now bodyWritten = do
   filledOffs <- await bodyWritten
   acquired <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
@@ -400,7 +392,7 @@ settleBody ctx point eb now pointWritten bodyWritten = do
 
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
 -- holds for it, having taken it in for another point, instead of fetching it
--- again: write the point and the body, filling its txs from where they are
+-- again: write the body, filling its txs from where they are
 -- durably held, and settle them as an arrival would.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
@@ -418,9 +410,8 @@ acquireCachedBody ctx point bounds =
       | otherwise -> do
           now <- systemTimeCurrent lfcSystemTime
           localFills <- locateTxs lfcTxCache packed [] snocLocated
-          pointWritten <- writeEbPoint lfcWriter point (lesBodySize (leiosEbSizes eb))
           bodyWritten <- writeEbBody lfcWriter point eb localFills
-          link =<< async (settleBody ctx point eb now pointWritten bodyWritten)
+          link =<< async (settleBody ctx point eb now bodyWritten)
      where
       eb = mkEndorserBlock $ reverse $ foldTxReferences (\acc txHash size -> (txHash, size) : acc) [] packed
  where

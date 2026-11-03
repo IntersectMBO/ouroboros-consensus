@@ -5,8 +5,7 @@
 -- single writer, which calls them from its
 -- 'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue.WriteJob's.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
-  ( sqlInsertEbPoint
-  , sqlInsertEbBody
+  ( sqlInsertEbBody
   , sqlInsertTxs
   ) where
 
@@ -17,8 +16,7 @@ import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , LeiosPoint (..)
   , TxLocation (..)
   , TxOffset
@@ -35,20 +33,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
 
-sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindPoint stmt point
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-    DB.changes db
-  bumpVolatileStats conn inserted
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint = stmt}} = conn
-
--- | Persist an EB body at a point, then fill what it can from the bytes other
--- points hold, in the same transaction. The point MUST already be present
--- (inserted via 'sqlInsertEbPoint').
+-- | Persist an EB body at a point, recording the point, then fill what it can
+-- from the bytes other points hold, in the same transaction.
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -59,7 +45,11 @@ sqlInsertEbBody ::
 sqlInsertEbBody tracer conn point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  dbWithWriteTransaction conn $ do
+  (inserted, filledOffs) <- dbWithWriteTransaction conn $ do
+    inserted <- useStmt stInsertEbPoint $ do
+      dbBindPoint stInsertEbPoint point
+      dbStep1 stInsertEbPoint
+      DB.changes db
     forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do
       dbBindPoint stInsertEbTxsRow point
       dbBindInt64 stInsertEbTxsRow 3 (fromIntegral txOffset)
@@ -93,12 +83,15 @@ sqlInsertEbBody tracer conn point eb fills = do
     useStmt stInitMissingCount $ do
       dbBindPoint stInitMissingCount point
       dbStep1 stInitMissingCount
-    pure filledOffs
+    pure (inserted, filledOffs)
+  bumpVolatileStats conn inserted
+  pure filledOffs
  where
   items = zip [0 :: Int ..] (endorserBlockReferences eb)
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
-    { stInsertEbTxsRow
+    { stInsertEbPoint
+    , stInsertEbTxsRow
     , stPreallocEbTxBytes
     , stFillEbTxBytesLocally
     , stInitMissingCount

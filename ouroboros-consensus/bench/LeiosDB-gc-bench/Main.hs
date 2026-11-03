@@ -37,7 +37,7 @@
 -- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
 -- order:
 --
---   1. insert 5 fresh full EBs (announcement + body + txs) at the current
+--   1. insert 5 fresh full EBs (body + txs) at the current
 --      load, reporting the median wall time (@insertEbSeconds@);
 --   2. promote half of the N EBs and wait for the background copier to land
 --      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
@@ -402,10 +402,9 @@ populateDb opts db =
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
-      pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
       bodyWritten <- writeEbBody writer point eb []
       txsWritten <- writeTxs writer point txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      awaitAll [void bodyWritten, txsWritten]
       pure (slot, hashBytes)
 
 -- * Deterministic data generation (as in leios-db-bench)
@@ -487,7 +486,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
     remainingRef <- newIORef schedule
     promotedRef <- newIORef (0 :: Int)
     freshRef <- newIORef (0 :: Int)
-    -- Time one fresh full-EB insertion (announcement + body + txs) through the
+    -- Time one fresh full-EB insertion (body + txs) through the
     -- given connection; the fresh EBs live at slots no frontier ever reaches.
     let timedInsertEbWith w = do
           k <- atomicModifyIORef' freshRef (\cnt -> (cnt + 1, cnt))
@@ -498,11 +497,10 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           snd
             <$> timed
               ( do
-                  pointWritten <- writeEbPoint w point (encodeEndorserBlockSize eb)
                   bodyWritten <- writeEbBody w point eb []
                   txsWritten <- writeTxs w point txs
-                  -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  -- Awaiting both times them to durability.
+                  awaitAll [void bodyWritten, txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup

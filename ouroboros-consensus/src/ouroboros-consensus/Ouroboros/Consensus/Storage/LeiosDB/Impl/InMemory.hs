@@ -67,9 +67,7 @@ import Ouroboros.Consensus.Util.IOLike
 -- | In-memory database state. Like the SQLite backend, it stores a body and
 -- its tx bytes per point, even for two points of the same endorser block.
 data InMemoryLeiosDb = InMemoryLeiosDb
-  { imEbPoints :: !(Map LeiosPoint BytesSize)
-  -- ^ Inserted points with their expected sizes.
-  , imEbBodies :: !(Map LeiosPoint (IntMap {- txOffset -} EbTxEntry))
+  { imEbBodies :: !(Map LeiosPoint (IntMap {- txOffset -} EbTxEntry))
   -- ^ The tx-hash list written at each point, by offset.
   , imEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes written at each point, by offset -- mirrors the SQLite
@@ -86,7 +84,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -155,8 +153,7 @@ imPromoteToImmutable stateVar points = do
 imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
   s
-    { imEbPoints = kept (imEbPoints s)
-    , imEbBodies = kept (imEbBodies s)
+    { imEbBodies = kept (imEbBodies s)
     , imEbTxBytes = kept (imEbTxBytes s)
     }
  where
@@ -192,8 +189,6 @@ openInMemoryWriter stateVar =
   pure
     LeiosDbWriter
       { closeWriter = pure ()
-      , writeEbPoint = \point ebBytesSize ->
-          resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb fills ->
           resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb fills)
       , writeTxs = \point txs ->
@@ -223,15 +218,8 @@ imScanEbPoints stateVar = atomically $ do
   state <- readTVar stateVar
   pure
     [ (pointSlotNo p, pointEbHash p)
-    | p <- Map.keys (imEbPoints state)
+    | p <- Map.keys (imEbBodies state)
     ]
-
--- | Insert an announced EB point. Idempotent: a second insert at the
--- same point keeps the first-seen size.
-imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
-imInsertEbPoint stateVar point ebBytesSize = atomically $
-  modifyTVar stateVar $ \s ->
-    s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
 imLookupEbBody ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m [(TxHash, BytesSize)]
@@ -256,9 +244,6 @@ imInsertEbBody stateVar point eb fills = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
-  unless known $
-    throwLeiosDbException "writeEbBody: point not registered (programmer error)"
   atomically $ do
     let entries =
           IntMap.fromList

@@ -107,7 +107,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
   , LeiosDbReader (..)
-  , LeiosDbWriter (..)
   , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -433,8 +432,7 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 
 -- | List the endorser block a new announcement names as one to fetch, if it
 -- takes its election's focus, and register the announcement with the
--- LeiosTxCache. Also write its point, so that the LeiosDB keeps the endorser
--- block for at least as long as this announcement matters.
+-- LeiosTxCache.
 --
 -- One entry per election: the announcement that takes the election's focus. A
 -- second announcement for an already-focused election is an equivocation, and
@@ -458,7 +456,6 @@ onNewLeiosAnnouncement kernel valid = do
       slot
       (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
       ebHash
-  void $ writeEbPoint lfcWriter point (announcementEbSize announcement)
   changed <- modifyMVar lfcOutstanding $ \outstanding ->
     let tooOld = slot < outstandingPrunedSlot outstanding
         introducesFocus = not $ Map.member elId (elFocus outstanding)
@@ -473,7 +470,7 @@ onNewLeiosAnnouncement kernel valid = do
     acquireCachedBody (lfkContext kernel) point announcementEbBounds
     void $ tryPutMVar lfcReady ()
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcWriter} = lfkContext kernel
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache} = lfkContext kernel
   MkValidAnnouncement{announcingHeader = anc, announcementOnset, announcementEbBounds} = valid
   announcement = ancAnnouncement anc
   elId = ancElectionId anc
