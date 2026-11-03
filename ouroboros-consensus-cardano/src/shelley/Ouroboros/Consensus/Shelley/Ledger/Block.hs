@@ -40,6 +40,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
   ) where
 
 import qualified Cardano.Crypto.Hash as Crypto
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
@@ -55,17 +56,19 @@ import Cardano.Ledger.Core as SL
   , toEraCBOR
   )
 import qualified Cardano.Ledger.Core as SL
-  ( TranslationContext
+  ( BlockBody
+  , TranslationContext
   , hashBlockBody
   , txSeqBlockBodyL
   )
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
-import Data.Maybe.Strict (isSJust, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), isSJust, strictMaybeToMaybe)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
@@ -233,14 +236,21 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
-    bodyContainsCert = isSJust (blockBodyLeiosCert blockBody)
+    bodyContainsCert = isSJust (bodyLeiosCert blockBody)
     bodyContainsTxs = not (null (blockBody ^. SL.txSeqBlockBodyL))
 
   headerIsEBB = const Nothing
 
 instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
   blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
-    strictMaybeToMaybe (blockBodyLeiosCert blockBody)
+    strictMaybeToMaybe (bodyLeiosCert blockBody)
+
+-- | The Leios certificate of a block body. Only an era with a 'LeiosEraDict'
+-- has a certificate field.
+bodyLeiosCert :: forall era. ShelleyBasedEra era => SL.BlockBody era -> StrictMaybe LeiosCert
+bodyLeiosCert blockBody = case getLeiosEraDict (Proxy @era) of
+  Just LeiosEraDict -> blockBody ^. leiosCertBlockBodyL
+  Nothing -> SNothing
 
 mkShelleyHeader ::
   ShelleyCompatible proto era =>
