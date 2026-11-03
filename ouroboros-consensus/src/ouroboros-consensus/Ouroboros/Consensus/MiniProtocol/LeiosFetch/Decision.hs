@@ -14,6 +14,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     -- * Offers
   , WhetherTxsClosureOffered (..)
   , PeerOffer (..)
+  , OfferPrune (..)
+  , pruneOffers
 
     -- * Outstanding state
   , LeiosOutstanding (..)
@@ -57,8 +59,11 @@ import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (partition, sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
 import Data.Sequence (Seq)
@@ -67,8 +72,6 @@ import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Set.NonEmpty (NESet)
-import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
@@ -184,6 +187,24 @@ data PeerOffer = MkPeerOffer
   , poClosure :: !WhetherTxsClosureOffered
   }
   deriving (Eq, Show)
+
+-- | What of a peer's offer of a point the decision logic found can no longer
+-- help.
+data OfferPrune
+  = -- | The whole offer.
+    PruneOffer
+  | -- | Its body half: the body was requested of this peer, which is asked for
+    -- it at most once, although its closure may still be requested.
+    PruneOfferedBody
+  deriving (Eq, Show)
+
+-- | Prune a peer's offers as 'leiosFetchLogicIteration' decided.
+pruneOffers :: Map LeiosPoint OfferPrune -> Map LeiosPoint PeerOffer -> Map LeiosPoint PeerOffer
+pruneOffers prunes offers = Map.foldlWithKey' prune offers prunes
+ where
+  prune acc point = \case
+    PruneOffer -> Map.delete point acc
+    PruneOfferedBody -> Map.adjust (\offer -> offer{poOfferedBody = SNothing}) point acc
 
 -- | Each field on its own terms: the leftmost size wins, which for
 -- 'Map.insertWith' is the newer offer's, and a peer that makes that choice
@@ -765,10 +786,11 @@ leiosFetchLogicIteration ::
   -- 'IsNotBigLedgerPeer').
   Map peer IsBigLedgerPeer ->
   LeiosOutstanding peer ->
-  -- | The new outstanding state, the requests to send, and the offers to prune
+  -- | The new outstanding state, the requests to send, and what of the offers
+  -- to prune ('pruneOffers')
   ( LeiosOutstanding peer
   , Map peer (NESeq LeiosFetchRequest)
-  , Map peer (NESet LeiosPoint)
+  , Map peer (NEMap LeiosPoint OfferPrune)
   )
 leiosFetchLogicIteration env forecastEbBounds mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
@@ -786,7 +808,7 @@ leiosFetchLogicIteration env forecastEbBounds mbCurrentSlot offerings bigLedgerP
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
                 Just neReqs -> Map.insert peer neReqs reqs
-            , case NESet.nonEmptySet peerDrops of
+            , case NEMap.nonEmptyMap peerDrops of
                 Nothing -> drops
                 Just nes -> Map.insert peer nes drops
             )
@@ -857,12 +879,12 @@ assignPeer ::
   peer ->
   Map LeiosPoint PeerOffer ->
   LeiosOutstanding peer ->
-  (LeiosOutstanding peer, Seq LeiosFetchRequest, Set LeiosPoint)
+  (LeiosOutstanding peer, Seq LeiosFetchRequest, Map LeiosPoint OfferPrune)
 assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
   -- Walk the high-priority tier, then the low, threading the accumulator; the
   -- second walk immediately short-circuits if the first already saturated the
   -- peer.
-  go (go (acc, Seq.empty, Set.empty) highTier) lowTier
+  go (go (acc, Seq.empty, Map.empty) highTier) lowTier
  where
   (highTier, lowTier) =
     fetchPriorityTiers
@@ -894,13 +916,16 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
         (NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
-          let (acc2, dec2) = assignBody forecastEbBounds peer point offerKind (acc1, dec1)
-           in (acc2, dec2, Set.insert point drops)
+          let (acc2, dec2) =
+                fromMaybe (acc1, dec1) $ assignBody forecastEbBounds peer point offerKind (acc1, dec1)
+           in (acc2, dec2, Map.insert point PruneOffer drops)
         (NoBody, TxsClosureOffered) ->
-          -- Request the body now, but keep the offer: we will request the
-          -- closure from this peer once we hold the body.
-          let (acc2, dec2) = assignBody forecastEbBounds peer point offerKind (acc1, dec1)
-           in (acc2, dec2, drops)
+          -- Request the body now, and prune only the body half of the offer:
+          -- we will request the closure from this peer once we hold the body,
+          -- but never ask it for the body again.
+          case assignBody forecastEbBounds peer point offerKind (acc1, dec1) of
+            Nothing -> (acc1, dec1, drops)
+            Just (acc2, dec2) -> (acc2, dec2, Map.insert point PruneOfferedBody drops)
         (BodyAcquired _jobPool, TxsClosureNotOffered) ->
           -- We hold the body and the peer never offered the closure, so it can
           -- no longer help.
@@ -919,12 +944,13 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
                   , dec2
                   , case exhausted of
                       PeerEbNotExhausted -> drops
-                      PeerEbExhausted -> Set.insert point drops
+                      PeerEbExhausted -> Map.insert point PruneOffer drops
                   )
    where
-    pruneThisOffer = (acc1, dec1, Set.insert point drops)
+    pruneThisOffer = (acc1, dec1, Map.insert point PruneOffer drops)
 
 -- | Request the EB body from this peer, at the size the peer offered it at.
+-- 'Nothing' if it does not.
 --
 -- The offered size is the only size with any say here; an announcement's has
 -- none, since at most one announcement naming a hash is honest and nothing
@@ -941,18 +967,18 @@ assignBody ::
   LeiosPoint ->
   PeerOffer ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest) ->
-  (LeiosOutstanding peer, Seq LeiosFetchRequest)
-assignBody forecastEbBounds peer point offer st@(acc, dec)
+  Maybe (LeiosOutstanding peer, Seq LeiosFetchRequest)
+assignBody forecastEbBounds peer point offer (acc, dec)
   | peer `Set.member` Map.findWithDefault Set.empty point (requestedEbPeers acc) =
       -- unless we've already requested it from them
-      st
+      Nothing
   | otherwise = case (eEbBounds, poOfferedBody offer) of
       -- Beyond our horizon and the offer brought no bound of its own, so we
       -- have nothing to hold the body to. Ignoring it this iteration costs
       -- nothing: a later one forecasts again, from a tip that has moved.
-      (Left _outsideRange, _) -> st
+      (Left _outsideRange, _) -> Nothing
       -- the peer offered the closure but not the body
-      (Right _, SNothing) -> st
+      (Right _, SNothing) -> Nothing
       (Right bounds, SJust size) ->
         let acc' =
               acc
@@ -961,15 +987,16 @@ assignBody forecastEbBounds peer point offer st@(acc, dec)
                 , requestedBytesSizePerPeer =
                     Map.insertWith (+) peer size (requestedBytesSizePerPeer acc)
                 }
-         in ( acc'
-            , dec
-                Seq.|> LeiosBlockRequest
-                  MkLeiosBlockRequest
-                    { lbrPoint = point
-                    , lbrOfferedSize = size
-                    , lbrEbBounds = bounds
-                    }
-            )
+         in Just
+              ( acc'
+              , dec
+                  Seq.|> LeiosBlockRequest
+                    MkLeiosBlockRequest
+                      { lbrPoint = point
+                      , lbrOfferedSize = size
+                      , lbrEbBounds = bounds
+                      }
+              )
  where
   eEbBounds = offerEbBounds forecastEbBounds (pointSlotNo point) offer
 

@@ -12,6 +12,7 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
@@ -40,7 +41,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
+  , pruneOffers
   , recordReferencedPoint
+  , refundEbRequest
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
@@ -62,6 +65,9 @@ tests =
             test_bodyAlreadyRequestedPeerSkipped
         , testCase "both offering peers are selected (no per-EB cap)" $
             test_bodyTwoPeersOffer
+        , testCase
+            "a peer offering the body and the closure is asked for the body once, even after its reply"
+            test_bodyAskedOnceOfBothOfferer
         , testCase
             "an endorser block rejected as too big at a point is never fetched again at that point"
             test_noRefetchOversized
@@ -146,6 +152,38 @@ test_bodyTwoPeersOffer =
     & runIteration
     -- both peers offer; with no per-EB cap the body is requested from both
     & assertRequestPeerCount 2
+
+-- | A peer that offers both the body and the closure is asked for the body, and
+-- not again once its reply has arrived but before the body is held. Its
+-- closure is still asked of it once the body is held.
+test_bodyAskedOnceOfBothOfferer :: IO ()
+test_bodyAskedOnceOfBothOfferer = do
+  assertBodyRequest peerA p 1024 reqs1
+  assertNoRequests reqs2
+  requestedOffsets reqs3 @?= IntSet.singleton 0
+ where
+  p = point 1 'a'
+  offers0 = Map.singleton p (MkPeerOffer SNothing (SJust 1024) TxsClosureOffered)
+  decide outstanding offers =
+    leiosFetchLogicIteration
+      env
+      anyBounds
+      (Just minBound)
+      (Map.singleton peerA offers)
+      Map.empty
+      outstanding
+  (outstanding1, reqs1, prunes1) = decide (scOutstanding (empty & withMissingBody p 1024)) offers0
+  offers1 = pruneOffers (maybe Map.empty NEMap.toMap (Map.lookup peerA prunes1)) offers0
+  -- The reply arrived, but its write has not settled, so the body is not held
+  -- yet.
+  outstanding2 = refundEbRequest peerA p 1024 outstanding1
+  (_, reqs2, _) = decide outstanding2 offers1
+  jobPool =
+    Jobs.mkLeiosJobPool
+      (maxJobBytesSize env)
+      (maxJobTxCount env)
+      (IntMap.singleton 0 (txHashOf 0, 100))
+  (_, reqs3, _) = decide (acquireEbBody p jobPool outstanding2) offers1
 
 -- | An endorser block rejected as too big, then offered at the same point at
 -- bounds that admit its closure but not its body, at bounds that admit its body

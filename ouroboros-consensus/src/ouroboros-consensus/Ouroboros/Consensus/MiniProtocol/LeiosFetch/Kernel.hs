@@ -25,12 +25,12 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
+import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
-import qualified Data.Set.NonEmpty as NESet
 import Data.Void (Void)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
@@ -94,6 +94,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
+  , pruneOffers
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   , removePeerFromOutstanding
@@ -520,10 +521,10 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
             outstanding
     pure (outstanding', (requests, offerDrops, peersVars))
   atomically $ do
-    -- Drop dead offers: those the decision found can no longer help.
-    forM_ (Map.toList offerDrops) $ \(peer, dropped) ->
+    -- Prune what of the offers the decision found can no longer help.
+    forM_ (Map.toList offerDrops) $ \(peer, pruned) ->
       forM_ (Map.lookup peer peersVars) $ \vars ->
-        modifyTVar (lfpOfferings vars) (`Map.withoutKeys` NESet.toSet dropped)
+        modifyTVar (lfpOfferings vars) (pruneOffers (NEMap.toMap pruned))
     -- Published after the lock is released, so a peer that unregistered
     -- meanwhile still gets these, although unregistering cancelled their
     -- accounting. That is harmless: a peer unregisters only when one of its
