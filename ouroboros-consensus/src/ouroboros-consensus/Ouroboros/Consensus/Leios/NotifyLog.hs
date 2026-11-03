@@ -16,7 +16,7 @@
 --
 -- Whoever appends a notification says until when it is worth relaying; the
 -- pruner drops it then, and the log does not take one it was pruned past
--- already. So the node relays none longer than 'notifyLogPruneCadence' after
+-- already. So the node relays none longer than the pruning cadence after
 -- that. A peer that connects
 -- late starts at the log's oldest notification, so it still receives
 -- everything worth relaying, and a notification is never worth relaying longer
@@ -30,24 +30,19 @@ module Ouroboros.Consensus.Leios.NotifyLog
   , appendNotifyLog
   , newNotifyLog
   , nextNotifyLog
-  , notifyLogPruneCadence
-  , notifyLogPruner
   , notifyLogStart
   , pruneNotifyLog
   ) where
 
-import Control.Monad (forever, unless)
+import Control.Monad (unless)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Time.Clock (NominalDiffTime)
-import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (Header)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
-  , SystemTime (..)
   )
 import Ouroboros.Consensus.Leios.Types (LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -55,17 +50,14 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
-  , MonadDelay (threadDelay)
   , STM
   , StrictTVar
-  , atomically
   , modifyTVar
   , newTVarIO
   , readTVar
   , retry
   , writeTVar
   )
-import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | A notification the node relays.
 data Notification blk
@@ -159,16 +151,3 @@ pruneNotifyLog notifyLog now = do
 
 succCursor :: NotifyCursor -> NotifyCursor
 succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
-
--- | Prune the log every 'notifyLogPruneCadence'.
-notifyLogPruner :: IOLike m => SystemTime m -> NotifyLog m blk -> m Void
-notifyLogPruner systemTime notifyLog = forever $ do
-  now <- systemTimeCurrent systemTime
-  atomically $ pruneNotifyLog notifyLog now
-  threadDelay (nominalDelay notifyLogPruneCadence)
-
--- | How often the log is pruned, so how long after it stops being worth
--- relaying the node may still relay a notification. It must stay far below the
--- grace a downstream peer gives before it rejects one.
-notifyLogPruneCadence :: NominalDiffTime
-notifyLogPruneCadence = 1

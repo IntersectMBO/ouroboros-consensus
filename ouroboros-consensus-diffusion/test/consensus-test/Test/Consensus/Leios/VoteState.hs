@@ -62,10 +62,10 @@ prop_keepsUnexpired = forAll genVotes $ \vs ->
         notifyLog <- newNotifyLog @_ @LeiosTestBlock
         announceState <- newAnnounceState notifyLog
         st <- newVoteState nullTracer announceState notifyLog
-        recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
-          _expired <- pruneVotes st at
+        recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> do
+          pruneVotes st at
           either (const Nothing) (const (Just (at, slot, voteSeatId vote)))
-            <$> recordVote st (validated slot vote)
+            <$> atomically (recordVote st (validated slot vote))
         kept' <- atomically (currentVotes st)
         pure (kept', recorded')
       lastPruned = maximum (RelativeTime 0 : [at | (at, _, _) <- vs])

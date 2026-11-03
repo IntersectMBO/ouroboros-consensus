@@ -80,7 +80,6 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , appendNotifyLog
   , newNotifyLog
   , nextNotifyLog
-  , notifyLogPruneCadence
   , notifyLogStart
   , pruneNotifyLog
   )
@@ -127,7 +126,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
-import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePruneCadence)
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
@@ -168,7 +167,6 @@ import Test.QuickCheck
   , elements
   , forAllShow
   , frequency
-  , once
   , oneof
   , property
   , sublistOf
@@ -219,9 +217,6 @@ tests =
         notifyLogAt [(9, 'a'), (300, 'b'), (5, 'c')] 6 @?= "ab"
     , testCase "the log does not take a notification it was pruned past already" $
         notifyLogPrunedAt 6 [(9, 'a'), (5, 'c'), (6, 'd')] @?= "ad"
-    , testProperty
-        "the log is pruned far more often than a downstream peer's grace"
-        prop_notifyLogPruneCadence
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -471,7 +466,7 @@ deadlineOf = snd . windowOf
 -- | The latest the node may relay a vote of an election slot: until the log is
 -- pruned past its deadline.
 relayedUntilOf :: SlotNo -> DiffTime
-relayedUntilOf slot = deadlineOf slot + realToFrac notifyLogPruneCadence
+relayedUntilOf slot = deadlineOf slot + realToFrac leiosDeadlinePruneCadence
 
 -- | When the window of the votes of an election slot opens, and their
 -- deadline.
@@ -798,21 +793,6 @@ notifyLogPrunedAt now appends = runSimOrThrow $ do
         (NotifyLog.NotifyVote (voteOf someAnnouncingBlock (seatOf name)))
         (RelativeTime expires)
   atomically $ map nameOf <$> notifyLogNotifications notifyLog
-
--- | The node relays a notification at most 'notifyLogPruneCadence' after it is
--- no longer worth relaying, which must leave a downstream peer's grace for
--- transmission and queueing: 'voteLateGrace' for a vote, and the margin between
--- 'maxAnnouncementAgeSend' and 'maxAnnouncementAgeRecv' for an announcement.
-prop_notifyLogPruneCadence :: Property
-prop_notifyLogPruneCadence =
-  once . conjoin $
-    [ counterexample "the vote grace" $
-        notifyLogPruneCadence `farBelow` voteLateGrace
-    , counterexample "the announcement grace" $
-        notifyLogPruneCadence `farBelow` (maxAnnouncementAgeRecv - maxAnnouncementAgeSend)
-    ]
- where
-  farBelow a b = 10 * a <= b
 
 -- | The seat a name stands for in a log, 'a' for seat 0.
 seatOf :: Char -> Word16

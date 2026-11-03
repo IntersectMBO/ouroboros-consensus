@@ -18,6 +18,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , leiosDeadlinePruneCadence
   , toConsensusMode
   ) where
 
@@ -51,6 +52,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Text as Text
+import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
@@ -65,9 +67,9 @@ import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , newNotifyLog
-  , notifyLogPruner
+  , pruneNotifyLog
   )
-import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
+import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -121,6 +123,7 @@ import Ouroboros.Consensus.Util.LeakyBucket
   )
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
+import Ouroboros.Consensus.Util.Time (nominalDelay)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (castTip, tipFromHeader)
 import Ouroboros.Network.BlockFetch
@@ -426,11 +429,8 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
         leiosNotifyPruner chainDB leiosAnnounceState leiosVoteState leiosNotifyClientStates
     void $
-      forkLinkedThread registry "NodeKernel.leiosVotePruner" $
-        votePruner leiosVoteState systemTime
-    void $
-      forkLinkedThread registry "NodeKernel.notifyLogPruner" $
-        notifyLogPruner systemTime leiosNotifyLog
+      forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
+        leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -649,6 +649,30 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   -- the LeiosDB write queue.
   finalizeForging (bf, leiosDbWriter) =
     finalize bf `finally` closeWriter leiosDbWriter
+
+{-------------------------------------------------------------------------------
+  Leios pruning
+-------------------------------------------------------------------------------}
+
+-- | Prune what the node relays only until a deadline, the notify log and the
+-- votes, every 'leiosDeadlinePruneCadence'.
+leiosDeadlinePruner ::
+  IOLike m =>
+  SystemTime m ->
+  NotifyLog m blk ->
+  VoteState m blk ->
+  m Void
+leiosDeadlinePruner systemTime notifyLog voteState = forever $ do
+  now <- systemTimeCurrent systemTime
+  atomically $ pruneNotifyLog notifyLog now
+  pruneVotes voteState now
+  threadDelay (nominalDelay leiosDeadlinePruneCadence)
+
+-- | How often 'leiosDeadlinePruner' runs, so how long after its deadline the
+-- node may still relay a notification. It must stay far below the grace a
+-- downstream peer gives before it rejects one.
+leiosDeadlinePruneCadence :: NominalDiffTime
+leiosDeadlinePruneCadence = 1
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
