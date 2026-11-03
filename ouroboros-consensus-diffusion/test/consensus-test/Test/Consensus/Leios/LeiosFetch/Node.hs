@@ -180,7 +180,7 @@ heldTxHash :: Int -> TxHash
 heldTxHash i = UnsafeHash (SBS.replicate 31 0 <> SBS.singleton (fromIntegral i))
 
 heldTxBytes :: Int -> BS.ByteString
-heldTxBytes i = BS.replicate (10 + i) (fromIntegral i)
+heldTxBytes i = BS.replicate (10 + i) (fromIntegral i + 1)
 
 heldTx :: Int -> LeiosTx
 heldTx = MkLeiosTx . heldTxBytes

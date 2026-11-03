@@ -121,14 +121,14 @@ serveTxs tracer reader point bitmaps = do
   -- One row for each requested offset that the endorser block has, with its
   -- bytes if the node holds them.
   rows <- batchRetrieveTxs reader (pointEbHash point) offsets
-  case traverse (\(_offset, _txHash, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
+  case traverse (\(_offset, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
     Just txs | length txs == length offsets -> do
       let n = length txs
       traceWith tracer $
         TraceLeiosFetchServerTxsServed point n (sum [BS.length (leiosTxBytes tx) | tx <- txs])
       pure $ V.fromListN n txs
     _ -> do
-      let held = IntSet.fromList [offset | (offset, _txHash, Just _bytes) <- rows]
+      let held = IntSet.fromList [offset | (offset, Just _bytes) <- rows]
       throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` held) offsets)
  where
   offsets = bitmapOffsets bitmaps

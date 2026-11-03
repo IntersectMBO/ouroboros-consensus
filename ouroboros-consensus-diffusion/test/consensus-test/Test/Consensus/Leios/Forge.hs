@@ -83,7 +83,6 @@ forgedEbs = withNode $ \node -> do
     announcedEbs <-
       sequence
         [ AnnouncedEb (blockSlot hdr) ebHash [txInSlot (blockSlot hdr)]
-            . fmap (map snd)
             <$> lookupEbClosure reader ebHash
         | hdr <- AF.toOldestFirst chain
         , Just (ebHash, _size) <- [lthAnnouncement hdr]
