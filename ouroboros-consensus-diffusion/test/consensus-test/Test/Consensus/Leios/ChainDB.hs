@@ -60,14 +60,22 @@ tests =
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "ChainSel does not verify a certificate again for a claim it established" $
         runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
-    , testCase "a restart forgets a certifying block off the selection, until it arrives again" $
-        runSimOrThrow (heldAcrossRestart BodyOfA) @?= (True, False, True)
-    , testCase "a restart keeps a certifying block on the selection" $
-        runSimOrThrow (heldAcrossRestart ClosureOfA) @?= (True, True, True)
-    , testCase "the GC keeps an endorser block an immutable block certifies" $
-        fst (runSimOrThrow bodiesAfterGc) @?= Just (endorserBlockBytes ebA)
-    , testCase "the GC evicts an endorser block no block certifies" $
-        snd (runSimOrThrow bodiesAfterGc) @?= Nothing
+    , testCase
+        "a restart keeps a certifying block on the selection, and forgets one off it until it arrives again"
+        $ forM_ [minBound .. maxBound]
+        $ \whatOfA ->
+          assertEqual
+            (show whatOfA)
+            ( True
+            , case whatOfA of
+                BodyOfA -> False
+                ClosureOfA -> True
+            , True
+            )
+            (runSimOrThrow (heldAcrossRestart whatOfA))
+    , testCase
+        "the GC keeps an endorser block an immutable block certifies, and evicts one no block certifies"
+        $ runSimOrThrow bodiesAfterGc @?= (Just (endorserBlockBytes ebA), Nothing)
     , testCase "ChainSel parks a certifying block until the closure arrives" $
         runSimOrThrow tipsAroundClosure
           @?= (blockPoint announcingA, blockPoint certifyingA)
@@ -188,6 +196,7 @@ data WhatOfA
     BodyOfA
   | -- | Its body and its transactions
     ClosureOfA
+  deriving (Show, Enum, Bounded)
 
 -- | 'certifyingA', except a minority made its certificate.
 minorityCertifyingA :: LeiosTestBlock
