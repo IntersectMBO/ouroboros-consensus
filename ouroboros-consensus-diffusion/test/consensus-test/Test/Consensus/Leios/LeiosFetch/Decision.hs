@@ -13,12 +13,10 @@ import Data.Function ((&))
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
-import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
-import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -50,7 +48,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , leiosFetchLogicIteration
   , newLeiosJobPool
   , pruneOutstandingToImmTip
-  , recordMaxAnnouncementSlot
+  , recordReferencedPoint
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
@@ -73,8 +71,8 @@ tests =
         , testCase "both offering peers are selected (no per-EB cap)" $
             test_bodyTwoPeersOffer
         , testCase
-            "an endorser block rejected as too big is fetched again once an offer's bounds admit it, and only then"
-            test_refetchOversized
+            "an endorser block rejected as too big at a point is never fetched again at that point"
+            test_noRefetchOversized
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
         ]
@@ -98,10 +96,6 @@ tests =
         "fetch priority"
         [ testCase "freshest window oldest-first, then rest freshest-first" $
             test_fetchPriorityOrder
-        , testCase "an EB ranks by the slots of the elections fetching it" $
-            test_fetchPriorityByElections
-        , testCase "an offer ranks by the elections fetching its EB, not by its own point" $
-            test_rankByFocusingElections
         ]
     ]
 
@@ -114,25 +108,8 @@ test_fetchPriorityOrder =
     @?= [90, 95, 100, 101, 105, 89, 50, 0]
  where
   (hi, lo) = fetchPriorityTiers (Just (SlotNo 100)) 10 offers
-  offers = [(NESet.singleton (election a), point a 'x') | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
+  offers = [(SlotNo (fromIntegral a), point a 'x') | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
   unSlot (SlotNo n) = n
-
--- | With S=100 and L=10, an EB that an election in the window is fetching ranks
--- by the oldest such election, any other EB by its youngest election, and when
--- the current slot is unknown every EB ranks by its oldest election.
-test_fetchPriorityByElections :: IO ()
-test_fetchPriorityByElections = do
-  fetchPriorityTiers (Just (SlotNo 100)) 10 offers @?= ("zyx", "vu")
-  fetchPriorityTiers Nothing 10 offers @?= ("uxvzy", "")
- where
-  offers =
-    [ (elections (50 :| [95]), 'x')
-    , (elections (92 :| []), 'y')
-    , (elections (91 :| [99]), 'z')
-    , (elections (40 :| [85]), 'u')
-    , (elections (88 :| []), 'v')
-    ]
-  elections = NESet.fromList . fmap election
 
 {-------------------------------------------------------------------------------
   Scenarios
@@ -165,7 +142,7 @@ test_bodyAlreadyRequestedPeerSkipped :: IO ()
 test_bodyAlreadyRequestedPeerSkipped =
   empty
     & withMissingBody (point 1 'a') 1024
-    & alreadyRequestedEbFrom (eb 'a') [peerA] -- already in flight from peerA
+    & alreadyRequestedEbFrom (point 1 'a') [peerA] -- already in flight from peerA
     & offersBody peerA [point 1 'a'] -- so peerA is not asked again
     & offersBody peerB [point 1 'a'] -- but a fresh offering peer is
     & runIteration
@@ -181,21 +158,21 @@ test_bodyTwoPeersOffer =
     -- both peers offer; with no per-EB cap the body is requested from both
     & assertRequestPeerCount 2
 
--- | An endorser block rejected as too big, then offered at bounds that admit
--- its closure but not its body, at bounds that admit its body but not its
--- closure, and at bounds that admit both.
-test_refetchOversized :: IO ()
-test_refetchOversized = do
+-- | An endorser block rejected as too big, then offered at the same point at
+-- bounds that admit its closure but not its body, at bounds that admit its body
+-- but not its closure, and at bounds that admit both.
+test_noRefetchOversized :: IO ()
+test_noRefetchOversized = do
   let sc =
         empty
           & withMissingBody (point 1 'a') 1024
           & onOutstanding
-            (acquireEbBody (eb 'a') (OversizedBody (MkLeiosEbSizes 1024 5000)) Jobs.emptyLeiosJobPool)
+            (acquireEbBody (point 1 'a') (OversizedBody (MkLeiosEbSizes 1024 5000)) Jobs.emptyLeiosJobPool)
           & offersBody peerA [point 1 'a']
       within maxBody maxTxs _slot = Right (MkLeiosEbBounds maxBody maxTxs)
   runIterationWith (within 1023 5000) sc & assertNoRequests
   runIterationWith (within 1024 4999) sc & assertNoRequests
-  runIterationWith (within 1024 5000) sc & assertBodyRequest peerA (point 1 'a') 1024
+  runIterationWith (within 1024 5000) sc & assertNoRequests
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
@@ -206,24 +183,6 @@ test_perPeerByteBudget =
     & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
-
--- | The peer can afford one more request. It offers @a@ at a point older than
--- the window, but an election in the window is also fetching @a@, so @a@
--- outranks @b@, whose one election is older than the window but younger than
--- that point.
-test_rankByFocusingElections :: IO ()
-test_rankByFocusingElections =
-  empty
-    & withMissingBody (point 50 'a') 1024
-    & withMissingBody (point 89 'b') 1024
-    & onOutstanding
-      ( focusElectionIfUnfocused (election 95) (eb 'a')
-          . recordMaxAnnouncementSlot (eb 'a') (SlotNo 95) SNothing
-      )
-    & withRequestedBytesPerPeer peerA (maxRequestedBytesSizePerPeer env - 1)
-    & offersBody peerA [point 50 'a', point 89 'b']
-    & runIterationAt (SlotNo 100)
-    & assertBodyRequest peerA (point 50 'a') 1024
 
 test_focusCertifiedPruned :: IO ()
 test_focusCertifiedPruned =
@@ -246,23 +205,24 @@ test_completeAfterRebuild =
   -- The old pool's first job, which covers offset 0.
   staleId = 0
   misses offs = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offs]
-  acquire offs o =
+  acquire at offs o =
     let (pool, o') = newLeiosJobPool env{maxJobTxCount = 1} (misses offs) o
-     in (pool, acquireEbBody (eb 'a') (FetchedBody (MkLeiosEbSizes 1000 0)) pool o')
+     in (pool, acquireEbBody at (FetchedBody (MkLeiosEbSizes 1000 0)) pool o')
   (oldPool, held) =
-    acquire [0, 1]
-      . recordMaxAnnouncementSlot (eb 'a') (SlotNo 10) SNothing
+    acquire p [0, 1]
+      . recordReferencedPoint p SNothing
       $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
-  -- Pruned, announced again, and fetched again, with offset 0 filled locally
-  -- this time.
+  -- Pruned, announced again at a later point, and fetched there, with offset
+  -- 0 filled locally this time.
   (_freshPool, reacquired) =
-    acquire [1]
-      . recordMaxAnnouncementSlot (eb 'a') (SlotNo 30) SNothing
+    acquire later [1]
+      . recordReferencedPoint later SNothing
       . snd
       $ pruneOutstandingToImmTip (SlotNo 20) held
-  poolOf o = case Map.lookup (eb 'a') (ebState o) of
-    Just (MkEbState _slot _onset (BodyAcquired _source pool)) -> Just pool
-    Just (MkEbState _slot _onset NoBody) -> Nothing
+  later = point 30 'a'
+  poolOf o = case Map.lookup later (ebState o) of
+    Just (MkEbState _onset (BodyAcquired _source pool)) -> Just pool
+    Just (MkEbState _onset NoBody) -> Nothing
     Nothing -> Nothing
 
 test_bigLedgerPeerBudget :: IO ()
@@ -290,8 +250,8 @@ test_bigLedgerPeerBudget = do
           (\o -> o{requestedBytesSizePerPeer = Map.singleton peerA used})
             -- the election fetching it, without which nothing is requested
             . focusElectionIfUnfocused (ElectionId (SlotNo 10) fixtureElectee) (eb 'a')
-            . acquireEbBody (eb 'a') (FetchedBody (MkLeiosEbSizes 1000 0)) jobPool
-            . recordMaxAnnouncementSlot (eb 'a') (SlotNo 10) SNothing
+            . acquireEbBody p (FetchedBody (MkLeiosEbSizes 1000 0)) jobPool
+            . recordReferencedPoint p SNothing
             $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
         (_o, reqs, _d) =
           leiosFetchLogicIteration
@@ -382,7 +342,7 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
   -- already fetching something, so this seeds it the way an announcement would.
   seed =
     focusElectionIfUnfocused (ElectionId slot fixtureElectee) ebHash
-      . recordMaxAnnouncementSlot ebHash slot SNothing
+      . recordReferencedPoint p SNothing
 
 -- | The one pool a scenario here pretends announced everything, since these
 -- have no headers to take an issuer from. An endorser block's election is
@@ -391,16 +351,12 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
 fixtureElectee :: KeyHash r
 fixtureElectee = KeyHash $ UnsafeHash $ SBS.pack (replicate 28 0)
 
--- | The election at this slot.
-election :: Word -> ElectionId
-election slot = ElectionId (SlotNo (fromIntegral slot)) fixtureElectee
-
-alreadyRequestedEbFrom :: EndorserBlockHash -> [Peer] -> Scenario -> Scenario
-alreadyRequestedEbFrom ebHash peers =
+alreadyRequestedEbFrom :: LeiosPoint -> [Peer] -> Scenario -> Scenario
+alreadyRequestedEbFrom p peers =
   onOutstanding $ \o ->
     o
       { requestedEbPeers =
-          Map.insertWith Set.union ebHash (Set.fromList peers) (requestedEbPeers o)
+          Map.insertWith Set.union p (Set.fromList peers) (requestedEbPeers o)
       }
 
 -- | Set a per-peer in-flight byte total. Use with the env's per-peer

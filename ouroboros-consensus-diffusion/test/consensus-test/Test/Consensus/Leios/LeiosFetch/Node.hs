@@ -94,7 +94,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosOutstanding (..)
   , PeerOffer (..)
   , WhetherTxsClosureOffered (..)
-  , isFocusedEb
+  , isFocusedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( ExnLeiosTwoCertificationClaims (..)
@@ -323,9 +323,7 @@ tests =
                   ,
                     [ RelayedAnnouncement
                     , RelayedAnnouncement
-                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
                     , RelayedBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer fetchedPoint
                     , RelayedBlockTxsOffer refocusedPoint
                     ]
                   )
@@ -1009,7 +1007,9 @@ nodeKeepsRefocusedThroughGc = do
 -- | As 'nodeKeepsRefocusedThroughGc', but the node also restarts once it has
 -- acquired 'fetchedEb', before it adds 'gcRestartChain'. So the certificate
 -- moves the election onto an endorser block that the node already held when
--- it started.
+-- it started, but whose body its LeiosTxCache does not hold, so it fetches it
+-- again at the certified announcement, from a peer whose ChainSync headers
+-- offer it there.
 nodeKeepsHeldAtStartRefocusedThroughGc :: IOSim s (Point LeiosTestBlock)
 nodeKeepsHeldAtStartRefocusedThroughGc = do
   nodeDBs <- emptyNodeDBs
@@ -1032,10 +1032,16 @@ nodeKeepsHeldAtStartRefocusedThroughGc = do
     withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
       void $ replicateM 2 $ atomically next
   withNodeOverDBs nodeDBs leiosDb $ \nut -> do
-    addBlocks nut gcRestartChain
-    _ <- awaitTip nut (lastPoint gcRestartChain)
-    -- Past the ChainDB's delay before it collects garbage, and its interval.
-    threadDelay 80
+    chain <- newEnvChain gcRestartChain
+    withNodeVsEnvConnection
+      nut
+      (PeerAddr 1)
+      ((servingChain nut chain){epLeiosFetchServer = servingFetched nut}) $
+      \_conn -> do
+        addBlocks nut gcRestartChain
+        _ <- awaitTip nut (lastPoint gcRestartChain)
+        -- Past the ChainDB's delay before it collects garbage, and its interval.
+        threadDelay 80
   withNodeOverDBs nodeDBs leiosDb $ \nut -> awaitTip nut (lastPoint gcRestartChain)
 
 -- | The peer announces 'fetchedEb' in 'announcingFetched' and again in
@@ -1043,11 +1049,13 @@ nodeKeepsHeldAtStartRefocusedThroughGc = do
 -- blocks from 'announcingFetched', which puts its immutable tip at
 -- 'reannouncingFetched', and prunes. Only then does the peer offer 'fetchedEb',
 -- at the second announcement, and serve it. The node's acquisitions, as it
--- announces them, and the notifications it relays to the peer, by
--- 'relayHorizon' after the sixth.
+-- emits them, and the notifications it relays to the peer, by 'relayHorizon'
+-- after the fourth.
 --
--- The node offers 'fetchedEb' at both announcements, since it relays an
--- announcement for as long as its age allows, whatever its immutable tip.
+-- The node offers 'fetchedEb' only at the second announcement, the point it
+-- acquired it at, although it still relays the first announcement, since it
+-- relays an announcement for as long as its age allows, whatever its immutable
+-- tip.
 nodeFetchesAfterPruningEarlier :: IOSim s ([Acquired], [Relayed])
 nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
   next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
@@ -1078,7 +1086,7 @@ nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
         [ MsgLeiosBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
         , MsgLeiosBlockTxsOffer refocusedPoint
         ]
-    (,) <$> replicateM 2 (acquiredOf <$> atomically next) <*> relayedBy listener 6
+    (,) <$> replicateM 2 (acquiredOf <$> atomically next) <*> relayedBy listener 4
 
 -- | What the node relays of a rival announcement of 'otherEbHash' and then
 -- 'announcingAndOffering' 'fetchedEb' 'announcingFetched', once it acquires
@@ -1123,7 +1131,8 @@ nodeSelectsCertifiedRival arrival = withNode $ \nut -> do
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
     -- The node relays an announcement only once it has taken it in.
     atomically $ readTVar (lsRelayed listener) >>= check . (>= 2) . length
-    rivalFocused <- isFocusedEb otherEbHash <$> readOutstanding nut
+    rivalFocused <-
+      isFocusedPoint (MkLeiosPoint (blockSlot announcingOther) otherEbHash) <$> readOutstanding nut
     case arrival of
       CertifyingAfterAnnouncing -> addBlocks nut [announcingFetched, certifyingFetched]
       CertifyingBeforeAnnouncing -> do

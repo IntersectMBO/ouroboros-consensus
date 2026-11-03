@@ -28,7 +28,7 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNo
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedEb)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -89,7 +89,7 @@ certifiedIsFetched = withNode $ \nut -> do
   outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nutKernel nut))))
   pure
     ( [(electionSlot elId, ebHash) | (elId, ebHash) <- Map.toList certified]
-    , isFocusedEb (pointEbHash pointA) outstanding
+    , isFocusedPoint pointA outstanding
     )
 
 -- | The node holds endorser blocks A and B, with their transactions. The

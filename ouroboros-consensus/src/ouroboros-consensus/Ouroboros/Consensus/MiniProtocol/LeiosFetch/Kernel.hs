@@ -23,7 +23,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , leiosFetchPruner
   ) where
 
-import Control.Monad (forM, forM_, forever, unless, void, when)
+import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -65,7 +65,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosProtocol (..)
@@ -75,28 +74,30 @@ import Ouroboros.Consensus.Leios.TxCache.API (LeiosTxCache (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
-  , LeiosEbSizes (..)
   , LeiosPoint (..)
   , leiosEbSizes
   , mkEndorserBlock
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (..)
+  , acquireCachedBody
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosEbBounds (..)
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosEbBounds (..)
   , LeiosFetchRequest
   , LeiosOutstanding (..)
   , PeerOffer (..)
   , WhetherTxsClosureOffered (..)
-  , ebStateHasBody
   , focusCertifiedEb
   , focusElectionIfUnfocused
-  , heldAcquisitionsAt
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
   , pruneOutstandingToImmTip
-  , recordMaxAnnouncementSlot
+  , recordReferencedPoint
   , removePeerFromOutstanding
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -109,7 +110,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , Promise (..)
   , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -452,9 +452,9 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 -- cost us. If that one turns out to be the certified one, a verified
 -- certificate gives it an entry then.
 --
--- If the announcement takes the focus and the node already holds its endorser
--- block, this also announces the acquisition again, at its point (see
--- 'LeiosEbNotification').
+-- If the announcement takes the focus and the LeiosTxCache holds its endorser
+-- block's body, taken in for another point, this acquires it at this point
+-- from there ('acquireCachedBody'), rather than fetching it again.
 onNewLeiosAnnouncement ::
   forall m peer blk.
   (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
@@ -468,26 +468,23 @@ onNewLeiosAnnouncement kernel valid = do
       slot
       (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
       ebHash
-  pointWritten <- writeEbPoint lfcWriter point (announcementEbSize announcement)
-  (changed, reacquired) <- modifyMVar lfcOutstanding $ \outstanding ->
+  void $ writeEbPoint lfcWriter point (announcementEbSize announcement)
+  changed <- modifyMVar lfcOutstanding $ \outstanding ->
     let tooOld = slot < outstandingPrunedSlot outstanding
         introducesFocus = not $ Map.member elId (elFocus outstanding)
-        held = maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
         outstanding' =
           focusElectionIfUnfocused elId ebHash $
-            recordMaxAnnouncementSlot ebHash slot (SJust announcementOnset) outstanding
+            recordReferencedPoint point (SJust announcementOnset) outstanding
      in pure $
           if tooOld || not introducesFocus
-            then (outstanding, (False, []))
-            else (outstanding', (not held, heldAcquisitionsAt point outstanding'))
-  -- The LeiosDB keeps the endorser block only while some point it holds for
-  -- the block is recent, so it must hold this one before anyone hears of it.
-  unless (null reacquired) $ await pointWritten
-  atomically $ mapM_ lfcNotify reacquired
-  when changed $ void $ tryPutMVar lfcReady ()
+            then (outstanding, False)
+            else (outstanding', True)
+  when changed $ do
+    acquireCachedBody (lfkContext kernel) point announcementEbBounds
+    void $ tryPutMVar lfcReady ()
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcWriter, lfcNotify} = lfkContext kernel
-  MkValidAnnouncement{announcingHeader = anc, announcementOnset} = valid
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcWriter} = lfkContext kernel
+  MkValidAnnouncement{announcingHeader = anc, announcementOnset, announcementEbBounds} = valid
   announcement = ancAnnouncement anc
   elId = ancElectionId anc
   slot = electionSlot elId
@@ -567,10 +564,10 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- certified endorser blocks against the ones it last saw, so a certificate
 -- verified after the offer arrived still moves the focus.
 --
--- If that moves an election's focus onto an endorser block the node already
--- holds, this also announces the acquisition again, at the certified point (see
--- 'LeiosEbNotification'), once the LeiosDB holds that point, so that it keeps
--- the endorser block for as long as the point matters.
+-- If that moves an election's focus onto an endorser block whose body the
+-- LeiosTxCache holds, taken in for another point, this acquires it at the
+-- certified point from there ('acquireCachedBody'), rather than fetching it
+-- again.
 leiosFetchFocuser ::
   IOLike m =>
   ChainDB m blk ->
@@ -578,7 +575,7 @@ leiosFetchFocuser ::
   m Void
 leiosFetchFocuser chainDB kernel = go Map.empty
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify, lfcWriter} = lfkContext kernel
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
 
   go seen = do
     certified <- atomically $ do
@@ -586,23 +583,21 @@ leiosFetchFocuser chainDB kernel = go Map.empty
       if certified == seen then retry else pure certified
     let arrived =
           Map.differenceWith (\new old -> if new == old then Nothing else Just new) certified seen
-    reacquired <- modifyMVar lfcOutstanding $ \outstanding ->
+    missing <- modifyMVar lfcOutstanding $ \outstanding ->
       pure $ Map.foldlWithKey' focus (outstanding, []) arrived
-    pointsWritten <-
-      forM [(p, lesBodySize sizes) | AcquiredEb p sizes <- reacquired] $ uncurry (writeEbPoint lfcWriter)
-    mapM_ await pointsWritten
-    atomically $ mapM_ lfcNotify reacquired
+    -- The committee voted for each at its point, so the ledger's bounds there
+    -- admit it.
+    forM_ missing $ \point -> acquireCachedBody (lfkContext kernel) point maxBound
     void $ tryPutMVar lfcReady ()
     go certified
 
-  focus (outstanding, reacquired) elId ebHash =
+  focus (outstanding, missing) elId ebHash =
     let outstanding' = focusCertifiedEb elId ebHash outstanding
-        focuses o = Map.lookup elId (elFocus o) == Just ebHash
-        newlyFocused = focuses outstanding' && not (focuses outstanding)
+        point = MkLeiosPoint (electionSlot elId) ebHash
      in ( outstanding'
-        , if newlyFocused
-            then reacquired <> heldAcquisitionsAt (MkLeiosPoint (electionSlot elId) ebHash) outstanding'
-            else reacquired
+        , case ebState outstanding' Map.!? point of
+            Just (MkEbState _onset NoBody) -> point : missing
+            _ -> missing
         )
 
 -- | Prune the node's LeiosFetch state, the peers' offers and claims, and the
