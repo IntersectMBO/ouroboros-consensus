@@ -182,28 +182,29 @@ import Test.Consensus.Leios.TestBlock
   )
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck
+  ( Gen
+  , Property
+  , choose
+  , elements
+  , forAll
+  , ioProperty
+  , oneof
+  , sublistOf
+  , suchThat
+  , tabulate
+  , testProperty
+  , (===)
+  )
 import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
   testGroup
     "node vs environment"
-    [ testCase "the node's server ends when the peer sends MsgDone" $
-        runSimFinishing (nodeServerAgainst doneClient) >>= (@?= ServerEnded)
-    , testCase "the node serves an endorser block it holds" $
-        runSimFinishing (nodeAnswers (requestBlock heldPoint))
-          >>= (@?= (Just (ReplyBlock heldEb), ServerEnded))
-    , testCase "the node serves the transactions it holds" $
-        runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 63, 64])))
-          >>= (@?= (Just (ReplyTxs (map heldTx [0, 63, 64])), ServerEnded))
-    , testCase "the node disconnects a client that requests an endorser block it does not hold" $
-        runSimFinishing (nodeAnswers (requestBlock unknownPoint))
-          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownBlockRequested unknownPoint))))
-    , testCase "the node disconnects a client that requests transactions it does not hold" $
-        -- The first is held, the second is not, and the third is past the end
-        -- of the endorser block.
-        runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 69, 100])))
-          >>= (@?= (Nothing, ServerFailed (show (ExnLeiosUnknownTxsRequested heldPoint [69, 100]))))
+    [ testProperty
+        "the node's server serves what it holds, disconnects a client that requests anything else, and ends when the client sends MsgDone"
+        prop_serverAnswers
     , testCase
         "the node fetches an endorser block and its closure that its peer offers, and offers them on"
         $ runSimFinishing nodeFetchesOffered
@@ -1975,31 +1976,84 @@ doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
 data Reply = ReplyBlock EndorserBlock | ReplyTxs [LeiosTx]
   deriving (Eq, Show)
 
--- | The node's reply to the client's one request, if it replied, and how its
--- server ended.
-nodeAnswers ::
-  (StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s) -> IOSim s (Maybe Reply, ServerOutcome)
-nodeAnswers client = do
-  replyVar <- newTVarIO Nothing
-  outcome <- nodeServerAgainst (client replyVar)
-  reply <- readTVarIO replyVar
-  pure (reply, outcome)
+-- | A request the environment's client sends the node's server.
+data Request
+  = RequestBlock !LeiosPoint
+  | -- | at these offsets
+    RequestTxs !LeiosPoint ![Int]
+  deriving Show
 
--- | A client that requests an endorser block, keeps the reply, and sends
--- 'MsgDone'.
-requestBlock :: LeiosPoint -> StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s
-requestBlock point replyVar =
-  Yield ReflClientAgency (MsgLeiosBlockRequest point) $
-    Await ReflServerAgency $ \case
-      MsgLeiosBlock eb -> Effect $ doneClient <$ atomically (writeTVar replyVar (Just (ReplyBlock eb)))
+-- | Property: the node's server answers each request, in order, as
+-- 'expectedAnswers' says.
+prop_serverAnswers :: Property
+prop_serverAnswers =
+  forAll genRequests $ \requests -> ioProperty $ do
+    answers@(replies, outcome) <- runSimFinishing (nodeAnswers requests)
+    pure $
+      tabulate "how the server ended" [ending outcome] $
+        tabulate "replies before then" [show (length replies)] $
+          answers === expectedAnswers requests
+ where
+  ending = \case
+    ServerEnded -> "ended"
+    ServerFailed e -> "failed: " <> takeWhile (/= ' ') e
 
--- | A client that requests transactions, keeps the reply, and sends 'MsgDone'.
-requestTxs :: LeiosPoint -> TxBitmaps -> StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s
-requestTxs point bitmaps replyVar =
-  Yield ReflClientAgency (MsgLeiosBlockTxsRequest point bitmaps) $
-    Await ReflServerAgency $ \case
-      MsgLeiosBlockTxs txs ->
-        Effect $ doneClient <$ atomically (writeTVar replyVar (Just (ReplyTxs (V.toList txs))))
+-- | Up to three requests for 'heldEb', at 'heldPoint' or at 'unknownPoint':
+-- its body, or transactions at offsets up to well past its end.
+genRequests :: Gen [Request]
+genRequests = do
+  n <- choose (0, 3)
+  replicateM n $ do
+    point <- elements [heldPoint, unknownPoint]
+    -- Often only offsets the node holds at 'heldPoint'.
+    highest <- elements [last heldOffsets, last heldOffsets + 1, 130]
+    oneof
+      [ pure (RequestBlock point)
+      , RequestTxs point <$> (sublistOf [0 .. highest] `suchThat` (not . null))
+      ]
+
+-- | What the node's server replies to these requests, in order, and how it
+-- ends. It serves 'heldEb' and its 'heldOffsets' at 'heldPoint', and
+-- disconnects the client at its first request for anything else.
+expectedAnswers :: [Request] -> ([Reply], ServerOutcome)
+expectedAnswers = go []
+ where
+  go replies = \case
+    [] -> (reverse replies, ServerEnded)
+    RequestBlock point : rest
+      | point == heldPoint -> go (ReplyBlock heldEb : replies) rest
+      | otherwise -> (reverse replies, ServerFailed (show (ExnLeiosUnknownBlockRequested point)))
+    RequestTxs point offsets : rest
+      | null missing -> go (ReplyTxs (map heldTx ascending) : replies) rest
+      | otherwise -> (reverse replies, ServerFailed (show (ExnLeiosUnknownTxsRequested point missing)))
+     where
+      ascending = List.nub (List.sort offsets)
+      missing = [offset | offset <- ascending, point /= heldPoint || offset `notElem` heldOffsets]
+
+-- | The node's replies to these requests, in order, and how its server ended.
+nodeAnswers :: [Request] -> IOSim s ([Reply], ServerOutcome)
+nodeAnswers requests = do
+  repliesVar <- newTVarIO []
+  outcome <- nodeServerAgainst (requestingClient requests repliesVar)
+  replies <- readTVarIO repliesVar
+  pure (reverse replies, outcome)
+
+-- | A client that sends these requests one at a time, keeps the replies,
+-- newest first, and then sends 'MsgDone'.
+requestingClient :: [Request] -> StrictTVar (IOSim s) [Reply] -> EnvClient s
+requestingClient requests repliesVar = case requests of
+  [] -> doneClient
+  RequestBlock point : rest ->
+    Yield ReflClientAgency (MsgLeiosBlockRequest point) $
+      Await ReflServerAgency $ \case
+        MsgLeiosBlock eb -> keep (ReplyBlock eb) rest
+  RequestTxs point offsets : rest ->
+    Yield ReflClientAgency (MsgLeiosBlockTxsRequest point (bitmapsNaming offsets)) $
+      Await ReflServerAgency $ \case
+        MsgLeiosBlockTxs txs -> keep (ReplyTxs (V.toList txs)) rest
+ where
+  keep reply rest =
+    Effect $ requestingClient rest repliesVar <$ atomically (modifyTVar repliesVar (reply :))
 
 -- | The bitmaps that name these offsets.
 bitmapsNaming :: [Int] -> TxBitmaps
@@ -2035,11 +2089,16 @@ heldTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 heldTx :: Int -> LeiosTx
 heldTx = MkLeiosTx . heldTxBytes
 
--- | Write 'heldEb' and all its transactions but the last.
+-- | The offsets of the transactions of 'heldEb' that 'holdHeldEb' writes: all
+-- but the last.
+heldOffsets :: [Int]
+heldOffsets = [0 .. 68]
+
+-- | Write 'heldEb' and its 'heldOffsets'.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb nut = withWriter (getLeiosDB (nutKernel nut)) $ \writer -> do
   _ <- await =<< writeEbBody writer heldPoint heldEb []
-  _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
+  _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- heldOffsets]
   pure ()
 
 {-------------------------------------------------------------------------------
