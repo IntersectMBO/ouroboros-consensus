@@ -39,8 +39,8 @@ import Control.Monad.Class.MonadFork (MonadFork, yield)
 import Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
-import qualified Control.Monad.IOSim as IOSim
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
+import qualified Control.Monad.IOSim as IOSim
 import Control.Monad.Reader
 import Control.Tracer (mkTracer)
 import Data.Functor ((<&>))
