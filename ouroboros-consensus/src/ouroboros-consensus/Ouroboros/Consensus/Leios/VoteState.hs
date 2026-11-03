@@ -297,8 +297,9 @@ data Votes = MkVotes
 data SlotVotes = MkSlotVotes
   { slotRelayUntil :: !RelativeTime
   , slotVotes :: !(Map LeiosSeatId LeiosVote)
-  , slotWeights :: !(Map RankingBlockHash Weight)
-  -- ^ The weight of the votes for each announcement.
+  , slotTallies :: !(Map RankingBlockHash Weight)
+  -- ^ The weight of the votes for each announcement. A seat votes once per
+  -- election slot, whichever announcement it votes for.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -370,12 +371,12 @@ recordVote st validatedVote = do
       (Map.singleton (voteSeatId vote) vote)
       (Map.singleton rbHash validatedSeatWeight)
 
-  weightOf = maybe 0 (Map.findWithDefault 0 rbHash . slotWeights)
+  weightOf = maybe 0 (Map.findWithDefault 0 rbHash . slotTallies)
 
   keepFirst new old =
     old
       { slotVotes = Map.union (slotVotes old) (slotVotes new)
-      , slotWeights = Map.unionWith (+) (slotWeights old) (slotWeights new)
+      , slotTallies = Map.unionWith (+) (slotTallies old) (slotTallies new)
       }
 
 -- | Forget the votes of every election slot whose deadline has passed at the
@@ -401,7 +402,7 @@ votePruner st systemTime = forever $ do
     pure
       [ (rbHash, weight)
       | slotVotes' <- Map.elems expired
-      , (rbHash, weight) <- Map.toList (slotWeights slotVotes')
+      , (rbHash, weight) <- Map.toList (slotTallies slotVotes')
       , Map.notMember rbHash certified
       ]
   for_ missed $ \(rbHash, weight) -> traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
