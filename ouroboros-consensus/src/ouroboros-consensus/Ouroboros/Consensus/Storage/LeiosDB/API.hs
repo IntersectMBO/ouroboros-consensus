@@ -36,7 +36,6 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , ForgedEndorserBlock
   , LeiosPoint (..)
-  , TxHash
   , TxOffset
   , encodeEndorserBlockSize
   , endorserBlockHash
@@ -80,13 +79,15 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ The EB "body", in the bytes it arrived in
   -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), or 'Nothing'
   -- if the LeiosDB does not hold it.
-  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
-  -- not complete.
+  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [ByteString])
+  -- ^ The EB "closure": the bytes of its txs in body order, or 'Nothing' unless
+  -- each of them is written.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EndorserBlockHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EndorserBlockHash -> [Int] -> m [(Int, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, in ascending order: the
+  -- offsets the body declares, each with its bytes, or 'Nothing' if not
+  -- written.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every announced EB point.
   --
@@ -98,8 +99,8 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ EBs whose closure is complete and whose announcer is no older than the
   -- given slot. Seeds the ChainDB's acquired-closures set at startup.
   --
-  -- The LeiosDB does not track completeness, so this infers it from the txs
-  -- it holds. Startup only.
+  -- The LeiosDB does not track completeness, so this hashes the txs of every
+  -- such EB against its body. Startup only.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 
@@ -135,8 +136,9 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- A transaction may be dropped by the implementation if:
   -- - is not in the body,
-  -- - or it is already stored,
   -- - or its size is not the declared one.
+  --
+  -- A transaction written again overwrites itself, with the same bytes.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
