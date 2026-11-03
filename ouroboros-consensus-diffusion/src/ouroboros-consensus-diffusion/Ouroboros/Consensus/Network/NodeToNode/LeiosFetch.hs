@@ -21,9 +21,7 @@ import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock
-  , mkEndorserBlock
-  , serialiseEndorserBlock
+  , SerialisedEndorserBlock (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
@@ -116,15 +114,11 @@ serveEb ::
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
-  -- The one body's tx references, in order. A stored body is never empty, so
-  -- no references means the node does not hold the body.
   lookupEbBody reader (pointEbHash point) >>= \case
-    [] -> throwIO $ ExnLeiosUnknownBlockRequested point
-    refs -> do
-      let n = length refs
-      traceWith tracer $ TraceLeiosFetchServerBlockServed point n
-      -- In this node's preferred encoding; see the TODO on 'lookupEbBody'.
-      pure $ serialiseEndorserBlock (mkEndorserBlock refs)
+    Nothing -> throwIO $ ExnLeiosUnknownBlockRequested point
+    Just bytes -> do
+      traceWith tracer $ TraceLeiosFetchServerBlockServed point (BS.length bytes)
+      pure $ MkSerialisedEndorserBlock bytes
 
 serveTxs ::
   MonadThrow m =>

@@ -38,10 +38,12 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , SerialisedEndorserBlock (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
   , endorserBlockReferences
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( CompletedEbs
@@ -84,6 +86,8 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by EB hash. Shared across every
   -- point that references the same EB.
+  , imEbBodyBytes :: !(Map EndorserBlockHash ByteString)
+  -- ^ The bodies of 'imEbBodies' in the bytes they arrived in.
   , imCompletedEbs :: !(Set LeiosPoint)
   -- ^ Points a write has already reported complete. The completion predicate
   -- stays true once an EB is complete, so any later batch containing one of
@@ -97,12 +101,14 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- reads fall back to this and 'imImmutableEbTxBytes'.
   , imImmutableEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
+  , imImmutableEbBodyBytes :: !(Map EndorserBlockHash ByteString)
+  -- ^ The bodies of 'imImmutableEbBodies' in the bytes they arrived in.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -148,7 +154,8 @@ imPromoteToImmutable stateVar points = do
                 entries <- Map.lookup ebHash (imEbBodies s)
                 let txBytes = volatileTxBytes s ebHash
                 _ <- closureWith txBytes entries
-                pure (entries, txBytes)
+                bodyBytes <- Map.lookup ebHash (imEbBodyBytes s)
+                pure (entries, txBytes, bodyBytes)
             )
             ( Set.fromList (map pointEbHash points)
                 `Set.difference` Map.keysSet (imImmutableEbBodies s)
@@ -159,8 +166,9 @@ imPromoteToImmutable stateVar points = do
       writeTVar
         stateVar
         s
-          { imImmutableEbBodies = imImmutableEbBodies s <> fmap fst copied
-          , imImmutableEbTxBytes = imImmutableEbTxBytes s <> fmap snd copied
+          { imImmutableEbBodies = imImmutableEbBodies s <> fmap (\(e, _, _) -> e) copied
+          , imImmutableEbTxBytes = imImmutableEbTxBytes s <> fmap (\(_, t, _) -> t) copied
+          , imImmutableEbBodyBytes = imImmutableEbBodyBytes s <> fmap (\(_, _, b) -> b) copied
           }
     pure incomplete
   unless (null incomplete) $
@@ -194,6 +202,7 @@ imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
         { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
         , imEbBodiesDownloaded = carried (imEbBodiesDownloaded s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
+        , imEbBodyBytes = Map.withoutKeys (imEbBodyBytes s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
         , imCompletedEbs = carried (imCompletedEbs s)
         }
@@ -268,16 +277,11 @@ imInsertEbPoint stateVar point ebBytesSize = atomically $
     s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m [(TxHash, BytesSize)]
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe ByteString)
 imLookupEbBody stateVar ebHash = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state) of
-    Nothing -> pure []
-    Just offsetMap ->
-      pure
-        [ (eteTxHash e, eteTxBytesSize e)
-        | e <- IntMap.elems offsetMap
-        ]
+  pure $
+    Map.lookup ebHash (imEbBodyBytes state) <|> Map.lookup ebHash (imImmutableEbBodyBytes state)
 
 imInsertEbBody ::
   IOLike m =>
@@ -310,6 +314,12 @@ imInsertEbBody stateVar point eb fills = do
           -- hash, so a second insertion at the same hash is a no-op.
           imEbBodies =
             Map.insertWith (\_ old -> old) (pointEbHash point) entries (imEbBodies s)
+        , imEbBodyBytes =
+            Map.insertWith
+              (\_ old -> old)
+              (pointEbHash point)
+              (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
+              (imEbBodyBytes s)
         , -- Mark this point as downloaded. Other points referencing
           -- the same EB hash are unaffected; each needs its own
           -- 'writeEbBody' to be considered complete.

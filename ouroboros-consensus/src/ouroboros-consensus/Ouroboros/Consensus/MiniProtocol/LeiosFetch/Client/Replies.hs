@@ -29,6 +29,7 @@ import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -449,7 +450,7 @@ processEndorserBlock ctx peer req eb = do
         (held, stillFilled) <- withReader lfcLeiosDb $ \reader -> do
           body <- lookupEbBody reader ebHash
           txs <- batchRetrieveTxs reader ebHash filledOffs
-          pure (not (null body), [off | (off, _txHash, Just _bytes) <- txs])
+          pure (isJust body, [off | (off, _txHash, Just _bytes) <- txs])
         if held then claimBody stillFilled slot else pure ([], Nothing)
 
 -- | What settling a body finds, holding the lock on the fetch state.

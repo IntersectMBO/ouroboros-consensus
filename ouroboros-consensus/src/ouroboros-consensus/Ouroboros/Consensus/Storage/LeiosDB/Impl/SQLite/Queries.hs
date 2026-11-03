@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_scan_complete_ebs_since
   , sql_insert_eb
   , sql_lookup_ebBodies
+  , sql_insert_eb_body_bytes
   , sql_insert_ebBody
   , sql_prealloc_ebTxBytes
   , sql_fill_ebTxBytes
@@ -20,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_mark_as_copied
   , sql_copy_completeness
   , sql_copy_insert_eb
+  , sql_copy_insert_ebBodies
   , sql_copy_insert_ebTxs
   , sql_copy_insert_ebTxBytes
   , sql_imm_filter_present
@@ -30,6 +32,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_gc_carry_missing_tx_count
   , sql_gc_drop_superseded
   , sql_sweep_pick_marked
+  , sql_gc_ebBodies
   , sql_gc_ebTxBytes
   , sql_gc_ebTxs
   , sql_gc_ebs_by_hash
@@ -67,10 +70,12 @@ sql_insert_eb =
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =
-  "SELECT txHashBytes, txBytesSize FROM ebTxs\n\
-  \WHERE ebHashBytes = ?\n\
-  \ORDER BY txOffset ASC\n\
-  \"
+  "SELECT body FROM ebBodies WHERE ebHashBytes = ?"
+
+-- | @OR IGNORE@: a second delivery of the same EB body has the same bytes.
+sql_insert_eb_body_bytes :: String
+sql_insert_eb_body_bytes =
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, body) VALUES (?, ?)"
 
 sql_insert_ebBody :: String
 sql_insert_ebBody =
@@ -254,6 +259,15 @@ sql_copy_insert_eb =
   \ORDER BY ebSlot DESC LIMIT 1\n\
   \"
 
+-- | Copy the EB's body. @OR IGNORE@ for the same reason as
+-- 'sql_copy_insert_eb'.
+sql_copy_insert_ebBodies :: String
+sql_copy_insert_ebBodies =
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, body)\n\
+  \SELECT ebHashBytes, body FROM vol.ebBodies\n\
+  \WHERE ebHashBytes = ?1\n\
+  \"
+
 -- | Copy the EB's body rows. @OR IGNORE@ for the same reason as
 -- 'sql_copy_insert_eb'.
 sql_copy_insert_ebTxs :: String
@@ -370,6 +384,11 @@ sql_sweep_pick_marked =
   \     WHERE live.ebHashBytes = cand.ebHashBytes AND live.status <> 3)\n\
   \LIMIT ?1\n\
   \"
+
+-- | Evict the 'ebBodies' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
+sql_gc_ebBodies :: String
+sql_gc_ebBodies =
+  "DELETE FROM ebBodies WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
 
 -- | Evict the 'ebTxs' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
 sql_gc_ebTxs :: String

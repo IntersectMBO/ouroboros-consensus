@@ -22,8 +22,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlockHash
+  ( EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
   )
@@ -101,35 +100,25 @@ immFilterPresent conn hashes =
  where
   Conn{connImmStmts = ImmStmts{immStFilterPresent = stmt}} = conn
 
-sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO [(TxHash, BytesSize)]
+sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO (Maybe ByteString)
 sqlLookupEbBody conn ebHash = do
-  vol <-
-    dbWithTransaction db $ useStmt stmt $ do
-      dbBindHash stmt 1 ebHash
-      bodyLoop stmt []
-  -- Bodies insert atomically, so the empty list is a complete miss: the EB
-  -- may have been copied to the immutable partition and evicted.
-  if null vol then immLookupEbBody conn ebHash else pure vol
+  vol <- dbWithTransaction db $ lookupBody stmt ebHash
+  -- The EB may have been copied to the immutable partition and evicted.
+  maybe (lookupBody immStmt ebHash) (pure . Just) vol
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbBody = stmt}} = conn
+  Conn
+    { conVolDb = db
+    , connVolStmts = VolStmts{stLookupEbBody = stmt}
+    , connImmStmts = ImmStmts{immStLookupEbBody = immStmt}
+    } = conn
 
--- | Immutable-partition fallback of 'sqlLookupEbBody'.
-immLookupEbBody :: Conn -> EndorserBlockHash -> IO [(TxHash, BytesSize)]
-immLookupEbBody conn ebHash =
+lookupBody :: DB.Statement -> EndorserBlockHash -> IO (Maybe ByteString)
+lookupBody stmt ebHash =
   useStmt stmt $ do
     dbBindHash stmt 1 ebHash
-    bodyLoop stmt []
- where
-  Conn{connImmStmts = ImmStmts{immStLookupEbBody = stmt}} = conn
-
-bodyLoop :: DB.Statement -> [(TxHash, BytesSize)] -> IO [(TxHash, BytesSize)]
-bodyLoop stmt acc =
-  dbStep stmt >>= \case
-    DB.Done -> pure (reverse acc)
-    DB.Row -> do
-      txHash <- dbColumnHash stmt 0
-      size <- fromIntegral <$> DB.columnInt64 stmt 1
-      bodyLoop stmt ((txHash, size) : acc)
+    dbStep stmt >>= \case
+      DB.Done -> pure Nothing
+      DB.Row -> Just <$> DB.columnBlob stmt 0
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;

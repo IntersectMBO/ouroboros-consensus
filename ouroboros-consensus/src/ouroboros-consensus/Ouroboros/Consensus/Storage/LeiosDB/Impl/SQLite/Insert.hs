@@ -22,9 +22,11 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , LeiosPoint (..)
+  , SerialisedEndorserBlock (..)
   , TxLocation (..)
   , TxOffset
   , endorserBlockReferences
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( CompletedEbs
@@ -66,6 +68,10 @@ sqlInsertEbBody tracer conn point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   dbWithWriteTransaction conn $ do
+    useStmt stInsertEbBodyBytes $ do
+      dbBindHash stInsertEbBodyBytes 1 (pointEbHash point)
+      dbBindBlob stInsertEbBodyBytes 2 (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
+      dbStep1 stInsertEbBodyBytes
     forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do
       dbBindHash stInsertEbTxsRow 1 (pointEbHash point)
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -118,7 +124,8 @@ sqlInsertEbBody tracer conn point eb fills = do
   items = zip [0 :: Int ..] (endorserBlockReferences eb)
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
-    { stInsertEbTxsRow
+    { stInsertEbBodyBytes
+    , stInsertEbTxsRow
     , stPreallocEbTxBytes
     , stFillEbTxBytesLocally
     , stInitMissingCount

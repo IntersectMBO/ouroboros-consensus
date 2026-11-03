@@ -11,7 +11,8 @@ The EBs and their closures are copied from the volatile to the immutable partiti
 ## Database schema
 
 - `ebs` has one row for each pair of slot and EB hash that an announcement named; announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written. Thus one EB hash can occur at several slots.
-- `ebTxs` is the EB body. It has one row for each transaction of the EB, in order. It stores each EB body only once, however many `ebs` rows name its hash.
+- `ebBodies` is the EB body as received, in its wire encoding: its version envelope around its bytes. One row per EB hash, so serving it is a copy.
+- `ebTxs` is the EB body's references. It has one row for each transaction of the EB, in order. It stores each EB body only once, however many `ebs` rows name its hash.
 - `ebTxBytes` stores the transaction bytes of the EB closure, one row for each `ebTxs` row, with the same key. The EB owns these bytes: a transaction that belongs to two EBs is stored twice (ie duplicated aka denormalized.)
 
 ## Volatile partition
@@ -24,6 +25,10 @@ erDiagram
         INTEGER ebBytesSize
         INTEGER missingTxCount "NULL: no body yet; >0: txs missing; 0: just completed; <0: notified"
         INTEGER status "0: volatile; 1: pinned for copy; 2: copied; 3: marked for GC"
+    }
+    ebBodies {
+        BLOB ebHashBytes PK
+        BLOB body
     }
     ebTxs {
         BLOB ebHashBytes PK
@@ -38,15 +43,16 @@ erDiagram
         BLOB txBytes
     }
 
+    ebs }|--o| ebBodies : "ebHashBytes"
     ebs }|--o{ ebTxs : "ebHashBytes"
     ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
 ```
 
 The queries join the tables on the EB hash (`ebHashBytes`) and the transaction offset (`txOffset`).
 
-- When an EB body arrives, rows are inserted in `ebTxs`. In the same transaction, one `ebTxBytes` row is allocated for each of them: a zero-filled blob of the declared size, with `filled = 0`. Then `missingTxCount` is set to the number of unfilled rows.
+- When an EB body arrives, its bytes are inserted in `ebBodies` and its references in `ebTxs`. In the same transaction, one `ebTxBytes` row is allocated for each of them: a zero-filled blob of the declared size, with `filled = 0`. Then `missingTxCount` is set to the number of unfilled rows.
 - When transactions arrive, they overwrite their rows in place and set `filled = 1`. A write is dropped if its row does not exist, is already filled, or has a different size. Also, the `missingTxCount` of every `ebs` row whose EB has already arrived and references the arriving transactions is decreased by the number of `ebTxBytes` rows filled for that EB. Note that a tx will decrement the `missingTxCount` columns only of EBs that referred to that tx with the correct size.
-- The GC sweep phase deletes the `ebTxBytes`, `ebTxs` and `ebs` rows of an EB by its hash: three range deletes.
+- The GC sweep phase deletes the `ebBodies`, `ebTxBytes`, `ebTxs` and `ebs` rows of an EB by its hash: four range deletes.
 
 Indexes:
 
@@ -87,6 +93,10 @@ erDiagram
         BLOB ebHashBytes PK
         INTEGER ebBytesSize
     }
+    ebBodies {
+        BLOB ebHashBytes PK
+        BLOB body
+    }
     ebTxs {
         BLOB ebHashBytes PK
         INTEGER txOffset PK
@@ -100,10 +110,11 @@ erDiagram
         BLOB txBytes
     }
 
+    ebs }|--|| ebBodies : "ebHashBytes"
     ebs }|--|{ ebTxs : "ebHashBytes"
     ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
 ```
 
 The copier copies only complete EBs, and GC never removes EBs from this partition.
-Thus every `ebs` row has its full body in `ebTxs`, and every `ebTxs` row has its filled `ebTxBytes` row.
+Thus every `ebs` row has its body in `ebBodies` and `ebTxs`, and every `ebTxs` row has its filled `ebTxBytes` row.
 For the same reason, the immutable partition does not have `missingTxCount`, `status`, or any index other than `idx_ebs_ebHashBytes`.

@@ -32,12 +32,14 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , SerialisedEndorserBlock (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
   , encodeEndorserBlockSize
   , endorserBlockReferences
   , mkEndorserBlock
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( CompletedEbs
@@ -156,7 +158,7 @@ rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
 
-rwLookupEbBody :: RW -> EndorserBlockHash -> IO [(TxHash, BytesSize)]
+rwLookupEbBody :: RW -> EndorserBlockHash -> IO (Maybe BS.ByteString)
 rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> EndorserBlockHash -> IO (Maybe [(TxHash, BS.ByteString)])
@@ -413,7 +415,7 @@ prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-        let expectedTxs = endorserBlockReferences eb
+        let expectedTxs = Just (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
         rwInsertEbPoint con point (encodeEndorserBlockSize eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
         (result, lookupTime) <- timed $ rwLookupEbBody con (pointEbHash point)
@@ -423,14 +425,14 @@ prop_ebsInsertThenLookup impl =
             & tabulate "insertEbBody" [timeBucket insertTime]
             & tabulate "lookupEbBody" [timeBucket lookupTime]
 
--- | Property: looking up a non-existent EB returns empty list.
+-- | Property: looking up a non-existent EB returns nothing.
 prop_ebsLookupMissing :: DbImpl -> Property
 prop_ebsLookupMissing impl =
   forAll genEbHash $ \missingHash ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
       (result, lookupTime) <- timed $ rwLookupEbBody con missingHash
       pure $
-        result === []
+        result === Nothing
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
 
 -- * Property tests for transactions
@@ -685,7 +687,7 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
   writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
   garbageCollect db 6
-  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= [])
+  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= Nothing)
   holdsClosure con (mkTestEbHash 1) >>= (@?= False)
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
   holdsClosure con (mkTestEbHash 2) >>= (@?= True)
@@ -857,9 +859,9 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     points <- rwScanEbPoints con
     points @?= [(5, keptHash)]
     keptBody <- rwLookupEbBody con keptHash
-    keptBody @?= endorserBlockReferences eb
+    keptBody @?= Just (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
     droppedBody <- rwLookupEbBody con droppedHash
-    droppedBody @?= []
+    droppedBody @?= Nothing
     keptClosure <- rwLookupEbClosure con keptHash
     fmap (map snd) keptClosure @?= Just (map snd (allTxsFor eb))
 
@@ -1106,7 +1108,7 @@ observe ::
   IO
     ( (Int, Int)
     , ( [(CompletedEbs, [TxOffset])]
-      , [ ( [(TxHash, BytesSize)]
+      , [ ( Maybe BS.ByteString
           , Maybe [(TxHash, BS.ByteString)]
           , [(Int, TxHash, Maybe BS.ByteString)]
           )
@@ -1171,7 +1173,13 @@ observe db settle bodies ops = withRW db $ \rw -> do
             , pointEbHash q == pointEbHash p
             , kept q
             ]
-      go rw (filter kept points) (nub (filter kept bodied <> carried)) pinned (nEvicted + length evicted) rest
+      go
+        rw
+        (filter kept points)
+        (nub (filter kept bodied <> carried))
+        pinned
+        (nEvicted + length evicted)
+        rest
 
 -- | Hand the action a wait for the SQLite implementation's background work to
 -- catch up: for its sweep to have evicted every row the garbage collection

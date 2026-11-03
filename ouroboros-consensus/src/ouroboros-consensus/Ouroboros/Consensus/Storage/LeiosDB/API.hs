@@ -72,13 +72,10 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m [(TxHash, BytesSize)]
-  -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  --
-  -- TODO FIXME Store and return the bytes the EB arrived in. An EB rebuilt
-  -- from these references has this node's preferred encoding, so one that
-  -- arrived in another encoding would no longer match the hash its ranking
-  -- block announced.
+  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m (Maybe ByteString)
+  -- ^ The EB "body" in its envelope, in the bytes it arrived in
+  -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), to serve as
+  -- is, or 'Nothing' if the LeiosDB does not hold it.
   , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
   -- not complete.

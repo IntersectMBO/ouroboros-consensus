@@ -53,6 +53,8 @@ data CopierStmts = CopierStmts
   -- ^ 'sql_copy_completeness'
   , ccInsertEb :: !DB.Statement
   -- ^ 'sql_copy_insert_eb'
+  , ccInsertEbBody :: !DB.Statement
+  -- ^ 'sql_copy_insert_ebBodies'
   , ccInsertEbTxs :: !DB.Statement
   -- ^ 'sql_copy_insert_ebTxs'
   , ccInsertEbTxBytes :: !DB.Statement
@@ -65,6 +67,7 @@ prepareCopierStmts :: HasCallStack => DB.Database -> IO CopierStmts
 prepareCopierStmts db = preparingStmts db $ \prep -> do
   ccCompleteness <- prep sql_copy_completeness
   ccInsertEb <- prep sql_copy_insert_eb
+  ccInsertEbBody <- prep sql_copy_insert_ebBodies
   ccInsertEbTxs <- prep sql_copy_insert_ebTxs
   ccInsertEbTxBytes <- prep sql_copy_insert_ebTxBytes
   pure CopierStmts{..}
@@ -73,6 +76,7 @@ finalizeCopierStmts :: CopierStmts -> IO ()
 finalizeCopierStmts CopierStmts{..} = do
   dbFinalize ccCompleteness
   dbFinalize ccInsertEb
+  dbFinalize ccInsertEbBody
   dbFinalize ccInsertEbTxs
   dbFinalize ccInsertEbTxBytes
 
@@ -109,6 +113,8 @@ finalizeGcStmts GcStmts{..} = do
 data SweeperStmts = SweeperStmts
   { swPickMarked :: !DB.Statement
   -- ^ 'sql_sweep_pick_marked'
+  , swEvictEbBodies :: !DB.Statement
+  -- ^ 'sql_gc_ebBodies'
   , swEvictEbTxBytes :: !DB.Statement
   -- ^ 'sql_gc_ebTxBytes'
   , swEvictEbTxs :: !DB.Statement
@@ -121,6 +127,7 @@ data SweeperStmts = SweeperStmts
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
   swPickMarked <- prep sql_sweep_pick_marked
+  swEvictEbBodies <- prep sql_gc_ebBodies
   swEvictEbTxBytes <- prep sql_gc_ebTxBytes
   swEvictEbTxs <- prep sql_gc_ebTxs
   swEvictEbs <- prep sql_gc_ebs_by_hash
@@ -129,6 +136,7 @@ prepareSweeperStmts db = preparingStmts db $ \prep -> do
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
   dbFinalize swPickMarked
+  dbFinalize swEvictEbBodies
   dbFinalize swEvictEbTxBytes
   dbFinalize swEvictEbTxs
   dbFinalize swEvictEbs
@@ -138,6 +146,7 @@ data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
   , stLookupEbBody :: !DB.Statement
+  , stInsertEbBodyBytes :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stPreallocEbTxBytes :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
@@ -184,6 +193,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stScanEbPoints <- prep sql_scan_ebs
   stInsertEbPoint <- prep sql_insert_eb
   stLookupEbBody <- prep sql_lookup_ebBodies
+  stInsertEbBodyBytes <- prep sql_insert_eb_body_bytes
   stInsertEbTxsRow <- prep sql_insert_ebBody
   stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
   stInitMissingCount <- prep sql_init_missing_tx_count
@@ -203,6 +213,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
   dbFinalize stLookupEbBody
+  dbFinalize stInsertEbBodyBytes
   dbFinalize stInsertEbTxsRow
   dbFinalize stPreallocEbTxBytes
   dbFinalize stInitMissingCount

@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -77,8 +78,8 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosEbSizes (..)
   , LeiosPoint (..)
+  , deserialiseEndorserBlock
   , leiosEbSizes
-  , mkEndorserBlock
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
@@ -112,6 +113,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , Promise (..)
   , withReader
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
   , Exception
@@ -214,7 +216,7 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
   acquired <- withReader leiosDb $ \reader -> do
     points <- scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
-    concat <$> mapM (\point -> withSize point <$> lookupEbBody reader (pointEbHash point)) points
+    concat <$> mapM (\point -> withSize point =<< lookupEbBody reader (pointEbHash point)) points
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty
@@ -228,12 +230,13 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
       , lfkPrunedSlot
       }
  where
-  -- The sizes of the body as the node serves it, rebuilt from its references.
-  -- A stored body is never empty, so no references means the LeiosDb no longer
-  -- holds it, and the endorser block starts afresh.
-  withSize point refs = case refs of
-    [] -> []
-    _ : _ -> [(point, leiosEbSizes (mkEndorserBlock refs))]
+  -- The sizes of the body as the node serves it. If the LeiosDb no longer
+  -- holds it, the endorser block starts afresh.
+  withSize point = \case
+    Nothing -> pure []
+    Just bytes -> case deserialiseEndorserBlock bytes of
+      Right eb -> pure [(point, leiosEbSizes eb)]
+      Left err -> throwLeiosDbException ("stored endorser block body does not decode: " <> err)
 
 -- | Run the action with this peer's LeiosFetch state and the
 -- 'LeiosPeerLifetimeId' of its registration, registering it with the decision

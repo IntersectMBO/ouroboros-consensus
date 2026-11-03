@@ -86,8 +86,8 @@ instance LogFormatting TraceLeiosFetchServerEvent where
   forMachine _dtal = \case
     TraceLeiosFetchServerBlockRequested point ->
       mconcat ["kind" .= String "BlockRequested", pointFields point]
-    TraceLeiosFetchServerBlockServed point txCount ->
-      mconcat ["kind" .= String "BlockServed", pointFields point, "txCount" .= txCount]
+    TraceLeiosFetchServerBlockServed point bytes ->
+      mconcat ["kind" .= String "BlockServed", pointFields point, "bytes" .= bytes]
     TraceLeiosFetchServerTxsRequested point txCount ->
       mconcat ["kind" .= String "TxsRequested", pointFields point, "txCount" .= txCount]
     TraceLeiosFetchServerTxsServed point txCount bytes ->
@@ -113,8 +113,8 @@ instance LogFormatting TraceLeiosFetchServerEvent where
   forHuman = \case
     TraceLeiosFetchServerBlockRequested point ->
       "Requested endorser block " <> pretty point
-    TraceLeiosFetchServerBlockServed point txCount ->
-      "Served endorser block " <> pretty point <> ", referencing " <> showT txCount <> " transactions"
+    TraceLeiosFetchServerBlockServed point bytes ->
+      "Served endorser block " <> pretty point <> ", " <> showT bytes <> " bytes"
     TraceLeiosFetchServerTxsRequested point txCount ->
       "Requested " <> showT txCount <> " transactions of endorser block " <> pretty point
     TraceLeiosFetchServerTxsServed point txCount bytes ->
