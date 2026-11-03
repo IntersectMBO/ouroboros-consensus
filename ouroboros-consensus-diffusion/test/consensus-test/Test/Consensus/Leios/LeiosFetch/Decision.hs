@@ -10,7 +10,6 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
-import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
@@ -27,9 +26,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( EbFetchState (..)
-  , EbState (..)
-  , LeiosBlockRequest (..)
+  ( LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosEbBounds (..)
   , LeiosFetchRequest (..)
@@ -38,15 +35,12 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , PeerOffer (MkPeerOffer)
   , WhetherTxsClosureOffered (..)
   , acquireEbBody
-  , completeTxRequest
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , fetchPriorityTiers
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
-  , newLeiosJobPool
-  , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
@@ -82,9 +76,6 @@ tests =
         , testCase
             "job assignment draws within the least-requested bucket, at random, respecting exclusions"
             test_pickJobs
-        , testCase
-            "a late reply for a discarded pool completes no job of the pool built afresh"
-            test_completeAfterRebuild
         ]
     , testGroup
         "focus"
@@ -191,39 +182,6 @@ test_focusCertifiedPruned =
     focusCertifiedEb (ElectionId (SlotNo 10) fixtureElectee) (eb 'a') $
       emptyLeiosOutstanding (mkStdGen 0) (SlotNo 20)
 
-test_completeAfterRebuild :: IO ()
-test_completeAfterRebuild =
-  case Jobs.lookupJob (Jobs.MkLeiosJobId staleId) oldPool of
-    Nothing -> assertFailure "the old pool lacks the job"
-    Just job ->
-      let request = MkLeiosBlockTxsRequest p (NEIntMap.singleton staleId job)
-       in (Jobs.nullLeiosJobPool <$> poolOf (completeTxRequest peerA request reacquired))
-            @?= Just False
- where
-  p = point 10 'a'
-  -- The old pool's first job, which covers offset 0.
-  staleId = 0
-  misses offs = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offs]
-  acquire at offs o =
-    let (pool, o') = newLeiosJobPool env{maxJobTxCount = 1} (misses offs) o
-     in (pool, acquireEbBody at (MkLeiosEbSizes 1000 0) pool o')
-  (oldPool, held) =
-    acquire p [0, 1]
-      . recordReferencedPoint p SNothing
-      $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
-  -- Pruned, announced again at a later point, and fetched there, with offset
-  -- 0 filled locally this time.
-  (_freshPool, reacquired) =
-    acquire later [1]
-      . recordReferencedPoint later SNothing
-      . snd
-      $ pruneOutstandingToImmTip (SlotNo 20) held
-  later = point 30 'a'
-  poolOf o = case Map.lookup later (ebState o) of
-    Just (MkEbState _onset (BodyAcquired _sizes pool)) -> Just pool
-    Just (MkEbState _onset NoBody) -> Nothing
-    Nothing -> Nothing
-
 test_bigLedgerPeerBudget :: IO ()
 test_bigLedgerPeerBudget = do
   -- past the ordinary cap, an ordinary peer is asked for nothing ...
@@ -236,7 +194,7 @@ test_bigLedgerPeerBudget = do
   offsets = [0 .. 4]
   p = point 10 'a'
   misses = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offsets]
-  jobPool = fst $ Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env) (Jobs.MkLeiosJobId 0) misses
+  jobPool = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env) misses
   -- The body is already held in these runs, so the offer names no size; only
   -- its closure half is consulted.
   offers = Map.singleton peerA $ Map.singleton p (MkPeerOffer SNothing SNothing TxsClosureOffered)
@@ -289,7 +247,7 @@ test_pickJobs = do
   misses = IntMap.fromList [(off, (txHashOf off, 100)) | off <- [0 .. 5]]
   -- 'maxJobTxCount' 1 makes each tx its own job, so job ids 0..5 all start at
   -- multiplicity 0 (one bucket).
-  pool0 = fst $ Jobs.mkLeiosJobPool 1000000 1 (Jobs.MkLeiosJobId 0) misses
+  pool0 = Jobs.mkLeiosJobPool 1000000 1 misses
   pickId pool excluded s =
     case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
       Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i

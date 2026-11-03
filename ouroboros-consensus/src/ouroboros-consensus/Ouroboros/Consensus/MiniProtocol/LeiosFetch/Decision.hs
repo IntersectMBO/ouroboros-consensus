@@ -278,8 +278,6 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
   -- (a uniform pick within the least-requested multiplicity bucket), so job ids
   -- aren't consumed in a fixed order. Seeded once at start-up.
-  , nextLeiosJobId :: !Jobs.LeiosJobId
-  -- ^ The first job id that no pool has used yet; see 'newLeiosJobPool'.
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
@@ -299,7 +297,6 @@ emptyLeiosOutstanding prng prunedSlot =
     , requestedBytesSizePerPeer = Map.empty
     , requestedJobsPerPeer = Map.empty
     , leiosFetchPrng = prng
-    , nextLeiosJobId = Jobs.MkLeiosJobId 0
     }
 
 -- | Per-point state tracked in 'ebState'
@@ -350,21 +347,12 @@ ebStateHasBody (MkEbState _onset fetchState) = case fetchState of
   BodyAcquired{} -> True
 
 -- | A pool of jobs to fetch these missing txs of an EB's closure, given as in
--- 'Jobs.mkLeiosJobPool', and the state with its jobs' ids taken.
+-- 'Jobs.mkLeiosJobPool'.
 newLeiosJobPool ::
   LeiosFetchStaticEnv ->
   IntMap.IntMap (TxHash, BytesSize) ->
-  LeiosOutstanding peer ->
-  (Jobs.LeiosJobPool, LeiosOutstanding peer)
-newLeiosJobPool env misses outstanding =
-  (jobPool, outstanding{nextLeiosJobId = nextId})
- where
-  (jobPool, nextId) =
-    Jobs.mkLeiosJobPool
-      (maxJobBytesSize env)
-      (maxJobTxCount env)
-      (nextLeiosJobId outstanding)
-      misses
+  Jobs.LeiosJobPool
+newLeiosJobPool env = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env)
 
 -- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.

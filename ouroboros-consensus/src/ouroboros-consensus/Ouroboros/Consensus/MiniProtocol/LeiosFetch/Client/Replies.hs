@@ -371,14 +371,14 @@ settleBody ctx point eb now pointWritten bodyWritten = do
           misses
             | point `elem` completed = IntMap.empty
             | otherwise = refs `IntMap.withoutKeys` IntSet.fromList filledOffs
-          (jobPool, outstanding') = newLeiosJobPool lfcStaticEnv misses outstanding
+          jobPool = newLeiosJobPool lfcStaticEnv misses
         atomically $ do
           lfcNotify $ AcquiredEb point sizes
           when (Jobs.nullLeiosJobPool jobPool) $
             lfcNotify $
               AcquiredEbTxs point sizes
         pure
-          ( acquireEbBody point sizes jobPool outstanding'
+          ( acquireEbBody point sizes jobPool outstanding
           , Just (onset, jobPool)
           )
       _ -> pure (outstanding, Nothing)
