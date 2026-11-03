@@ -17,9 +17,7 @@ sql_schema_vol :: String
 sql_schema_vol =
   unlines
     ( ebsTable
-        [ -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
-          "  missingTxCount INTEGER,"
-        , -- 0 = volatile, 1 = certified/pinned awaiting copy,
+        [ -- 0 = volatile, 1 = certified/pinned awaiting copy,
           -- 2 = copied to the immutable partition (evictable),
           -- 3 = marked for GC, awaiting the sweeper
           "  status INTEGER NOT NULL DEFAULT 0,"
@@ -49,7 +47,7 @@ sql_schema_gc =
 -- over ATTACH.
 --
 -- Left out, since EBs land here complete and are never collected:
--- @ebs.missingTxCount@, @ebs.status@ and the GC indexes.
+-- @ebs.status@ and the GC indexes.
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 

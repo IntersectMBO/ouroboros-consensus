@@ -24,7 +24,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
-import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -61,9 +60,6 @@ tests =
           @?= Just (serialiseEndorserBlock ebA)
     , testCase "the GC evicts an endorser block no block certifies" $
         snd (runSimOrThrow bodiesAfterGc) @?= Nothing
-    , testCase "ChainSel parks a certifying block until the closure arrives" $
-        runSimOrThrow tipsAroundClosure
-          @?= (blockPoint announcingA, blockPoint certifyingA)
     , testCase "ChainSel selects a certifying block whose closure the LeiosDB held at start" $
         runSimOrThrow tipWithClosureBeforeStart @?= blockPoint certifyingA
     ]
@@ -74,8 +70,8 @@ tests =
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
 bodiesAfterGc :: IOSim s (Maybe BS.ByteString, Maybe BS.ByteString)
-bodiesAfterGc = withNode $ \node -> do
-  let leiosDb = getLeiosDB (nodeKernel node)
+bodiesAfterGc = do
+  leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
       await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
@@ -88,15 +84,16 @@ bodiesAfterGc = withNode $ \node -> do
             [ (offset, BS.replicate (fromIntegral size) 0)
             | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
             ]
-  -- Let the slots of the chain's blocks pass, so none is from the future.
-  threadDelay 20
-  addBlocks node chain
-  -- Long enough for the copy to the ImmutableDB and for the delayed GC.
-  threadDelay 100
-  withReader leiosDb $ \reader ->
-    (,)
-      <$> lookupEbBody reader (pointEbHash pointA)
-      <*> lookupEbBody reader (pointEbHash pointB)
+  withNodeOver leiosDb $ \node -> do
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 20
+    addBlocks node chain
+    -- Long enough for the copy to the ImmutableDB and for the delayed GC.
+    threadDelay 100
+    withReader leiosDb $ \reader ->
+      (,)
+        <$> lookupEbBody reader (pointEbHash pointA)
+        <*> lookupEbBody reader (pointEbHash pointB)
  where
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.
@@ -200,35 +197,7 @@ ebA = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 1), 10)]
 ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
--- body but not its transactions. The tip of the selected chain before they
--- arrive, and after.
-tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
-tipsAroundClosure = withNode $ \node -> do
-  let leiosDb = getLeiosDB (nodeKernel node)
-      chainDB = nodeChainDB node
-  withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
-  -- Let the slots of the chain's blocks pass, so none is from the future.
-  threadDelay 20
-  addBlocks node [announcingA, certifyingA]
-  threadDelay 1
-  tipBefore <- atomically $ ChainDB.getTipPoint chainDB
-  withWriter leiosDb $ \writer ->
-    void $
-      await
-        =<< writeTxs
-          writer
-          pointA
-          [ (offset, BS.replicate (fromIntegral size) 0)
-          | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
-          ]
-  threadDelay 1
-  tipAfter <- atomically $ ChainDB.getTipPoint chainDB
-  pure (tipBefore, tipAfter)
-
--- | As 'tipsAroundClosure', except that the LeiosDB holds A's closure before
--- the node starts. The tip of the selected chain.
+-- closure from before the node starts. The tip of the selected chain.
 tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
 tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory

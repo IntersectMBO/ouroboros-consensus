@@ -73,8 +73,8 @@ data Notification blk
   = NotifyAnnouncement !(AnnouncingHeader blk)
   | NotifyVote !LeiosVote
   -- TODO: add offers. 'storeForgedEb' does not wait for the writes,
-  -- so offer a self-forged EB only after the LeiosDB sends 'AcquiredEb', and
-  -- its txs only after 'AcquiredEbTxs'.
+  -- so offer a self-forged EB only once its body is durable, and its txs only
+  -- once they are.
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)
