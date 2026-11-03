@@ -14,6 +14,7 @@ module Test.Util.Peras.Common
   , nonEmptyListOf
   , genRelativeTime
   , genWithArrivalTime
+  , genPerasCandidateWith
   , genPointTestBlock
   , mockSystemTime
   , mkBucket
@@ -39,6 +40,10 @@ import Ouroboros.Consensus.BlockchainTime
   )
 import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId)
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
+import Ouroboros.Consensus.Peras.Voting.View
+  ( PerasCandidate (..)
+  , PerasCandidateAge (..)
+  )
 import Ouroboros.Network.Block (Point (..), SlotNo (..))
 import Ouroboros.Network.Point (Block (..), WithOrigin (..))
 import Test.QuickCheck (Arbitrary (..), Gen, NonEmptyList (..), choose)
@@ -146,6 +151,17 @@ genPointTestBlock =
           pure (Point (At (Block slotNo hash)))
       )
     ]
+
+genPerasCandidateWith :: Gen c -> Gen (PerasCandidate c)
+genPerasCandidateWith genC = do
+  candidate <- genC
+  candidateAge <-
+    frequency
+      [ (1, pure PerasCandidateTooYoung)
+      , (10, pure PerasCandidateWithRightAge)
+      , (1, pure PerasCandidateTooOld)
+      ]
+  pure $ PerasCandidate candidate candidateAge
 
 -- | A static 'SystemTime' returning a constant time. The canonical mock system
 -- time lives in 'Test.Util.LogicalClock.mockSystemTime', but it is a field of

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -27,12 +28,14 @@ module Ouroboros.Consensus.Peras.Voting.View
   , perasRoundStart
   , perasChainAtCandidateBlock
   , LatestCertSeenView (..)
+  , PerasCandidate (..)
+  , PerasCandidateAge (..)
   , PerasVotingView (..)
   , mkPerasVotingView
   )
 where
 
-import Cardano.Slotting.Slot (WithOrigin)
+import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.Exception (Exception)
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.Reader (MonadReader (..), Reader, runReader)
@@ -62,7 +65,8 @@ import Ouroboros.Consensus.HardFork.History.EraParams
 import qualified Ouroboros.Consensus.HardFork.History.Qry as HF
 import qualified Ouroboros.Consensus.HardFork.History.Summary as HF
 import Ouroboros.Consensus.Peras.Params
-  ( PerasBlockMinSlots (..)
+  ( PerasBlockMaxSlots (..)
+  , PerasBlockMinSlots (..)
   , PerasParams (..)
   )
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -140,21 +144,31 @@ perasRoundStart roundNo = PerasQry $ do
 perasChainAtCandidateBlock ::
   GetHeader blk =>
   PerasBlockMinSlots ->
+  PerasBlockMaxSlots ->
   PerasRoundNo ->
   AnchoredFragment (Header blk) ->
-  PerasQry xs (AnchoredFragment (Header blk))
-perasChainAtCandidateBlock blockMinSlots currRoundNo currChain = do
+  PerasQry xs (PerasCandidate (AnchoredFragment (Header blk)))
+perasChainAtCandidateBlock blockMinSlots blockMaxSlots currRoundNo currChain = do
   -- Slot number at the start of the current round
   currRoundStart <- perasRoundStart currRoundNo
   -- Minimum number of slots to consider before the candidate block
   let _L = SlotNo (unPerasBlockMinSlots blockMinSlots)
-  -- Determine the candidate slot horizon
-  -- NOTE: here we need make sure that the result doesn't underflow
-  let candidateSlotHorizon
-        | currRoundStart >= _L = currRoundStart - _L
-        | otherwise = SlotNo 0
-  -- Split the chain at the candidate slot horizon
-  pure $ fst $ AF.splitAtSlot candidateSlotHorizon currChain
+  -- Maximum number of slots after which the candidate block is considered too old
+  let _M = SlotNo (unPerasBlockMaxSlots blockMaxSlots)
+  -- Check the age of the candidate block relative to the current round start, L, and M.
+  if currRoundStart < _L
+    then pure $ tooYoung $ fst $ AF.splitAtSlot (SlotNo 0) currChain
+    else
+      let chain = fst $ AF.splitAtSlot (currRoundStart - _L) currChain
+       in case AF.headSlot chain of
+            Origin ->
+              if currRoundStart <= _M
+                then pure $ justRight chain
+                else pure $ tooOld chain
+            At headSlot ->
+              if currRoundStart <= headSlot + _M
+                then pure $ justRight chain
+                else pure $ tooOld chain
 
 {-------------------------------------------------------------------------------
   Voting interface
@@ -180,6 +194,30 @@ data LatestCertSeenView cert
   }
   deriving Show
 
+data PerasCandidateAge
+  = PerasCandidateTooYoung
+  | PerasCandidateWithRightAge
+  | PerasCandidateTooOld
+  deriving (Eq, Generic, Show, NoThunks)
+
+-- | Annotates a candidate for Peras election with its age relative to the current round,
+-- perasBlockMinSlots, and perasBlockMaxSlots. In practice, `c` will either be Point
+-- or AnchoredFragment.
+data PerasCandidate c = PerasCandidate
+  { pcCandidate :: c
+  , pcCandidateAge :: PerasCandidateAge
+  }
+  deriving (Eq, Functor, Generic, Show, NoThunks)
+
+tooOld :: c -> PerasCandidate c
+tooOld c = PerasCandidate c PerasCandidateTooOld
+
+tooYoung :: c -> PerasCandidate c
+tooYoung c = PerasCandidate c PerasCandidateTooYoung
+
+justRight :: c -> PerasCandidate c
+justRight c = PerasCandidate c PerasCandidateWithRightAge
+
 -- | Interface needed to evaluate the Peras voting rules
 --
 -- NOTE: the voting rules depend on the candidate block only indirectly. The
@@ -196,11 +234,13 @@ data PerasVotingView cert blk = PerasVotingView
   , latestCertOnChainRound :: !(WithOrigin PerasRoundNo)
   -- ^ 'PerasRoundNo' of the latest certificate present in our preferred chain
   -- (we don't actually need the whole certificate here).
-  , candidateBlock :: Point blk
+  , candidateBlock :: PerasCandidate (Point blk)
   -- ^ The candidate block being voted for.
   --
   -- NOTE: this is the tip of the 'chainAtCandidateBlock' used to initialize
   -- the voting view.
+  -- If the candidate is too young or too old, we want to process that information
+  -- in the voting rules, rather than failing to construct the voting view.
   }
   deriving Show
 
@@ -224,7 +264,7 @@ mkPerasVotingView ::
   WithOrigin PerasRoundNo ->
   -- | Prefix leading to the candidate block in the volatile suffix of our
   -- preferred chain
-  AnchoredFragment (Header blk) ->
+  PerasCandidate (AnchoredFragment (Header blk)) ->
   -- | Constructed voting view
   PerasQry xs (PerasVotingView cert blk)
 mkPerasVotingView
@@ -265,13 +305,14 @@ mkPerasVotingView
     -- satisfy VR-1A (assuming reasonable protocol and network parameters),
     -- so that approximation is safe.
     candidateBlockExtendsCert cert =
-      AF.withinFragmentBounds boostedBlock chainAtCandidateBlock
-        || pointSlot boostedBlock < AF.anchorToSlotNo (AF.anchor chainAtCandidateBlock)
+      AF.withinFragmentBounds boostedBlock chain
+        || pointSlot boostedBlock < AF.anchorToSlotNo (AF.anchor chain)
      where
+      chain = pcCandidate chainAtCandidateBlock
       boostedBlock = castPoint (getPerasCertPoint cert)
 
     candidateBlock =
       AF.anchorToPoint
         . AF.castAnchor
         . AF.headAnchor
-        $ chainAtCandidateBlock
+        <$> chainAtCandidateBlock
