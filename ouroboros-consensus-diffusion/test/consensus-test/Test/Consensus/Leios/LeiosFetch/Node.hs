@@ -209,18 +209,6 @@ tests =
         "the node's server serves what it holds, disconnects a client that requests anything else, and ends when the client sends MsgDone"
         prop_serverAnswers
     , testCase
-        "the node fetches an endorser block and its closure that its peer offers, and offers them on"
-        $ runSimFinishing nodeFetchesOffered
-          >>= ( @?=
-                  ( [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint]
-                  ,
-                    [ RelayedAnnouncement
-                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer fetchedPoint
-                    ]
-                  )
-              )
-    , testCase
         "the node offers an endorser block it acquires only at the point it acquires it at"
         $ runSimFinishing relayOffersAtAcquiredPoint
           >>= ( @?=
@@ -294,17 +282,11 @@ tests =
         $ runSimFinishing nodeDisconnectsDoubleCertifier
           >>= (@?= Just (endorserBlockHash fetchedEb, otherEbHash))
     , testCase
-        "the node selects a block certifying an endorser block it acquired at an earlier election"
-        $ runSimFinishing (nodeSelectsReannounced NothingPruned)
-          >>= (@?= lastPoint (reannouncedChain NothingPruned))
-    , testCase
-        "the node selects a block certifying an endorser block it acquired, pruned, and saw announced again"
-        $ runSimFinishing (nodeSelectsReannounced PruneThenReannounce)
-          >>= (@?= lastPoint (reannouncedChain PruneThenReannounce))
-    , testCase
-        "the node selects a block certifying an endorser block it acquired and saw announced again, once it prunes the first announcement"
-        $ runSimFinishing (nodeSelectsReannounced ReannounceThenPrune)
-          >>= (@?= lastPoint (reannouncedChain ReannounceThenPrune))
+        "the node selects a block certifying an endorser block it acquired at an earlier election, whether it prunes that announcement before, after, or without seeing the endorser block announced again"
+        $ forM_ [minBound .. maxBound]
+        $ \whenReannounced ->
+          runSimFinishing (nodeSelectsReannounced whenReannounced)
+            >>= assertEqual (show whenReannounced) (lastPoint (reannouncedChain whenReannounced))
     , testCase
         "the node fetches and selects what a certificate certifies at an election's third announcement, which it does not relay"
         $ runSimFinishing nodeFetchesCertifiedThird
@@ -330,13 +312,13 @@ tests =
                   )
               )
     , testCase
-        "the node selects a block certifying an endorser block though a rival announcement took the focus first"
-        $ runSimFinishing (nodeSelectsCertifiedRival CertifyingAfterAnnouncing)
-          >>= (@?= (True, blockPoint certifyingFetched, relayedFetchedAfterRival))
-    , testCase
-        "the node selects a block certifying an endorser block though a rival announcement took the focus first and the certifying block arrived first"
-        $ runSimFinishing (nodeSelectsCertifiedRival CertifyingBeforeAnnouncing)
-          >>= (@?= (True, blockPoint certifyingFetched, relayedFetchedAfterRival))
+        "the node selects a block certifying an endorser block though a rival announcement took the focus first, whichever of the announcing and certifying blocks arrives first"
+        $ forM_ [minBound .. maxBound]
+        $ \arrival ->
+          runSimFinishing (nodeSelectsCertifiedRival arrival)
+            >>= assertEqual
+              (show arrival)
+              (True, blockPoint certifyingFetched, relayedFetchedAfterRival)
     , testCase
         "the node fetches an endorser block at the size its peer offers, though the announcement states another"
         $ runSimFinishing nodeFetchesAtOfferedSize
@@ -366,13 +348,16 @@ tests =
         $ runSimFinishing nodeDisconnectsReofferAfterRequest
           >>= (@?= Just (show (ExnLeiosRepeatedBlockOffer fetchedPoint)))
     , testCase
-        "the node does not offer the closure of an endorser block that misstates the size of a transaction the node already holds"
-        $ runSimFinishing (nodeOffersLyingEb TxBeforeBody)
-          >>= (@?= relayedHonestEb <> relayedLyingEb)
-    , testCase
-        "the node does not offer the closure of an endorser block that misstates the size of a transaction the node fetches afterwards"
-        $ runSimFinishing (nodeOffersLyingEb BodyBeforeTx)
-          >>= (@?= relayedLyingEb <> relayedHonestEb)
+        "the node does not offer the closure of an endorser block that misstates the size of a transaction, whether the node holds that transaction already or fetches it afterwards"
+        $ forM_ [minBound .. maxBound]
+        $ \arrival ->
+          runSimFinishing (nodeOffersLyingEb arrival)
+            >>= assertEqual
+              (show arrival)
+              ( case arrival of
+                  TxBeforeBody -> relayedHonestEb <> relayedLyingEb
+                  BodyBeforeTx -> relayedLyingEb <> relayedHonestEb
+              )
     , testProperty
         "the node relays an announcement, and offers at its point, to a listener that connects before the node stops relaying it, and nothing to one that connects after, whatever the listener's immutable tip and clock"
         prop_listenerReach
@@ -526,34 +511,6 @@ nodeFetchesCertifiedThird = withNode $ \nut -> do
       addBlocks nut [announcingFetched, certifyingFetched]
       (,) <$> awaitTip nut (blockPoint certifyingFetched) <*> relayedBy heard 2
 
--- | The peer announces 'fetchedEb', offers its body and its closure, and
--- serves both. The node's acquisitions, as it announces them, and the
--- notifications it relays to the peer, by 'relayHorizon' after the third.
-nodeFetchesOffered :: IOSim s ([Acquired], [Relayed])
-nodeFetchesOffered = withNode $ \nut -> do
-  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
-  listener <- newListener nut
-  notifications <- newTQueueIO
-  atomically $
-    mapM_
-      (writeTQueue notifications)
-      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
-      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-      , MsgLeiosBlockTxsOffer fetchedPoint
-      ]
-  let envPeer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient listener)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient listener)
-          }
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
-    acquired <- replicateM 2 $ acquiredOf <$> atomically next
-    relays <- relayedBy listener 3
-    pure (acquired, relays)
-
 -- | The log holds three announcements of 'fetchedEb', at three points. The node
 -- then acquires 'fetchedEb' and its closure at the first. The offers the relay
 -- adds to the log.
@@ -593,9 +550,10 @@ relayOffersAtAcquiredPoint = withNode $ \nut -> do
               NotifyLog.NotifyAnnouncement{} -> rest
               NotifyLog.NotifyVote{} -> rest
 
--- | 'nodeFetchesOffered', after which the peer announces 'fetchedEb' again, in
--- 'reannouncingFetched' and then in 'reannouncingFetchedAgain', each once the
--- node has acquired it at the previous announcement, and offers nothing more.
+-- | The peer announces 'fetchedEb', offers its body and its closure, and
+-- serves both. Then it announces 'fetchedEb' again, in 'reannouncingFetched'
+-- and then in 'reannouncingFetchedAgain', each once the node has acquired it at
+-- the previous announcement, and offers nothing more.
 -- The node's acquisitions, as it announces them, and the notifications it
 -- relays to the peer, by 'relayHorizon' after the ninth.
 nodeReacquiresHeld :: IOSim s ([Acquired], [Relayed])
@@ -626,11 +584,12 @@ nodeReacquiresHeld = withNode $ \nut -> do
     relays <- relayedBy listener 9
     pure (acquired <> concat reacquired, relays)
 
--- | 'nodeFetchesOffered', after which the peer announces 'otherEbHash' and then
--- 'fetchedEb' in a later election, so that the former takes its focus, and the
--- node's ChainDB then verifies a certificate of the latter. The node's
--- acquisitions, as it announces them, and the notifications it relays to the
--- peer, by 'relayHorizon' after the seventh.
+-- | The peer announces 'fetchedEb', offers its body and its closure, and
+-- serves both. Then it announces 'otherEbHash' and then 'fetchedEb' in a later
+-- election, so that the former takes its focus, and the node's ChainDB then
+-- verifies a certificate of the latter. The node's acquisitions, as it
+-- announces them, and the notifications it relays to the peer, by
+-- 'relayHorizon' after the seventh.
 nodeReacquiresCertified :: IOSim s ([Acquired], [Relayed])
 nodeReacquiresCertified = withNode $ \nut -> do
   next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
@@ -842,6 +801,7 @@ data WhenReannounced
     NothingPruned
   | PruneThenReannounce
   | ReannounceThenPrune
+  deriving (Show, Enum, Bounded)
 
 -- | The chain the node adds, one block per slot from 'announcingFetched'. Its
 -- second-to-last block announces 'fetchedEb' again, and its last block
@@ -1048,6 +1008,7 @@ relayedFetchedAfterRival =
 
 -- | Which of 'announcingFetched' and 'certifyingFetched' the node adds first.
 data CertifyingArrival = CertifyingAfterAnnouncing | CertifyingBeforeAnnouncing
+  deriving (Show, Enum, Bounded)
 
 -- | The peer announces 'otherEbHash' in 'announcingOther', and then 'fetchedEb'
 -- in 'announcingFetched', for the same election, so that the former takes its
@@ -1403,6 +1364,7 @@ withholding nut requested chan =
 -- | Which arrives first: 'honestEb''s closure, which holds 'sharedTx', or the
 -- body of 'lyingEb', which names it at the wrong size.
 data LieArrival = TxBeforeBody | BodyBeforeTx
+  deriving (Show, Enum, Bounded)
 
 -- | A transaction that 'honestEb' and 'lyingEb' both name.
 sharedTx :: LeiosTx
