@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertSeenView (..)
   , PerasCandidate (..)
+  , PerasCandidateAge (..)
   , PerasVotingView (..)
   )
 import Ouroboros.Consensus.Util.Pred
@@ -112,6 +113,9 @@ data PerasVotingRule
     --
     -- The 'PerasRoundNo' parameter corresponds to the existential value c.
     VR2B PerasRoundNo
+  | -- | Checks the age of the candidate block relative to the current slot,
+    -- perasBlockMinSLots, and perasBlockMaxSlots.
+    VR3
   deriving (Show, Eq)
 
 instance Explainable PerasVotingRule where
@@ -120,6 +124,7 @@ instance Explainable PerasVotingRule where
     VR1B -> "VR-1B"
     VR2A -> "VR-2A"
     VR2B _ -> "VR-2B"
+    VR3 -> "VR-3"
   explain Deep = \case
     VR1A ->
       "voter has seen the certificate for the previous round in time"
@@ -129,6 +134,8 @@ instance Explainable PerasVotingRule where
       "the last certificate seen is sufficiently old"
     VR2B _ ->
       "the last certificate on chain is exactly one or more cooldown periods old"
+    VR3 ->
+      "the block being voted upon is within the allowed age range"
 
 -- | VR-1A: the voter has seen the certificate for the previous round, and the
 -- certificate was received in the first X slots after the start of the round.
@@ -287,10 +294,21 @@ perasVR2 ::
 perasVR2 pvv =
   perasVR2A pvv :/\: perasVR2B pvv
 
+perasVR3 ::
+  PerasVotingView cert blk ->
+  Pred PerasVotingRule
+perasVR3 PerasVotingView{candidateBlock} =
+  VR3 := vr3
+ where
+  vr3 = case pcCandidateAge candidateBlock of
+    PerasCandidateTooYoung -> Bool False
+    PerasCandidateTooOld -> Bool False
+    PerasCandidateWithRightAge -> Bool True
+
 -- | Voting is allowed if either VR-1A and VR-1B hold, or VR-2A and VR-2B hold.
 perasVotingRules ::
   IsPerasCert cert blk =>
   PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVotingRules pvv =
-  perasVR1 pvv :\/: perasVR2 pvv
+  (perasVR1 pvv :\/: perasVR2 pvv) :/\: perasVR3 pvv
