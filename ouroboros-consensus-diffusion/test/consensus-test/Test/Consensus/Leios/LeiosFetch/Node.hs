@@ -13,8 +13,8 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (forM, forM_, forever, replicateM, replicateM_, unless, void, when)
-import Control.Monad.Class.MonadAsync (wait, withAsync)
+import Control.Monad (forM, forM_, replicateM, replicateM_, unless, void)
+import Control.Monad.Class.MonadAsync (withAsync)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), diffTime, getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
@@ -100,6 +100,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( ExnLeiosTwoCertificationClaims (..)
   , LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , LeiosPeerLifetimeId (..)
   , recordLeiosOffer
   , withLeiosFetchPeer
   )
@@ -149,7 +150,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
-import Ouroboros.Consensus.NodeKernel (LeiosPeerKey (..), NodeKernel (..))
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -160,7 +161,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Block (Tip (..))
 import Ouroboros.Network.Channel (Channel)
-import Ouroboros.Network.ConnectionId (ConnStateId (..), ConnectionId (..))
+import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
 import Ouroboros.Network.Mux
@@ -226,10 +227,6 @@ tests =
                   , RelayedBlockTxsOffer fetchedPoint
                   ]
               )
-    , testCase
-        "the node fetches what a peer offers on a connection that started while an earlier one with the same ConnectionId was still ending"
-        $ runSimFinishing nodeFetchesOverOverlappingConnection
-          >>= (@?= [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint])
     , testCase
         "the node announces its acquisition again, and offers it there, each time a later election focuses an endorser block it holds"
         $ runSimFinishing nodeReacquiresHeld
@@ -651,71 +648,6 @@ relayOffersWhereAdmitted = withNode $ \nut -> do
               NotifyLog.NotifyAnnouncement{} -> rest
               NotifyLog.NotifyVote{} -> rest
 
--- | The node connects to the peer at one address again while its earlier
--- connection is still ending, as when the peer reconnects at once: the
--- earlier connection offers 'fetchedEb' but never serves it, so its LeiosFetch
--- client still awaits a reply when the node demotes the peer, and ends only
--- once the later connection has started. Then the peer announces 'fetchedEb'
--- on the later connection, offers its body and its closure, and serves both.
--- The node's acquisitions, as it announces them.
---
--- The node demotes the peer on the earlier connection before the later one
--- starts because the diffusion layer never runs two live connections to one
--- peer: a new one can only start while the mini-protocols of the previous one
--- are still ending. Were both live, the diffusion layer's own per-peer
--- registries, keyed by the 'ConnectionId', would interfere.
-nodeFetchesOverOverlappingConnection :: IOSim s [Acquired]
-nodeFetchesOverOverlappingConnection = withNode $ \nut -> do
-  next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
-  earlierNotifications <- newTQueueIO
-  laterNotifications <- newTQueueIO
-  earlierDemoted <- newTVarIO False
-  earlierEnds <- newTVarIO False
-  let envPeer notifications fetchServer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = fetchServer
-          , epLeiosFetchClient = Nothing
-          }
-      neverServing _channel = forever $ threadDelay 1000
-      awaitTrue var = atomically $ readTVar var >>= check
-      -- Until the node has asked for 'fetchedEb'.
-      awaitRequested = do
-        outstanding <- readOutstanding nut
-        when (Map.null (requestedBytesSizePerPeer outstanding)) $
-          threadDelay 0.1 >> awaitRequested
-  atomically $
-    mapM_
-      (writeTQueue earlierNotifications)
-      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
-      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-      , MsgLeiosBlockTxsOffer fetchedPoint
-      ]
-  withAsync
-    ( withNodeVsEnvConnection nut (PeerAddr 1) (envPeer earlierNotifications neverServing) $ \earlierConn -> do
-        awaitTrue earlierDemoted
-        connTerminate earlierConn
-        awaitTrue earlierEnds
-    )
-    $ \earlier -> do
-      awaitRequested
-      atomically $ writeTVar earlierDemoted True
-      threadDelay 1
-      withNodeVsEnvConnection nut (PeerAddr 1) (envPeer laterNotifications (servingFetched nut)) $ \_laterConn -> do
-        threadDelay 1
-        atomically $ writeTVar earlierEnds True
-        wait earlier
-        atomically $
-          mapM_
-            (writeTQueue laterNotifications)
-            [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
-            , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-            , MsgLeiosBlockTxsOffer fetchedPoint
-            ]
-        replicateM 2 $ acquiredOf <$> atomically next
-
 -- | 'nodeFetchesOffered', after which the peer announces 'fetchedEb' again, in
 -- 'reannouncingFetched' and then in 'reannouncingFetchedAgain', each once the
 -- node has acquired it at the previous announcement, and offers nothing more.
@@ -904,7 +836,7 @@ nodeFetchesFromJumperInSteps = withJumpingNode 1 $ \nut -> do
 jumpedThrough :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s (WithOrigin SlotNo)
 jumpedThrough nut addr = IOLike.atomically $ do
   peers <- IOLike.readTVar (lfkPeers (getLeiosFetchKernel (nutKernel nut)))
-  case [peer | (MkLeiosPeerKey connId _, peer) <- Map.toList peers, remoteAddress connId == addr] of
+  case [peer | (MkLeiosPeerLifetimeId connId _, peer) <- Map.toList peers, remoteAddress connId == addr] of
     [] -> pure Origin
     peer : _ -> pointSlot <$> IOLike.readTVar (lfpJumpedThrough peer)
 
@@ -919,9 +851,9 @@ nodeIgnoresPrunedOffer = withNode $ \nut -> do
           , poOfferedBody = SNothing
           , poClosure = TxsClosureOffered
           }
-      peer = MkLeiosPeerKey (ConnectionId (PeerAddr 0) (PeerAddr 1)) (ConnStateId 0)
+      peer = ConnectionId (PeerAddr 0) (PeerAddr 1)
   IOLike.atomically $ IOLike.writeTVar (lfkPrunedSlot kernel) (SlotNo 5)
-  withLeiosFetchPeer kernel peer IsNotBigLedgerPeer $ \peerVars -> do
+  withLeiosFetchPeer kernel peer IsNotBigLedgerPeer $ \_lifetimeId peerVars -> do
     forM_ [SlotNo 4, SlotNo 5] $ \slot ->
       recordLeiosOffer kernel peerVars (MkLeiosPoint slot (endorserBlockHash fetchedEb)) offer
     map pointSlotNo . Map.keys <$> IOLike.readTVarIO (lfpOfferings peerVars)
@@ -1648,7 +1580,8 @@ announcingAndOffering eb blk =
   point = MkLeiosPoint (blockSlot blk) (endorserBlockHash eb)
 
 -- | The node's LeiosFetch state.
-readOutstanding :: NodeUnderTest (IOSim s) -> IOSim s (LeiosOutstanding (LeiosPeerKey PeerAddr))
+readOutstanding ::
+  NodeUnderTest (IOSim s) -> IOSim s (LeiosOutstanding (LeiosPeerLifetimeId (ConnectionId PeerAddr)))
 readOutstanding nut = IOLike.readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nutKernel nut))))
 
 -- | Wait until the node has pruned what is older than the slot after it.
@@ -1876,7 +1809,7 @@ servingChain nut chain =
 offersFetched :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s Bool
 offersFetched nut addr = IOLike.atomically $ do
   peers <- IOLike.readTVar (lfkPeers (getLeiosFetchKernel (nutKernel nut)))
-  case [peer | (MkLeiosPeerKey connId _, peer) <- Map.toList peers, remoteAddress connId == addr] of
+  case [peer | (MkLeiosPeerLifetimeId connId _, peer) <- Map.toList peers, remoteAddress connId == addr] of
     [] -> pure False
     peer : _ -> Map.member fetchedPoint <$> IOLike.readTVar (lfpOfferings peer)
 

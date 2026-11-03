@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , LeiosPeerLifetimeId (..)
   , newLeiosFetchKernel
   , withLeiosFetchPeer
   , recordLeiosOffer
@@ -31,6 +32,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
 import qualified Data.Set.NonEmpty as NESet
 import Data.Void (Void)
+import Data.Word (Word64)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , BlockSupportsProtocol (..)
@@ -142,15 +144,34 @@ import System.Random (StdGen)
 
 -- | The node's LeiosFetch state, which all its LeiosFetch clients share.
 data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
-  { lfkContext :: !(LeiosFetchClientContext m peer)
-  , lfkPeers :: !(StrictTVar m (Map.Map peer (LeiosFetchPeer m blk)))
-  -- ^ The upstream peers the decision loop assigns requests to; see
-  -- 'withLeiosFetchPeer'.
+  { lfkContext :: !(LeiosFetchClientContext m (LeiosPeerLifetimeId peer))
+  , lfkPeers :: !(StrictTVar m (Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk)))
+  -- ^ The upstream peers the decision loop assigns requests to, each
+  -- registered at most once at a time; see 'withLeiosFetchPeer'.
+  , lfkNextLifetimeId :: !(StrictTVar m Word64)
+  -- ^ What tells the next registration's 'LeiosPeerLifetimeId' apart from
+  -- every earlier one.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
   -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
   -- and claims to. Nothing older is recorded afterwards, so that an offer or
   -- claim that arrives after the pruning cannot undo it.
   }
+
+-- | Identifies one registration of an upstream peer with the decision loop,
+-- from when the first of its mini-protocols registers it until it is
+-- unregistered; see 'withLeiosFetchPeer'. The decision loop's state is keyed
+-- by it rather than by the peer, which the peer's later registrations share.
+--
+-- The peer alone would not do, even though connections whose mini-protocols
+-- run at the same time have different @ConnectionId@s: that covers only the
+-- mini-protocols' own threads. The LeiosDB writes asynchronously, so for each
+-- reply a LeiosFetch client forks a thread that waits for the write and then
+-- updates the decision loop's state for the peer, and that thread may outlive
+-- the client. By then the peer may have registered again, after the mux
+-- restarted its mini-protocols or after it reconnected with the same
+-- @ConnectionId@, and the update would act on that registration instead.
+data LeiosPeerLifetimeId peer = MkLeiosPeerLifetimeId !peer !Word64
+  deriving (Eq, Ord, Show)
 
 -- | What the node's LeiosFetch state holds about one upstream peer.
 data LeiosFetchPeer m blk = MkLeiosFetchPeer
@@ -182,7 +203,10 @@ newLeiosFetchKernel ::
   -- | Seeds the decision loop's PRNG.
   StdGen ->
   -- | Everything of the clients' context but the state this creates.
-  (StrictMVar m (LeiosOutstanding peer) -> StrictMVar m () -> LeiosFetchClientContext m peer) ->
+  ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
+    StrictMVar m () ->
+    LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
+  ) ->
   m (LeiosFetchKernel m peer blk)
 newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   immTipSlot <-
@@ -194,8 +218,15 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar
   lfkPeers <- uncheckedNewTVarM Map.empty
+  lfkNextLifetimeId <- uncheckedNewTVarM 0
   lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
-  pure MkLeiosFetchKernel{lfkContext = mkContext outstanding ready, lfkPeers, lfkPrunedSlot}
+  pure
+    MkLeiosFetchKernel
+      { lfkContext = mkContext outstanding ready
+      , lfkPeers
+      , lfkNextLifetimeId
+      , lfkPrunedSlot
+      }
  where
   -- The sizes of the body as the node serves it, rebuilt from its references.
   -- A stored body is never empty, so no references means the LeiosDb no longer
@@ -204,28 +235,29 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
     [] -> []
     _ : _ -> [(point, leiosEbSizes (mkEndorserBlock refs))]
 
--- | Run the action with this peer's LeiosFetch state, registering it with the
--- decision loop if no other mini-protocol of the peer has.
+-- | Run the action with this peer's LeiosFetch state and the
+-- 'LeiosPeerLifetimeId' of its registration, registering it with the decision
+-- loop if no other mini-protocol of the peer has.
 --
 -- There is no reference count: the first of the peer's mini-protocols to end
 -- unregisters it, and cancels what it had in flight, so that other peers are
 -- asked instead. Any of its mini-protocols still running keep their state, but
 -- the decision loop no longer assigns them anything.
 --
--- The key must differ between connections whose mini-protocols may overlap,
--- as a connection's @ConnStateId@ does: otherwise one connection's
--- unregistering would remove the other's registration, and its late replies
--- would refund the other's budget.
+-- A connection's mini-protocols find its registration by @peer@, so
+-- connections whose mini-protocols run at the same time must have different
+-- @peer@s. Their @ConnectionId@s differ, by the exclusivity of @ConnectionId@s
+-- (see "Ouroboros.Network.ConnectionId#exclusivity").
 withLeiosFetchPeer ::
   (IOLike m, Ord peer) =>
   LeiosFetchKernel m peer blk ->
   peer ->
   IsBigLedgerPeer ->
-  (LeiosFetchPeer m blk -> m a) ->
+  (LeiosPeerLifetimeId peer -> LeiosFetchPeer m blk -> m a) ->
   m a
-withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
+withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
  where
-  MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
+  MkLeiosFetchKernel{lfkContext, lfkPeers, lfkNextLifetimeId} = kernel
 
   register = do
     fresh <-
@@ -236,16 +268,24 @@ withLeiosFetchPeer kernel peer isBig = bracket register (const unregister)
         <*> uncheckedNewTVarM GenesisPoint
     atomically $ do
       peers <- readTVar lfkPeers
-      case Map.lookup peer peers of
-        Just existing -> pure existing
-        Nothing -> fresh <$ writeTVar lfkPeers (Map.insert peer fresh peers)
+      -- 'LeiosPeerLifetimeId's order by their peer first, so this finds the
+      -- peer's registration if it has one.
+      case Map.lookupGE (MkLeiosPeerLifetimeId peer 0) peers of
+        Just (lifetimeId@(MkLeiosPeerLifetimeId peer' _), existing)
+          | peer' == peer -> pure (lifetimeId, existing)
+        _ -> do
+          n <- readTVar lfkNextLifetimeId
+          writeTVar lfkNextLifetimeId (n + 1)
+          let lifetimeId = MkLeiosPeerLifetimeId peer n
+          writeTVar lfkPeers (Map.insert lifetimeId fresh peers)
+          pure (lifetimeId, fresh)
 
   -- The decision loop reads the registered peers within the same critical
   -- section in which it assigns requests, so it cannot assign this peer
   -- anything after its requests are cancelled here.
-  unregister = modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
-    atomically $ modifyTVar lfkPeers (Map.delete peer)
-    pure $! removePeerFromOutstanding peer outstanding
+  unregister (lifetimeId, _) = modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
+    atomically $ modifyTVar lfkPeers (Map.delete lifetimeId)
+    pure $! removePeerFromOutstanding lifetimeId outstanding
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
 -- with, unless the point is older than what has been pruned, and wake the

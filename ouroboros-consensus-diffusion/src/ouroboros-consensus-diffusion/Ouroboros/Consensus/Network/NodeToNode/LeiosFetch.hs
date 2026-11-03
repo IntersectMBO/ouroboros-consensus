@@ -33,6 +33,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (nextLeiosFetc
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , LeiosPeerLifetimeId
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
@@ -73,16 +74,16 @@ leiosFetchClient ::
   (IOLike m, Ord peer) =>
   LeiosFetchKernel m peer blk ->
   ControlMessageSTM m ->
-  peer ->
+  LeiosPeerLifetimeId peer ->
   LeiosFetchPeer m blk ->
   LeiosFetchClientPeerPipelined LeiosPoint EndorserBlock LeiosTx m ()
-leiosFetchClient kernel controlMessageSTM peer peerVars =
+leiosFetchClient kernel controlMessageSTM lifetimeId peerVars =
   toLeiosFetchClientPeerPipelined $
     leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
       nextLeiosFetchClientCommand
         (lfkContext kernel)
         controlMessageSTM
-        peer
+        lifetimeId
         (lfpRequestsToSend peerVars)
 
 -- | The node's LeiosFetch server, which serves endorser blocks and their

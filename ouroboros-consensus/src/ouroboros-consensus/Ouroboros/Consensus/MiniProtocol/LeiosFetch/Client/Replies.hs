@@ -478,9 +478,11 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- picked by this peer, which others may already be asked for too, and
   -- which its disconnection releases.
   --
-  -- The worker may outlive the peer, harmlessly: it settles only what is now
-  -- durable, and never recreates the peer's state that its disconnection
-  -- removed. It ends once the write lands, which closing the LeiosDB ensures.
+  -- The worker may outlive the peer's registration, harmlessly: it settles
+  -- only what is now durable, and the node keys the peer's state by its
+  -- registration's @LeiosPeerLifetimeId@, so the worker neither recreates the
+  -- state that unregistering removed nor touches a later registration's. It
+  -- ends once the write lands, which closing the LeiosDB ensures.
   link =<< async (settleTxs now txsWritten toIngest)
  where
   MkLeiosFetchClientContext
