@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge
-  ( ebTxBytes
+  ( serializeTxForLeios
   , forgeShelleyBlock
   ) where
 
@@ -105,7 +105,7 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe ForgedEndorserBlock)
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
-        Just LeiosEraDict -> forgeLeiosEb . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
+        Just LeiosEraDict -> forgeLeiosEb . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 
     -- TODO Forging does not yet certify endorser blocks.
@@ -143,7 +143,7 @@ forgeShelleyBlock
 -- Their length must not exceed 'txByteSizeWithOverhead'. Otherwise the
 -- endorser block can exceed the size that 'txEbMeasureDijkstra' reserved
 -- for it, and header validation rejects the block with 'LeiosEbTooBig'.
-ebTxBytes ::
+serializeTxForLeios ::
   forall era.
   (Core.EraTx era, SafeToHash (Core.Tx Core.TopTx era)) => Core.Tx Core.TopTx era -> ByteString
-ebTxBytes = serialize' (SL.eraProtVerLow @era) . toCBORForBlockInclusion
+serializeTxForLeios = serialize' (SL.eraProtVerLow @era) . toCBORForBlockInclusion

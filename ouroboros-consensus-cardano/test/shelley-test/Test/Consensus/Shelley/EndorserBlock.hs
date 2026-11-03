@@ -23,7 +23,7 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Ledger.Forge (ebTxBytes)
+import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
@@ -143,27 +143,27 @@ prop_referencesCapacityFloorsAtZero =
       , (1, chooseEnum (maxFraming + 1, maxBound))
       ]
 
--- | The length of the 'ebTxBytes' of a Dijkstra transaction never exceeds
--- its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra' reserves for the
--- reference.
+-- | The length of the 'serializeTxForLeios' bytes of a Dijkstra transaction
+-- never exceeds its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra'
+-- reserves for the reference.
 --
--- The ledger computes 'sizeTxF' from one encoding and 'ebTxBytes' uses
--- another, so a ledger change can make the two disagree.
+-- The ledger computes 'sizeTxF' from one encoding and 'serializeTxForLeios'
+-- uses another, so a ledger change can make the two disagree.
 prop_dijkstraEbTxSizeBounded :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (ebTxBytes tx)
+  ebTxSize = BS.length (serializeTxForLeios tx)
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
 
 -- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
--- 'ebTxBytes'. The Dijkstra ledger defines this reference as the
+-- 'serializeTxForLeios' bytes. The Dijkstra ledger defines this reference as the
 -- transaction's 'hashAnnotated', which is the hash of its 'originalBytes'.
 -- Thus a node can check fetched bytes against the reference without decoding
--- them. Fails if 'ebTxBytes' returns other bytes, for example the 'EncCBOR'
--- encoding, which drops the @is_valid@ flag.
+-- them. Fails if 'serializeTxForLeios' returns other bytes, for example the
+-- 'EncCBOR' encoding, which drops the @is_valid@ flag.
 prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
-  map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (ebTxBytes tx))))
+  map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (serializeTxForLeios tx))))
     === [extractHash (hashAnnotated tx)]
