@@ -7,13 +7,11 @@ module Test.Consensus.Shelley.Forge (tests) where
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL (Globals (..), ProtVer (..))
-import Cardano.Ledger.Binary (serialize')
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Core (bodyTxL, eraProtVerLow, feeTxBodyL, ppProtocolVersionL)
-import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Core (bodyTxL, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
-import Cardano.Ledger.Hashes (HASH, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH, originalBytes, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
@@ -26,6 +24,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
+import Data.Foldable (toList)
 import Data.Maybe (isJust)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
@@ -41,6 +40,8 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
+  , forgedEbBody
+  , forgedEbTxs
   )
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
@@ -92,27 +93,30 @@ prop_announcesEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
     forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
       let ebTxs = take numEbTxs distinctTxs
-      ForgeBlockResult blk forgedEb <- forgeWith coreNode ebTxs
+      (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
       pure $ case forgedEb of
         Nothing -> counterexample "no endorser block" False
-        Just eb ->
-          conjoin
-            [ counterexample "the endorser block does not reference the transactions in order" $
-                endorserBlockReferences eb === map reference ebTxs
-            , announcement blk
-                === SJust
-                  EbReferencesAnnouncement
-                    { ebReferencesAnnouncementHash = unsafeMakeSafeHash (endorserBlockHash eb)
-                    , ebReferencesAnnouncementSize = encodeEndorserBlockSize eb
-                    }
-            , counterexample "the block does not match its header" $
-                blockMatchesHeader (getHeader blk) blk
-            ]
+        Just forged ->
+          let eb = forgedEbBody forged
+           in conjoin
+                [ counterexample "the endorser block does not reference the transactions in order" $
+                    endorserBlockReferences eb === map reference ebTxs
+                , counterexample "forgedEbTxs does not hold the referenced transaction bytes" $
+                    toList (forgedEbTxs forged) === map txBytes ebTxs
+                , announcement blk
+                    === SJust
+                      EbReferencesAnnouncement
+                        { ebReferencesAnnouncementHash = unsafeMakeSafeHash (endorserBlockHash eb)
+                        , ebReferencesAnnouncementSize = encodeEndorserBlockSize eb
+                        }
+                , counterexample "the block does not match its header" $
+                    blockMatchesHeader (getHeader blk) blk
+                ]
 
 prop_noEb :: Property
 prop_noEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
-    ForgeBlockResult blk forgedEb <- forgeWith coreNode []
+    (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
 
 -- | A number of endorser-block transactions.
@@ -126,12 +130,13 @@ genNumEbTxs =
     ]
 
 -- | Forge the block after the example ledger state, with the given endorser
--- block transactions and no ranking block transactions.
+-- block transactions and no ranking block transactions. Also return the
+-- config of the forge.
 forgeWith ::
   CoreNode StandardCrypto ->
   [GenTx StandardDijkstraBlock] ->
-  IO (ForgeBlockResult StandardDijkstraBlock)
-forgeWith coreNode ebTxs = do
+  IO (TopLevelConfig StandardDijkstraBlock, ForgeBlockResult StandardDijkstraBlock)
+forgeWith coreNode ebTxs = fmap ((,) topLevelConfig) $ do
   hotKey <-
     instantiatePraosCredentials
       (SL.maxKESEvo globals)
@@ -236,12 +241,15 @@ distinctTxs =
 -- | The reference that an endorser block holds for a transaction: the
 -- Blake2b-256 hash and the length of the transaction bytes.
 reference :: GenTx StandardDijkstraBlock -> (TxHash, BytesSize)
-reference (ShelleyTx _ tx) =
-  ( Hash.castHash (Hash.hashWith @HASH id bytes)
-  , fromIntegral (BS.length bytes)
+reference tx =
+  ( Hash.castHash (Hash.hashWith @HASH id (txBytes tx))
+  , fromIntegral (BS.length (txBytes tx))
   )
- where
-  bytes = serialize' (eraProtVerLow @DijkstraEra) tx
+
+-- | The bytes of a transaction that an endorser block references: the
+-- block-body encoding, which keeps the @is_valid@ flag.
+txBytes :: GenTx StandardDijkstraBlock -> BS.ByteString
+txBytes (ShelleyTx _ tx) = originalBytes tx
 
 exampleDijkstraBlock :: StandardDijkstraBlock
 exampleDijkstraBlock = example Examples.exampleBlock

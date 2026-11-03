@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Shelley.Eras
 
     -- * Shelley-based era
   , ConwayEraGovDict (..)
+  , LeiosEraDict (..)
   , ShelleyBasedEra (..)
 
     -- * Convenience functions
@@ -29,7 +30,6 @@ module Ouroboros.Consensus.Shelley.Eras
   ) where
 
 import Cardano.Binary (FromCBOR, ToCBOR)
-import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
@@ -48,7 +48,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
-import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Dijkstra.BlockBody (DijkstraEraBlockBody)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -137,6 +137,9 @@ class
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
+  -- | The 'LeiosEraDict' of the era, if the era supports Leios.
+  getLeiosEraDict :: proxy era -> Maybe (LeiosEraDict era)
+
   mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
 
@@ -146,14 +149,13 @@ class
   getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
   getShelleyEraPerasRoundLength _ = NoPerasEnabled
 
-  -- | The Leios certificate this block body carries, if any.
-  --
-  -- Eras that don't support Leios define this as
-  -- 'defaultBlockBodyLeiosCert'.
-  blockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
-
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
+
+-- | What the Leios protocol needs to know about an era. Only an era that
+-- supports Leios has one.
+data LeiosEraDict era where
+  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
@@ -184,68 +186,70 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
 
-defaultBlockBodyLeiosCert :: Core.BlockBody era -> StrictMaybe LeiosCert
-defaultBlockBodyLeiosCert _ = SNothing
+defaultGetLeiosEraDict :: proxy era -> Maybe (LeiosEraDict era)
+defaultGetLeiosEraDict _ = Nothing
 
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkEraMkMempoolApplyTxError _prx = Nothing
+  getLeiosEraDict = defaultGetLeiosEraDict
 
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkEraMkMempoolApplyTxError _prx = Nothing
+  getLeiosEraDict = defaultGetLeiosEraDict
 
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkEraMkMempoolApplyTxError _prx = Nothing
+  getLeiosEraDict = defaultGetLeiosEraDict
 
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkEraMkMempoolApplyTxError _prx = Nothing
+  getLeiosEraDict = defaultGetLeiosEraDict
 
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-  mkEraMkMempoolApplyTxError _prx = Nothing
+  getLeiosEraDict = defaultGetLeiosEraDict
 
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
+  mkEraMkMempoolApplyTxError _prx = Nothing
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
+  getLeiosEraDict = defaultGetLeiosEraDict
+
   mkEraMkMempoolApplyTxError _prx =
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
-
-  blockBodyLeiosCert = defaultBlockBodyLeiosCert
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
+
+  getLeiosEraDict _ = Just LeiosEraDict
 
   -- TODO we'll need to change the mini protocol (backwards-incompatibly?) to
   -- use MempoolFailure type family instead of just PredicateFailure type
@@ -253,8 +257,6 @@ instance ShelleyBasedEra DijkstraEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
-
-  blockBodyLeiosCert bb = bb ^. leiosCertBlockBodyL
 
 applyAlonzoBasedTx ::
   forall era.

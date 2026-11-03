@@ -72,7 +72,9 @@ import Ouroboros.Consensus.Util.Time (nominalDelay)
 data Notification blk
   = NotifyAnnouncement !(AnnouncingHeader blk)
   | NotifyVote !LeiosVote
-  -- TODO: add offers
+  -- TODO: add offers. 'storeForgedEb' does not wait for the writes,
+  -- so offer a self-forged EB only after the LeiosDB sends 'AcquiredEb', and
+  -- its txs only after 'AcquiredEbTxs'.
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)

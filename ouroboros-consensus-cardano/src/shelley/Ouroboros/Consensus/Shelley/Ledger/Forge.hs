@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge
-  ( ebTxBytes
+  ( serializeTxForLeios
   , forgeShelleyBlock
   ) where
 
@@ -18,7 +18,8 @@ import qualified Cardano.Ledger.Core as SL
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
+import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
+import Cardano.Ledger.Hashes (SafeToHash, unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
@@ -33,14 +34,15 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlock
+  ( ForgedEndorserBlock (..)
   , encodeEndorserBlockSize
-  , endorserBlockFromTxBytes
   , endorserBlockHash
+  , forgeLeiosEb
   )
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
+import Ouroboros.Consensus.Shelley.Eras (LeiosEraDict (..), ShelleyBasedEra (getLeiosEraDict))
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -98,14 +100,16 @@ forgeShelleyBlock
 
     -- Only a protocol with Leios has a value in 'WhenLeios', so the other
     -- protocols build no endorser block. CIP-0164 does not allow an empty
-    -- endorser block.
-    forgedEb :: WhenLeios proto (Maybe EndorserBlock)
+    -- endorser block. A protocol with Leios on an era without 'LeiosEraDict'
+    -- is a bug in how the eras are put together, so we fail loudly.
+    forgedEb :: WhenLeios proto (Maybe ForgedEndorserBlock)
     forgedEb =
-      pureLeiosOnly @proto $
-        endorserBlockFromTxBytes . fmap (ebTxBytes . extractTx) <$> nonEmpty fbEbTxs
+      pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
+        Just LeiosEraDict -> forgeLeiosEb . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
+        Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 
     -- TODO Forging does not yet certify endorser blocks.
-    leiosFields = (,) False . maybeToStrictMaybe . fmap announce <$> forgedEb
+    leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
 
     announce eb =
       EbReferencesAnnouncement
@@ -132,9 +136,14 @@ forgeShelleyBlock
 
 -- | The bytes of a transaction that an endorser block references.
 --
--- The length of these bytes must not exceed 'txByteSizeWithOverhead'.
--- Otherwise the endorser block can exceed the size that
--- 'txEbMeasureDijkstra' reserved for it, and header validation rejects the
--- block with 'LeiosEbTooBig'.
-ebTxBytes :: forall era. Core.EraTx era => Core.Tx Core.TopTx era -> ByteString
-ebTxBytes = serialize' (SL.eraProtVerLow @era)
+-- These bytes must keep the @is_valid@ flag, because a peer cannot get it
+-- from anywhere else. 'EncCBOR' drops the flag in Dijkstra, so we use the
+-- block-body encoding.
+--
+-- Their length must not exceed 'txByteSizeWithOverhead'. Otherwise the
+-- endorser block can exceed the size that 'txEbMeasureDijkstra' reserved
+-- for it, and header validation rejects the block with 'LeiosEbTooBig'.
+serializeTxForLeios ::
+  forall era.
+  (Core.EraTx era, SafeToHash (Core.Tx Core.TopTx era)) => Core.Tx Core.TopTx era -> ByteString
+serializeTxForLeios = serialize' (SL.eraProtVerLow @era) . toCBORForBlockInclusion

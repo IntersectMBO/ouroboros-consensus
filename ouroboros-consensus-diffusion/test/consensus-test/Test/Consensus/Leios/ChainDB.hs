@@ -48,7 +48,7 @@ tests =
     "ChainDB and LeiosDB"
     [ testCase "ChainSel rejects a block whose certificate a minority made" $
         runSimOrThrow
-          (whyInvalid (\nut -> addBlocks nut [announcingA, minorityCertifyingA]) minorityCertifyingA)
+          (whyInvalid (\node -> addBlocks node [announcingA, minorityCertifyingA]) minorityCertifyingA)
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "ChainSel does not verify a certificate again for a claim it established" $
         runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
@@ -73,8 +73,8 @@ tests =
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
 bodiesAfterGc :: IOSim s ([(TxHash, BytesSize)], [(TxHash, BytesSize)])
-bodiesAfterGc = withNode $ \nut -> do
-  let leiosDb = getLeiosDB (nutKernel nut)
+bodiesAfterGc = withNode $ \node -> do
+  let leiosDb = getLeiosDB (nodeKernel node)
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
       await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
@@ -89,7 +89,7 @@ bodiesAfterGc = withNode $ \nut -> do
             ]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
-  addBlocks nut chain
+  addBlocks node chain
   -- Long enough for the copy to the ImmutableDB and for the delayed GC.
   threadDelay 100
   withReader leiosDb $ \reader ->
@@ -107,12 +107,12 @@ whyInvalid ::
   (NodeUnderTest (IOSim s) -> IOSim s ()) ->
   LeiosTestBlock ->
   IOSim s (Maybe (ExtValidationError LeiosTestBlock))
-whyInvalid add blk = withNode $ \nut -> do
+whyInvalid add blk = withNode $ \node -> do
   -- Let the slots of the blocks pass, so none is from the future.
   threadDelay 20
-  add nut
+  add node
   threadDelay 1
-  isInvalid <- atomically $ forgetFingerprint <$> ChainDB.getIsInvalidBlock (nutChainDB nut)
+  isInvalid <- atomically $ forgetFingerprint <$> ChainDB.getIsInvalidBlock (nodeChainDB node)
   pure $ isInvalid (blockHash blk)
 
 -- | The node adds 'announcingA' and 'certifyingA', restarts, and then adds
@@ -139,20 +139,20 @@ heldAcrossRestart whatOfA = do
               [ (offset, BS.replicate (fromIntegral size) 0)
               | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
               ]
-  beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+  beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
-    addBlocks nut [announcingA, certifyingA]
+    addBlocks node [announcingA, certifyingA]
     threadDelay 1
-    holds nut
-  withNodeOverDBs nodeDBs leiosDb $ \nut -> do
-    afterRestart <- holds nut
-    addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [certifyingA]
+    holds node
+  withNodeOverDBs nodeDBs leiosDb $ \node -> do
+    afterRestart <- holds node
+    addBlocksAfter node (NotOrigin (blockSlot announcingA)) [certifyingA]
     threadDelay 1
-    afterAddingAgain <- holds nut
+    afterAddingAgain <- holds node
     pure (beforeRestart, afterRestart, afterAddingAgain)
  where
-  holds nut = atomically $ ($ blockPoint certifyingA) <$> ChainDB.getIsFetched (nutChainDB nut)
+  holds node = atomically $ ($ blockPoint certifyingA) <$> ChainDB.getIsFetched (nodeChainDB node)
 
 -- | What the LeiosDB holds of A
 data WhatOfA
@@ -174,9 +174,9 @@ minoritySibling =
 
 -- | Add 'certifyingA', which establishes its claim, and then 'minoritySibling'.
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
-addSibling nut = do
-  addBlocks nut [announcingA, certifyingA]
-  addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [minoritySibling]
+addSibling node = do
+  addBlocks node [announcingA, certifyingA]
+  addBlocksAfter node (NotOrigin (blockSlot announcingA)) [minoritySibling]
 
 rbHashOf :: LeiosTestBlock -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
@@ -202,15 +202,15 @@ ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 -- body but not its transactions. The tip of the selected chain before they
 -- arrive, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
-tipsAroundClosure = withNode $ \nut -> do
-  let leiosDb = getLeiosDB (nutKernel nut)
-      chainDB = nutChainDB nut
+tipsAroundClosure = withNode $ \node -> do
+  let leiosDb = getLeiosDB (nodeKernel node)
+      chainDB = nodeChainDB node
   withWriter leiosDb $ \writer -> do
     await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
     void $ await =<< writeEbBody writer pointA ebA
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
-  addBlocks nut [announcingA, certifyingA]
+  addBlocks node [announcingA, certifyingA]
   threadDelay 1
   tipBefore <- atomically $ ChainDB.getTipPoint chainDB
   withWriter leiosDb $ \writer ->
@@ -242,9 +242,9 @@ tipWithClosureBeforeStart = do
           [ (offset, BS.replicate (fromIntegral size) 0)
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
-  withNodeOver leiosDb $ \nut -> do
+  withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
-    addBlocks nut [announcingA, certifyingA]
+    addBlocks node [announcingA, certifyingA]
     threadDelay 1
-    atomically $ ChainDB.getTipPoint (nutChainDB nut)
+    atomically $ ChainDB.getTipPoint (nodeChainDB node)
