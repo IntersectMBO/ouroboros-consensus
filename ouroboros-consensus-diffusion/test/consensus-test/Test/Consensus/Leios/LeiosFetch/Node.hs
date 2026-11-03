@@ -292,12 +292,11 @@ tests =
         $ runSimFinishing nodeFetchesCertifiedThird
           >>= (@?= (blockPoint certifyingFetched, [RelayedAnnouncement, RelayedAnnouncement]))
     , testCase
-        "the node keeps an endorser block that a certificate refocuses an election onto through garbage collection and a restart"
-        $ runSimFinishingWithin 200 nodeKeepsRefocusedThroughGc
-          >>= (@?= lastPoint gcRestartChain)
-    , testCase "an endorser block held at start-up keeps a new focus through garbage collection" $
-        runSimFinishingWithin 200 nodeKeepsHeldAtStartRefocusedThroughGc
-          >>= (@?= lastPoint gcRestartChain)
+        "the node keeps an endorser block that a certificate refocuses an election onto through garbage collection and a restart, whether or not it held the endorser block at start-up"
+        $ forM_ [minBound .. maxBound]
+        $ \restarts ->
+          runSimFinishingWithin 200 (nodeKeepsRefocusedThroughGc restarts)
+            >>= assertEqual (show restarts) (lastPoint gcRestartChain)
     , testCase
         "the node fetches an endorser block a later election announced, once it prunes the earlier announcement"
         $ runSimFinishing nodeFetchesAfterPruningEarlier
@@ -875,15 +874,29 @@ gcRestartChain = chain <> take 5 (drop 1 (iterate successorLeiosBlock (last chai
  where
   chain = reannouncedChain NothingPruned
 
+-- | When the node restarts in 'nodeKeepsRefocusedThroughGc'.
+data Restarts
+  = -- | Once, after the garbage collection.
+    RestartAfterGc
+  | -- | Also once it has acquired 'fetchedEb', before it adds
+    -- 'gcRestartChain'. So the certificate moves the election onto an
+    -- endorser block that the node already held when it started, but whose
+    -- body its LeiosTxCache does not hold, so it fetches it again at the
+    -- certified announcement, from a peer whose ChainSync headers offer it
+    -- there.
+    RestartBeforeChainToo
+  deriving (Show, Enum, Bounded)
+
 -- | The peer announces 'fetchedEb' in 'announcingFetched', offers it, and
 -- serves it. Once the node has acquired it, the node adds 'gcRestartChain',
 -- whose certificate moves the second announcement's election onto
 -- 'fetchedEb', though nothing announced it to the node. Then the node waits
 -- out a garbage collection of its LeiosDB to its immutable tip, which is past
--- 'announcingFetched', and restarts. The tip of its selection after the
--- restart, once that is the chain's last block or ten seconds have passed.
-nodeKeepsRefocusedThroughGc :: IOSim s (Point LeiosTestBlock)
-nodeKeepsRefocusedThroughGc = do
+-- 'announcingFetched', and restarts, and also earlier as the argument says.
+-- The tip of its selection after the last restart, once that is the chain's
+-- last block or ten seconds have passed.
+nodeKeepsRefocusedThroughGc :: Restarts -> IOSim s (Point LeiosTestBlock)
+nodeKeepsRefocusedThroughGc restarts = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- newLeiosDBInMemory
   withNodeOverDBs nodeDBs leiosDb $ \nut -> do
@@ -903,53 +916,31 @@ nodeKeepsRefocusedThroughGc = do
     threadDelay 20
     withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
       _ <- replicateM 2 $ atomically next
-      addBlocks nut gcRestartChain
-      -- The acquisition announced again, at the certified announcement.
-      _ <- replicateM 2 $ atomically next
-      _ <- awaitTip nut (lastPoint gcRestartChain)
-      -- Past the ChainDB's delay before it collects garbage, and its interval.
-      threadDelay 80
+      case restarts of
+        RestartBeforeChainToo -> pure ()
+        RestartAfterGc -> do
+          addBlocks nut gcRestartChain
+          -- The acquisition announced again, at the certified announcement.
+          _ <- replicateM 2 $ atomically next
+          awaitChainThenGc nut
+  case restarts of
+    RestartAfterGc -> pure ()
+    RestartBeforeChainToo ->
+      withNodeOverDBs nodeDBs leiosDb $ \nut -> do
+        chain <- newEnvChain gcRestartChain
+        withNodeVsEnvConnection
+          nut
+          (PeerAddr 1)
+          ((servingChain nut chain){epLeiosFetchServer = servingFetched nut})
+          $ \_conn -> do
+            addBlocks nut gcRestartChain
+            awaitChainThenGc nut
   withNodeOverDBs nodeDBs leiosDb $ \nut -> awaitTip nut (lastPoint gcRestartChain)
-
--- | As 'nodeKeepsRefocusedThroughGc', but the node also restarts once it has
--- acquired 'fetchedEb', before it adds 'gcRestartChain'. So the certificate
--- moves the election onto an endorser block that the node already held when
--- it started, but whose body its LeiosTxCache does not hold, so it fetches it
--- again at the certified announcement, from a peer whose ChainSync headers
--- offer it there.
-nodeKeepsHeldAtStartRefocusedThroughGc :: IOSim s (Point LeiosTestBlock)
-nodeKeepsHeldAtStartRefocusedThroughGc = do
-  nodeDBs <- emptyNodeDBs
-  leiosDb <- newLeiosDBInMemory
-  withNodeOverDBs nodeDBs leiosDb $ \nut -> do
-    next <- subscribeLeiosAcquisitions (nutLeiosAcquisitions nut)
-    notifications <- newTQueueIO
-    atomically $
-      mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
-    let envPeer =
-          EnvPeer
-            { epChainSyncServer = quietChainSyncServer
-            , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-            , epLeiosNotifyClient = Nothing
-            , epLeiosFetchServer = servingFetched nut
-            , epLeiosFetchClient = Nothing
-            }
-    -- Let the slots of the chain's blocks pass, so none is from the future.
-    threadDelay 20
-    withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn ->
-      void $ replicateM 2 $ atomically next
-  withNodeOverDBs nodeDBs leiosDb $ \nut -> do
-    chain <- newEnvChain gcRestartChain
-    withNodeVsEnvConnection
-      nut
-      (PeerAddr 1)
-      ((servingChain nut chain){epLeiosFetchServer = servingFetched nut})
-      $ \_conn -> do
-        addBlocks nut gcRestartChain
-        _ <- awaitTip nut (lastPoint gcRestartChain)
-        -- Past the ChainDB's delay before it collects garbage, and its interval.
-        threadDelay 80
-  withNodeOverDBs nodeDBs leiosDb $ \nut -> awaitTip nut (lastPoint gcRestartChain)
+ where
+  awaitChainThenGc nut = do
+    _ <- awaitTip nut (lastPoint gcRestartChain)
+    -- Past the ChainDB's delay before it collects garbage, and its interval.
+    threadDelay 80
 
 -- | The peer announces 'fetchedEb' in 'announcingFetched' and again in
 -- 'reannouncingFetched', and offers nothing. The node adds a chain of twelve
