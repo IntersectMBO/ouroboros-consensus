@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Leios (LeiosCommittee (..), LeiosSeat (..))
 import Cardano.Ledger.Allegra (ApplyTxError (AllegraApplyTxError))
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo (ApplyTxError (AlonzoApplyTxError))
@@ -88,7 +89,8 @@ import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import Cardano.Ledger.Dijkstra.PParams
-  ( ppMaxEndorserBlockExUnitsL
+  ( ppLeiosQuorumStakeThresholdL
+  , ppMaxEndorserBlockExUnitsL
   , ppMaxEndorserBlockReferencesSizeL
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
@@ -98,7 +100,9 @@ import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.Shelley.LedgerState (esSnapshotsL, nesEsL)
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
+import Cardano.Ledger.State (ssLeiosCommitteeL, ssStakeSetL)
 import Cardano.Protocol.Crypto (Crypto)
 import Cardano.Slotting.EpochInfo (epochInfoFirst)
 import Control.Arrow ((+++))
@@ -881,6 +885,19 @@ scaleDijkstraEbMeasure factor eb =
   scale :: Natural -> Natural
   scale n = floor (factor * fromIntegral n)
 
+-- | Whether the committee of the ticked state's epoch can reach a quorum: its
+-- seats with a voting key hold at least the quorum threshold. Without one no
+-- endorser block certifies, so none is worth filling nor making room for.
+leiosQuorumPossible ::
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
+  Bool
+leiosQuorumPossible st =
+  sum [seatWeight seat | seat <- toList (leiosCommitteeSeats committee), L.SJust _ <- [seatVKey seat]]
+    >= L.unboundRational (getPParams nes ^. ppLeiosQuorumStakeThresholdL)
+ where
+  nes = tickedShelleyLedgerState st
+  committee = nes ^. nesEsL . esSnapshotsL . ssStakeSetL . ssLeiosCommitteeL
+
 -- | What one Leios endorser block may hold, from the Dijkstra endorser-block
 -- protocol parameters.
 leiosEndorserBlockCapacity ::
@@ -990,7 +1007,9 @@ instance
 
   txEbMeasure _ = txEbMeasureDijkstra
 
-  ebCapacityTxMeasure _cfg = leiosEndorserBlockCapacity
+  ebCapacityTxMeasure _cfg st
+    | leiosQuorumPossible st = leiosEndorserBlockCapacity st
+    | otherwise = zero
   mempoolEbReservation _ DijkstraEbMeasure{ebClosureMeasure = TxMeasure alonzo refScripts} =
     TxMeasure alonzo refScripts
   scaleEbCapacity _ = scaleDijkstraEbMeasure
