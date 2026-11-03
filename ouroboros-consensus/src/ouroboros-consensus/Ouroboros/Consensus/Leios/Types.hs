@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Transactions
   , LeiosTx (..)
+  , hashLeiosTx
   , encodeLeiosTx
   , decodeLeiosTx
 
@@ -41,6 +42,9 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , EndorserBlock -- opaque
   , TxOffset
+  , TxLocation (..)
+  , ProtVerParity (..)
+  , protVerParity
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , endorserBlockHash
@@ -49,6 +53,10 @@ module Ouroboros.Consensus.Leios.Types
   , decodeEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
+  , LeiosEbSizes (..)
+  , leiosEbSizes
+  , LeiosEbBounds (..)
+  , admitsSizes
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -71,13 +79,14 @@ import Cardano.Crypto.Hash
   )
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
   , EncCBOR (..)
   , FullByteString (..)
   , Version
+  , getVersion64
   , toPlainDecoder
   , toPlainEncoding
   )
@@ -114,7 +123,7 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
@@ -173,6 +182,10 @@ newtype LeiosTx = MkLeiosTx {leiosTxBytes :: ByteString}
   deriving stock (Eq, Show)
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
+
+-- | The hash an endorser block names this transaction by.
+hashLeiosTx :: LeiosTx -> TxHash
+hashLeiosTx (MkLeiosTx bytes) = castHash $ hashWith @HASH id bytes
 
 encodeLeiosTx :: LeiosTx -> Encoding
 encodeLeiosTx (MkLeiosTx bytes) = encodeNestedCborBytes (BSL.fromStrict bytes)
@@ -290,10 +303,30 @@ endorserBlockFromTxBytes =
   mkEndorserBlock . map reference . toList
  where
   reference :: ByteString -> (TxHash, BytesSize)
-  reference bytes = (castHash $ hashWith @HASH id bytes, fromIntegral $ BS.length bytes)
+  reference bytes = (hashLeiosTx (MkLeiosTx bytes), fromIntegral $ BS.length bytes)
 
 -- | The position of a transaction in its endorser block.
 type TxOffset = Int
+
+-- | Where a transaction's durable bytes live: an endorser block that references
+-- it, and its offset there. A later endorser block referencing the same
+-- transaction copies the bytes from there rather than fetching them again. A
+-- stale location is harmless: if the bytes are gone, nothing is copied and the
+-- transaction is fetched.
+data TxLocation = MkTxLocation !EndorserBlockHash !TxOffset
+  deriving stock (Eq, Show)
+
+-- | The protocol version a tx was validated under, modulo 2. A tx stays
+-- cached for less than an epoch, so it sees at most one version change, and the
+-- parity tells whether its validation still holds.
+data ProtVerParity = EvenProtVer | OddProtVer
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+protVerParity :: ProtVer -> ProtVerParity
+protVerParity pv
+  | even (getVersion64 (pvMajor pv)) = EvenProtVer
+  | otherwise = OddProtVer
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
@@ -410,6 +443,38 @@ maxTxsPerEndorserBlock =
 -- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
+
+-- | What the ledger's bounds on an endorser block measure.
+data LeiosEbSizes = MkLeiosEbSizes
+  { lesBodySize :: !BytesSize
+  -- ^ the size of 'encodeEndorserBlock'
+  , lesTxsSize :: !Word64
+  -- ^ the total size of the transactions it references
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+leiosEbSizes :: EndorserBlock -> LeiosEbSizes
+leiosEbSizes eb =
+  MkLeiosEbSizes
+    (encodeEndorserBlockSize eb)
+    (sum [fromIntegral size | (_txHash, size) <- endorserBlockReferences eb])
+
+-- | The ledger's bounds on an endorser block, as of its slot.
+data LeiosEbBounds = MkLeiosEbBounds
+  { lebMaxBodySize :: !BytesSize
+  -- ^ the largest body the ledger admits
+  , lebMaxTxsSize :: !BytesSize
+  -- ^ the largest total size of the transactions a body may reference
+  }
+  deriving stock (Eq, Show, Bounded, Generic)
+  deriving anyclass NoThunks
+
+-- | Whether these bounds admit an endorser block of these sizes.
+admitsSizes :: LeiosEbBounds -> LeiosEbSizes -> Bool
+admitsSizes bounds sizes =
+  lesBodySize sizes <= lebMaxBodySize bounds
+    && lesTxsSize sizes <= fromIntegral (lebMaxTxsSize bounds)
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

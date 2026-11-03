@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Leios.NotifyLog
   , nextNotifyLog
   , notifyLogPruneCadence
   , notifyLogPruner
+  , leiosOfferRelay
   , notifyLogStart
   , pruneNotifyLog
   ) where
@@ -50,9 +51,22 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
-import Ouroboros.Consensus.Leios.Types (LeiosVote)
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  )
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , ElectionId (..)
+  , LeiosEbBounds
+  , LeiosEbSizes (..)
+  , LeiosPoint (..)
+  , LeiosVote
+  , admitsSizes
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( AnnouncingHeader
+  ( AnnouncingHeader (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -70,9 +84,14 @@ import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | A notification the node relays.
 data Notification blk
-  = NotifyAnnouncement !(AnnouncingHeader blk)
+  = -- | An announcement, with the ledger's bounds on its endorser block as of
+    -- its slot.
+    NotifyAnnouncement !(AnnouncingHeader blk) !LeiosEbBounds
   | NotifyVote !LeiosVote
-  -- TODO: add offers
+  | -- | An offer of an endorser block's body, at its size.
+    NotifyBlockOffer !LeiosPoint !BytesSize
+  | -- | An offer of an endorser block's closure.
+    NotifyBlockTxsOffer !LeiosPoint
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)
@@ -168,3 +187,49 @@ notifyLogPruner systemTime notifyLog = forever $ do
 -- grace a downstream peer gives before it rejects one.
 notifyLogPruneCadence :: NominalDiffTime
 notifyLogPruneCadence = 1
+
+-- | Offer each endorser block body and closure the node acquires, at the point
+-- of each announcement of it that the log still holds, and only then: a
+-- downstream peer that reads the log has then received the announcement before
+-- the offer. Each offer is worth relaying exactly as long as its announcement.
+-- It skips a point whose bounds do not admit the endorser block, since a
+-- downstream peer holds an offer to the bounds as of its point.
+--
+-- The node may announce an acquisition again ('LeiosEbNotification'), so this
+-- skips a point the log already holds that offer at: a downstream peer
+-- disconnects a peer that repeats an offer.
+leiosOfferRelay ::
+  IOLike m =>
+  LeiosAcquisitions m ->
+  NotifyLog m blk ->
+  m Void
+leiosOfferRelay acquisitions notifyLog = do
+  next <- subscribeLeiosAcquisitions acquisitions
+  forever $ atomically $ do
+    acquired <- next
+    entries <- readTVar (notifyEntries notifyLog)
+    expiries <- readTVar (notifyExpiry notifyLog)
+    let announced ebHash =
+          Map.toList $
+            Map.fromList
+              [ (MkLeiosPoint (electionSlot (ancElectionId anc)) ebHash, (expires, bounds))
+              | (expires, ats) <- Map.toList expiries
+              , at <- ats
+              , Just (NotifyAnnouncement anc bounds) <- [Map.lookup at entries]
+              , announcementEbHash (ancAnnouncement anc) == ebHash
+              ]
+        bodyOffered = Set.fromList [p | NotifyBlockOffer p _size <- Map.elems entries]
+        closureOffered = Set.fromList [p | NotifyBlockTxsOffer p <- Map.elems entries]
+    sequence_ $ case acquired of
+      AcquiredEb point sizes ->
+        [ appendNotifyLog notifyLog (NotifyBlockOffer p (lesBodySize sizes)) expires
+        | (p, (expires, bounds)) <- announced (pointEbHash point)
+        , admitsSizes bounds sizes
+        , Set.notMember p bodyOffered
+        ]
+      AcquiredEbTxs point sizes ->
+        [ appendNotifyLog notifyLog (NotifyBlockTxsOffer p) expires
+        | (p, (expires, bounds)) <- announced (pointEbHash point)
+        , admitsSizes bounds sizes
+        , Set.notMember p closureOffered
+        ]

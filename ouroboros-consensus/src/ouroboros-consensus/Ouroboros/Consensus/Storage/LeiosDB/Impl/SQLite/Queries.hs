@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_insert_ebBody
   , sql_prealloc_ebTxBytes
   , sql_fill_ebTxBytes
+  , sql_fill_ebTxBytes_locally
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
   , sql_mark_point_notified
@@ -26,6 +27,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_gc_has_work
   , sql_gc_markable
   , sql_gc_mark
+  , sql_gc_carry_missing_tx_count
+  , sql_gc_drop_superseded
   , sql_sweep_pick_marked
   , sql_gc_ebTxBytes
   , sql_gc_ebTxs
@@ -100,6 +103,31 @@ sql_fill_ebTxBytes =
   "UPDATE ebTxBytes SET txBytes = ?3, filled = 1\n\
   \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
   \  AND length(txBytes) = length(?3)\n\
+  \"
+
+-- | Fill one pre-allocated row from another EB's filled row, if that row holds
+-- the tx this EB lists at this offset. Guarded like 'sql_fill_ebTxBytes', and
+-- also by the two bodies listing the same tx hash at their offsets, so a stale
+-- or wrong location updates nothing. The source's bytes hash to the hash its
+-- body lists, since a write must, so this needs no hashing.
+--
+-- Parameters: 1 = ebHashBytes, 2 = txOffset, 3 = source ebHashBytes,
+-- 4 = source txOffset
+sql_fill_ebTxBytes_locally :: String
+sql_fill_ebTxBytes_locally =
+  "UPDATE ebTxBytes SET filled = 1, txBytes = (\n\
+  \    SELECT src.txBytes FROM ebTxBytes AS src\n\
+  \    WHERE src.ebHashBytes = ?3 AND src.txOffset = ?4\n\
+  \)\n\
+  \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
+  \  AND EXISTS (\n\
+  \    SELECT 1 FROM ebTxs AS dstTx, ebTxs AS srcTx, ebTxBytes AS src\n\
+  \    WHERE dstTx.ebHashBytes = ?1 AND dstTx.txOffset = ?2\n\
+  \      AND srcTx.ebHashBytes = ?3 AND srcTx.txOffset = ?4\n\
+  \      AND srcTx.txHashBytes = dstTx.txHashBytes\n\
+  \      AND src.ebHashBytes = ?3 AND src.txOffset = ?4 AND src.filled = 1\n\
+  \      AND length(src.txBytes) = length(ebTxBytes.txBytes)\n\
+  \  )\n\
   \"
 
 -- | Decrement missingTxCount on every `ebs` row with this EB body hash that
@@ -294,6 +322,35 @@ sql_gc_mark =
   "UPDATE ebs AS c SET status = 3\n\
   \WHERE "
     <> sql_gc_markable
+
+-- | For 'sql_gc_drop_superseded': give each live row of an EB that has older
+-- rows to drop the least closure count among the EB's rows, unless it has one
+-- of its own. Dropping those rows then loses neither the evidence that the
+-- closure is complete nor the count that its remaining transactions decrement
+-- as they arrive.
+sql_gc_carry_missing_tx_count :: String
+sql_gc_carry_missing_tx_count =
+  "UPDATE ebs AS live SET missingTxCount =\n\
+  \  (SELECT MIN(o.missingTxCount) FROM ebs o WHERE o.ebHashBytes = live.ebHashBytes)\n\
+  \WHERE live.missingTxCount IS NULL\n\
+  \  AND (live.status = 1 OR live.ebSlot >= ?1)\n\
+  \  AND EXISTS\n\
+  \    (SELECT 1 FROM ebs old\n\
+  \     WHERE old.ebHashBytes = live.ebHashBytes\n\
+  \       AND old.status IN (0, 2) AND old.ebSlot < ?1\n\
+  \       AND old.missingTxCount IS NOT NULL)"
+
+-- | Delete every row old enough for GC whose EB a live row keeps (pinned, or
+-- announced at or after the frontier @?1@), once 'sql_gc_carry_missing_tx_count'
+-- has run. The EB's body and tx bytes stay: they are the EB's, not the row's.
+sql_gc_drop_superseded :: String
+sql_gc_drop_superseded =
+  "DELETE FROM ebs AS c\n\
+  \WHERE c.status IN (0, 2) AND c.ebSlot < ?1\n\
+  \  AND EXISTS\n\
+  \    (SELECT 1 FROM ebs live\n\
+  \     WHERE live.ebHashBytes = c.ebHashBytes\n\
+  \       AND (live.status = 1 OR live.ebSlot >= ?1))"
 
 -- | Up to @?1@ GC-marked EBs ready to sweep.
 --

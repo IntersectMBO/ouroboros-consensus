@@ -44,7 +44,10 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CS
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( TraceChainSyncServerEvent
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( TraceLeiosFetchClientEvent
+  , TraceLeiosFetchServerEvent
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
@@ -84,6 +87,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
+  , leiosFetchClientTracer :: f TraceLeiosFetchClientEvent
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
   , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
   , leiosDbTracer :: f TraceLeiosDb
@@ -133,6 +137,7 @@ instance
       , blockFetchDecisionTracer = f blockFetchDecisionTracer
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
+      , leiosFetchClientTracer = f leiosFetchClientTracer
       , leiosFetchServerTracer = f leiosFetchServerTracer
       , leiosNotifyClientTracer = f leiosNotifyClientTracer
       , leiosDbTracer = f leiosDbTracer
@@ -182,6 +187,7 @@ nullTracers =
     , blockFetchDecisionTracer = nullTracer
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
+    , leiosFetchClientTracer = nullTracer
     , leiosFetchServerTracer = nullTracer
     , leiosNotifyClientTracer = nullTracer
     , leiosDbTracer = nullTracer
@@ -241,6 +247,7 @@ showTracers tr =
     , blockFetchDecisionTracer = show >$< tr
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
+    , leiosFetchClientTracer = show >$< tr
     , leiosFetchServerTracer = show >$< tr
     , leiosNotifyClientTracer = show >$< tr
     , leiosDbTracer = show >$< tr

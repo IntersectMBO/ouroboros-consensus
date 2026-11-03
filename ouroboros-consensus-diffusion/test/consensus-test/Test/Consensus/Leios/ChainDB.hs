@@ -13,17 +13,23 @@ import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
+  , SlotNo
   , WithOrigin (..)
   , blockHash
   , blockPoint
   , blockSlot
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedEb)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
@@ -34,6 +40,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Util.IOLike (readMVar)
 import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
@@ -65,7 +72,25 @@ tests =
           @?= (blockPoint announcingA, blockPoint certifyingA)
     , testCase "ChainSel selects a certifying block whose closure the LeiosDB held at start" $
         runSimOrThrow tipWithClosureBeforeStart @?= blockPoint certifyingA
+    , testCase "a verified certificate has LeiosFetch fetch the endorser block it certifies" $
+        runSimOrThrow certifiedIsFetched @?= ([(blockSlot announcingA, pointEbHash pointA)], True)
     ]
+
+-- | The node adds 'announcingA' and 'certifyingA', whose certificate ChainSel
+-- verifies. Which endorser blocks the ChainDB then says are certified, by the
+-- slot of their election, and whether LeiosFetch is fetching A.
+certifiedIsFetched :: IOSim s ([(SlotNo, EndorserBlockHash)], Bool)
+certifiedIsFetched = withNode $ \nut -> do
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  addBlocks nut [announcingA, certifyingA]
+  threadDelay 1
+  certified <- atomically $ ChainDB.getLeiosCertifiedEbs (nutChainDB nut)
+  outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nutKernel nut))))
+  pure
+    ( [(electionSlot elId, ebHash) | (elId, ebHash) <- Map.toList certified]
+    , isFocusedEb (pointEbHash pointA) outstanding
+    )
 
 -- | The node holds endorser blocks A and B, with their transactions. The
 -- chain's first block announces A, its second certifies A, and its third
@@ -78,7 +103,7 @@ bodiesAfterGc = withNode $ \nut -> do
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
       await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
-      void $ await =<< writeEbBody writer point eb
+      void $ await =<< writeEbBody writer point eb []
       void $
         await
           =<< writeTxs
@@ -87,6 +112,11 @@ bodiesAfterGc = withNode $ \nut -> do
             [ (offset, BS.replicate (fromIntegral size) 0)
             | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
             ]
+  atomically $
+    mapM_
+      ( \(point, eb) -> announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs point (leiosEbSizes eb))
+      )
+      [(pointA, ebA), (pointB, ebB)]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks nut chain
@@ -127,7 +157,7 @@ heldAcrossRestart whatOfA = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
     await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     case whatOfA of
       BodyOfA -> pure ()
       ClosureOfA ->
@@ -147,7 +177,7 @@ heldAcrossRestart whatOfA = do
     holds nut
   withNodeOverDBs nodeDBs leiosDb $ \nut -> do
     afterRestart <- holds nut
-    addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [certifyingA]
+    addBlocksAfter nut (NotOrigin announcingA) [certifyingA]
     threadDelay 1
     afterAddingAgain <- holds nut
     pure (beforeRestart, afterRestart, afterAddingAgain)
@@ -176,7 +206,7 @@ minoritySibling =
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling nut = do
   addBlocks nut [announcingA, certifyingA]
-  addBlocksAfter nut (NotOrigin (blockSlot announcingA)) [minoritySibling]
+  addBlocksAfter nut (NotOrigin announcingA) [minoritySibling]
 
 rbHashOf :: LeiosTestBlock -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
@@ -200,14 +230,14 @@ ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
 -- body but not its transactions. The tip of the selected chain before they
--- arrive, and after.
+-- arrive and the node announces their acquisition, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
 tipsAroundClosure = withNode $ \nut -> do
   let leiosDb = getLeiosDB (nutKernel nut)
       chainDB = nutChainDB nut
   withWriter leiosDb $ \writer -> do
     await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks nut [announcingA, certifyingA]
@@ -222,6 +252,8 @@ tipsAroundClosure = withNode $ \nut -> do
           [ (offset, BS.replicate (fromIntegral size) 0)
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
+  atomically $
+    announceLeiosAcquisition (nutLeiosAcquisitions nut) (AcquiredEbTxs pointA (leiosEbSizes ebA))
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)
@@ -233,7 +265,7 @@ tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
     await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     void $
       await
         =<< writeTxs

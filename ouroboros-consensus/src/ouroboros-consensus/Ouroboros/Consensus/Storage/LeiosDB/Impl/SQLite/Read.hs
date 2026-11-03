@@ -16,7 +16,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 
 import Cardano.Crypto.Hash (hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Applicative ((<|>))
 import Data.ByteString (ByteString)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
@@ -148,14 +150,19 @@ sqlBatchRetrieveTxs conn ebHash offsets = do
       retrieveLoop stmt []
   -- Zero rows means the EB's body is absent from the volatile partition
   -- entirely (a present body joins every requested offset): copied+evicted.
-  --
-  -- TODO This misses an EB that was copied to the immutable partition, evicted
-  -- from the volatile partition, and then fetched again: until the volatile
-  -- partition has all of its txs again, the missing ones read as absent,
-  -- although the immutable partition holds them.
+  -- Otherwise a tx the volatile partition lacks may still be in the immutable
+  -- partition, if the EB was copied, evicted, and then fetched again.
   if null vol && not (null offsets)
     then immBatchRetrieveTxs conn ebHash offsets
-    else pure vol
+    else case [offset | (offset, _txHash, Nothing) <- vol] of
+      [] -> pure vol
+      missing -> do
+        imm <- immBatchRetrieveTxs conn ebHash missing
+        let immBytes = IntMap.fromList [(offset, bytes) | (offset, _txHash, Just bytes) <- imm]
+        pure
+          [ (offset, txHash, mbBytes <|> IntMap.lookup offset immBytes)
+          | (offset, txHash, mbBytes) <- vol
+          ]
  where
   Conn{conVolDb = db, connVolStmts = VolStmts{stBatchRetrieveTxs = stmt}} = conn
 

@@ -43,7 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, LocalFill, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -73,8 +73,10 @@ data WriteJob
       !LeiosPoint
       -- | the EB body
       !EndorserBlock
+      -- | where to fill its txs from
+      ![LocalFill]
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult (CompletedEbs, [TxOffset]))
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
@@ -175,7 +177,7 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
+  WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"

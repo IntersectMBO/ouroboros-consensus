@@ -39,6 +39,7 @@ import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -114,6 +115,7 @@ run = withRegistry \registry -> do
           Punishment.noPunishment
           predecessorSlot
           (trivialLeiosLedgerView (Proxy @TestBlock))
+          SNothing
 
   chainSyncHandles <- atomically newChainSyncClientHandleCollection
 

@@ -202,10 +202,16 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
+    Ouroboros.Consensus.Leios.TxCache
+    Ouroboros.Consensus.Leios.TxCache.API
+    Ouroboros.Consensus.Leios.TxCache.Optimized
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Ouroboros.Consensus.Leios.TxCache.Reference
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
     Ouroboros.Consensus.Mempool
@@ -225,6 +231,10 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -985,6 +995,7 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1038,7 +1049,7 @@ test-suite leios-storage-test
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:{si-timers, strict-stm},
+    io-classes:si-timers,
     ouroboros-consensus,
     QuickCheck,
     tasty,
@@ -1048,6 +1059,32 @@ test-suite leios-storage-test
     text,
     time,
     unstable-consensus-testlib,
+
+-- Recompiles the LeiosTxCache's hash table and its test with GHC's
+-- array-primop bounds checking, so that an out-of-bounds access fails loudly
+-- instead of silently corrupting memory. It does not depend on the library, so
+-- that it compiles its own, checked copy of the module.
+test-suite leios-txcache-bounds-checked
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs:
+    ouroboros-consensus/test/leios-txcache-bounds-checked
+    ouroboros-consensus-diffusion/test/consensus-test
+    ouroboros-consensus/src/ouroboros-consensus
+
+  main-is: Main.hs
+  other-modules:
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
+
+  ghc-options: -fcheck-prim-bounds
+  build-depends:
+    base,
+    containers,
+    primitive,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
 
 benchmark mempool-bench
   import: common-bench
@@ -1518,13 +1555,16 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.AcquiredEbs
     Test.Consensus.Leios.Cert
     Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Committee
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Codec
+    Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Node
+    Test.Consensus.Leios.LeiosFetch.Replies
     Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Leios.LeiosNotify.Codec
     Test.Consensus.Leios.LeiosNotify.Node
@@ -1532,6 +1572,10 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
+    Test.Consensus.Leios.TxCache
+    Test.Consensus.Leios.TxCache.Optimized
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Test.Consensus.Leios.TxCache.Reference
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
@@ -1591,9 +1635,10 @@ test-suite consensus-diffusion-test
     monoidal-containers ^>=0.6,
     mtl,
     network-mux,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
-    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
+    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols, protocols-tests-lib},
     pretty,
     QuickCheck,
     quickcheck-dynamic ^>=4,

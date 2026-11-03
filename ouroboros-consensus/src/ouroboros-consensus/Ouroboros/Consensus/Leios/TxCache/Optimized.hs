@@ -1,0 +1,533 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
+{-# OPTIONS_GHC -O2 #-}
+
+-- | A 'LeiosTxCache' handle backed by the mutable 'HT.MutableHashTable': the
+-- counterpart to 'Ouroboros.Consensus.Leios.TxCache.newPureLeiosTxCache'. The ~2M-entry tx map lives
+-- in the hash table (value = the tx's refcount, 2-bit state tag and durable
+-- location packed into the 'Word64', see 'mkVal' and 'encodeLoc'); the small
+-- announcement and body state stays in 'Map's behind an
+-- 'MVar' that also serializes every hash-table access (the \"Locked\" ops hold it
+-- for writes; 'withLookupTx' holds it for the read batch). The refcount
+-- maintenance and eviction cascade mirror "Ouroboros.Consensus.Leios.TxCache.Reference" exactly — this
+-- is the mutable re-implementation validated against the pure one.
+--
+-- Only @a = ()@ and @v = 'ProtVerParity'@ are supported (the node's
+-- instantiation), since the value is a bare 'Word64'.
+module Ouroboros.Consensus.Leios.TxCache.Optimized
+  ( newHashTableLeiosTxCache
+  ) where
+
+import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32), hashToPackedBytes)
+import Cardano.Crypto.PackedBytes (unpackBytes)
+import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Monad.Primitive (PrimMonad, PrimState)
+import Data.Bits (unsafeShiftL, unsafeShiftR, (.&.), (.|.))
+import qualified Data.ByteString.Short as SBS
+import qualified Data.Foldable as F
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Word (Word64)
+import Ouroboros.Consensus.Leios.TxCache.API
+  ( BodyState (..)
+  , EbRingIndex (UnsafeEbRingIndex)
+  , FetchArrivalBytes
+  , LeiosTxCache (..)
+  , RefCount (..)
+  , ReferencesTxsByHash (..)
+  , TxArrivalPrior (..)
+  , bucketTxArrival
+  , maxAnnouncementCount
+  , mkEbRingIndex
+  , mkLeiosTxCacheInsertBodySummary
+  , unEbRingIndex
+  )
+import qualified Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable as HT
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , EndorserBlockHash
+  , ProtVerParity (..)
+  , RankingBlockHash
+  , TxHash
+  , TxLocation (..)
+  )
+import Ouroboros.Consensus.Util.IOLike (IOLike)
+import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
+
+-- | The small, map-resident state (the tx map is the hash table, not here).
+data HtState b = HtState
+  { hsAnnouncements :: !(Map SlotNo (NEMap RankingBlockHash EndorserBlockHash))
+  , hsCount :: !Int
+  , hsBodies :: !(Map EndorserBlockHash (BodyState b))
+  , hsPrunedSlot :: !SlotNo
+  -- ^ Greatest slot 'evictOlderThan' has pruned to; 'insertAnnouncement' ignores
+  -- any EB strictly older. Mirrors 'Ouroboros.Consensus.Leios.TxCache.Reference.prunedSlot'.
+  , hsLocRing :: !(Map EbRingIndex EndorserBlockHash)
+  -- ^ The source-EB ring the packed tx locations index into: slot @i@ holds
+  -- the @i@-th (mod 'maxAnnouncementCount') EB advertised via
+  -- 'setTxLocations'. Reuse makes a stored location stale, not wrong: the
+  -- LeiosDb fill guards reject a mismatched source.
+  , hsLocNext :: !Int
+  }
+
+emptyHtState :: HtState b
+emptyHtState = HtState Map.empty 0 Map.empty (SlotNo 0) Map.empty 0
+
+-- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots;
+-- the node uses 22, 'Ouroboros.Consensus.Leios.TxCache.API.defaultLeiosTxCacheShift') and
+-- @k0@\/@k1@ are the SipHash salt (feed a securely-random pair).
+--
+-- Every update masks asynchronous exceptions: it mutates the table in place,
+-- which restoring the 'HtState' cannot undo, so a peer thread killed halfway
+-- through would otherwise leave refcounts that nothing will ever decrement.
+newHashTableLeiosTxCache ::
+  (IOLike m, ReferencesTxsByHash b) =>
+  Int ->
+  Word64 ->
+  Word64 ->
+  m (LeiosTxCache m () ProtVerParity b)
+{-# SPECIALIZE newHashTableLeiosTxCache ::
+  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () ProtVerParity b)
+  #-}
+newHashTableLeiosTxCache nshift k0 k1 = do
+  ht <- HT.new nshift k0 k1
+  stateVar <- MVar.uncheckedNewMVar emptyHtState
+  pure
+    LeiosTxCache
+      { insertAnnouncement = \slot rbh ebh ->
+          MVar.modifyMVarMasked stateVar $ \st ->
+            if slot < hsPrunedSlot st || announcementPresent slot rbh st
+              then pure (st, (Set.empty, Set.empty))
+              else
+                evictWhile
+                  ht
+                  ((> maxAnnouncementCount) . hsCount)
+                  (addAnnouncement slot rbh ebh st)
+                  Set.empty
+                  Set.empty
+      , evictOlderThan = \boundary ->
+          MVar.modifyMVarMasked stateVar $ \st ->
+            let st' = st{hsPrunedSlot = max (hsPrunedSlot st) boundary}
+             in evictWhile ht (oldestIsStale (hsPrunedSlot st')) st' Set.empty Set.empty
+      , insertBody = \ebh b nil snoc ->
+          MVar.modifyMVarMasked stateVar $ \st ->
+            case Map.lookup ebh (hsBodies st) of
+              Nothing -> pure (st, Nothing)
+              Just BodyAlreadyInserted{} -> pure (st, Nothing)
+              Just (BodyNotYetInserted rc) -> do
+                -- bump each tx's refcount and classify its prior state in one
+                -- pass; snoc every referenced tx onto the caller's accumulator at
+                -- its body offset (@nn@), with its durable location if some held
+                -- EB owns its bytes -- the prior word 'bumpTx' returns already
+                -- carries it, so the fill lookup rides this pass.
+                (n, tracked, acquired, validated, w) <-
+                  foldTxReferences
+                    ( \acc txh sz -> do
+                        (!nn, !tt, !aa, !vv, !w) <- acc
+                        mv <- bumpTx ht txh
+                        let (dt, da, dv) = priorClass mv
+                            mbLoc = do
+                              (ringIdx, off) <- valLoc =<< mv
+                              srcEb <- Map.lookup ringIdx (hsLocRing st)
+                              Just (MkTxLocation srcEb off)
+                            w' = snoc w nn txh sz mbLoc
+                        pure (nn + 1, tt + dt, aa + da, vv + dv, w')
+                    )
+                    (pure (0, 0, 0, 0, nil))
+                    b
+                cacheTxCount <- HT.size ht
+                let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
+                pure
+                  ( st'
+                  , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount, w)
+                  )
+      , lookupBody = \ebh ->
+          MVar.withMVar stateVar $ \st ->
+            pure $ case Map.lookup ebh (hsBodies st) of
+              Just (BodyAlreadyInserted _ b) -> Just b
+              _ -> Nothing
+      , withLockedInsertUnappliedTx = \k ->
+          MVar.modifyMVarMasked stateVar $ \st -> do
+            fab <- k mempty (\fab txh sz () -> setTag ht TxAlreadyInserted fab txh sz)
+            pure (st, fab)
+      , withLockedInsertAppliedTx = \k ->
+          MVar.modifyMVarMasked_ stateVar $ \st -> do
+            () <- k () (\() txh parity -> setTag_ ht (TxAlreadyValidated parity) txh)
+            pure st
+      , withLookupTx = \k ->
+          MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
+      , setTxLocations = \ebh offTxs ->
+          MVar.modifyMVarMasked stateVar $ \st -> do
+            -- An EB's closure arrives over one or more batches, each a separate
+            -- call; all must land in the single slot the EB holds. Claim a new
+            -- slot only the first time an EB is seen (while it still occupies the
+            -- ring); claiming one per batch would wrap the ring every
+            -- 'maxAnnouncementCount' /batches/ rather than EBs, overwriting slots
+            -- still referenced by recent EBs.
+            let (slot, locNext') = case ringSlotOf ebh st of
+                  Just s -> (s, hsLocNext st)
+                  Nothing ->
+                    (UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount), hsLocNext st + 1)
+            F.for_ offTxs $ \(off, txh) -> do
+              let key = toKey txh
+              mv <- HT.lookup ht key
+              -- NOTE: Latest location wins: the newest source EB outlives older
+              -- ones in both the ring and the db
+              F.for_ mv $ \w ->
+                HT.insert ht key (encodeLoc slot off .|. (w .&. 0xFFFFFFFF))
+            pure
+              ( st
+                  { hsLocRing = Map.insert slot ebh (hsLocRing st)
+                  , hsLocNext = locNext'
+                  }
+              , ()
+              )
+      }
+
+{-------------------------------------------------------------------------------
+  Announcement \/ body state (mirrors LeiosTxCacheIndex, txs excepted)
+-------------------------------------------------------------------------------}
+
+-- | The ring slot an EB currently occupies, if it still does. Scans the ring,
+-- at most 'maxAnnouncementCount' entries.
+ringSlotOf :: EndorserBlockHash -> HtState b -> Maybe EbRingIndex
+ringSlotOf ebh = fmap fst . F.find ((== ebh) . snd) . Map.toList . hsLocRing
+
+announcementPresent :: SlotNo -> RankingBlockHash -> HtState b -> Bool
+announcementPresent slot rbh st =
+  maybe False (NEMap.member rbh) (Map.lookup slot (hsAnnouncements st))
+
+addAnnouncement :: SlotNo -> RankingBlockHash -> EndorserBlockHash -> HtState b -> HtState b
+addAnnouncement slot rbh ebh st =
+  HtState
+    { hsAnnouncements =
+        Map.alter
+          (Just . maybe (NEMap.singleton rbh ebh) (NEMap.insert rbh ebh))
+          slot
+          (hsAnnouncements st)
+    , hsCount = hsCount st + 1
+    , hsBodies =
+        Map.alter
+          (Just . maybe (BodyNotYetInserted (MkRefCount 1)) incBodyRc)
+          ebh
+          (hsBodies st)
+    , hsPrunedSlot = hsPrunedSlot st
+    , hsLocRing = hsLocRing st
+    , hsLocNext = hsLocNext st
+    }
+
+-- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the state: the shared
+-- core of the two eviction entrypoints (count-driven from 'insertAnnouncement',
+-- slot-driven from 'evictOlderThan'). Mirrors 'Ouroboros.Consensus.Leios.TxCache.Reference.evictWhile'.
+evictWhile ::
+  (PrimMonad m, ReferencesTxsByHash b) =>
+  HT.MutableHashTable (PrimState m) ->
+  (HtState b -> Bool) ->
+  HtState b ->
+  Set EndorserBlockHash ->
+  Set TxHash ->
+  m (HtState b, (Set EndorserBlockHash, Set TxHash))
+{-# SPECIALIZE evictWhile ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  (HtState b -> Bool) ->
+  HtState b ->
+  Set EndorserBlockHash ->
+  Set TxHash ->
+  IO (HtState b, (Set EndorserBlockHash, Set TxHash))
+  #-}
+evictWhile ht shouldEvict = go
+ where
+  go st !evEbs !evTxs
+    | shouldEvict st = do
+        (st', ebs', txs') <- evictOldest ht st
+        go st' (evEbs <> ebs') (evTxs <> txs')
+    | otherwise = pure (st, (evEbs, evTxs))
+
+-- | Whether the oldest retained announcement's slot is strictly older than the
+-- boundary. The slot-driven eviction predicate.
+oldestIsStale :: SlotNo -> HtState b -> Bool
+oldestIsStale boundary st = case Map.lookupMin (hsAnnouncements st) of
+  Just (slotMin, _) -> slotMin < boundary
+  Nothing -> False
+
+evictOldest ::
+  (PrimMonad m, ReferencesTxsByHash b) =>
+  HT.MutableHashTable (PrimState m) ->
+  HtState b ->
+  m (HtState b, Set EndorserBlockHash, Set TxHash)
+{-# SPECIALIZE evictOldest ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  HtState b ->
+  IO (HtState b, Set EndorserBlockHash, Set TxHash)
+  #-}
+evictOldest ht st = do
+  let (slotMin, nem) = Map.findMin (hsAnnouncements st)
+      (rbhMin, ebhEvicted) = NEMap.findMin nem
+      announcements' = case NEMap.nonEmptyMap (NEMap.delete rbhMin nem) of
+        Nothing -> Map.delete slotMin (hsAnnouncements st)
+        Just nem' -> Map.insert slotMin nem' (hsAnnouncements st)
+  (bodies', evEbs, evTxs) <- decBody ht ebhEvicted (hsBodies st)
+  -- Mirror 'Ouroboros.Consensus.Leios.TxCache.Reference.evictOldest': a body eviction prunes the EB's
+  -- rows, so free its ring slot. Txs held only by the evicted EB then resolve to
+  -- no location (and are fetched) rather than to a pruned/stale source.
+  let hsLocRing'
+        | Set.member ebhEvicted evEbs
+        , Just evSlot <- ringSlotOf ebhEvicted st =
+            Map.delete evSlot (hsLocRing st)
+        | otherwise = hsLocRing st
+  pure
+    ( HtState
+        { hsAnnouncements = announcements'
+        , hsCount = hsCount st - 1
+        , hsBodies = bodies'
+        , hsPrunedSlot = hsPrunedSlot st
+        , hsLocRing = hsLocRing'
+        , hsLocNext = hsLocNext st
+        }
+    , evEbs
+    , evTxs
+    )
+
+decBody ::
+  (PrimMonad m, ReferencesTxsByHash b) =>
+  HT.MutableHashTable (PrimState m) ->
+  EndorserBlockHash ->
+  Map EndorserBlockHash (BodyState b) ->
+  m (Map EndorserBlockHash (BodyState b), Set EndorserBlockHash, Set TxHash)
+{-# SPECIALIZE decBody ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  EndorserBlockHash ->
+  Map EndorserBlockHash (BodyState b) ->
+  IO (Map EndorserBlockHash (BodyState b), Set EndorserBlockHash, Set TxHash)
+  #-}
+decBody ht ebh bodies = case Map.lookup ebh bodies of
+  Nothing -> pure (bodies, Set.empty, Set.empty)
+  Just bs -> case decRefCount (bodyRefCount bs) of
+    Just rc' -> pure (Map.insert ebh (setBodyRefCount rc' bs) bodies, Set.empty, Set.empty)
+    Nothing -> do
+      evTxs <- case bs of
+        BodyNotYetInserted _ -> pure Set.empty
+        BodyAlreadyInserted _ b -> decBodyTxs ht b
+      pure (Map.delete ebh bodies, Set.singleton ebh, evTxs)
+
+decBodyTxs ::
+  (PrimMonad m, ReferencesTxsByHash b) =>
+  HT.MutableHashTable (PrimState m) ->
+  b ->
+  m (Set TxHash)
+{-# SPECIALIZE decBodyTxs ::
+  ReferencesTxsByHash b => HT.MutableHashTable (PrimState IO) -> b -> IO (Set TxHash)
+  #-}
+decBodyTxs ht =
+  foldTxReferences
+    ( \act txh _sz -> do
+        s <- act
+        evicted <- decTx ht txh
+        pure (if evicted then Set.insert txh s else s)
+    )
+    (pure Set.empty)
+
+{-------------------------------------------------------------------------------
+  Refcount helpers (RefCount's own inc\/dec are internal to LeiosTxCacheIndex)
+-------------------------------------------------------------------------------}
+
+incBodyRc :: BodyState b -> BodyState b
+incBodyRc (BodyNotYetInserted (MkRefCount n)) = BodyNotYetInserted (MkRefCount (n + 1))
+incBodyRc (BodyAlreadyInserted (MkRefCount n) b) = BodyAlreadyInserted (MkRefCount (n + 1)) b
+
+bodyRefCount :: BodyState b -> RefCount
+bodyRefCount (BodyNotYetInserted rc) = rc
+bodyRefCount (BodyAlreadyInserted rc _) = rc
+
+setBodyRefCount :: RefCount -> BodyState b -> BodyState b
+setBodyRefCount rc (BodyNotYetInserted _) = BodyNotYetInserted rc
+setBodyRefCount rc (BodyAlreadyInserted _ b) = BodyAlreadyInserted rc b
+
+decRefCount :: RefCount -> Maybe RefCount
+decRefCount (MkRefCount n)
+  | n <= 1 = Nothing
+  | otherwise = Just (MkRefCount (n - 1))
+
+{-------------------------------------------------------------------------------
+  Tx map operations, over the hash table
+-------------------------------------------------------------------------------}
+
+-- | A tx's state, the low two bits of its packed value.
+data TxTag
+  = -- | Referenced by a held body, but not held.
+    TxNotYetInserted
+  | TxAlreadyInserted
+  | TxAlreadyValidated !ProtVerParity
+  deriving Eq
+
+encodeTxTag :: TxTag -> Word64
+encodeTxTag = \case
+  TxNotYetInserted -> 0
+  TxAlreadyInserted -> 1
+  TxAlreadyValidated EvenProtVer -> 2
+  TxAlreadyValidated OddProtVer -> 3
+
+-- | Total: every two-bit value is a tag.
+decodeTxTag :: Word64 -> TxTag
+decodeTxTag w = case w .&. 3 of
+  0 -> TxNotYetInserted
+  1 -> TxAlreadyInserted
+  2 -> TxAlreadyValidated EvenProtVer
+  _ -> TxAlreadyValidated OddProtVer
+
+-- The packed value is @(TxState, Maybe TxLocation)@ flattened into a 'Word64':
+--
+-- > bit  63     62..56   55..32     31..2      1..0
+-- >      valid  ringIdx  txOffset   refcount   tag
+-- >      └──── Maybe TxLocation ┘   └── TxState ──┘
+--
+-- Bit 63 is the location's @Just@\/@Nothing@ tag: a fresh entry is all zeroes
+-- in the high half, and ring slot 0 \/ offset 0 is a legitimate location, so
+-- absence needs its own bit. The ring index names a slot of 'hsLocRing'
+-- (7 bits ↔ 'maxAnnouncementCount' slots); 24 offset bits cover the wire's
+-- 22-bit addressable range. Only 'setTxLocations' writes the high half; every
+-- 'TxState' write preserves it via 'withLoc', and entry deletion drops it.
+
+-- | @(refcount << 2) | tag@ — the low ('TxState') half only, location cleared.
+mkVal :: Word64 -> TxTag -> Word64
+mkVal rc tag = ((rc .&. 0x3FFFFFFF) `unsafeShiftL` 2) .|. encodeTxTag tag
+
+valRefcount :: Word64 -> Word64
+valRefcount w = (w .&. 0xFFFFFFFF) `unsafeShiftR` 2
+
+valTag :: Word64 -> TxTag
+valTag = decodeTxTag
+
+-- | Carry an existing value's location onto a rebuilt low word.
+withLoc :: Word64 -> Word64 -> Word64
+withLoc old new = (old .&. 0xFFFFFFFF00000000) .|. (new .&. 0xFFFFFFFF)
+
+-- | @Just (ringIdx, txOffset)@ as a high half: valid bit set, low word zero
+-- (combine with the entry's 'TxState' half via @.|.@). The ring index is
+-- 'EbRingIndex', so it fits the 7-bit field by construction.
+encodeLoc :: EbRingIndex -> Int -> Word64
+encodeLoc ringIdx off =
+  ( 0x80000000
+      .|. (fromIntegral (unEbRingIndex ringIdx) `unsafeShiftL` 24)
+      .|. (fromIntegral off .&. 0xFFFFFF)
+  )
+    `unsafeShiftL` 32
+
+-- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set, and the 7-bit ring
+-- field is re-checked through 'mkEbRingIndex' (so a field out of the ring's bounds
+-- declines the location rather than keying it wrongly).
+valLoc :: Word64 -> Maybe (EbRingIndex, Int)
+valLoc w
+  | hi .&. 0x80000000 == 0 = Nothing
+  | otherwise = do
+      ringIdx <- mkEbRingIndex (fromIntegral ((hi `unsafeShiftR` 24) .&. 0x7F))
+      Just (ringIdx, fromIntegral (hi .&. 0xFFFFFF))
+ where
+  hi = w `unsafeShiftR` 32
+
+-- | A body now refers to this tx: create at refcount 1 (NotYetInserted) or bump.
+-- Returns the tx's /prior/ packed value ('Nothing' if it was untracked), so the
+-- caller can classify it without a second lookup.
+bumpTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe Word64)
+{-# SPECIALIZE bumpTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe Word64) #-}
+bumpTx ht txh = do
+  let key = toKey txh
+  mv <- HT.lookup ht key
+  case mv of
+    Nothing -> HT.insert ht key (mkVal 1 TxNotYetInserted)
+    Just w -> HT.insert ht key (withLoc w (mkVal (valRefcount w + 1) (valTag w)))
+  pure mv
+
+-- | Classify a tx's prior packed value into @(tracked, acquired, validated)@ count
+-- deltas for the insert-body summary.
+priorClass :: Maybe Word64 -> (Int, Int, Int)
+priorClass Nothing = (0, 0, 0)
+priorClass (Just w) = case valTag w of
+  TxAlreadyValidated _ -> (1, 1, 1)
+  TxAlreadyInserted -> (1, 1, 0)
+  TxNotYetInserted -> (1, 0, 0)
+
+-- | An evicted body no longer refers to this tx: decrement, deleting (and
+-- reporting) it at zero.
+decTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m Bool
+{-# SPECIALIZE decTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO Bool #-}
+decTx ht txh = do
+  let key = toKey txh
+  mv <- HT.lookup ht key
+  case mv of
+    Nothing -> pure False
+    Just w
+      | valRefcount w <= 1 -> HT.delete ht key >> pure True
+      | otherwise -> HT.insert ht key (withLoc w (mkVal (valRefcount w - 1) (valTag w))) >> pure False
+
+-- | Set a present tx's state tag, preserving its refcount; no-op if absent.
+setTag_ :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxTag -> TxHash -> m ()
+{-# SPECIALIZE setTag_ :: HT.MutableHashTable (PrimState IO) -> TxTag -> TxHash -> IO () #-}
+setTag_ ht tag txh = do
+  let key = toKey txh
+  mv <- HT.lookup ht key
+  case mv of
+    Nothing -> pure ()
+    Just w -> HT.insert ht key (withLoc w (mkVal (valRefcount w) tag))
+
+-- | Like 'setTag', but also maintains a 'FetchArrivalBytes'
+setTag ::
+  PrimMonad m =>
+  HT.MutableHashTable (PrimState m) ->
+  TxTag ->
+  FetchArrivalBytes ->
+  TxHash ->
+  BytesSize ->
+  m FetchArrivalBytes
+{-# SPECIALIZE setTag ::
+  HT.MutableHashTable (PrimState IO) ->
+  TxTag ->
+  FetchArrivalBytes ->
+  TxHash ->
+  BytesSize ->
+  IO FetchArrivalBytes
+  #-}
+setTag ht tag fab txh sz = do
+  let key = toKey txh
+  mv <- HT.lookup ht key
+  case mv of
+    Nothing -> pure $! fab <> bucketTxArrival TxWasUntracked sz
+    Just w -> do
+      HT.insert ht key (withLoc w (mkVal (valRefcount w) tag))
+      let !cls = if valTag w == TxNotYetInserted then TxWasNotYetInserted else TxWasAlreadyHeld
+      pure $! fab <> bucketTxArrival cls sz
+
+lookupOne ::
+  PrimMonad m =>
+  HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe (Either () ProtVerParity))
+{-# SPECIALIZE lookupOne ::
+  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe (Either () ProtVerParity))
+  #-}
+lookupOne ht txh = do
+  mv <- HT.lookup ht (toKey txh)
+  pure $ case mv of
+    Nothing -> Nothing
+    Just w -> case valTag w of
+      TxAlreadyInserted -> Just (Left ())
+      TxAlreadyValidated parity -> Just (Right parity)
+      TxNotYetInserted -> Nothing -- referenced but not held
+
+-- | The 32-byte hash as the table's four-word 'HT.Key' (big-endian words).
+toKey :: TxHash -> HT.Key
+toKey txh = case hashToPackedBytes txh of
+  PackedBytes32 w0 w1 w2 w3 -> HT.Key w0 w1 w2 w3
+  -- A 32-byte hash is always 'PackedBytes32'; this arm is unreachable and pays
+  -- a copy only if it ever runs.
+  pb -> HT.Key (wordAt 0) (wordAt 8) (wordAt 16) (wordAt 24)
+   where
+    bytes = unpackBytes pb
+    wordAt i = foldl (\acc j -> acc `unsafeShiftL` 8 .|. fromIntegral (SBS.index bytes (i + j))) 0 [0 .. 7]
