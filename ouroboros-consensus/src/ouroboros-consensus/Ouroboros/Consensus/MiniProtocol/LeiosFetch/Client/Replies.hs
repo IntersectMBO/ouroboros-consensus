@@ -71,8 +71,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( BodySource (..)
-  , EbFetchState (..)
+  ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -278,7 +277,7 @@ processLeiosBlock ctx peer req eb = do
           -- the pruning window forfeits this, costing one more body fetch from
           -- the next peer to serve it.
           pure
-            ( acquireEbBody point (OversizedBody sizes) Jobs.emptyLeiosJobPool cleaned
+            ( acquireEbBody point sizes Jobs.emptyLeiosJobPool cleaned
             , (Nothing, fetchArrivalInvalid ebBytesSize)
             )
       | tooOld -> pure (cleaned, (Nothing, fetchArrivalEvicted ebBytesSize))
@@ -379,7 +378,7 @@ settleBody ctx point eb now pointWritten bodyWritten = do
             lfcNotify $
               AcquiredEbTxs point sizes
         pure
-          ( acquireEbBody point (FetchedBody sizes) jobPool outstanding'
+          ( acquireEbBody point sizes jobPool outstanding'
           , Just (onset, jobPool)
           )
       _ -> pure (outstanding, Nothing)
@@ -465,7 +464,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- and writing a transaction again is harmless.
   outstanding0 <- readMVar lfcOutstanding
   let pendingJobs = case Map.lookup point (ebState outstanding0) of
-        Just (MkEbState _onset (BodyAcquired _source jobPool)) ->
+        Just (MkEbState _onset (BodyAcquired _sizes jobPool)) ->
           Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         Just (MkEbState _onset NoBody) -> IntMap.empty
         Nothing -> IntMap.empty
@@ -527,7 +526,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       let outstanding' = completeTxRequest peer req outstanding
       case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
         ( Just (MkEbState _ (BodyAcquired _ before))
-          , Just (MkEbState onset (BodyAcquired (FetchedBody sizes) after))
+          , Just (MkEbState onset (BodyAcquired sizes after))
           )
             | not (Jobs.nullLeiosJobPool before)
             , Jobs.nullLeiosJobPool after -> do

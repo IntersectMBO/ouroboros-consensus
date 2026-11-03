@@ -27,8 +27,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( BodySource (..)
-  , EbFetchState (..)
+  ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -167,7 +166,7 @@ test_noRefetchOversized = do
         empty
           & withMissingBody (point 1 'a') 1024
           & onOutstanding
-            (acquireEbBody (point 1 'a') (OversizedBody (MkLeiosEbSizes 1024 5000)) Jobs.emptyLeiosJobPool)
+            (acquireEbBody (point 1 'a') (MkLeiosEbSizes 1024 5000) Jobs.emptyLeiosJobPool)
           & offersBody peerA [point 1 'a']
       within maxBody maxTxs _slot = Right (MkLeiosEbBounds maxBody maxTxs)
   runIterationWith (within 1023 5000) sc & assertNoRequests
@@ -207,7 +206,7 @@ test_completeAfterRebuild =
   misses offs = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offs]
   acquire at offs o =
     let (pool, o') = newLeiosJobPool env{maxJobTxCount = 1} (misses offs) o
-     in (pool, acquireEbBody at (FetchedBody (MkLeiosEbSizes 1000 0)) pool o')
+     in (pool, acquireEbBody at (MkLeiosEbSizes 1000 0) pool o')
   (oldPool, held) =
     acquire p [0, 1]
       . recordReferencedPoint p SNothing
@@ -221,7 +220,7 @@ test_completeAfterRebuild =
       $ pruneOutstandingToImmTip (SlotNo 20) held
   later = point 30 'a'
   poolOf o = case Map.lookup later (ebState o) of
-    Just (MkEbState _onset (BodyAcquired _source pool)) -> Just pool
+    Just (MkEbState _onset (BodyAcquired _sizes pool)) -> Just pool
     Just (MkEbState _onset NoBody) -> Nothing
     Nothing -> Nothing
 
@@ -250,7 +249,7 @@ test_bigLedgerPeerBudget = do
           (\o -> o{requestedBytesSizePerPeer = Map.singleton peerA used})
             -- the election fetching it, without which nothing is requested
             . focusElectionIfUnfocused (ElectionId (SlotNo 10) fixtureElectee) (eb 'a')
-            . acquireEbBody p (FetchedBody (MkLeiosEbSizes 1000 0)) jobPool
+            . acquireEbBody p (MkLeiosEbSizes 1000 0) jobPool
             . recordReferencedPoint p SNothing
             $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
         (_o, reqs, _d) =
