@@ -8,14 +8,16 @@
 --
 -- The vote weight an announcement collected by the time the next block
 -- arrives is its participation, a share of total stake like the quorum
--- threshold. Only announcements whose next block came late enough to certify
--- them count. Each one that missed the quorum cuts the endorser-block capacity
--- by a factor, and each one that made it adds a step back, which the forge
--- applies before it cuts the mempool snapshot.
+-- threshold. Each announcement that reached the quorum adds a step back to the
+-- endorser-block capacity, which the forge applies before it cuts the mempool
+-- snapshot. Only one whose next block came late enough to certify it can miss
+-- the quorum, and each that did cuts the capacity by a factor: an earlier
+-- block cut its votes short.
 --
--- The controller does not anticipate: a quorum made with any margin leaves the
--- capacity alone. Recovery is slow on purpose, so too big a limit costs a few
--- misses and then stays cut for long.
+-- The controller does not anticipate: a quorum made with any margin never
+-- cuts. The cut is deep and the recovery gradual, because a missed quorum loses
+-- a whole endorser block while too small a one loses a share of it, and a
+-- backlog keeps endorser blocks full until the cut gets them under the cliff.
 module LeiosAdaptiveEndorsements
   ( LeiosAdaptiveEbConfig (..)
   , defaultLeiosAdaptiveEbConfig
@@ -92,7 +94,7 @@ defaultLeiosAdaptiveEbConfig :: LeiosAdaptiveEbConfig
 defaultLeiosAdaptiveEbConfig =
   MkLeiosAdaptiveEbConfig
     { aebDecrease = 0.8
-    , aebIncrease = 0.01
+    , aebIncrease = 0.02
     , aebMinScale = 0.1
     }
 
@@ -208,7 +210,9 @@ runAdaptiveEndorsements tracer cfg lcfg chainDB voteState caughtUp scaleVar =
     voters <- queryVoters voteState rbHash
     let participation = fromRational (sum voters)
         missedQuorum = any (sum voters <) mThreshold
+        reachedQuorum = any (sum voters >=) mThreshold
         scale'
+          | reachedQuorum = stepAdaptiveEb cfg False scale
           | certifiable = stepAdaptiveEb cfg missedQuorum scale
           | otherwise = scale
     atomically $ writeTVar scaleVar (toRational scale')

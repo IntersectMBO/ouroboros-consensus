@@ -1702,7 +1702,7 @@ data TraceLeiosKernel
       }
   | -- | The block after an announcement arrived, so the node took the vote
     -- weight the announcement had collected. Only an announcement whose
-    -- certification was possible moves the endorser-block capacity scale.
+    -- certification was possible can cut the endorser-block capacity scale.
     TraceLeiosAdaptiveEb
       { ebPoint :: LeiosPoint
       , participation :: Double
