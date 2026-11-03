@@ -57,9 +57,10 @@ tests =
     , testCase "a restart keeps a certifying block on the selection" $
         runSimOrThrow (heldAcrossRestart ClosureOfA) @?= (True, True, True)
     , testCase "the GC keeps an endorser block an immutable block certifies" $
-        fst (runSimOrThrow bodiesAfterGc) @?= endorserBlockReferences ebA
+        fst (runSimOrThrow bodiesAfterGc)
+          @?= Just (serialiseEndorserBlock ebA)
     , testCase "the GC evicts an endorser block no block certifies" $
-        snd (runSimOrThrow bodiesAfterGc) @?= []
+        snd (runSimOrThrow bodiesAfterGc) @?= Nothing
     , testCase "ChainSel parks a certifying block until the closure arrives" $
         runSimOrThrow tipsAroundClosure
           @?= (blockPoint announcingA, blockPoint certifyingA)
@@ -72,7 +73,7 @@ tests =
 -- announces B, which nothing certifies. Once the immutable tip has passed both
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
-bodiesAfterGc :: IOSim s ([(TxHash, BytesSize)], [(TxHash, BytesSize)])
+bodiesAfterGc :: IOSim s (Maybe BS.ByteString, Maybe BS.ByteString)
 bodiesAfterGc = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
   withWriter leiosDb $ \writer ->

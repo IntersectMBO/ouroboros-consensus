@@ -84,7 +84,12 @@ ebsTable extraColumns =
 -- without moving rows between B-tree pages.
 sharedTables :: [String]
 sharedTables =
-  [ "CREATE TABLE IF NOT EXISTS ebTxs ("
+  [ -- The EB body in the bytes it arrived in, one row per EB hash.
+    "CREATE TABLE IF NOT EXISTS ebBodies ("
+  , "  ebHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , "  body BLOB NOT NULL"
+  , ");"
+  , "CREATE TABLE IF NOT EXISTS ebTxs ("
   , "  ebHashBytes BLOB NOT NULL,"
   , "  txOffset INTEGER NOT NULL,"
   , "  txHashBytes BLOB NOT NULL,"

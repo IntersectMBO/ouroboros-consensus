@@ -51,6 +51,8 @@ module Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , encodeEndorserBlock
   , decodeEndorserBlock
+  , serialiseEndorserBlock
+  , deserialiseEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
   , referencesCapacity
@@ -94,7 +96,7 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
-  , SafeToHash (originalBytesSize)
+  , SafeToHash (originalBytes, originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
@@ -106,6 +108,7 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -390,6 +393,22 @@ decodeEndorserBlock = do
         <> " bytes exceeds "
         <> show maxEndorserBlockBytesSize
   pure eb
+
+-- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
+-- received in, or the ledger's encoding of one this node built.
+serialiseEndorserBlock :: EndorserBlock -> ByteString
+serialiseEndorserBlock (MkEndorserBlock references) = originalBytes references
+
+-- | The inverse of 'serialiseEndorserBlock', with 'decodeEndorserBlock'.
+deserialiseEndorserBlock :: ByteString -> Either String EndorserBlock
+deserialiseEndorserBlock bytes =
+  case deserialiseFromBytes decodeEndorserBlock lazyBytes of
+    Left err -> Left (show err)
+    Right (rest, eb)
+      | BSL.null rest -> Right (eb lazyBytes)
+      | otherwise -> Left (show (BSL.length rest) <> " bytes after the endorser block")
+ where
+  lazyBytes = BSL.fromStrict bytes
 
 -- | The most bytes 'encodeEndorserBlock' writes besides the references, for an
 -- endorser block that 'mkEndorserBlock' built: its map header. Each
