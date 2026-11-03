@@ -50,6 +50,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertSeenView (..)
+  , PerasCandidate (..)
   , PerasVotingView (..)
   )
 import Ouroboros.Consensus.Util.Pred
@@ -87,7 +88,7 @@ isPerasVotingAllowed ::
 isPerasVotingAllowed pvv =
   evalPred (perasVotingRules pvv) $ \e ->
     case e of
-      ETrue{} -> Vote e (candidateBlock pvv)
+      ETrue{} -> Vote e (pcCandidate $ candidateBlock pvv)
       EFalse{} -> NoVote e
 
 -- | Voting rules
