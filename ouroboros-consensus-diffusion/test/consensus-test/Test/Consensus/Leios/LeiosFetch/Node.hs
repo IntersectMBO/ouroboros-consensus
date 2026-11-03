@@ -224,15 +224,9 @@ tests =
                     , AcquiredBody refocusedPoint
                     , AcquiredClosure refocusedPoint
                     ]
-                  ,
-                    [ RelayedAnnouncement
-                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer fetchedPoint
-                    , RelayedAnnouncement
-                    , RelayedAnnouncement
-                    , RelayedBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer refocusedPoint
-                    ]
+                  , relayedFetchedAt fetchedPoint
+                      <> [RelayedAnnouncement]
+                      <> relayedFetchedAt refocusedPoint
                   )
               )
     , testCase "the node fetches the endorser block a header its peer rolls forward certifies" $
@@ -243,11 +237,7 @@ tests =
         $ runSimFinishing nodeFetchesRolledForward
           >>= ( @?=
                   ( [AcquiredBody fetchedPoint, AcquiredClosure fetchedPoint]
-                  ,
-                    [ RelayedAnnouncement
-                    , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer fetchedPoint
-                    ]
+                  , relayedFetchedAt fetchedPoint
                   )
               )
     , testCase "the node takes a peer that jumps over a certifying header as offering what it certifies" $
@@ -289,12 +279,7 @@ tests =
         $ runSimFinishing nodeFetchesAfterPruningEarlier
           >>= ( @?=
                   ( [AcquiredBody refocusedPoint, AcquiredClosure refocusedPoint]
-                  ,
-                    [ RelayedAnnouncement
-                    , RelayedAnnouncement
-                    , RelayedBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
-                    , RelayedBlockTxsOffer refocusedPoint
-                    ]
+                  , RelayedAnnouncement : relayedFetchedAt refocusedPoint
                   )
               )
     , testCase
@@ -324,10 +309,7 @@ tests =
         "the node relays an announcement to a peer that connects after it, before offering that peer the endorser block"
         $ runSimFinishing nodeAnnouncesToLateListener
           >>= ( @?=
-                  [ RelayedAnnouncement
-                  , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-                  , RelayedBlockTxsOffer fetchedPoint
-                  ]
+                  relayedFetchedAt fetchedPoint
               )
     , testCase
         "the node disconnects a peer that offers an endorser block's body again once the node has requested it"
@@ -472,13 +454,7 @@ nodeFetchesCertifiedThird = withNode $ \nut -> do
       [announcingOther, announcingAnother]
     mapM_ (writeTQueue holderNotifications) (announcingAndOffering fetchedEb announcingFetched)
   let announcer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut announcerNotifications
-          , epLeiosNotifyClient = Just (lsNotifyClient heard)
-          , epLeiosFetchServer = silentLeiosFetchServer nut
-          , epLeiosFetchClient = Just (lsFetchClient heard)
-          }
+        (listening nut heard){epLeiosNotifyServer = feedingLeiosNotifyServer nut announcerNotifications}
       holder =
         EnvPeer
           { epChainSyncServer = quietChainSyncServer
@@ -511,18 +487,9 @@ nodeReacquiresHeld = withNode $ \nut -> do
   atomically $
     mapM_
       (writeTQueue notifications)
-      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
-      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-      , MsgLeiosBlockTxsOffer fetchedPoint
-      ]
+      (announcingAndOffering fetchedEb announcingFetched)
   let envPeer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient listener)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient listener)
-          }
+        holdingFetchedListening nut notifications listener
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
     acquired <- replicateM 2 $ acquiredOf <$> atomically next
     reacquired <- forM [reannouncingFetched, reannouncingFetchedAgain] $ \blk -> do
@@ -545,18 +512,9 @@ nodeReacquiresCertified = withNode $ \nut -> do
   atomically $
     mapM_
       (writeTQueue notifications)
-      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
-      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-      , MsgLeiosBlockTxsOffer fetchedPoint
-      ]
+      (announcingAndOffering fetchedEb announcingFetched)
   let envPeer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient listener)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient listener)
-          }
+        holdingFetchedListening nut notifications listener
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
     acquired <- replicateM 2 $ acquiredOf <$> atomically next
     atomically $
@@ -912,13 +870,7 @@ nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
       (writeTQueue notifications . MsgLeiosBlockAnnouncement . ltbHeader)
       [announcingFetched, reannouncingFetched]
   let envPeer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient listener)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient listener)
-          }
+        holdingFetchedListening nut notifications listener
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
@@ -938,12 +890,7 @@ nodeFetchesAfterPruningEarlier = withNode $ \nut -> do
 -- 'announcingAndOffering' 'fetchedEb' 'announcingFetched', once it acquires
 -- 'fetchedEb'.
 relayedFetchedAfterRival :: [Relayed]
-relayedFetchedAfterRival =
-  [ RelayedAnnouncement
-  , RelayedAnnouncement
-  , RelayedBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
-  , RelayedBlockTxsOffer fetchedPoint
-  ]
+relayedFetchedAfterRival = RelayedAnnouncement : relayedFetchedAt fetchedPoint
 
 -- | Which of 'announcingFetched' and 'certifyingFetched' the node adds first.
 data CertifyingArrival = CertifyingAfterAnnouncing | CertifyingBeforeAnnouncing
@@ -966,13 +913,7 @@ nodeSelectsCertifiedRival arrival = withNode $ \nut -> do
       MsgLeiosBlockAnnouncement (ltbHeader announcingOther)
         : announcingAndOffering fetchedEb announcingFetched
   let envPeer =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient listener)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient listener)
-          }
+        holdingFetchedListening nut notifications listener
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
@@ -1188,13 +1129,7 @@ nodeReselectsForgotten = do
       writeTQueue rivalNotifications (MsgLeiosBlockAnnouncement (ltbHeader announcingOther))
       mapM_ (writeTQueue holderNotifications) (announcingAndOffering fetchedEb announcingFetched)
     let rival =
-          EnvPeer
-            { epChainSyncServer = quietChainSyncServer
-            , epLeiosNotifyServer = feedingLeiosNotifyServer nut rivalNotifications
-            , epLeiosNotifyClient = Just (lsNotifyClient heardByRival)
-            , epLeiosFetchServer = silentLeiosFetchServer nut
-            , epLeiosFetchClient = Just (lsFetchClient heardByRival)
-            }
+          (listening nut heardByRival){epLeiosNotifyServer = feedingLeiosNotifyServer nut rivalNotifications}
         holder =
           EnvPeer
             { epChainSyncServer = quietChainSyncServer
@@ -1228,21 +1163,9 @@ nodeAnnouncesToLateListener = withNode $ \nut -> do
   atomically $
     writeTQueue notifications (MsgLeiosBlockAnnouncement (ltbHeader announcingFetched))
   let holder =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = feedingLeiosNotifyServer nut notifications
-          , epLeiosNotifyClient = Just (lsNotifyClient heardByHolder)
-          , epLeiosFetchServer = servingFetched nut
-          , epLeiosFetchClient = Just (lsFetchClient heardByHolder)
-          }
+        holdingFetchedListening nut notifications heardByHolder
       listener =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = \_chan -> atomically retry
-          , epLeiosNotifyClient = Just (lsNotifyClient heardByListener)
-          , epLeiosFetchServer = silentLeiosFetchServer nut
-          , epLeiosFetchClient = Just (lsFetchClient heardByListener)
-          }
+        listening nut heardByListener
   withNodeVsEnvConnection nut (PeerAddr 1) holder $ \_holderConn -> do
     -- The node relays an announcement only once it has taken it in.
     atomically $ readTVar (lsRelayed heardByHolder) >>= check . not . null
@@ -1363,13 +1286,7 @@ nodeOffersLyingEb arrival = withNode $ \nut -> do
   holderNotifications <- newTQueueIO
   liarNotifications <- newTQueueIO
   let listener =
-        EnvPeer
-          { epChainSyncServer = quietChainSyncServer
-          , epLeiosNotifyServer = \_chan -> atomically retry
-          , epLeiosNotifyClient = Just (lsNotifyClient heard)
-          , epLeiosFetchServer = silentLeiosFetchServer nut
-          , epLeiosFetchClient = Just (lsFetchClient heard)
-          }
+        listening nut heard
       holder =
         EnvPeer
           { epChainSyncServer = quietChainSyncServer
@@ -1830,6 +1747,20 @@ holdingFetched nut notifications =
     , epLeiosNotifyClient = Nothing
     , epLeiosFetchServer = servingFetched nut
     , epLeiosFetchClient = Nothing
+    }
+
+-- | 'holdingFetched', which also listens to the node as the listener does.
+holdingFetchedListening ::
+  NodeUnderTest (IOSim s) ->
+  StrictTQueue
+    (IOSim s)
+    (Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle) ->
+  Listener s ->
+  EnvPeer (IOSim s)
+holdingFetchedListening nut notifications listener =
+  (holdingFetched nut notifications)
+    { epLeiosNotifyClient = Just (lsNotifyClient listener)
+    , epLeiosFetchClient = Just (lsFetchClient listener)
     }
 
 -- | A peer that only listens.
