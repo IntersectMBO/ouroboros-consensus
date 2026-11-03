@@ -235,6 +235,8 @@ mkTestGroups impl =
           withFreshDb impl test_fillWithoutSourceBytes
       , testCase "a body whose fills complete its closure completes it" $
           withFreshDb impl test_fillCompletesClosure
+      , testCase "a second write of a body reports what the point holds" $
+          withFreshDb impl test_secondBodyWriteReportsHeld
       ]
   , testGroup
       "completion"
@@ -639,6 +641,19 @@ test_fillCompletesClosure db = do
     result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation pointA 1)]
     result @?= [0]
     holdsClosure con pointB >>= (@?= True)
+
+-- | A second write of a body at a point, with no fills of its own, reports the
+-- txs the point holds, as the settlement of whichever write settles first
+-- needs.
+test_secondBodyWriteReportsHeld :: LeiosDbHandle IO -> IO ()
+test_secondBodyWriteReportsHeld db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation pointA 1)] >>= (@?= [0])
+    rwInsertEbBodyFilling con pointB ebB [] >>= (@?= [0])
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    rwInsertEbBodyFilling con pointB ebB [] >>= (@?= [0, 1])
 
 -- * Garbage collection
 

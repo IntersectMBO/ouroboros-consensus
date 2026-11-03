@@ -267,7 +267,9 @@ imInsertEbBody stateVar point eb fills = do
     unless (IntMap.null filled) $
       modifyTVar stateVar $ \s ->
         s{imEbTxBytes = Map.insertWith IntMap.union point filled (imEbTxBytes s)}
-    pure (IntMap.keys filled)
+    -- Including what earlier writes filled, which a second delivery of the
+    -- same body cannot fill again.
+    (\s -> IntMap.keys (volatileTxBytes s point)) <$> readTVar stateVar
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
   -- declared and has no bytes for yet, and only from a source holding bytes of

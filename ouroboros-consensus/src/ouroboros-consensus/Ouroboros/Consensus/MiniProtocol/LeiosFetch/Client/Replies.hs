@@ -335,8 +335,8 @@ processLeiosBlock ctx peer req eb = do
   closureTooBig = closureBytesSize > fromIntegral lebMaxTxsSize
   tooBig = bodyTooBig || closureTooBig
 
--- | Hold the body, now that its write is durable, with the jobs that the
--- write's fills left to fetch, and emit what is acquired. Nothing if the point
+-- | Hold the body, now that its write is durable, with the jobs for the txs
+-- the point does not hold yet, and emit what is acquired. Nothing if the point
 -- was pruned meanwhile, or another delivery of it settled first.
 --
 -- TODO The LeiosDB's GC normally collects a point only after the fetch state
@@ -352,13 +352,13 @@ settleBody ::
   Promise m [TxOffset] ->
   m ()
 settleBody ctx point eb now bodyWritten = do
-  filledOffs <- await bodyWritten
+  heldOffs <- await bodyWritten
   acquired <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
       Just (MkEbState onset NoBody) -> do
         let
           jobPool =
-            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList filledOffs)
+            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList heldOffs)
         atomically $ do
           lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
           when (Jobs.nullLeiosJobPool jobPool) $
@@ -371,7 +371,7 @@ settleBody ctx point eb now bodyWritten = do
       _ -> pure (outstanding, Nothing)
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- filledOffs]
+  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
   void $ tryPutMVar lfcReady ()
   forM_ acquired $ \(onset, jobPool) -> do
     traceWith lfcTracer $ TraceLeiosFetchClientBlockAcquired point (ageAt now onset)

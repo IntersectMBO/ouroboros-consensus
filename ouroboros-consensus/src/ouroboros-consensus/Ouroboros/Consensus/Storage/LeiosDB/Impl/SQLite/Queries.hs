@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_prealloc_ebTxBytes
   , sql_fill_ebTxBytes
   , sql_fill_ebTxBytes_locally
+  , sql_held_offsets
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
   , sql_retrieve_from_ebTxs_json
@@ -113,6 +114,15 @@ sql_fill_ebTxBytes_locally =
   \      AND src.filled = 1\n\
   \      AND length(src.txBytes) = length(ebTxBytes.txBytes)\n\
   \  )\n\
+  \"
+
+-- | The offsets at which the point holds its txs' bytes, ascending: a range of
+-- the primary key, at most one row per tx the body references.
+sql_held_offsets :: String
+sql_held_offsets =
+  "SELECT txOffset FROM ebTxBytes\n\
+  \WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND filled = 1\n\
+  \ORDER BY txOffset\n\
   \"
 
 -- | Decrement the point's missingTxCount, if it has one, by the number of

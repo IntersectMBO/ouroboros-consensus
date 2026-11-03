@@ -109,9 +109,11 @@ data LeiosDbWriter m = LeiosDbWriter
   -- Every point stores its own body and txs, even when another point names the
   -- same EB.
   --
-  -- Returns the offsets that actually filled: a fill whose source does not
-  -- hold the tx this body lists at its offset fills nothing, and that tx stays
-  -- fetchable.
+  -- Returns the offsets at which the point holds its txs once the write is
+  -- done, whether this write's fills or earlier writes filled them: a second
+  -- delivery of the same body cannot fill again what an earlier one filled. A
+  -- fill whose source does not hold the tx this body lists at its offset fills
+  -- nothing, and that tx stays fetchable.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
