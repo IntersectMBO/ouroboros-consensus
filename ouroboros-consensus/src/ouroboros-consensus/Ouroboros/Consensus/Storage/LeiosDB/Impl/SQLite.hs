@@ -16,9 +16,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   , sql_schema_vol
   , sql_schema_imm
   , sql_insert_eb
-  , sql_insert_ebBody
-  , sql_prealloc_ebTxBytes
-  , sql_fill_ebTxBytes
+  , sql_insert_eb_body
+  , sql_insert_eb_closure
   ) where
 
 import Cardano.Prelude (forM_, when)
@@ -355,9 +354,9 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
             WriteEbPoint point size resultVar ->
               publish resultVar (sqlInsertEbPoint conn point size) >> pure Continue
             WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn point eb) >> pure Continue
+              publish resultVar (sqlInsertEbBody conn point eb) >> pure Continue
             WriteTxs point txs resultVar ->
-              publish resultVar (sqlInsertTxs tracer conn point txs) >> pure Continue
+              publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
             PinEb ebHashes resultVar -> do
