@@ -76,13 +76,16 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
+  , SerialisedEndorserBlock (..)
   , TxHash
+  , deserialiseEndorserBlock
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , leiosEbSizes
   , mkEndorserBlock
+  , serialiseEndorserBlock
   , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -163,7 +166,7 @@ import Ouroboros.Network.Block (Tip (..))
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
-import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
+import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -1428,7 +1431,7 @@ withholding ::
   IOSim s ()
 withholding nut requested chan =
   fst
-    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer withhold)
+    <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer withhold)
  where
   withhold = MkLeiosFetchRequestHandler $ \_request -> do
     atomically $ writeTVar requested True
@@ -1700,7 +1703,7 @@ newListenerWith nut immTip offset = do
               )
       , lsFetchClient = \chan ->
           fst
-            <$> runAnnotatedPeer
+            <$> runPeer
               nullTracer
               (envLeiosFetchCodec nut)
               chan
@@ -1754,7 +1757,7 @@ requestingBody :: LeiosPoint -> (EndorserBlock -> EnvClient s) -> EnvClient s
 requestingBody point k =
   Yield ReflClientAgency (MsgLeiosBlockRequest point) $
     Await ReflServerAgency $ \case
-      MsgLeiosBlock eb -> k eb
+      MsgLeiosBlock eb -> k (unsafeDeserialise eb)
 
 -- | A LeiosNotify server that sends what the queue holds, as the node asks.
 feedingLeiosNotifyServer ::
@@ -1791,7 +1794,7 @@ serving ::
   IOSim s ()
 serving eb txs nut chan =
   fst
-    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer (serveEb eb txs))
+    <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer (serveEb eb txs))
 
 -- | A peer that serves the chain over ChainSync, and says nothing over the Leios
 -- mini-protocols.
@@ -1825,9 +1828,11 @@ relayedOf = \case
 -- | Serve the endorser block and its transactions.
 serveEb ::
   Monad m =>
-  EndorserBlock -> V.Vector LeiosTx -> LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
+  EndorserBlock ->
+  V.Vector LeiosTx ->
+  LeiosFetchRequestHandler LeiosPoint SerialisedEndorserBlock LeiosTx m
 serveEb eb txs = MkLeiosFetchRequestHandler $ \case
-  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock eb)
+  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock (serialiseEndorserBlock eb))
   MsgLeiosBlockTxsRequest _point bitmaps ->
     pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (txs V.!?) (bitmapOffsets bitmaps)
 
@@ -1946,7 +1951,13 @@ data ServerOutcome = ServerEnded | ServerFailed String
   deriving (Eq, Show)
 
 type EnvClient s =
-  Peer (LeiosFetch LeiosPoint EndorserBlock LeiosTx) AsClient NonPipelined StIdle (IOSim s) ()
+  Peer
+    (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)
+    AsClient
+    NonPipelined
+    StIdle
+    (IOSim s)
+    ()
 
 -- | Run the node's server, with 'heldEb' in its LeiosDB, against a peer that
 -- runs this client.
@@ -1968,7 +1979,7 @@ nodeServerAgainst client = withNode $ \nut -> do
       Left e -> pure $ ServerFailed (show e)
 
 runEnvClient :: NodeUnderTest (IOSim s) -> EnvClient s -> Channel (IOSim s) ByteString -> IOSim s ()
-runEnvClient nut client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan client
+runEnvClient nut client chan = fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan client
 
 doneClient :: EnvClient s
 doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
@@ -1992,7 +2003,13 @@ requestBlock :: LeiosPoint -> StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s
 requestBlock point replyVar =
   Yield ReflClientAgency (MsgLeiosBlockRequest point) $
     Await ReflServerAgency $ \case
-      MsgLeiosBlock eb -> Effect $ doneClient <$ atomically (writeTVar replyVar (Just (ReplyBlock eb)))
+      MsgLeiosBlock eb ->
+        Effect $ doneClient <$ atomically (writeTVar replyVar (Just (ReplyBlock (unsafeDeserialise eb))))
+
+-- | The endorser block a test peer received, which the test expects to decode.
+unsafeDeserialise :: SerialisedEndorserBlock -> EndorserBlock
+unsafeDeserialise (MkSerialisedEndorserBlock bytes) =
+  either (error . ("unsafeDeserialise: " <>)) id $ deserialiseEndorserBlock bytes
 
 -- | A client that requests transactions, keeps the reply, and sends 'MsgDone'.
 requestTxs :: LeiosPoint -> TxBitmaps -> StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s

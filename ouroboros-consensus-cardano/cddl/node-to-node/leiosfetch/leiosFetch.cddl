@@ -25,10 +25,14 @@ point = [slot, eb_hash]
 slot = uint .size 8
 eb_hash = bytes .size 32
 
+; the version of the endorser block's encoding, then its bytes, which its hash
+; is of; only version 0 so far
+endorser_block = [0, #6.24(bytes .cbor eb_references)]
+
 ; the hash and size of each transaction the endorser block names, as the
 ; ledger's dijkstra.eb_references: the order of the entries is the order of the
 ; transactions, and no hash occurs twice
-endorser_block = { + tx_hash => tx_size }
+eb_references = { + tx_hash => tx_size }
 tx_hash = bytes .size 32
 tx_size = uint .size 4
 

@@ -19,10 +19,11 @@ import qualified Data.ByteString as BS
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlock
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , LeiosTx (..)
+  , SerialisedEndorserBlock
   , mkEndorserBlock
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
@@ -76,7 +77,7 @@ leiosFetchClient ::
   ControlMessageSTM m ->
   LeiosPeerLifetimeId peer ->
   LeiosFetchPeer m blk ->
-  LeiosFetchClientPeerPipelined LeiosPoint EndorserBlock LeiosTx m ()
+  LeiosFetchClientPeerPipelined LeiosPoint SerialisedEndorserBlock LeiosTx m ()
 leiosFetchClient kernel controlMessageSTM lifetimeId peerVars =
   toLeiosFetchClientPeerPipelined $
     leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
@@ -92,7 +93,7 @@ leiosFetchServer ::
   MonadCatch m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
-  LeiosFetchServerPeer LeiosPoint EndorserBlock LeiosTx m ()
+  LeiosFetchServerPeer LeiosPoint SerialisedEndorserBlock LeiosTx m ()
 leiosFetchServer tracer reader =
   leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
     MsgLeiosBlockRequest point ->
@@ -111,7 +112,7 @@ serveEb ::
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
-  m EndorserBlock
+  m SerialisedEndorserBlock
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
@@ -123,7 +124,7 @@ serveEb tracer reader point = do
       let n = length refs
       traceWith tracer $ TraceLeiosFetchServerBlockServed point n
       -- In this node's preferred encoding; see the TODO on 'lookupEbBody'.
-      pure $ mkEndorserBlock refs
+      pure $ serialiseEndorserBlock (mkEndorserBlock refs)
 
 serveTxs ::
   MonadThrow m =>

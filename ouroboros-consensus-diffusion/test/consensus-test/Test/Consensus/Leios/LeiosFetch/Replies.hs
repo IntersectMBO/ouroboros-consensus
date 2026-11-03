@@ -7,6 +7,8 @@ module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
+import qualified Codec.CBOR.Encoding as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , atomically
@@ -47,10 +49,13 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , RankingBlockHash (..)
+  , SerialisedEndorserBlock (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , hashEndorserBlockBytes
   , hashLeiosTx
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
@@ -99,6 +104,12 @@ tests =
         test_acquisitions
     , testCase "the client disconnects a peer whose body has another hash" $
         test_wrongHash
+    , testCase "the client disconnects a peer whose body has another hash, without decoding it" $
+        test_wrongHashUndecodable
+    , testCase "the client disconnects a peer whose body has the hash but does not decode" $
+        test_undecodable
+    , testCase "the client disconnects a peer whose body is not in an envelope" $
+        test_noEnvelope
     , testCase
         "the client announces a body at the newer slot an election focused it at while it was being written, which the LeiosDB then holds"
         test_refocusedWhileWriting
@@ -193,7 +204,11 @@ test_acquisitions :: Assertion
 test_acquisitions = do
   let (point, eb, txs) = fixture
   (ctx, notes) <- newContext
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   -- The peer offers the closure, so the decision logic asks it for the jobs.
   reqs <-
@@ -223,11 +238,73 @@ test_wrongHash = do
         ctx
         peer
         (MkLeiosBlockRequest point (encodeEndorserBlockSize other) maxBound)
-        other
+        (serialiseEndorserBlock other)
   case result of
     Left (ExnLeiosBlockWrongHash p h) -> (p, h) @?= (point, endorserBlockHash other)
     Left exn -> assertFailure $ "unexpected exception: " <> show exn
     Right () -> assertFailure "the client accepted a body with another hash"
+  atomically (readTVar notes) >>= (@?= [])
+
+-- | Bytes that are no endorser block.
+notAnEndorserBlock :: BS8.ByteString
+notAnEndorserBlock = BS8.pack "not an endorser block"
+
+-- | These bytes in the envelope of version 0, as an endorser block's.
+enveloped :: BS8.ByteString -> SerialisedEndorserBlock
+enveloped bytes =
+  MkSerialisedEndorserBlock $
+    CBOR.toStrictByteString $
+      CBOR.encodeListLen 2 <> CBOR.encodeWord 0 <> CBOR.encodeTag 24 <> CBOR.encodeBytes bytes
+
+test_noEnvelope :: Assertion
+test_noEnvelope = do
+  let (point, _eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  result <-
+    try $
+      processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (fromIntegral (BS8.length notAnEndorserBlock)) maxBound)
+        (MkSerialisedEndorserBlock notAnEndorserBlock)
+  case result of
+    Left (ExnLeiosBlockUndecodable p _err) -> p @?= point
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client accepted bytes that are no endorser block"
+  atomically (readTVar notes) >>= (@?= [])
+
+test_wrongHashUndecodable :: Assertion
+test_wrongHashUndecodable = do
+  let (point, _eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  result <-
+    try $
+      processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (fromIntegral (BS8.length notAnEndorserBlock)) maxBound)
+        (enveloped notAnEndorserBlock)
+  case result of
+    Left (ExnLeiosBlockWrongHash p h) -> (p, h) @?= (point, hashEndorserBlockBytes notAnEndorserBlock)
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client accepted a body with another hash"
+  atomically (readTVar notes) >>= (@?= [])
+
+test_undecodable :: Assertion
+test_undecodable = do
+  let point = MkLeiosPoint (SlotNo 5) (hashEndorserBlockBytes notAnEndorserBlock)
+  (ctx, notes) <- newContext
+  result <-
+    try $
+      processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (fromIntegral (BS8.length notAnEndorserBlock)) maxBound)
+        (enveloped notAnEndorserBlock)
+  case result of
+    Left (ExnLeiosBlockUndecodable p _err) -> p @?= point
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client accepted bytes that are no endorser block"
   atomically (readTVar notes) >>= (@?= [])
 
 -- | An election focuses the 'fixture' at a newer slot while its body is being
@@ -238,7 +315,11 @@ test_refocusedWhileWriting = do
       newer = MkLeiosPoint (SlotNo 7) (pointEbHash point)
   written <- newEmptyTMVarIO
   (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   modifyMVar_ (lfcOutstanding ctx) $
     pure . recordMaxAnnouncementSlot (pointEbHash point) (pointSlotNo newer) SNothing
   atomically $ putTMVar written ()
@@ -256,7 +337,11 @@ test_collectedWhileWriting = do
       newer = MkLeiosPoint (SlotNo 8) ebHash
   written <- newEmptyTMVarIO
   (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   -- What 'processLeiosBlock' itself signals, so that what is left to await is
   -- the body's settlement.
   takeMVar (lfcReady ctx)
@@ -285,7 +370,11 @@ test_collectedAndRewrittenWhileWriting filled = do
   written <- newEmptyTMVarIO
   (ctx, notes) <- newContextHolding (atomically (readTMVar written))
   holdSource ctx (take filled txs)
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   takeMVar (lfcReady ctx)
   modifyMVar_ (lfcOutstanding ctx) $ pure . snd . pruneOutstandingToImmTip (SlotNo 6)
   garbageCollect (lfcLeiosDb ctx) (SlotNo 6)

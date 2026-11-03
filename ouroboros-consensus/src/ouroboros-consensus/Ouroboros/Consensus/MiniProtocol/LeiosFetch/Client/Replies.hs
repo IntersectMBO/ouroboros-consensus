@@ -58,11 +58,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , ProtVerParity
+  , SerialisedEndorserBlock (..)
   , TxHash
-  , endorserBlockHash
+  , deserialiseEndorserBlock
   , endorserBlockReferences
+  , hashEndorserBlockBytes
   , hashLeiosTx
   , leiosEbSizes
+  , unwrapEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -138,6 +141,12 @@ data ExnLeiosFetchInvalidReply
       !LeiosPoint
       -- | the hash of what arrived
       !EndorserBlockHash
+  | -- | The bytes are not an endorser block in its envelope, or have the
+    -- requested hash but are not an endorser block.
+    ExnLeiosBlockUndecodable
+      !LeiosPoint
+      -- | why they do not decode
+      !String
   | -- | The endorser block has the requested hash, but not the size the peer
     -- offered it at.
     ExnLeiosBlockWrongSize
@@ -195,15 +204,16 @@ nextLeiosFetchClientCommand ::
   StrictTVar m (Seq LeiosFetchRequest) ->
   m
     ( Either
-        (m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
-        (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
+        (m (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m)))
+        (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m))
     )
 nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
   atomically checkOrBlock >>= \case
     Just result -> pure $ Right result
     Nothing -> pure $ Left (atomically awaitStopOrRequest)
  where
-  checkOrBlock :: STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
+  checkOrBlock ::
+    STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m)))
   checkOrBlock =
     controlMessageSTM >>= \case
       Terminate -> pure $ Just $ Left ()
@@ -218,7 +228,8 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
           pure $ Just $ Right $ toJob req
         Seq.Empty -> pure Nothing
 
-  awaitStopOrRequest :: STM m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
+  awaitStopOrRequest ::
+    STM m (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m))
   awaitStopOrRequest = checkOrBlock >>= maybe retry pure
 
   -- Replies are processed right on the pipelined peer's collector thread:
@@ -239,7 +250,8 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
 -- | Take in an endorser block that arrived in reply to this request.
 --
 -- The hash is the whole of it: these bytes either are the endorser block we
--- asked for or they are not, and no announcement gets a say. Bytes that are
+-- asked for or they are not, and no announcement gets a say. So the bytes are
+-- hashed before they are decoded. Bytes that are
 -- the right block but not the size the peer offered still cost the peer its
 -- connection, but only once we have taken the body: throwing them away would
 -- let a peer deny us an endorser block just by lowballing its own offer. Bytes
@@ -251,13 +263,39 @@ processLeiosBlock ::
   LeiosFetchClientContext m peer ->
   peer ->
   LeiosBlockRequest ->
+  SerialisedEndorserBlock ->
+  m ()
+processLeiosBlock ctx peer req (MkSerialisedEndorserBlock serialised) =
+  case unwrapEndorserBlock serialised of
+    Left err -> invalid (BS.length serialised) $ ExnLeiosBlockUndecodable point err
+    Right (_version, bytes) -> do
+      when (hashEndorserBlockBytes bytes /= ebHash) $
+        invalid (BS.length bytes) $
+          ExnLeiosBlockWrongHash point (hashEndorserBlockBytes bytes)
+      case deserialiseEndorserBlock serialised of
+        Left err -> invalid (BS.length bytes) $ ExnLeiosBlockUndecodable point err
+        Right eb -> processEndorserBlock ctx peer req eb
+ where
+  point = lbrPoint req
+  ebHash = pointEbHash point
+
+  invalid :: Int -> ExnLeiosFetchInvalidReply -> m ()
+  invalid size exn = do
+    traceWith (lfcTracer ctx) $
+      TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid (fromIntegral size))
+    throwIO exn
+
+-- | 'processLeiosBlock', once the bytes are the requested endorser block.
+processEndorserBlock ::
+  forall peer m.
+  (Ord peer, IOLike m) =>
+  LeiosFetchClientContext m peer ->
+  peer ->
+  LeiosBlockRequest ->
   EndorserBlock ->
   m ()
-processLeiosBlock ctx peer req eb = do
+processEndorserBlock ctx peer req eb = do
   now <- systemTimeCurrent lfcSystemTime
-  when (endorserBlockHash eb /= ebHash) $ do
-    traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid ebBytesSize)
-    throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
   -- The lock decides whether this is a novel, still relevant body, so two peers
   -- delivering the same body cannot both write it.
   (fills, arrival) <- modifyMVar lfcOutstanding $ \outstanding -> do

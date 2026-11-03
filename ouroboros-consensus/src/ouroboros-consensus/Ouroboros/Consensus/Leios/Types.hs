@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
@@ -48,9 +49,17 @@ module Ouroboros.Consensus.Leios.Types
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , hashEndorserBlockBytes
   , endorserBlockReferences
   , encodeEndorserBlock
-  , decodeEndorserBlock
+  , SerialisedEndorserBlock (..)
+  , endorserBlockVersion
+  , envelopeLedgerVersion
+  , serialiseEndorserBlock
+  , unwrapEndorserBlock
+  , deserialiseEndorserBlock
+  , encodeSerialisedEndorserBlock
+  , decodeSerialisedEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
   , LeiosEbSizes (..)
@@ -83,12 +92,10 @@ import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
-  , EncCBOR (..)
   , FullByteString (..)
   , Version
   , getVersion64
   , toPlainDecoder
-  , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Ledger.Core (eraProtVerLow)
@@ -99,7 +106,7 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
-  , SafeToHash (originalBytesSize)
+  , SafeToHash (originalBytes, originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
@@ -111,6 +118,8 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -119,7 +128,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
@@ -282,17 +291,26 @@ newtype EndorserBlock = MkEndorserBlock Ledger.EbReferences
 
 instance ShowProxy EndorserBlock where showProxy _ = "EndorserBlock"
 
--- | The protocol version endorser blocks are encoded at.
---
--- NOTE: We do not intend to use endorser blocks across eras, encoded or not.
-endorserBlockVersion :: Version
-endorserBlockVersion = eraProtVerLow @DijkstraEra
+-- | The version of the envelope this node builds endorser blocks in, see
+-- 'serialiseEndorserBlock'.
+endorserBlockVersion :: Word
+endorserBlockVersion = 0
 
--- | An endorser block naming these transactions, in this order.
+-- | The ledger version the bytes in an envelope of this version decode at, if
+-- the version is known: only Dijkstra's so far, as the era tag around a block
+-- selects the version its bytes decode at. Whether it matches the ledger state
+-- is for whoever votes on or adopts the endorser block to check.
+envelopeLedgerVersion :: Word -> Maybe Version
+envelopeLedgerVersion = \case
+  0 -> Just (eraProtVerLow @DijkstraEra)
+  _ -> Nothing
+
+-- | An endorser block naming these transactions, in this order, as of
+-- 'endorserBlockVersion'.
 mkEndorserBlock :: [(TxHash, BytesSize)] -> EndorserBlock
 mkEndorserBlock =
   MkEndorserBlock
-    . Ledger.mkEbReferences endorserBlockVersion
+    . Ledger.mkEbReferences (eraProtVerLow @DijkstraEra)
     . IsList.fromList
     . map (\(txHash, txSize) -> (unsafeMakeSafeHash txHash, txSize))
 
@@ -333,6 +351,11 @@ protVerParity pv
 endorserBlockHash :: EndorserBlock -> EndorserBlockHash
 endorserBlockHash (MkEndorserBlock references) = extractHash $ hashAnnotated references
 
+-- | The hash 'endorserBlockHash' gives the endorser block of these bytes,
+-- without decoding them.
+hashEndorserBlockBytes :: ByteString -> EndorserBlockHash
+hashEndorserBlockBytes = castHash . hashWith @HASH id
+
 -- | The transactions an endorser block names, in order.
 endorserBlockReferences :: EndorserBlock -> [(TxHash, BytesSize)]
 endorserBlockReferences (MkEndorserBlock references) =
@@ -362,42 +385,104 @@ sizeEndorserBlockReference (ByteSize32 txSize) =
 -- encoding changes, both must change with it.
 encodeEndorserBlock :: EndorserBlock -> Encoding
 encodeEndorserBlock (MkEndorserBlock references) =
-  toPlainEncoding endorserBlockVersion $ encCBOR references
+  CBOR.encodePreEncoded (originalBytes references)
 
--- | The inverse of 'encodeEndorserBlock', given the whole input it decoded
--- from, not just the endorser block's bytes: the ledger's annotator slices
--- them by the byte offsets of this decoder's run. Like the ledger, it rejects
+-- | An endorser block in its envelope, @[version, #6.24(bytes)]@, as
+-- LeiosFetch sends it and the LeiosDB stores it, as it is: the version of its
+-- encoding, like the era tag around the headers of ChainSync, then the bytes
+-- it was received in, or the ledger's encoding of one this node built,
+-- CBOR-in-CBOR. Its hash and size are of those bytes.
+newtype SerialisedEndorserBlock = MkSerialisedEndorserBlock
+  { serialisedEndorserBlockBytes :: ByteString
+  }
+  deriving stock (Eq, Show)
+
+instance ShowProxy SerialisedEndorserBlock where
+  showProxy _ = "SerialisedEndorserBlock"
+
+-- | An endorser block in its envelope of 'endorserBlockVersion'.
+serialiseEndorserBlock :: EndorserBlock -> SerialisedEndorserBlock
+serialiseEndorserBlock (MkEndorserBlock references) =
+  MkSerialisedEndorserBlock $ envelope endorserBlockVersion (originalBytes references)
+
+envelope :: Word -> ByteString -> ByteString
+envelope version bytes =
+  toStrictByteString $
+    CBOR.encodeListLen 2
+      <> CBOR.encodeWord version
+      <> CBOR.encodeTag 24
+      <> CBOR.encodeBytes bytes
+
+-- | The envelope as it is.
+encodeSerialisedEndorserBlock :: SerialisedEndorserBlock -> Encoding
+encodeSerialisedEndorserBlock (MkSerialisedEndorserBlock bytes) = CBOR.encodePreEncoded bytes
+
+-- | An envelope, without decoding the endorser block's bytes. It rejects an
+-- unknown version, and bytes beyond 'maxEndorserBlockBytesSize'.
+decodeSerialisedEndorserBlock :: Decoder s (SerialisedEndorserBlock)
+decodeSerialisedEndorserBlock = do
+  (version, bytes) <- decodeEnvelope
+  pure $ MkSerialisedEndorserBlock $ envelope version bytes
+
+decodeEnvelope :: Decoder s (Word, ByteString)
+decodeEnvelope =
+  decodeRecordNamed (T.pack "EndorserBlock") (const 2) $ do
+    version <- CBOR.decodeWord
+    when (isNothing (envelopeLedgerVersion version)) $
+      fail $
+        "unknown endorser block version " <> show version
+    tag <- CBOR.decodeTag
+    when (tag /= 24) $
+      fail $
+        "endorser block bytes in tag " <> show tag <> " rather than 24"
+    bytes <- CBOR.decodeBytes
+    -- Nothing currently bounds the number of references more tightly than
+    -- this bound on the bytes does, ie by 'maxTxsPerEndorserBlock'.
+    when (BS.length bytes > fromIntegral maxEndorserBlockBytesSize) $
+      fail $
+        "endorser block of "
+          <> show (BS.length bytes)
+          <> " bytes exceeds "
+          <> show maxEndorserBlockBytesSize
+    pure (version, bytes)
+
+-- | The version and the endorser block's bytes in an envelope, without
+-- decoding the latter, eg to hash them first.
+unwrapEndorserBlock :: ByteString -> Either String (Word, ByteString)
+unwrapEndorserBlock serialised =
+  case deserialiseFromBytes decodeEnvelope (BSL.fromStrict serialised) of
+    Left err -> Left (show err)
+    Right (rest, unwrapped)
+      | BSL.null rest -> Right unwrapped
+      | otherwise -> Left (show (BSL.length rest) <> " bytes after the endorser block")
+
+-- | The inverse of 'serialiseEndorserBlock'. It decodes the endorser block's
+-- bytes at the ledger version of the envelope's. Like the ledger, it rejects
 -- an empty map of transaction references and one naming a transaction twice.
--- It also rejects one whose bytes exceed 'maxEndorserBlockBytesSize'. It can
--- tell only after decoding them (if endorser blocks were wrapped as
--- CBOR-in-CBOR, it would know their length before decoding them, even from an
--- indefinite-length byte string), since a CBOR map gives its number of entries
--- rather than of bytes. So the byte limit of the message carrying it must keep
--- small the work it does before then, eg
--- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'.
 --
--- The endorser block keeps its slice of those bytes, so its hash and encoding
--- are of the bytes received.
-decodeEndorserBlock :: Decoder s (BSL.ByteString -> EndorserBlock)
-decodeEndorserBlock = do
-  start <- CBOR.peekByteOffset
-  eb <-
-    toPlainDecoder Nothing endorserBlockVersion $
+-- The endorser block keeps those bytes, so its hash and encoding are of the
+-- bytes received.
+deserialiseEndorserBlock :: ByteString -> Either String EndorserBlock
+deserialiseEndorserBlock serialised = do
+  (version, bytes) <- unwrapEndorserBlock serialised
+  ledgerVersion <-
+    maybe (Left ("unknown endorser block version " <> show version)) Right $
+      envelopeLedgerVersion version
+  let lazyBytes = BSL.fromStrict bytes
+  case deserialiseFromBytes (decodeEb ledgerVersion) lazyBytes of
+    Left err -> Left (show err)
+    Right (rest, eb)
+      | BSL.null rest -> Right (eb lazyBytes)
+      | otherwise -> Left (show (BSL.length rest) <> " bytes after the endorser block")
+ where
+  decodeEb :: Version -> Decoder s (BSL.ByteString -> EndorserBlock)
+  decodeEb ledgerVersion =
+    toPlainDecoder Nothing ledgerVersion $
       (. Full)
         -- The annotator only slices the bytes, which cannot fail.
         . (either (\e -> error ("Impossible, endorser block decoder failed: " <> show e)) MkEndorserBlock .)
         . runAnnotator
         <$> decCBOR
-  end <- CBOR.peekByteOffset
-  -- Nothing currently bounds the number of references more tightly than this
-  -- bound on the bytes does, ie by 'maxTxsPerEndorserBlock'.
-  when (end - start > fromIntegral maxEndorserBlockBytesSize) $
-    fail $
-      "endorser block of "
-        <> show (end - start)
-        <> " bytes exceeds "
-        <> show maxEndorserBlockBytesSize
-  pure eb
 
 -- | The most bytes 'encodeEndorserBlock' writes besides the references, for an
 -- endorser block that 'mkEndorserBlock' built: its map header. Each
@@ -420,7 +505,7 @@ referencesCapacity paramLimit = paramLimit - min paramLimit maxFramingSize
 --
 -- TODO Nothing yet keeps the @maxEndorserBlockReferencesSize@ protocol
 -- parameter within it, so a larger value would let an honest peer send an
--- endorser block that 'decodeEndorserBlock' rejects. Make it the
+-- endorser block that 'deserialiseEndorserBlock' rejects. Make it the
 -- constitution's guardrail on that parameter, and refuse to run with a
 -- parameter above it.
 maxEndorserBlockBytesSize :: BytesSize

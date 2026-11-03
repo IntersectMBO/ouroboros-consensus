@@ -58,7 +58,7 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import qualified Network.Mux as Mx
 import Network.Mux.Bearer.Queues (QueueChannel (..), queueChannelAsBearer)
-import Network.TypedProtocol.Codec (AnnotatedCodec, Codec)
+import Network.TypedProtocol.Codec (Codec)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block
   ( Header
@@ -71,7 +71,7 @@ import Ouroboros.Consensus.Block
   , pattern GenesisPoint
   )
 import Ouroboros.Consensus.Config (configCodec)
-import Ouroboros.Consensus.Leios.Types (EndorserBlock, LeiosPoint, LeiosTx, LeiosVote)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosTx, LeiosVote, SerialisedEndorserBlock)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchRequestHandler (..)
   , leiosFetchServerPeer
@@ -92,7 +92,7 @@ import Ouroboros.Network.Context
   , ResponderContext (..)
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Driver.Simple (runAnnotatedPeer, runPeer)
+import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.KeepAlive (keepAliveServer)
 import Ouroboros.Network.Mock.Chain (ChainUpdate (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -150,7 +150,11 @@ type LeiosNotifyCodec s =
   Codec (LeiosNotify LeiosPoint (Header Blk) LeiosVote) DeserialiseFailure (IOSim s) ByteString
 
 type LeiosFetchCodec s =
-  AnnotatedCodec (LeiosFetch LeiosPoint EndorserBlock LeiosTx) DeserialiseFailure (IOSim s) ByteString
+  Codec
+    (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)
+    DeserialiseFailure
+    (IOSim s)
+    ByteString
 
 -- | What a peer runs for the Leios mini-protocols.
 data EnvPeer m = EnvPeer
@@ -507,14 +511,14 @@ envLeiosFetchCodec nut = NTN.cLeiosFetchCodec (envCodecs nut maxBound)
 -- does not serve.
 silentLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
 silentLeiosFetchServer nut chan =
-  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer silent)
+  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer silent)
  where
   silent = MkLeiosFetchRequestHandler $ \_request -> atomically retry
 
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
 refusingLeiosFetchServer nut chan =
-  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer refuse)
+  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer refuse)
  where
   refuse = MkLeiosFetchRequestHandler $ \_request ->
     throwIO $ userError "the environment's LeiosFetch server serves nothing"
