@@ -114,7 +114,7 @@ data LeiosDbReader m = LeiosDbReader
 --
 -- Asynchronous interface where each operation returns upon submission. The
 -- returned 'Promise' can be used to 'await' the write being performed. Any
--- exceptions are thrown through 'await'. A write can also throw at submission.
+-- exceptions are thrown through 'await'.
 data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
@@ -209,7 +209,7 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 -- 'encodeEndorserBlockSize' of the endorser block body.
 --
 -- This function does not await the writes. On SQLite, it blocks while the
--- write queue is full. If a write fails, the node stops. Peers can get the
+-- write queue is full, and if a write fails, the node stops. Peers can get the
 -- header before the endorser block is stored.
 storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
 storeForgedEb writer slot forgedEb = do
