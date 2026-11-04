@@ -38,6 +38,7 @@ import Control.Monad.Class.MonadThrow
   ( bracket
   , try
   )
+import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.ResourceRegistry
   ( ResourceKey
   , ResourceRegistry
@@ -258,8 +259,11 @@ startWriter registry tracer statsVar volPath immPath = do
           serve :: IO ()
           serve = do
             job <- atomically $ readTBQueue queue
+            start <- getMonotonicTime
             next <- runJob job
-            traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
+            end <- getMonotonicTime
+            traceWith tracer $
+              TraceLeiosDbWriteJobDone (describeJob job) (realToFrac (diffTime end start))
             case next of
               Stop -> pure ()
               Continue -> serve

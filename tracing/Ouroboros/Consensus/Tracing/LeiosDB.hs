@@ -19,8 +19,12 @@ instance LogFormatting TraceLeiosDb where
       mconcat ["kind" .= String "LeiosDbWriterQueueFull", "job" .= job]
     TraceLeiosDbWriteAbandoned job ->
       mconcat ["kind" .= String "LeiosDbWriteAbandoned", "job" .= job]
-    TraceLeiosDbWriteJobDone job ->
-      mconcat ["kind" .= String "LeiosDbWriteJobDone", "job" .= job]
+    TraceLeiosDbWriteJobDone job seconds ->
+      mconcat
+        [ "kind" .= String "LeiosDbWriteJobDone"
+        , "job" .= job
+        , "durationMillis" .= (seconds * 1000)
+        ]
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
       mconcat
         [ "kind" .= String "LeiosDbStats"
@@ -40,8 +44,8 @@ instance LogFormatting TraceLeiosDb where
       "A LeiosDB write waited for room in the writer's queue: " <> Text.pack job
     TraceLeiosDbWriteAbandoned job ->
       "A LeiosDB write was lost while waiting for room in the writer's queue: " <> Text.pack job
-    TraceLeiosDbWriteJobDone job ->
-      "The LeiosDB writer ran " <> Text.pack job
+    TraceLeiosDbWriteJobDone job seconds ->
+      "The LeiosDB writer ran " <> Text.pack job <> " in " <> showT (seconds * 1000) <> " ms"
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
       "The LeiosDB holds "
         <> showT volatileEbs
@@ -99,7 +103,7 @@ instance MetaTrace TraceLeiosDb where
     Just
       "The submitting thread died while waiting for room in the writer's queue, so its write is lost."
   documentFor (Namespace _ ["WriteJobDone"]) =
-    Just "The writer ran a job."
+    Just "The writer ran a job, and how long it took."
   documentFor (Namespace _ ["Stats"]) =
     Just "The sizes of the two partitions, sampled on a timer."
   documentFor (Namespace _ ["Copied"]) =
