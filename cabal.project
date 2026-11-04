@@ -42,3 +42,23 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger.git
+  tag: 95b369053fd32422695a81fb7d5289d6dd35eee2
+  --sha256: sha256-7i38NqRmHegCXjLv1EKSSQOGKLaVoAjAdBi2yjGvgII=
+  subdir:
+    eras/alonzo/impl
+    eras/babbage/impl
+    eras/conway/impl
+    eras/dijkstra/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/impl
+    eras/shelley/test-suite
+    libs/cardano-ledger-core
+    libs/cardano-protocol
+
+allow-newer:
+  cardano-keys:cardano-ledger-core
