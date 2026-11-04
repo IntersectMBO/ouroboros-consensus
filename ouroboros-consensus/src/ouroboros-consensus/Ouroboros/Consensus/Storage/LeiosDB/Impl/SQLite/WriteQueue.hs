@@ -38,7 +38,6 @@ import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
-  , EndorserBlockHash
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
@@ -85,25 +84,25 @@ data WriteJob
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
+  | -- | Pin certified points for promotion; see 'sqlPromoteToImmutable'.
     PinEb
-      -- | the EBs to pin
-      ![EndorserBlockHash]
+      -- | the points to pin
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
   | -- | The volatile half of a copy: the EB is in the immutable partition
-    -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
+    -- now, so its pin retires. Submitted by 'startCopier'.
     MarkCopied
-      -- | the EBs now in the immutable partition
-      ![EndorserBlockHash]
+      -- | the points now in the immutable partition
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
-  | -- | The GC MARK phase; see 'gcMark'.
+  | -- | The GC MARK phase; see 'sqlGarbageCollect'.
     GcMark
       -- | the GC frontier slot
       !SlotNo
-      -- | where the worker puts the number of 'ebs' rows marked
-      !(WriteResult Int)
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
@@ -178,8 +177,8 @@ describeJob = \case
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
-  MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
+  PinEb points _ -> "PinEb (" <> show (length points) <> " ebs)"
+  MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " ebs)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
