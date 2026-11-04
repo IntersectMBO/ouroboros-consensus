@@ -14,9 +14,11 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
+  , SlotNo
   , WithOrigin (..)
   , blockHash
   , blockPoint
@@ -26,6 +28,9 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
@@ -36,6 +41,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Util.IOLike (readMVar)
 import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
@@ -75,7 +81,25 @@ tests =
           @?= (blockPoint announcingA, blockPoint certifyingA)
     , testCase "ChainSel selects a certifying block whose closure the LeiosDB held at start" $
         runSimOrThrow tipWithClosureBeforeStart @?= blockPoint certifyingA
+    , testCase "a verified certificate has LeiosFetch fetch the endorser block it certifies" $
+        runSimOrThrow certifiedIsFetched @?= ([(blockSlot announcingA, pointEbHash pointA)], True)
     ]
+
+-- | The node adds 'announcingA' and 'certifyingA', whose certificate ChainSel
+-- verifies. Which endorser blocks the ChainDB then says are certified, by the
+-- slot of their election, and whether LeiosFetch is fetching A.
+certifiedIsFetched :: IOSim s ([(SlotNo, EndorserBlockHash)], Bool)
+certifiedIsFetched = withNode $ \node -> do
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  addBlocks node [announcingA, certifyingA]
+  threadDelay 1
+  certified <- atomically $ ChainDB.getLeiosCertifiedEbs (nodeChainDB node)
+  outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nodeKernel node))))
+  pure
+    ( [(electionSlot elId, ebHash) | (elId, ebHash) <- Map.toList certified]
+    , isFocusedPoint pointA outstanding
+    )
 
 -- | The node holds endorser blocks A and B, with their transactions. The
 -- chain's first block announces A, its second certifies A, and its third
@@ -159,7 +183,7 @@ heldAcrossRestart whatOfA = do
     holds node
   withNodeOverDBs nodeDBs leiosDb $ \node -> do
     afterRestart <- holds node
-    addBlocksAfter node (NotOrigin (blockSlot announcingA)) [certifyingA]
+    addBlocksAfter node (NotOrigin announcingA) [certifyingA]
     threadDelay 1
     afterAddingAgain <- holds node
     pure (beforeRestart, afterRestart, afterAddingAgain)
@@ -189,7 +213,7 @@ minoritySibling =
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling node = do
   addBlocks node [announcingA, certifyingA]
-  addBlocksAfter node (NotOrigin (blockSlot announcingA)) [minoritySibling]
+  addBlocksAfter node (NotOrigin announcingA) [minoritySibling]
 
 rbHashOf :: LeiosTestBlock -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
