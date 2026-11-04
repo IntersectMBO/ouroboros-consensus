@@ -122,7 +122,7 @@ bodiesAfterGc = withNode $ \node -> do
             ]
   atomically $
     mapM_
-      (announceLeiosAcquisition (nodeLeiosAcquisitions node) . AcquiredEbTxs)
+      (emitLeiosAcquisition (nodeLeiosAcquisitions node) . AcquiredEbTxs)
       [pointA, pointB]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
@@ -237,7 +237,7 @@ ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
 -- body but not its transactions. The tip of the selected chain before they
--- arrive and the node announces their acquisition, and after.
+-- arrive and the node emits their acquisition, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
 tipsAroundClosure = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
@@ -259,7 +259,7 @@ tipsAroundClosure = withNode $ \node -> do
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
   atomically $
-    announceLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs pointA)
+    emitLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs pointA)
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)

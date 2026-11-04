@@ -212,7 +212,7 @@ data NodeUnderTest m = NodeUnderTest
   , nodeVersions :: NodeVersions m
   , nodeSeeds :: Seeds StdGen
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
-  -- ^ Where a test announces the endorser blocks and closures the node
+  -- ^ Where a test emits the endorser blocks and closures the node
   -- acquires, as the node's LeiosFetch would.
   , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
   -- ^ The peers the node has a connection to.

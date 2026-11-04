@@ -1,6 +1,6 @@
--- | Where the node announces each endorser block and closure it acquires.
+-- | Where the node emits each endorser block and closure it acquires.
 --
--- LeiosFetch announces them, once each write is durable; see
+-- LeiosFetch emits them, once each write is durable; see
 -- 'LeiosEbNotification' for at which points. The ChainDB subscribes, so
 -- that ChainSel can select a block certifying an endorser block once the node
 -- holds that endorser block's closure.
@@ -42,9 +42,9 @@ data LeiosEbNotification
 
 -- | A broadcast of the node's acquisitions.
 data LeiosAcquisitions m = MkLeiosAcquisitions
-  { announceLeiosAcquisition :: LeiosEbNotification -> STM m ()
+  { emitLeiosAcquisition :: LeiosEbNotification -> STM m ()
   , subscribeLeiosAcquisitions :: m (STM m LeiosEbNotification)
-  -- ^ Each acquisition announced from now on, once and in order, blocking
+  -- ^ Each acquisition emitted from now on, once and in order, blocking
   -- until there is one.
   }
 
@@ -53,15 +53,15 @@ newLeiosAcquisitions = do
   chan <- atomically newBroadcastTChan
   pure
     MkLeiosAcquisitions
-      { announceLeiosAcquisition = writeTChan chan
+      { emitLeiosAcquisition = writeTChan chan
       , subscribeLeiosAcquisitions = readTChan <$> atomically (dupTChan chan)
       }
 
 -- | For a node that fetches nothing, such as a tool replaying its own
--- databases: nothing is ever announced.
+-- databases: nothing is ever emitted.
 noLeiosAcquisitions :: MonadSTM m => LeiosAcquisitions m
 noLeiosAcquisitions =
   MkLeiosAcquisitions
-    { announceLeiosAcquisition = \_ -> pure ()
+    { emitLeiosAcquisition = \_ -> pure ()
     , subscribeLeiosAcquisitions = pure retry
     }

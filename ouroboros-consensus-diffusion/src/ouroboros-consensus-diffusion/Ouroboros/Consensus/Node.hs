@@ -556,7 +556,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckSnapshotPolicyArgs (configSecurityParam cfg) snapshotPolicyArgs) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
-          -- Where the node announces what it acquires, to the ChainDB among
+          -- Where the node emits what it acquires, to the ChainDB among
           -- others.
           leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-

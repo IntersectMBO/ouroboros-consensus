@@ -204,7 +204,7 @@ tests =
         "the node's server serves what it holds, disconnects a client that requests anything else, and ends when the client sends MsgDone"
         prop_serverAnswers
     , testCase
-        "the node announces its acquisition again, and offers it there, each time a later election focuses an endorser block it holds"
+        "the node emits its acquisition again, and offers it there, each time a later election focuses an endorser block it holds"
         $ runSimFinishing nodeReacquiresHeld
           >>= ( @?=
                   ( concat
@@ -215,7 +215,7 @@ tests =
                   )
               )
     , testCase
-        "the node announces its acquisition again, and offers it there, when a certificate focuses an endorser block it holds"
+        "the node emits its acquisition again, and offers it there, when a certificate focuses an endorser block it holds"
         $ runSimFinishing nodeReacquiresCertified
           >>= ( @?=
                   (
@@ -351,7 +351,7 @@ runSimFinishingWithin limit sim = case runSimOrThrow (timeout limit sim) of
   The node's client
 -------------------------------------------------------------------------------}
 
--- | What the node announced acquiring, comparably.
+-- | What the node emitted as acquired, comparably.
 data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
   deriving (Eq, Show)
 
@@ -477,7 +477,7 @@ nodeFetchesCertifiedThird = withNode $ \node -> do
 -- serves both. Then it announces 'fetchedEb' again, in 'reannouncingFetched'
 -- and then in 'reannouncingFetchedAgain', each once the node has acquired it at
 -- the previous announcement, and offers nothing more.
--- The node's acquisitions, as it announces them, and the notifications it
+-- The node's acquisitions, as it emits them, and the notifications it
 -- relays to the peer, by 'relayHorizon' after the ninth.
 nodeReacquiresHeld :: IOSim s ([Acquired], [Relayed])
 nodeReacquiresHeld = withNode $ \node -> do
@@ -502,7 +502,7 @@ nodeReacquiresHeld = withNode $ \node -> do
 -- serves both. Then it announces 'otherEbHash' and then 'fetchedEb' in a later
 -- election, so that the former takes its focus, and the node's ChainDB then
 -- verifies a certificate of the latter. The node's acquisitions, as it
--- announces them, and the notifications it relays to the peer, by
+-- emits them, and the notifications it relays to the peer, by
 -- 'relayHorizon' after the seventh.
 nodeReacquiresCertified :: IOSim s ([Acquired], [Relayed])
 nodeReacquiresCertified = withNode $ \node -> do
@@ -530,7 +530,7 @@ nodeReacquiresCertified = withNode $ \node -> do
 
 -- | The peer announces 'fetchedEb', which so takes its election's focus, and
 -- then offers nothing over LeiosNotify. It rolls forward the header that
--- certifies it, and serves it. The node's acquisitions, as it announces them.
+-- certifies it, and serves it. The node's acquisitions, as it emits them.
 nodeFetchesCertified :: IOSim s [Acquired]
 nodeFetchesCertified = withNode $ \node -> do
   next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
@@ -551,7 +551,7 @@ nodeFetchesCertified = withNode $ \node -> do
 
 -- | The peer says nothing over LeiosNotify. It rolls forward the header that
 -- announces 'fetchedEb' and the one that certifies it, and serves it. The
--- node's acquisitions, as it announces them, and the notifications it relays
+-- node's acquisitions, as it emits them, and the notifications it relays
 -- to the peer, by 'relayHorizon' after the third.
 nodeFetchesRolledForward :: IOSim s ([Acquired], [Relayed])
 nodeFetchesRolledForward = withNode $ \node -> do
@@ -826,7 +826,7 @@ nodeKeepsRefocusedThroughGc restarts = do
         RestartBeforeChainToo -> pure ()
         RestartAfterGc -> do
           addBlocks node gcRestartChain
-          -- The acquisition announced again, at the certified announcement.
+          -- The acquisition emitted again, at the certified announcement.
           _ <- replicateM 2 $ atomically next
           awaitChainThenGc node
   case restarts of
@@ -930,7 +930,7 @@ nodeSelectsCertifiedRival arrival = withNode $ \node -> do
 
 -- | The peer announces 'fetchedEb' in 'announcingFetched', but at one byte more
 -- than its size. It then offers it at its size, and serves it. The node's
--- acquisitions, as it announces them.
+-- acquisitions, as it emits them.
 nodeFetchesAtOfferedSize :: IOSim s [Acquired]
 nodeFetchesAtOfferedSize = withNode $ \node -> do
   next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
@@ -1049,7 +1049,7 @@ expectedBounded eb
 
 -- | A peer announces the endorser block, offers its body and its closure,
 -- offering the body at its size or the most the ledger admits, whichever is
--- smaller, and serves both. What the node announces acquiring by
+-- smaller, and serves both. What the node emits as acquired by
 -- 'relayHorizon', and why its LeiosFetch client failed, if it did by then.
 nodeTakesEvenEb :: (EndorserBlock, V.Vector LeiosTx) -> IOSim s ([Acquired], Maybe String)
 nodeTakesEvenEb (eb, txs) = withNode $ \node -> do
@@ -1345,7 +1345,7 @@ relayedBy listener n = do
 relayHorizon :: DiffTime
 relayHorizon = 5
 
--- | Wait until the node announces this acquisition.
+-- | Wait until the node emits this acquisition.
 awaitAcquired :: STM (IOSim s) LeiosEbNotification -> Acquired -> IOSim s ()
 awaitAcquired next acquired = do
   got <- acquiredOf <$> atomically next

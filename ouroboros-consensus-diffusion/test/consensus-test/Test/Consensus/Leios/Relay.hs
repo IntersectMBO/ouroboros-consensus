@@ -869,8 +869,8 @@ offersRelayed = runSimOrThrow $ do
     -- Until the relay has subscribed.
     threadDelay 1
     atomically $ do
-      announceLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
-      announceLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+      emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
+      emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
     threadDelay 1
     atomically $ concatMap offered <$> notifyLogNotifications notifyLog
  where

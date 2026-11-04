@@ -269,7 +269,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
-  -- ^ Where the node's LeiosFetch announces what it acquires.
+  -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
   -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
@@ -477,7 +477,7 @@ initNodeKernel
           , lfcReady = ready
           , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
-          , lfcNotify = announceLeiosAcquisition leiosAcquisitions
+          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
           , lfcTracer = leiosFetchClientTracer tracers
           }
