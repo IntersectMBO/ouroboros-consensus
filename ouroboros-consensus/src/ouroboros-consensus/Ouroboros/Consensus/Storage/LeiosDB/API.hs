@@ -118,7 +118,7 @@ data LeiosDbWriter m = LeiosDbWriter
   , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m ())
   -- ^ Persist an EB body into each point of the EB.
   --
-  -- Its point must already have been written, by 'writeEbPoint'.
+  -- Writes its point too, if 'writeEbPoint' has not.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())

@@ -30,11 +30,11 @@ sql_schema_imm = unlines ebsTable
 -- every column before it. Nothing updates a row once its body is written, but
 -- through the blob API, as an update reads, and may rewrite, the whole row.
 --
--- @id@ never reuses a value, so GC can tell the rows written before it ran.
+-- The point is the key, which also serves GC's scan by slot. The blob API
+-- opens a row by its implicit rowid.
 ebsTable :: [String]
 ebsTable =
   [ "CREATE TABLE IF NOT EXISTS ebs ("
-  , "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
   , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
   , "  ebBytesSize INTEGER NOT NULL,"
@@ -42,7 +42,7 @@ ebsTable =
   , "  txBounds BLOB,"
   , "  body BLOB,"
   , "  txs BLOB,"
-  , "  UNIQUE (ebSlot, ebHashBytes)"
+  , "  PRIMARY KEY (ebSlot, ebHashBytes)"
   , ");"
   , -- Lookups by hash alone, e.g. serving.
     "CREATE INDEX IF NOT EXISTS idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
