@@ -106,7 +106,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , ValidAnnouncement (..)
-  , chainSyncAnnouncement
+  , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
@@ -499,7 +499,7 @@ initNodeKernel
     -- a peer go through, with no peer. As for a header ChainSync validated, the
     -- announcement needs no further check: the forge built the header.
     let onForgedEb hdr onset leiosView forged = do
-          mbValid <- chainSyncAnnouncement systemTime cfg hdr onset leiosView
+          mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
           for_ mbValid $ \valid -> do
             void $ atomically $ onValidAnnouncement leiosAnnounceState valid

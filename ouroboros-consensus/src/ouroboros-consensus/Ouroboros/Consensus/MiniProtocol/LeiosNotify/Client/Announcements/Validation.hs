@@ -25,7 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , ValidAnnouncement (..)
   , announcementValidity
   , announcingRbHash
-  , chainSyncAnnouncement
+  , validHeaderAnnouncement
   , LeiosAnnouncementAgeLimits (..)
   , defaultLeiosAnnouncementAgeLimits
   , mkAnnouncingHeader
@@ -342,13 +342,15 @@ announcementValidity ageLimits systemTime futureCheck cfg immLedger ancHdr = do
       , announcementEbBounds = ebBounds
       }
 
--- | The announcement a header carries, if any, once ChainSync has validated
--- the header.
+-- | The announcement a header carries, if any, once the header is known to be
+-- valid: ChainSync validated it as an extension of the peer's chain, or the
+-- node's own forge built it on the node's selection.
 --
--- ChainSync validated it as an extension of the peer's chain, which checks all
--- that 'announcementValidity' does and more. That chain extends the immutable
--- tip, so the header's operational certificate is not revoked there either.
-chainSyncAnnouncement ::
+-- Validating a header as an extension of its chain checks all that
+-- 'announcementValidity' does and more, and the forge builds only headers that
+-- would pass. That chain extends the immutable tip, so the header's operational
+-- certificate is not revoked there either.
+validHeaderAnnouncement ::
   (Monad m, BlockSupportsProtocol blk) =>
   SystemTime m ->
   TopLevelConfig blk ->
@@ -358,7 +360,7 @@ chainSyncAnnouncement ::
   -- | the Leios part of the ledger view at the header's slot
   StrictMaybe LeiosLedgerView ->
   m (Maybe (ValidAnnouncement blk))
-chainSyncAnnouncement systemTime cfg hdr onset leiosView =
+validHeaderAnnouncement systemTime cfg hdr onset leiosView =
   for (mkAnnouncingHeader cfg hdr) $ \anc -> do
     now <- systemTimeCurrent systemTime
     pure

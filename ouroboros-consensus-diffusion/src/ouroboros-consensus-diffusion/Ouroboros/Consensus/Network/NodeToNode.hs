@@ -121,7 +121,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client (LeiosNotifyClientPeerPipelined)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( chainSyncAnnouncement
+  ( validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
@@ -436,7 +436,7 @@ mkHandlers
                   -- The node accepts the announcement a valid header carries as
                   -- it would one from a LeiosNotify peer.
                   mbValid <-
-                    chainSyncAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
+                    validHeaderAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
                   for_ mbValid $ \valid -> do
                     whetherNew <- atomically $ onValidAnnouncement getLeiosAnnounceState valid
                     case whetherNew of
