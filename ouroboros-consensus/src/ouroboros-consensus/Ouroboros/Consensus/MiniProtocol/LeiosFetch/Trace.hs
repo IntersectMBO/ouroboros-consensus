@@ -25,6 +25,10 @@ data TraceLeiosFetchClientEvent peer
     -- write is durable, and was needed only if no other delivery's write
     -- settled first.
     TraceLeiosFetchClientBlockArrived !peer !LeiosPoint !FetchArrivalBytes
+  | -- | The node took the endorser block at this point from the body the
+    -- LeiosTxCache held for another point, rather than fetching it. Traced once
+    -- the write is durable, if no delivery's write settled first.
+    TraceLeiosFetchClientBlockFromCache !LeiosPoint
   | -- | Some of an endorser block's transactions arrived from this peer, their
     -- bytes classified by whether the node needed them.
     TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
@@ -45,7 +49,7 @@ data FetchArrivalBytes = MkFetchArrivalBytes
   -- ^ Bytes of an invalid message (the whole message).
   , fabEvicted :: !BytesSize
   -- ^ Bytes the node no longer tracked, though it presumably once did: their
-  -- point was pruned.
+  -- point was pruned, or the LeiosTxCache had evicted them.
   , fabGood :: !BytesSize
   -- ^ Bytes the node needed.
   , fabExtra :: !BytesSize

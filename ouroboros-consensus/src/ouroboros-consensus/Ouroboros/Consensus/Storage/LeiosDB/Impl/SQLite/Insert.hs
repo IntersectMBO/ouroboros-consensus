@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   , sqlInsertTxs
   ) where
 
+import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM, forM_, when)
 import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
@@ -19,10 +20,12 @@ import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
+  , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
   , endorserBlockReferences
   )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -33,8 +36,9 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
 
--- | Persist an EB body at a point, recording the point, in one transaction.
--- Returns the offsets at which the point then holds its txs.
+-- | Persist an EB body at a point, recording the point, then fill what it can
+-- from the bytes other points hold, in the same transaction. Returns the
+-- offsets at which the point then holds its txs.
 --
 -- Those offsets are read back from 'ebTxBytes': a range of the primary key,
 -- one row per tx the body references, so up to
@@ -47,8 +51,9 @@ sqlInsertEbBody ::
   Conn ->
   LeiosPoint ->
   EndorserBlock ->
+  [LocalFill] ->
   IO [TxOffset]
-sqlInsertEbBody tracer conn point eb = do
+sqlInsertEbBody tracer conn point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (inserted, held) <- dbWithWriteTransaction conn $ do
@@ -73,13 +78,23 @@ sqlInsertEbBody tracer conn point eb = do
     useStmt stPreallocEbTxBytes $ do
       dbBindPoint stPreallocEbTxBytes point
       dbStep1 stPreallocEbTxBytes
+    -- Before the count, so that it counts only what is still unfilled.
+    forM_ fills $ \(txOffset, MkTxLocation src srcOffset) ->
+      useStmt stFillEbTxBytesLocally $ do
+        dbBindPoint stFillEbTxBytesLocally point
+        dbBindInt64 stFillEbTxBytesLocally 3 (fromIntegral txOffset)
+        dbBindInt64 stFillEbTxBytesLocally 4 (fromIntegral $ unSlotNo (pointSlotNo src))
+        dbBindHash stFillEbTxBytesLocally 5 (pointEbHash src)
+        dbBindInt64 stFillEbTxBytesLocally 6 (fromIntegral srcOffset)
+        dbStep1 stFillEbTxBytesLocally
     -- If the body was already written at this point, by an earlier delivery,
     -- the inserts above changed nothing, and the count accounts for every tx
     -- written since.
     useStmt stInitMissingCount $ do
       dbBindPoint stInitMissingCount point
       dbStep1 stInitMissingCount
-    -- Those written since an earlier delivery of the same body.
+    -- Including what earlier writes filled, which a second delivery of the
+    -- same body cannot fill again.
     held <- useStmt stHeldOffsets $ do
       dbBindPoint stHeldOffsets point
       let loop acc =
@@ -99,6 +114,7 @@ sqlInsertEbBody tracer conn point eb = do
     { stInsertEbPoint
     , stInsertEbTxsRow
     , stPreallocEbTxBytes
+    , stFillEbTxBytesLocally
     , stInitMissingCount
     , stHeldOffsets
     } = connVolStmts

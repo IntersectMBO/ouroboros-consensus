@@ -174,7 +174,7 @@ blockCountTest logStep = do
       eb = mkEndorserBlock [(UnsafeHash (fromString (replicate 32 't')), 500)]
   withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
     withWriter leiosDb $ \con ->
-      mapM_ (\point -> await =<< writeEbBody con point eb) [keptEb, droppedEb]
+      mapM_ (\point -> await =<< writeEbBody con point eb []) [keptEb, droppedEb]
 
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs

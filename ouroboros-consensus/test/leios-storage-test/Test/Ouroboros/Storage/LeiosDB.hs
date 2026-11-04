@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , decodeEndorserBlock
   , endorserBlockBytes
@@ -44,6 +45,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
+  , LocalFill
   , Promise (..)
   , TraceLeiosDb (..)
   , newLeiosDBInMemory
@@ -136,11 +138,11 @@ withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 
 -- Writes are awaited, so a read that follows one sees it.
 rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO ()
-rwInsertEbBody rw point eb = void $ rwInsertEbBodyHeld rw point eb
+rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb []
 
--- | Also the offsets at which the point then holds its txs.
-rwInsertEbBodyHeld :: RW -> LeiosPoint -> EndorserBlock -> IO [TxOffset]
-rwInsertEbBodyHeld rw point eb = await =<< writeEbBody (rwWriter rw) point eb
+rwInsertEbBodyFilling ::
+  RW -> LeiosPoint -> EndorserBlock -> [LocalFill] -> IO [TxOffset]
+rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
 rwInsertTxs rw point txs = void $ rwInsertTxsDropping rw point txs
@@ -233,13 +235,24 @@ mkTestGroups impl =
           test_readsFallBackToImmutable impl
       ]
   , testGroup
+      "local fills"
+      [ testCase "a body fills a tx from another point's bytes" $
+          withFreshDb impl test_fillFromAnotherEb
+      , testCase "a fill from a source without the bytes fills nothing" $
+          withFreshDb impl test_fillWithoutSourceBytes
+      , testCase "a body whose fills complete its closure completes it" $
+          withFreshDb impl test_fillCompletesClosure
+      , testCase "a second write of a body reports all txs the point already holds" $
+          withFreshDb impl test_secondBodyWriteReportsHeld
+      ]
+  , testGroup
       "closures"
       [ testCase "lookupEbClosure gives a point's closure once its body and every tx are written" $
           withFreshDb impl test_completion
       , testCase "lookupEbClosure gives the closure at each point of an endorser block on its own" $
           withFreshDb impl test_multipleSlotsSameHash
-      , testCase "a second write of a body reports all txs the point already holds" $
-          withFreshDb impl test_secondBodyWriteReportsHeld
+      , testCase "a scan finds a point whose body filled every tx from an older point of its endorser block" $
+          withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
       "garbage collection"
@@ -533,6 +546,21 @@ test_multipleSlotsSameHash db = do
     rwInsertTxs con point2 (allTxsFor eb)
     holdsClosure con point2 >>= (@?= True)
 
+-- | An EB complete at one point and announced again at a later one is not
+-- complete there until a body is written there, which can fill every tx from
+-- the older point.
+test_scanFindsLaterPoint :: LeiosDbHandle IO -> IO ()
+test_scanFindsLaterPoint db = do
+  let older = mkTestPoint (SlotNo 10) 1
+      younger = mkTestPoint (SlotNo 30) 1
+      eb = mkTestEb 2
+  withRW db $ \con -> do
+    writeWholeEb con [older] eb
+    scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 20 >>= (@?= [])
+    rwInsertEbBodyFilling con younger eb [(off, MkTxLocation older off) | (off, _) <- allTxsFor eb]
+      >>= (@?= [0, 1])
+    scanCompleteEbClosuresNotOlderThanSlot (rwReader con) 20 >>= (@?= [younger])
+
 -- | A tx write only fills a tx the body declares, once, at its declared size.
 -- Anything else changes nothing and completes nothing.
 --
@@ -566,16 +594,77 @@ test_malformedTxWritesDropped db = do
     rwInsertTxs con point [(1, txBytesFor eb 1)]
     holdsClosure con point >>= (@?= True)
 
--- | A second write of a body at a point reports the txs the point holds, as
--- the settlement of whichever write settles first needs.
+-- | Two endorser block points that both reference tx 1: 'mkTestEb' 2, and one
+-- that references it at offset 0, then tx 7.
+fillFixtures :: (LeiosPoint, EndorserBlock, LeiosPoint, EndorserBlock)
+fillFixtures =
+  ( mkTestPoint (SlotNo 1) 1
+  , mkTestEb 2
+  , mkTestPoint (SlotNo 2) 2
+  , mkEndorserBlock [(mkTestTxHash 1, 101), (mkTestTxHash 7, 107)]
+  )
+
+test_fillFromAnotherEb :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherEb db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    rwInsertEbBody con pointA ebA
+    rwInsertTxs con pointA (allTxsFor ebA)
+    -- The second fill's source lists another tx at its offset.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation pointA 1)
+        , (1, MkTxLocation pointA 0)
+        ]
+    result @?= [0]
+    retrieved <- rwBatchRetrieveTxs con pointB [0, 1]
+    [bytes | (_, _, bytes) <- retrieved] @?= [Just (txBytesFor ebA 1), Nothing]
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    holdsClosure con pointB >>= (@?= True)
+
+test_fillWithoutSourceBytes :: LeiosDbHandle IO -> IO ()
+test_fillWithoutSourceBytes db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    rwInsertEbBody con pointA ebA
+    -- The first source holds the body but not its txs; the second is unknown.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation pointA 1)
+        , (0, MkTxLocation (mkTestPoint 9 9) 0)
+        ]
+    result @?= []
+
+test_fillCompletesClosure :: LeiosDbHandle IO -> IO ()
+test_fillCompletesClosure db = do
+  let (pointA, ebA, _, _) = fillFixtures
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkEndorserBlock [(mkTestTxHash 1, 101)]
+  withRW db $ \con -> do
+    rwInsertEbBody con pointA ebA
+    rwInsertTxs con pointA (allTxsFor ebA)
+    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation pointA 1)]
+    result @?= [0]
+    holdsClosure con pointB >>= (@?= True)
+
+-- | A second write of a body at a point, with no fills of its own, reports the
+-- txs the point holds, as the settlement of whichever write settles first
+-- needs.
 test_secondBodyWriteReportsHeld :: LeiosDbHandle IO -> IO ()
 test_secondBodyWriteReportsHeld db = do
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 2
+  let (pointA, ebA, pointB, ebB) = fillFixtures
   withRW db $ \con -> do
-    rwInsertEbBodyHeld con point eb >>= (@?= [])
-    rwInsertTxs con point [(0, txBytesFor eb 0)]
-    rwInsertEbBodyHeld con point eb >>= (@?= [0])
+    writeWholeEb con [pointA] ebA
+    rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation pointA 1)] >>= (@?= [0])
+    rwInsertEbBodyFilling con pointB ebB [] >>= (@?= [0])
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    rwInsertEbBodyFilling con pointB ebB [] >>= (@?= [0, 1])
 
 -- * Garbage collection
 
@@ -867,7 +956,7 @@ test_closeWithPinnedEb =
 -- | An operation on the database: a write, or what the ChainDB has it do as
 -- blocks become immutable.
 data Op
-  = OpBody LeiosPoint
+  = OpBody LeiosPoint [LocalFill]
   | OpTxs LeiosPoint [TxOffset]
   | OpPromote LeiosPoint
   | OpGc SlotNo
@@ -904,7 +993,8 @@ prop_implementationsAgree =
         pure $
           tabulate "points pinned" [bucket nPinned] $
             tabulate "points evicted" [bucket nEvicted] $
-              inMemory === sqlite
+              tabulate "local fills landed" [bucket (sum (map (length . fst) (fst inMemory)))] $
+                inMemory === sqlite
  where
   bucket n = if n >= 3 then "3+" else show n
 
@@ -933,21 +1023,42 @@ genOps bodies =
     OpGc slot -> let frontier' = max frontier slot in (frontier', OpGc frontier')
     op -> (frontier, op)
   genPointOf = elements (allPoints bodies)
+  -- Mostly from a source that lists the same tx, which is the only kind that
+  -- can land, possibly another point of the same endorser block; otherwise from
+  -- anywhere.
+  genFill point =
+    frequency $
+      (1, (,) <$> chooseInt (0, 4) <*> (MkTxLocation <$> genPointOf <*> chooseInt (0, 4)))
+        : [ (3, elements matching)
+          | let indices = snd (bodies Map.! pointEbHash point)
+                matching =
+                  [ (dstOff, MkTxLocation src srcOff)
+                  | (dstOff, i) <- zip [0 ..] indices
+                  , src <- allPoints bodies
+                  , src /= point
+                  , let srcIndices = snd (bodies Map.! pointEbHash src)
+                  , (srcOff, j) <- zip [0 ..] srcIndices
+                  , i == j
+                  ]
+          , not (null matching)
+          ]
   genOp =
     frequency
-      [ (2, OpBody <$> genPointOf)
+      [ (2, genPointOf >>= \point -> OpBody point <$> listOf (genFill point))
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> genPointOf)
       , (1, OpGc . SlotNo . fromIntegral <$> chooseInt (2, 3))
       ]
   -- A point written whole, as the node writes a point it fetches: its body,
-  -- and every tx. So closures complete, and promotions happen.
+  -- and every tx. So closures complete, and fills and promotions
+  -- happen.
   genWhole = do
     point <- genPointOf
-    pure [OpBody point, OpTxs point [0 .. 4]]
+    fills <- listOf (genFill point)
+    pure [OpBody point fills, OpTxs point [0 .. 4]]
 
 -- | Every point the operations may name: each endorser block at slot 1 and at
--- slot 2. Few enough that a point's closure often completes, so that
+-- slot 2. Few enough that a point's closure often completes, so that fills and
 -- promotions happen.
 allPoints :: Bodies -> [LeiosPoint]
 allPoints bodies = [MkLeiosPoint (SlotNo slot) ebHash | slot <- [1, 2], ebHash <- Map.keys bodies]
@@ -1002,9 +1113,9 @@ observe db settle bodies ops = withRW db $ \rw -> do
  where
   go _rw _frontier _bodied pinned nEvicted [] = pure ((length pinned, nEvicted), [])
   go rw frontier bodied pinned nEvicted (op : rest) = case op of
-    OpBody point
+    OpBody point fills
       | point `notElem` bodied && pointSlotNo point >= frontier -> do
-          filled <- rwInsertEbBodyHeld rw point (fst (bodies Map.! pointEbHash point))
+          filled <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
           settle 0
           complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
           fmap ((sort filled, complete) :)

@@ -111,7 +111,7 @@ bodiesAfterGc = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
-      void $ await =<< writeEbBody writer point eb
+      void $ await =<< writeEbBody writer point eb []
       void $
         await
           =<< writeTxs
@@ -163,7 +163,7 @@ heldAcrossRestart whatOfA = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     case whatOfA of
       BodyOfA -> pure ()
       ClosureOfA ->
@@ -243,7 +243,7 @@ tipsAroundClosure = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
       chainDB = nodeChainDB node
   withWriter leiosDb $ \writer -> do
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks node [announcingA, certifyingA]
@@ -270,7 +270,7 @@ tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
 tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     void $
       await
         =<< writeTxs

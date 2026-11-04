@@ -215,7 +215,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           closeWriter = void . await =<< submitJob writeQueue Flush
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
+        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
@@ -349,8 +349,8 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               -- outcome of that close to this job's awaiter.
               writeIORef shutdownVar (Just resultVar)
               pure Stop
-            WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn point eb) >> pure Continue
+            WriteEbBody point eb fills resultVar ->
+              publish resultVar (sqlInsertEbBody tracer conn point eb fills) >> pure Continue
             WriteTxs point txs resultVar ->
               publish resultVar (sqlInsertTxs tracer conn point txs) >> pure Continue
             Flush resultVar ->

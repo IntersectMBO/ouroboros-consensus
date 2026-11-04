@@ -23,6 +23,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.Foldable as Foldable
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
   , endorserBlockReferences
@@ -47,6 +49,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
+  , LocalFill
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -195,8 +198,8 @@ openInMemoryWriter stateVar =
   pure
     LeiosDbWriter
       { closeWriter = pure ()
-      , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb)
+      , writeEbBody = \point eb fills ->
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb fills)
       , writeTxs = \point txs ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
@@ -238,8 +241,9 @@ imInsertEbBody ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   EndorserBlock ->
+  [LocalFill] ->
   m [TxOffset]
-imInsertEbBody stateVar point eb = do
+imInsertEbBody stateVar point eb fills = do
   let items = zip [0 :: Int ..] (endorserBlockReferences eb)
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
@@ -260,9 +264,37 @@ imInsertEbBody stateVar point eb = do
           imEbBodies = Map.insertWith (\_ old -> old) point entries (imEbBodies s)
         , imEbBytes = Map.insertWith (\_ old -> old) point (endorserBlockBytes eb) (imEbBytes s)
         }
-    -- The txs the point holds: those written since an earlier delivery of the
-    -- body.
+    filled <- fillLocally <$> readTVar stateVar
+    unless (IntMap.null filled) $
+      modifyTVar stateVar $ \s ->
+        s{imEbTxBytes = Map.insertWith IntMap.union point filled (imEbTxBytes s)}
+    -- Including what earlier writes filled, which a second delivery of the
+    -- same body cannot fill again.
     (\s -> IntMap.keys (volatileTxBytes s point)) <$> readTVar stateVar
+ where
+  -- Mirrors the SQLite backend: a fill lands only on an offset the body
+  -- declared and has no bytes for yet, and only from a source holding bytes of
+  -- the declared size for the tx its body lists there, which must be the tx
+  -- this body lists.
+  fillLocally s =
+    Foldable.foldl'
+      ( \acc (off, MkTxLocation src srcOff) ->
+          case wanted s off of
+            Just e
+              | not (IntMap.member off acc)
+              , Just srcEntry <- IntMap.lookup srcOff =<< Map.lookup src (imEbBodies s)
+              , eteTxHash srcEntry == eteTxHash e
+              , Just bytes <- IntMap.lookup srcOff (volatileTxBytes s src)
+              , fromIntegral (BS.length bytes) == eteTxBytesSize e ->
+                  IntMap.insert off bytes acc
+            _ -> acc
+      )
+      IntMap.empty
+      fills
+  -- The entry the body declares at this offset, if it has no bytes yet.
+  wanted s off = do
+    e <- IntMap.lookup off =<< Map.lookup point (imEbBodies s)
+    if IntMap.member off (volatileTxBytes s point) then Nothing else Just e
 
 -- | Whether a body is written at this point and every one of its offsets has
 -- its bytes.
