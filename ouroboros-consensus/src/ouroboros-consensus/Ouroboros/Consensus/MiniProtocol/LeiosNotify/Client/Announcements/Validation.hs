@@ -25,6 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , ValidAnnouncement (..)
   , announcementValidity
   , announcingRbHash
+  , validHeaderAnnouncement
   , InvalidLeiosAnnouncementAgeLimits (..)
   , LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -39,7 +40,9 @@ import Control.Monad (when)
 import Control.Monad.Except (Except, ExceptT, liftEither, runExcept, throwError, withExcept)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (first)
+import Data.Maybe.Strict (StrictMaybe, strictMaybeToMaybe)
 import Data.Time.Clock (NominalDiffTime)
+import Data.Traversable (for)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -342,6 +345,36 @@ announcementValidity ageLimits systemTime futureCheck cfg immLedger ancHdr = do
       , announcementStaleness = staleness
       , announcementEbBounds = ebBounds
       }
+
+-- | The announcement a header carries, if any, once the header is known to be
+-- valid: ChainSync validated it as an extension of the peer's chain, or the
+-- node's own forge built it on the node's selection.
+--
+-- Validating a header as an extension of its chain checks all that
+-- 'announcementValidity' does and more, and the forge builds only headers that
+-- would pass. That chain extends the immutable tip, so the header's operational
+-- certificate is not revoked there either.
+validHeaderAnnouncement ::
+  (Monad m, BlockSupportsProtocol blk) =>
+  SystemTime m ->
+  TopLevelConfig blk ->
+  Header blk ->
+  -- | the onset of the header's slot
+  RelativeTime ->
+  -- | the Leios part of the ledger view at the header's slot
+  StrictMaybe LeiosLedgerView ->
+  m (Maybe (ValidAnnouncement blk))
+validHeaderAnnouncement systemTime cfg hdr onset leiosView =
+  for (mkAnnouncingHeader cfg hdr) $ \anc -> do
+    now <- systemTimeCurrent systemTime
+    pure
+      MkValidAnnouncement
+        { announcingHeader = anc
+        , announcementOnset = onset
+        , announcementAge = diffRelTime now onset
+        , announcementStaleness = FreshOCIN
+        , announcementEbBounds = ebBoundsOf (strictMaybeToMaybe leiosView)
+        }
 
 -- | A valid announcement, and what 'announcementValidity' learns about it.
 data ValidAnnouncement blk = MkValidAnnouncement
