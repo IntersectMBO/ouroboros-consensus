@@ -15,18 +15,18 @@ import qualified Data.Vector.Strict as V
 import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..))
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint (..)
+  ( EndorserBlockEnvelope
+  , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock
+  , decodeEndorserBlockEnvelope
   , decodeLeiosPoint
   , decodeLeiosTx
-  , decodeSerialisedEndorserBlock
+  , encodeEndorserBlockEnvelope
   , encodeLeiosPoint
   , encodeLeiosTx
-  , encodeSerialisedEndorserBlock
   , maxTxsPerEndorserBlock
   , mkEndorserBlock
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Test.Tasty
@@ -53,14 +53,14 @@ prop_nodeCodecMatchesCDDL =
       pure $ either (`counterexample` False) (const $ property True) result
  where
   nodeCodec ::
-    Codec (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx) DeserialiseFailure IO ByteString
+    Codec (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx) DeserialiseFailure IO ByteString
   nodeCodec =
     codecLeiosFetch
       maxTxsPerEndorserBlock
       encodeLeiosPoint
       decodeLeiosPoint
-      encodeSerialisedEndorserBlock
-      decodeSerialisedEndorserBlock
+      encodeEndorserBlockEnvelope
+      decodeEndorserBlockEnvelope
       encodeLeiosTx
       decodeLeiosTx
 
@@ -81,7 +81,7 @@ prop_nodeCodecMatchesCDDL =
     indices <- Set.toAscList . Set.fromList <$> arbitrary
     traverse (\i -> (,) i . getPositive <$> arbitrary) indices
 
-  genEb = serialiseEndorserBlock . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
+  genEb = mkEndorserBlockEnvelope . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 
   genTx = MkLeiosTx . BS.pack <$> arbitrary
 

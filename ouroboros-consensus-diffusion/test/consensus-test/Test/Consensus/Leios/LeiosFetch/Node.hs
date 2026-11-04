@@ -70,13 +70,13 @@ import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope
   , EndorserBlockHash
   , LeiosEbBounds (..)
   , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
-  , SerialisedEndorserBlock (..)
   , TxHash
   , deserialiseEndorserBlock
   , encodeEndorserBlockSize
@@ -85,7 +85,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , leiosEbSizes
   , mkEndorserBlock
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -1830,9 +1830,9 @@ serveEb ::
   Monad m =>
   EndorserBlock ->
   V.Vector LeiosTx ->
-  LeiosFetchRequestHandler LeiosPoint SerialisedEndorserBlock LeiosTx m
+  LeiosFetchRequestHandler LeiosPoint EndorserBlockEnvelope LeiosTx m
 serveEb eb txs = MkLeiosFetchRequestHandler $ \case
-  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock (serialiseEndorserBlock eb))
+  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock (mkEndorserBlockEnvelope eb))
   MsgLeiosBlockTxsRequest _point bitmaps ->
     pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (txs V.!?) (bitmapOffsets bitmaps)
 
@@ -1952,7 +1952,7 @@ data ServerOutcome = ServerEnded | ServerFailed String
 
 type EnvClient s =
   Peer
-    (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)
+    (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx)
     AsClient
     NonPipelined
     StIdle
@@ -2007,9 +2007,9 @@ requestBlock point replyVar =
         Effect $ doneClient <$ atomically (writeTVar replyVar (Just (ReplyBlock (unsafeDeserialise eb))))
 
 -- | The endorser block a test peer received, which the test expects to decode.
-unsafeDeserialise :: SerialisedEndorserBlock -> EndorserBlock
-unsafeDeserialise (MkSerialisedEndorserBlock bytes) =
-  either (error . ("unsafeDeserialise: " <>)) id $ deserialiseEndorserBlock bytes
+unsafeDeserialise :: EndorserBlockEnvelope -> EndorserBlock
+unsafeDeserialise envelope =
+  either (error . ("unsafeDeserialise: " <>)) id $ deserialiseEndorserBlock envelope
 
 -- | A client that requests transactions, keeps the reply, and sends 'MsgDone'.
 requestTxs :: LeiosPoint -> TxBitmaps -> StrictTVar (IOSim s) (Maybe Reply) -> EnvClient s

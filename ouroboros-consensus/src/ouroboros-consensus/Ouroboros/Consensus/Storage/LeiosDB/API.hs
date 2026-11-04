@@ -34,6 +34,7 @@ import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope
   , EndorserBlockHash
   , LeiosPoint
   , TxLocation
@@ -72,10 +73,8 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m (Maybe ByteString)
-  -- ^ The EB "body" in its envelope, in the bytes it arrived in
-  -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), to serve as
-  -- is.
+  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m (Maybe EndorserBlockEnvelope)
+  -- ^ The EB "body" in the envelope it arrived in, to serve as is.
   , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [ByteString])
   -- ^ The EB "closure": the bytes of its txs in body order, or 'Nothing' if
   -- the EB body is not stored. Txs not written yet are zeroes ('unwrittenTx'): whether the EB

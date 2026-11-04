@@ -38,25 +38,25 @@ import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock (..)
   , TxHash
+  , decodeEndorserBlockEnvelope
   , decodeLeiosPoint
   , decodeLeiosTx
-  , decodeSerialisedEndorserBlock
   , deserialiseEndorserBlock
   , encodeEndorserBlock
+  , encodeEndorserBlockEnvelope
   , encodeEndorserBlockSize
   , encodeLeiosPoint
   , encodeLeiosTx
-  , encodeSerialisedEndorserBlock
   , endorserBlockHash
   , endorserBlockReferences
   , maxEndorserBlockBytesSize
   , mkEndorserBlock
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits (..))
@@ -245,7 +245,7 @@ prop_keepsEndorserBlockBytes =
           decodeMsgLeiosBlockViaLeiosFetchCodec $
             CBOR.encodePreEncoded $
               BSL.toStrict $
-                encode leiosFetchCodec (MsgLeiosBlock (serialiseEndorserBlock eb))
+                encode leiosFetchCodec (MsgLeiosBlock (mkEndorserBlockEnvelope eb))
         pure $
           conjoin
             [ counterexample "references" $ endorserBlockReferences eb === ebRecipeReferences ebRecipe
@@ -415,7 +415,7 @@ headBytes major width n = case width of
 -- | A codec that admits at most two txs.
 leiosFetchCodec ::
   Codec
-    (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)
+    (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx)
     CBOR.DeserialiseFailure
     IO
     ByteString
@@ -424,14 +424,14 @@ leiosFetchCodec =
     2
     encodeLeiosPoint
     decodeLeiosPoint
-    encodeSerialisedEndorserBlock
-    decodeSerialisedEndorserBlock
+    encodeEndorserBlockEnvelope
+    decodeEndorserBlockEnvelope
     encodeLeiosTx
     decodeLeiosTx
 
 -- | Decode a message with 'leiosFetchCodec'.
 decodeViaLeiosFetchCodec ::
-  forall (st :: LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx).
+  forall (st :: LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx).
   ActiveState st =>
   StateToken st ->
   CBOR.Encoding ->
@@ -449,8 +449,8 @@ decodeMsgLeiosBlockTxsViaLeiosFetchCodec enc =
 decodeMsgLeiosBlockViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe EndorserBlock)
 decodeMsgLeiosBlockViaLeiosFetchCodec enc =
   decodeViaLeiosFetchCodec SingBlock enc <&> \case
-    Just (SomeMessage (MsgLeiosBlock (MkSerialisedEndorserBlock bytes))) ->
-      either (const Nothing) Just $ deserialiseEndorserBlock bytes
+    Just (SomeMessage (MsgLeiosBlock envelope)) ->
+      either (const Nothing) Just $ deserialiseEndorserBlock envelope
     Nothing -> Nothing
 
 -- | CBOR-in-CBOR.

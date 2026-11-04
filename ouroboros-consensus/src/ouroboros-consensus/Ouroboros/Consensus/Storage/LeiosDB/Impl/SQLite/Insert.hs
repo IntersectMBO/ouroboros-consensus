@@ -15,6 +15,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
@@ -22,15 +23,15 @@ import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope (..)
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock (..)
   , TxLocation (..)
   , TxOffset
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , withBlob
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
+import Ouroboros.Network.Block (Serialised (..))
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize = do
@@ -90,7 +92,8 @@ sqlInsertEbBody conn point eb fills = do
     useStmt stInsertEbBody $ do
       dbBindHash stInsertEbBody 1 (pointEbHash point)
       dbBindBlob stInsertEbBody 2 (encodeTxBounds eb)
-      dbBindBlob stInsertEbBody 3 (serialisedEndorserBlockBytes (serialiseEndorserBlock eb))
+      dbBindInt64 stInsertEbBody 3 (fromIntegral (envelopeVersion envelope))
+      dbBindBlob stInsertEbBody 4 (BSL.toStrict (unSerialised (envelopeBytes envelope)))
       dbStep1 stInsertEbBody
     -- Each source is read once, in ascending offsets, as each blob handle walks
     -- the blob's pages from its start.
@@ -111,6 +114,7 @@ sqlInsertEbBody conn point eb fills = do
             ]
     writeTxBytes conn (pointEbHash point) copied
  where
+  envelope = mkEndorserBlockEnvelope eb
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   -- The fills by source, then by offset in the source.
   bySource =

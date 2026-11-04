@@ -29,10 +29,10 @@ import qualified Database.SQLite3 as SQL
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , hashLeiosTx
   , mkEndorserBlock
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
@@ -163,7 +163,7 @@ rwScanEbPoints = testScanEbPoints . rwReader
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
-rwLookupEbBody :: RW -> EndorserBlockHash -> IO (Maybe BS.ByteString)
+rwLookupEbBody :: RW -> EndorserBlockHash -> IO (Maybe EndorserBlockEnvelope)
 rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> EndorserBlockHash -> IO (Maybe [BS.ByteString])
@@ -334,10 +334,6 @@ zeroesFor eb off = BS.replicate (fromIntegral size) 0
 allTxsFor :: EndorserBlock -> [(TxOffset, BS.ByteString)]
 allTxsFor eb = [(off, txBytesFor eb off) | off <- [0 .. length (endorserBlockReferences eb) - 1]]
 
--- | The bytes the EB arrived in, as 'lookupEbBody' returns them.
-bodyBytes :: EndorserBlock -> BS.ByteString
-bodyBytes = serialisedEndorserBlockBytes . serialiseEndorserBlock
-
 -- * Test fixtures for unit tests
 
 -- | Create a simple test EndorserBlockHash from a seed byte.
@@ -431,7 +427,7 @@ prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-        let expected = Just (bodyBytes eb)
+        let expected = Just (mkEndorserBlockEnvelope eb)
         rwInsertEbPoint con point (encodeEndorserBlockSize eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
         (result, lookupTime) <- timed $ rwLookupEbBody con (pointEbHash point)
@@ -878,7 +874,7 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     points <- rwScanEbPoints con
     points @?= [(5, keptHash)]
     keptBody <- rwLookupEbBody con keptHash
-    keptBody @?= Just (bodyBytes eb)
+    keptBody @?= Just (mkEndorserBlockEnvelope eb)
     droppedBody <- rwLookupEbBody con droppedHash
     droppedBody @?= Nothing
     keptClosure <- rwLookupEbClosure con keptHash
@@ -1155,7 +1151,7 @@ observe ::
   IO
     ( (Int, Int)
     , ( [[TxOffset]]
-      , ( [ ( Maybe BS.ByteString
+      , ( [ ( Maybe EndorserBlockEnvelope
             , Maybe [BS.ByteString]
             , [(Int, BS.ByteString)]
             )

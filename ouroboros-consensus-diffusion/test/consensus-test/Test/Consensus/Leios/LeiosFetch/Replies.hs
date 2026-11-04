@@ -7,8 +7,6 @@ module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
-import qualified Codec.CBOR.Encoding as CBOR
-import qualified Codec.CBOR.Write as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , atomically
@@ -25,6 +23,7 @@ import Control.Exception (try)
 import Control.Monad (forM_)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntSet as IntSet
@@ -46,16 +45,16 @@ import Ouroboros.Consensus.Leios.TxCache
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
+  , EndorserBlockEnvelope (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , RankingBlockHash (..)
-  , SerialisedEndorserBlock (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
   , hashEndorserBlockBytes
   , hashLeiosTx
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
@@ -91,6 +90,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   )
 import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar, takeMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, uncheckedNewMVar)
+import Ouroboros.Network.Block (Serialised (..))
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
 import Test.Tasty (TestTree, testGroup)
@@ -108,8 +108,6 @@ tests =
         test_wrongHashUndecodable
     , testCase "the client disconnects a peer whose body has the hash but does not decode" $
         test_undecodable
-    , testCase "the client disconnects a peer whose body is not in an envelope" $
-        test_noEnvelope
     , testCase
         "the client announces a body at the newer slot an election focused it at while it was being written, which the LeiosDB then holds"
         test_refocusedWhileWriting
@@ -208,7 +206,7 @@ test_acquisitions = do
     ctx
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
+    (mkEndorserBlockEnvelope eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   -- The peer offers the closure, so the decision logic asks it for the jobs.
   reqs <-
@@ -238,7 +236,7 @@ test_wrongHash = do
         ctx
         peer
         (MkLeiosBlockRequest point (encodeEndorserBlockSize other) maxBound)
-        (serialiseEndorserBlock other)
+        (mkEndorserBlockEnvelope other)
   case result of
     Left (ExnLeiosBlockWrongHash p h) -> (p, h) @?= (point, endorserBlockHash other)
     Left exn -> assertFailure $ "unexpected exception: " <> show exn
@@ -250,28 +248,8 @@ notAnEndorserBlock :: BS8.ByteString
 notAnEndorserBlock = BS8.pack "not an endorser block"
 
 -- | These bytes in the envelope of version 0, as an endorser block's.
-enveloped :: BS8.ByteString -> SerialisedEndorserBlock
-enveloped bytes =
-  MkSerialisedEndorserBlock $
-    CBOR.toStrictByteString $
-      CBOR.encodeListLen 2 <> CBOR.encodeWord 0 <> CBOR.encodeTag 24 <> CBOR.encodeBytes bytes
-
-test_noEnvelope :: Assertion
-test_noEnvelope = do
-  let (point, _eb, _txs) = fixture
-  (ctx, notes) <- newContext
-  result <-
-    try $
-      processLeiosBlock
-        ctx
-        peer
-        (MkLeiosBlockRequest point (fromIntegral (BS8.length notAnEndorserBlock)) maxBound)
-        (MkSerialisedEndorserBlock notAnEndorserBlock)
-  case result of
-    Left (ExnLeiosBlockUndecodable p _err) -> p @?= point
-    Left exn -> assertFailure $ "unexpected exception: " <> show exn
-    Right () -> assertFailure "the client accepted bytes that are no endorser block"
-  atomically (readTVar notes) >>= (@?= [])
+enveloped :: BS8.ByteString -> EndorserBlockEnvelope
+enveloped bytes = MkEndorserBlockEnvelope 0 (Serialised (BSL.fromStrict bytes))
 
 test_wrongHashUndecodable :: Assertion
 test_wrongHashUndecodable = do
@@ -319,7 +297,7 @@ test_refocusedWhileWriting = do
     ctx
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
+    (mkEndorserBlockEnvelope eb)
   modifyMVar_ (lfcOutstanding ctx) $
     pure . recordMaxAnnouncementSlot (pointEbHash point) (pointSlotNo newer) SNothing
   atomically $ putTMVar written ()
@@ -341,7 +319,7 @@ test_collectedWhileWriting = do
     ctx
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
+    (mkEndorserBlockEnvelope eb)
   -- What 'processLeiosBlock' itself signals, so that what is left to await is
   -- the body's settlement.
   takeMVar (lfcReady ctx)
@@ -374,7 +352,7 @@ test_collectedAndRewrittenWhileWriting filled = do
     ctx
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
+    (mkEndorserBlockEnvelope eb)
   takeMVar (lfcReady ctx)
   modifyMVar_ (lfcOutstanding ctx) $ pure . snd . pruneOutstandingToImmTip (SlotNo 6)
   garbageCollect (lfcLeiosDb ctx) (SlotNo 6)

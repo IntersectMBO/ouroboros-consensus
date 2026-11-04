@@ -73,15 +73,19 @@ ebsTable extraColumns =
 
 -- | The tables that are identical in both partitions.
 --
--- An EB's body is stored as received, in its wire encoding, to serve it as
--- is, next to 'txBounds': where each of its txs is in the closure
+-- An EB's body is stored as received, the version and bytes of its envelope,
+-- to serve it as is, next to 'txBounds': where each of its txs is in the closure
 -- ('Read.encodeTxBounds'). The closure is one row, its txs' bytes
 -- concatenated. The first tx write allocates it with zeroes, and every write
 -- fills its txs in place.
+--
+-- Columns go from small to large, as reading one walks the overflow pages of
+-- every column before it.
 sharedTables :: [String]
 sharedTables =
   [ "CREATE TABLE IF NOT EXISTS ebBodies ("
   , "  ebHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , "  version INTEGER NOT NULL,"
   , "  txBounds BLOB NOT NULL,"
   , "  body BLOB NOT NULL"
   , ");"

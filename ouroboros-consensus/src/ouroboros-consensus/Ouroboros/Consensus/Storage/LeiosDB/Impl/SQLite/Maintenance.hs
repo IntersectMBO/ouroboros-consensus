@@ -76,7 +76,12 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (boundAt, closureMatches, splitClosure)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
+  ( boundAt
+  , closureMatches
+  , columnEnvelope
+  , splitClosure
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
@@ -149,12 +154,12 @@ copyEbToImmutable tracer statsVar conn ebHash =
           dbStepSafe ccClosure >>= \case
             DB.Done -> pure False
             DB.Row -> do
-              body <- DB.columnBlob ccClosure 0
-              bounds <- DB.columnBlob ccClosure 1
+              body <- columnEnvelope ccClosure 0
+              bounds <- DB.columnBlob ccClosure 2
               txs <-
-                DB.columnType ccClosure 2 >>= \case
+                DB.columnType ccClosure 3 >>= \case
                   DB.NullColumn -> pure (BS.replicate (boundAt bounds (BS.length bounds `div` 4 - 1)) 0)
-                  _ -> DB.columnBlob ccClosure 2
+                  _ -> DB.columnBlob ccClosure 3
               pure $ closureMatches body (splitClosure bounds txs)
       if not complete
         then

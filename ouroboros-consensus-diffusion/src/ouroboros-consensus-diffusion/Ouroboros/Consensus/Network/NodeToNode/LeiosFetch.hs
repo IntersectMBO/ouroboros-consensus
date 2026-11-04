@@ -16,12 +16,13 @@ import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint (..)
+  ( EndorserBlockEnvelope (..)
+  , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
@@ -58,6 +59,7 @@ import Ouroboros.Consensus.Util.IOLike
   , MonadCatch (..)
   , MonadThrow (..)
   )
+import Ouroboros.Network.Block (Serialised (..))
 import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
@@ -75,7 +77,7 @@ leiosFetchClient ::
   ControlMessageSTM m ->
   LeiosPeerLifetimeId peer ->
   LeiosFetchPeer m blk ->
-  LeiosFetchClientPeerPipelined LeiosPoint SerialisedEndorserBlock LeiosTx m ()
+  LeiosFetchClientPeerPipelined LeiosPoint EndorserBlockEnvelope LeiosTx m ()
 leiosFetchClient kernel controlMessageSTM lifetimeId peerVars =
   toLeiosFetchClientPeerPipelined $
     leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
@@ -91,7 +93,7 @@ leiosFetchServer ::
   MonadCatch m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
-  LeiosFetchServerPeer LeiosPoint SerialisedEndorserBlock LeiosTx m ()
+  LeiosFetchServerPeer LeiosPoint EndorserBlockEnvelope LeiosTx m ()
 leiosFetchServer tracer reader =
   leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
     MsgLeiosBlockRequest point ->
@@ -110,15 +112,17 @@ serveEb ::
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
-  m SerialisedEndorserBlock
+  m EndorserBlockEnvelope
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
   lookupEbBody reader (pointEbHash point) >>= \case
     Nothing -> throwIO $ ExnLeiosUnknownBlockRequested point
-    Just bytes -> do
-      traceWith tracer $ TraceLeiosFetchServerBlockServed point (BS.length bytes)
-      pure $ MkSerialisedEndorserBlock bytes
+    Just envelope -> do
+      traceWith tracer $
+        TraceLeiosFetchServerBlockServed point $
+          fromIntegral (BSL.length (unSerialised (envelopeBytes envelope)))
+      pure envelope
 
 serveTxs ::
   MonadThrow m =>

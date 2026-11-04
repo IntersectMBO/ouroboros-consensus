@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , withBlob
   , splitClosure
   , closureMatches
+  , columnEnvelope
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -40,6 +41,7 @@ import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
+  , EndorserBlockEnvelope (..)
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
@@ -51,6 +53,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API (unwrittenTx)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
+import Ouroboros.Network.Block (Serialised (..))
 
 sqlScanEbPoints :: Conn -> IO [(SlotNo, EndorserBlockHash)]
 sqlScanEbPoints conn =
@@ -101,15 +104,15 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
     lookupEbIndex (rsLookupEbIndex immReads) ebHash >>= \case
       Just _ -> pure True
       Nothing -> dbWithTransaction volDb $ do
-        mbBody <- lookupBlob (rsLookupEbBody volReads) ebHash
+        mbBody <- lookupEnvelope (rsLookupEbBody volReads) ebHash
         mbTxs <- closureFrom volReads ebHash
         pure $ case (mbBody, mbTxs) of
           (Just body, Just txs) -> closureMatches body txs
           _ -> False
 
--- | Whether these txs are the closure of the EB with these body bytes: each
--- hashes to what the body lists at its offset.
-closureMatches :: ByteString -> [ByteString] -> Bool
+-- | Whether these txs are the closure of the EB in this envelope: each hashes
+-- to what the body lists at its offset.
+closureMatches :: EndorserBlockEnvelope -> [ByteString] -> Bool
 closureMatches body txs = case deserialiseEndorserBlock body of
   Left _ -> False
   Right eb ->
@@ -125,12 +128,12 @@ splitClosure bounds txs =
   | i <- [0 .. BS.length bounds `div` 4 - 2]
   ]
 
-sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO (Maybe ByteString)
+sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO (Maybe EndorserBlockEnvelope)
 sqlLookupEbBody conn ebHash = do
-  vol <- dbWithTransaction volDb $ lookupBlob (rsLookupEbBody volReads) ebHash
+  vol <- dbWithTransaction volDb $ lookupEnvelope (rsLookupEbBody volReads) ebHash
   -- No body means the EB may have been copied to the immutable partition and
   -- evicted.
-  maybe (lookupBlob (rsLookupEbBody immReads) ebHash) (pure . Just) vol
+  maybe (lookupEnvelope (rsLookupEbBody immReads) ebHash) (pure . Just) vol
  where
   Conn
     { conVolDb = volDb
@@ -215,13 +218,21 @@ closureFrom ReadStmts{rsLookupEbClosure = stmt} ebHash =
             _ -> DB.columnBlob stmt 1
         pure $ Just (splitClosure bounds txs)
 
-lookupBlob :: DB.Statement -> EndorserBlockHash -> IO (Maybe ByteString)
-lookupBlob stmt ebHash =
+-- | An EB's body from 'sql_lookup_eb_body'.
+lookupEnvelope :: DB.Statement -> EndorserBlockHash -> IO (Maybe EndorserBlockEnvelope)
+lookupEnvelope stmt ebHash =
   useStmt stmt $ do
     dbBindHash stmt 1 ebHash
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
-      DB.Row -> Just <$> DB.columnBlob stmt 0
+      DB.Row -> Just <$> columnEnvelope stmt 0
+
+-- | The envelope in a version column and the body column after it.
+columnEnvelope :: DB.Statement -> DB.ColumnIndex -> IO EndorserBlockEnvelope
+columnEnvelope stmt i =
+  MkEndorserBlockEnvelope
+    <$> (fromIntegral <$> DB.columnInt64 stmt i)
+    <*> (Serialised . BSL.fromStrict <$> DB.columnBlob stmt (i + 1))
 
 -- | Where an EB's blobs are.
 data EbIndex = EbIndex

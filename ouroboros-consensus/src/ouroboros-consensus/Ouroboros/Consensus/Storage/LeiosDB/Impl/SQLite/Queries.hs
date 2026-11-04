@@ -54,15 +54,15 @@ sql_has_point =
 -- | Insert an EB's body. @OR IGNORE@: a second delivery of the same body
 -- changes nothing.
 --
--- Parameters: 1 = ebHashBytes, 2 = txBounds, 3 = body (wire encoding)
+-- Parameters: 1 = ebHashBytes, 2 = txBounds, 3 = envelope version, 4 = body
 sql_insert_eb_body :: String
 sql_insert_eb_body =
-  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, body) VALUES (?1, ?2, ?3)"
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, version, body) VALUES (?1, ?2, ?3, ?4)"
 
--- | An EB's body, in its wire encoding.
+-- | An EB's body, the version and bytes of its envelope.
 sql_lookup_eb_body :: String
 sql_lookup_eb_body =
-  "SELECT body FROM ebBodies WHERE ebHashBytes = ?1"
+  "SELECT version, body FROM ebBodies WHERE ebHashBytes = ?1"
 
 -- | Where an EB's blobs are: the rowid of its body, how many txs it lists,
 -- and the rowid of its closure, NULL until a tx is written. @length@ of a
@@ -112,7 +112,7 @@ sql_mark_as_copied =
 -- tx is written, from the volatile partition.
 sql_copy_closure :: String
 sql_copy_closure =
-  "SELECT b.body, b.txBounds, c.txs\n\
+  "SELECT b.version, b.body, b.txBounds, c.txs\n\
   \FROM vol.ebBodies b LEFT JOIN vol.ebClosures c ON c.ebHashBytes = b.ebHashBytes\n\
   \WHERE b.ebHashBytes = ?1\n\
   \"
@@ -136,8 +136,8 @@ sql_copy_insert_eb =
 -- 'sql_copy_insert_eb'.
 sql_copy_insert_ebBody :: String
 sql_copy_insert_ebBody =
-  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, body)\n\
-  \SELECT ebHashBytes, txBounds, body FROM vol.ebBodies WHERE ebHashBytes = ?1\n\
+  "INSERT OR IGNORE INTO ebBodies (ebHashBytes, txBounds, version, body)\n\
+  \SELECT ebHashBytes, txBounds, version, body FROM vol.ebBodies WHERE ebHashBytes = ?1\n\
   \"
 
 -- | Copy the EB's closure. @OR IGNORE@ for the same reason as

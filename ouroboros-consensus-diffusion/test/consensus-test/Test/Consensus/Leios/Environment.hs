@@ -71,7 +71,7 @@ import Ouroboros.Consensus.Block
   , pattern GenesisPoint
   )
 import Ouroboros.Consensus.Config (configCodec)
-import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosTx, LeiosVote, SerialisedEndorserBlock)
+import Ouroboros.Consensus.Leios.Types (EndorserBlockEnvelope, LeiosPoint, LeiosTx, LeiosVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchRequestHandler (..)
   , leiosFetchServerPeer
@@ -151,7 +151,7 @@ type LeiosNotifyCodec s =
 
 type LeiosFetchCodec s =
   Codec
-    (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)
+    (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx)
     DeserialiseFailure
     (IOSim s)
     ByteString

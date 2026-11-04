@@ -75,18 +75,18 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint
+  ( EndorserBlockEnvelope
+  , LeiosPoint
   , LeiosTx
   , LeiosVote
-  , SerialisedEndorserBlock
+  , decodeEndorserBlockEnvelope
   , decodeLeiosPoint
   , decodeLeiosTx
   , decodeLeiosVote
-  , decodeSerialisedEndorserBlock
+  , encodeEndorserBlockEnvelope
   , encodeLeiosPoint
   , encodeLeiosTx
   , encodeLeiosVote
-  , encodeSerialisedEndorserBlock
   , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
@@ -364,12 +364,12 @@ data Handlers m addr blk = Handlers
       ControlMessageSTM m ->
       LeiosPeerLifetimeId (ConnectionId addr) ->
       LeiosFetchPeer m blk ->
-      LeiosFetchClientPeerPipelined LeiosPoint SerialisedEndorserBlock LeiosTx m ()
+      LeiosFetchClientPeerPipelined LeiosPoint EndorserBlockEnvelope LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
       LeiosDbReader m ->
-      LeiosFetchServerPeer LeiosPoint SerialisedEndorserBlock LeiosTx m ()
+      LeiosFetchServerPeer LeiosPoint EndorserBlockEnvelope LeiosTx m ()
   }
 
 mkHandlers ::
@@ -578,7 +578,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN bLF = Codec
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
-  , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx) e m bLF
+  , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx) e m bLF
   }
 
 -- | Protocol codecs for the node-to-node protocols
@@ -671,8 +671,8 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
           maxTxsPerEndorserBlock
           encodeLeiosPoint
           decodeLeiosPoint
-          encodeSerialisedEndorserBlock
-          decodeSerialisedEndorserBlock
+          encodeEndorserBlockEnvelope
+          decodeEndorserBlockEnvelope
           encodeLeiosTx
           decodeLeiosTx
     }
@@ -701,7 +701,7 @@ identityCodecs ::
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
-    (AnyMessage (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx))
+    (AnyMessage (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx))
 identityCodecs =
   Codecs
     { cChainSyncCodec = codecChainSyncId
@@ -742,7 +742,7 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tLeiosNotifyTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint (Header blk) LeiosVote)))
   , tLeiosFetchTracer ::
-      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint SerialisedEndorserBlock LeiosTx)))
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint EndorserBlockEnvelope LeiosTx)))
   }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where

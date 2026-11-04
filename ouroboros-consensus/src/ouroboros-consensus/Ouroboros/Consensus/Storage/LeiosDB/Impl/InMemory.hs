@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -34,16 +35,16 @@ import qualified GHC.Stack as GHC
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope (..)
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , SerialisedEndorserBlock (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
+  , mkEndorserBlockEnvelope
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
@@ -66,6 +67,7 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
+import Ouroboros.Network.Block (Serialised (..))
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
@@ -93,10 +95,11 @@ data InMemoryLeiosDb = InMemoryLeiosDb
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
 emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
--- | An EB body: the bytes it arrived in, as the SQLite backend's @ebBodies@
--- row, and the txs it lists by offset.
+-- | An EB body: the version and bytes of the envelope it arrived in, as the
+-- SQLite backend's @ebBodies@ row, and the txs it lists by offset.
 data StoredBody = StoredBody
-  { sbBytes :: !ByteString
+  { sbVersion :: !Word
+  , sbBytes :: !ByteString
   , sbTxs :: !(IntMap {- txOffset -} EbTxEntry)
   }
   deriving stock Generic
@@ -248,11 +251,11 @@ imInsertEbPoint stateVar point ebBytesSize = atomically $
     s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe ByteString)
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe EndorserBlockEnvelope)
 imLookupEbBody stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   pure $
-    sbBytes
+    (\body -> MkEndorserBlockEnvelope (sbVersion body) (Serialised (BSL.fromStrict (sbBytes body))))
       <$> (Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state))
 
 -- | Mirrors the SQLite backend: the body, then the local fills, the first of
@@ -301,7 +304,8 @@ imInsertEbBody stateVar point eb fills = do
       [ (offset, EbTxEntry{eteTxHash = txHash, eteTxBytesSize = size})
       | (offset, (txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
       ]
-  body = StoredBody{sbBytes = serialisedEndorserBlockBytes (serialiseEndorserBlock eb), sbTxs = refs}
+  MkEndorserBlockEnvelope version (Serialised ebBytes) = mkEndorserBlockEnvelope eb
+  body = StoredBody{sbVersion = version, sbBytes = BSL.toStrict ebBytes, sbTxs = refs}
 
 imInsertTxs ::
   IOLike m =>

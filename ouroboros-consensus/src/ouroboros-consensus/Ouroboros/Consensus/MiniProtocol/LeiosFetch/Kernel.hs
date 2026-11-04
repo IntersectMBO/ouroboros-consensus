@@ -234,7 +234,7 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   -- holds it, the endorser block starts afresh.
   withSize point = \case
     Nothing -> pure []
-    Just bytes -> case deserialiseEndorserBlock bytes of
+    Just envelope -> case deserialiseEndorserBlock envelope of
       Right eb -> pure [(point, leiosEbSizes eb)]
       Left err -> throwLeiosDbException ("stored endorser block body does not decode: " <> err)
 

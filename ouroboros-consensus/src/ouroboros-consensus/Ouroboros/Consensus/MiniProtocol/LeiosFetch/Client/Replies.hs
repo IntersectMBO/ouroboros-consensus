@@ -24,6 +24,7 @@ import Cardano.Slotting.Slot (SlotNo)
 import Control.Monad (foldM, forM_, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (fold)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
@@ -54,19 +55,18 @@ import Ouroboros.Consensus.Leios.TxCache.API
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , EndorserBlockEnvelope (..)
   , EndorserBlockHash
   , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , ProtVerParity
-  , SerialisedEndorserBlock (..)
   , TxHash
   , deserialiseEndorserBlock
   , endorserBlockReferences
-  , hashEndorserBlockBytes
+  , hashEndorserBlockEnvelope
   , hashLeiosTx
   , leiosEbSizes
-  , unwrapEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -116,6 +116,7 @@ import Ouroboros.Consensus.Util.IOLike
   , tryPutMVar
   , writeTVar
   )
+import Ouroboros.Network.Block (Serialised (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 
 -- | What every LeiosFetch client of the node shares.
@@ -206,8 +207,8 @@ nextLeiosFetchClientCommand ::
   StrictTVar m (Seq LeiosFetchRequest) ->
   m
     ( Either
-        (m (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m)))
-        (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m))
+        (m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlockEnvelope LeiosTx m)))
+        (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlockEnvelope LeiosTx m))
     )
 nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
   atomically checkOrBlock >>= \case
@@ -215,7 +216,7 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
     Nothing -> pure $ Left (atomically awaitStopOrRequest)
  where
   checkOrBlock ::
-    STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m)))
+    STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlockEnvelope LeiosTx m)))
   checkOrBlock =
     controlMessageSTM >>= \case
       Terminate -> pure $ Just $ Left ()
@@ -231,7 +232,7 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
         Seq.Empty -> pure Nothing
 
   awaitStopOrRequest ::
-    STM m (Either () (SomeLeiosFetchJob LeiosPoint (SerialisedEndorserBlock) LeiosTx m))
+    STM m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlockEnvelope LeiosTx m))
   awaitStopOrRequest = checkOrBlock >>= maybe retry pure
 
   -- Replies are processed right on the pipelined peer's collector thread:
@@ -265,26 +266,24 @@ processLeiosBlock ::
   LeiosFetchClientContext m peer ->
   peer ->
   LeiosBlockRequest ->
-  SerialisedEndorserBlock ->
+  EndorserBlockEnvelope ->
   m ()
-processLeiosBlock ctx peer req (MkSerialisedEndorserBlock serialised) =
-  case unwrapEndorserBlock serialised of
-    Left err -> invalid (BS.length serialised) $ ExnLeiosBlockUndecodable point err
-    Right (_version, bytes) -> do
-      when (hashEndorserBlockBytes bytes /= ebHash) $
-        invalid (BS.length bytes) $
-          ExnLeiosBlockWrongHash point (hashEndorserBlockBytes bytes)
-      case deserialiseEndorserBlock serialised of
-        Left err -> invalid (BS.length bytes) $ ExnLeiosBlockUndecodable point err
-        Right eb -> processEndorserBlock ctx peer req eb
+processLeiosBlock ctx peer req envelope = do
+  when (hashEndorserBlockEnvelope envelope /= ebHash) $
+    invalid $
+      ExnLeiosBlockWrongHash point (hashEndorserBlockEnvelope envelope)
+  case deserialiseEndorserBlock envelope of
+    Left err -> invalid $ ExnLeiosBlockUndecodable point err
+    Right eb -> processEndorserBlock ctx peer req eb
  where
   point = lbrPoint req
   ebHash = pointEbHash point
 
-  invalid :: Int -> ExnLeiosFetchInvalidReply -> m ()
-  invalid size exn = do
+  invalid :: ExnLeiosFetchInvalidReply -> m ()
+  invalid exn = do
     traceWith (lfcTracer ctx) $
-      TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid (fromIntegral size))
+      TraceLeiosFetchClientBlockArrived point $
+        fetchArrivalInvalid (fromIntegral (BSL.length (unSerialised (envelopeBytes envelope))))
     throwIO exn
 
 -- | 'processLeiosBlock', once the bytes are the requested endorser block.
