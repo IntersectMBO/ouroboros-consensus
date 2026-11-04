@@ -70,7 +70,7 @@ import Ouroboros.Consensus.Leios.Cert
   , leiosClaim
   , verifyLeiosClaim
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -317,6 +317,7 @@ addBlockAsync ::
   InvalidBlockPunishment m ->
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -523,7 +524,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView b) >>= \case
+        lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView blockCertifiedAnnouncement b) >>= \case
           Right () ->
             chainSelectionForBlock
               cdb
@@ -1505,18 +1506,21 @@ addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
 -- | Check the Leios certificate of an arriving block, if it contains one,
 -- against the Leios part of the ledger view at the block's slot.
 --
--- If the certificate is valid, then record the claim it establishes; see
--- 'LeiosValidClaims'. If it is invalid, then so is the block. A block making an
--- already established claim need not have its certificate verified.
+-- If the certificate is valid, then record the claim it establishes, with the
+-- announcement it certifies; see 'LeiosValidClaims'. If it is invalid, then so
+-- is the block. A block making an already established claim need not have its
+-- certificate verified.
 checkLeiosCert ::
   (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
   ChainDbEnv m blk ->
   -- | The slot of the block's predecessor
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  -- | The announcement the block's certificate certifies
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
+checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView certified b =
   case blockLeiosCert b of
     Nothing -> pure $ Right ()
     Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
@@ -1528,7 +1532,7 @@ checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView b =
           | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
               Left rejection -> pure $ Left rejection
               Right () -> do
-                atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim)
+                atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim certified)
                 pure $ Right ()
 
 {-------------------------------------------------------------------------------

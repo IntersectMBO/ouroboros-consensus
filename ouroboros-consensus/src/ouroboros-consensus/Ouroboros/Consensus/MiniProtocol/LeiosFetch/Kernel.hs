@@ -17,6 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , onNewLeiosAnnouncement
   , onForgedLeiosEb
   , leiosFetchDecisionLoop
+  , leiosFetchFocuser
   , leiosFetchPruner
   ) where
 
@@ -67,6 +68,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosFetchRequest
   , LeiosOutstanding (..)
   , PeerOffer (..)
+  , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
@@ -267,7 +269,8 @@ recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
 -- One entry per election: the announcement that takes the election's focus. A
 -- second announcement for an already-focused election is an equivocation, and
 -- tracking its endorser block too would let a pool double what its won slots
--- cost us.
+-- cost us. If that one turns out to be the certified one, a verified
+-- certificate gives it an entry then.
 onNewLeiosAnnouncement ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
@@ -412,6 +415,36 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 
   loopInterval :: DiffTime
   loopInterval = 0.5
+
+-- | Move each election's focus onto the endorser block a verified certificate
+-- certifies, as ChainSel verifies such certificates.
+--
+-- This is how a node that only saw some other announcement for the election,
+-- or none, because the announcing block has been on its selection since before
+-- it started, comes to fetch the certified one. Each iteration compares the
+-- certified endorser blocks against the ones it last saw, so a certificate
+-- verified after the offer arrived still moves the focus.
+leiosFetchFocuser ::
+  IOLike m =>
+  ChainDB m blk ->
+  LeiosFetchKernel m peer blk ->
+  m Void
+leiosFetchFocuser chainDB kernel = go Map.empty
+ where
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
+
+  go seen = do
+    certified <- atomically $ do
+      certified <- ChainDB.getLeiosCertifiedEbs chainDB
+      if certified == seen then retry else pure certified
+    let arrived =
+          Map.differenceWith (\new old -> if new == old then Nothing else Just new) certified seen
+    modifyMVar_ lfcOutstanding $ \outstanding ->
+      pure $ Map.foldlWithKey' focus outstanding arrived
+    void $ tryPutMVar lfcReady ()
+    go certified
+
+  focus outstanding elId ebHash = focusCertifiedEb elId ebHash outstanding
 
 -- | Prune the node's LeiosFetch state and the peers' offers each time the
 -- immutable tip's slot advances.

@@ -66,12 +66,12 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
-import Data.Maybe.Strict (StrictMaybe (SJust))
+import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Network.Mux as Mux
-import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot, getHeader)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
@@ -85,10 +85,12 @@ import Ouroboros.Consensus.Config
   ( DiffusionPipeliningSupport (..)
   , SecurityParam (..)
   , TopLevelConfig
+  , configBlock
   , configLedger
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.HeaderValidation (certifiedLeiosAnnouncement)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
@@ -224,21 +226,32 @@ data NodeUnderTest m = NodeUnderTest
 addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
 addBlocks node = addBlocksAfter node Origin
 
--- | Add a chain to the node's ChainDB, oldest first, given the slot of its
--- first block's predecessor
+-- | Add a chain to the node's ChainDB, oldest first, given its first block's
+-- predecessor
 --
 -- A 'LeiosTestBlock''s ledger view is the same at every slot.
-addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin SlotNo -> [Blk] -> m ()
-addBlocksAfter node predecessorSlot blks =
+addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin Blk -> [Blk] -> m ()
+addBlocksAfter node predecessor blks =
   sequence_ $
     zipWith
-      ( \predSlot ->
-          ChainDB.addBlock_ (nodeChainDB node) noPunishment predSlot leiosView
+      ( \prev blk ->
+          ChainDB.addBlock_
+            (nodeChainDB node)
+            noPunishment
+            (blockSlot <$> prev)
+            leiosView
+            (certified prev blk)
+            blk
       )
-      (predecessorSlot : map (NotOrigin . blockSlot) blks)
+      (predecessor : map NotOrigin blks)
       blks
  where
-  leiosView = SJust (ltlcLeios (configLedger (nodeTopLevelConfig node)))
+  cfg = nodeTopLevelConfig node
+  leiosView = SJust (ltlcLeios (configLedger cfg))
+  certified prev blk = case prev of
+    Origin -> SNothing
+    NotOrigin p ->
+      certifiedLeiosAnnouncement (configBlock cfg) (getHeader blk) (latestAnnouncement (getHeader p))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =

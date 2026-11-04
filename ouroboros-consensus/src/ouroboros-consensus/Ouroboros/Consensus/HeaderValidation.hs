@@ -65,6 +65,7 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
+  , certifiedLeiosAnnouncement
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -82,7 +83,7 @@ import Control.Monad.Except
 import Data.Coerce
 import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.Proxy
 import Data.Typeable (Typeable)
 import Data.Void (Void)
@@ -92,7 +93,11 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement
+  , LeiosLedgerView
+  , LeiosProtocol (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
@@ -587,7 +592,8 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
 -------------------------------------------------------------------------------}
 
 -- | A header paired with the time of the slot that it inhabits, with the slot
--- of its predecessor, and with the Leios part of the ledger view at its slot.
+-- of its predecessor, with the Leios part of the ledger view at its slot, and
+-- with the announcement its Leios certificate certifies.
 --
 -- Note that the header's slot was translated to this time (by whatever
 -- validated the header) according to the header's chain. This clarification
@@ -614,6 +620,12 @@ data HeaderWithTime blk = HeaderWithTime
   -- The ledger view is a property of the slot, so applying the header's block
   -- in that slot does not change it: the state just before the block and the
   -- state the block produced give the same view.
+  , hwtCertifiedAnnouncement :: !(StrictMaybe LeiosAnnouncement)
+  -- ^ What the header's predecessor announced, if the header contains a Leios
+  -- certificate, which certifies that; see 'certifiedLeiosAnnouncement'
+  --
+  -- Like 'hwtPredecessorSlot', this is knowledge of the chain the header
+  -- arrived on, and unambiguous for the same reason.
   }
   deriving Generic
 
@@ -628,6 +640,22 @@ deriving anyclass instance
   NoThunks (HeaderWithTime blk)
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
+
+-- | The announcement a header's Leios certificate certifies, if the header
+-- contains one, given the chain-dependent state as of the header's predecessor
+certifiedLeiosAnnouncement ::
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  Header blk ->
+  ChainDepState (BlockProtocol blk) ->
+  StrictMaybe LeiosAnnouncement
+certifiedLeiosAnnouncement bcfg hdr predChainDep
+  | getContainsLeiosCert p (validateView bcfg hdr) =
+      maybeToStrictMaybe $ getCertifiableLeiosAnnouncement p predChainDep
+  | otherwise = SNothing
+ where
+  p = Proxy @(BlockProtocol blk)
 
 instance
   ( Show (HeaderHash blk)
