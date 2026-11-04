@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getIsValid
   , getMaxSlotNo
   , getPastLedger
+  , getLeiosCertifiedEbs
   , getPerasWeightSnapshot
   , getLatestPerasCertSeen
   , getPerasCertsAfter
@@ -69,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
+import Ouroboros.Consensus.Leios.Types (ElectionId, EndorserBlockHash)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionView
   , mkPerasCertInclusionView
@@ -97,6 +99,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , PerasCertInclusionViewError (..)
   , PerasVotingViewError (..)
   )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (leiosCertifiedEbs)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -367,6 +370,10 @@ withReadOnlyForkerAtPoint cdb tgt =
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
+
+getLeiosCertifiedEbs ::
+  IOLike m => ChainDbEnv m blk -> STM m (Map ElectionId EndorserBlockHash)
+getLeiosCertifiedEbs CDB{..} = leiosCertifiedEbs <$> readTVar cdbLeiosValidClaims
 
 getPerasWeightSnapshot ::
   ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))

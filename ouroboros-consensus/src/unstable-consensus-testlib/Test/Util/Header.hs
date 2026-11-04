@@ -13,6 +13,7 @@ module Test.Util.Header
 
 import Cardano.Slotting.EpochInfo.API (epochInfoSlotToRelativeTime)
 import Data.Functor.Identity (runIdentity)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
@@ -79,6 +80,8 @@ attachSlotTime cfg predecessorSlot hdr =
         runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
     , hwtPredecessorSlot = predecessorSlot
     , hwtLeiosLedgerView = trivialLeiosLedgerView (Proxy @blk)
+    , -- Such a block has no Leios, so neither has its chain.
+      hwtCertifiedAnnouncement = SNothing
     }
  where
   ei = immutableEpochInfo cfg
