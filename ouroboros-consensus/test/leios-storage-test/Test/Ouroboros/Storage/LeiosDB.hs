@@ -1161,7 +1161,7 @@ prop_storeForgedEbThenLookup impl =
         let forged = forgeLeiosEb txs
             body = forgedEbBody forged
             ebHash = endorserBlockHash body
-        withWriter db $ \writer -> storeForgedEb writer slot forged
+        withWriter db $ \writer -> storeForgedEb (\_ -> pure ()) writer slot forged
         (points, closure) <-
           withReader db $ \reader ->
             (,)

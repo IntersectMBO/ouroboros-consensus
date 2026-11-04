@@ -202,6 +202,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
@@ -1517,6 +1518,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.AcquiredEbs
     Test.Consensus.Leios.Cert
     Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Committee

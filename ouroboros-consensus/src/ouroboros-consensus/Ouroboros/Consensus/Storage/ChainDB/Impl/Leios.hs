@@ -54,8 +54,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol (..)
   )
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlockHash
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , RankingBlockHash
   )
 import Ouroboros.Consensus.Storage.ImmutableDB (Parent (..))
@@ -98,61 +97,37 @@ leiosHeaderInfo bcfg hdr =
   Acquired closures
 -------------------------------------------------------------------------------}
 
--- | The endorser blocks whose closure the LeiosDB holds.
---
--- 'UnsafeAcquiredEbs' does not ensure that 'aleBySlot' is the inverse of
--- 'aleYoungestSlot'; build one with 'mkAcquiredEbs' instead.
-data AcquiredEbs = UnsafeAcquiredEbs
-  { aleYoungestSlot :: !(Map EndorserBlockHash SlotNo)
-  -- ^ INVARIANT: the slot of the youngest 'LeiosPoint' with that EB hash in
-  -- 'aleBySlot'.
-  --
-  -- The domain is used by ChainSel when checking which CertRBs are
-  -- parked/not-selectable.
-  --
-  -- The codomain is used instead of a refcount when pruning.
-  , aleBySlot :: !(Map SlotNo (NESet EndorserBlockHash))
-  -- ^ Each 'LeiosPoint' the LeiosDB has acquired is inserted into this map;
-  -- see @launchBgTasks@.
+-- | The endorser block points whose closure the LeiosDB holds: those of the
+-- @AcquiredEbTxs@ acquisitions (see @LeiosEbNotification@).
+data AcquiredEbs = MkAcquiredEbs
+  { alePoints :: !(Set LeiosPoint)
+  , alePrunedSlot :: !SlotNo
+  -- ^ The slot this has most recently been pruned to, so that an acquisition
+  -- that arrives after the pruning cannot undo it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 mkAcquiredEbs :: [LeiosPoint] -> AcquiredEbs
 mkAcquiredEbs =
-  List.foldl' (flip insertAcquiredEb) (UnsafeAcquiredEbs Map.empty Map.empty)
+  List.foldl' (flip insertAcquiredEb) (MkAcquiredEbs Set.empty (SlotNo 0))
 
--- | Record that the endorser block's closure is acquired, and that the given
--- point announces it.
+-- | Record that the closure of the endorser block at this point is acquired,
+-- unless the point is older than what has been pruned.
 insertAcquiredEb :: LeiosPoint -> AcquiredEbs -> AcquiredEbs
-insertAcquiredEb (MkLeiosPoint slot ebHash) acquired@(UnsafeAcquiredEbs youngest bySlot) =
-  case Map.lookup ebHash youngest of
-    Nothing -> record bySlot
-    Just prevSlot
-      | slot <= prevSlot -> acquired
-      | otherwise -> record (Map.update (NESet.nonEmptySet . NESet.delete ebHash) prevSlot bySlot)
- where
-  record bySlot' =
-    UnsafeAcquiredEbs
-      (Map.insert ebHash slot youngest)
-      (Map.insertWith NESet.union slot (NESet.singleton ebHash) bySlot')
+insertAcquiredEb point acquired@(MkAcquiredEbs points prunedSlot)
+  | pointSlotNo point < prunedSlot = acquired
+  | otherwise = MkAcquiredEbs (Set.insert point points) prunedSlot
 
-isAcquiredEb :: EndorserBlockHash -> AcquiredEbs -> Bool
-isAcquiredEb ebHash = Map.member ebHash . aleYoungestSlot
+isAcquiredEb :: LeiosPoint -> AcquiredEbs -> Bool
+isAcquiredEb point = Set.member point . alePoints
 
--- | Forget every endorser block all of whose foci are older than the slot. A
--- block that ChainSel has yet to select can then certify it only at another
--- announcement, and verifying that certificate makes the announcement a focus,
--- which records the endorser block here again.
---
--- See 'AcquiredEbs' for why its slots are the youngest foci.
+-- | Forget every point older than the slot.
 pruneAcquiredEbs :: SlotNo -> AcquiredEbs -> AcquiredEbs
-pruneAcquiredEbs slot (UnsafeAcquiredEbs youngest bySlot) =
-  UnsafeAcquiredEbs
-    (youngest `Map.withoutKeys` foldMap NESet.toSet pruned)
-    kept
- where
-  (pruned, kept) = Map.spanAntitone (< slot) bySlot
+pruneAcquiredEbs slot (MkAcquiredEbs points prunedSlot) =
+  MkAcquiredEbs
+    (Set.dropWhileAntitone ((< slot) . pointSlotNo) points)
+    (max slot prunedSlot)
 
 {-------------------------------------------------------------------------------
   Parking
@@ -170,18 +145,19 @@ isParkedCertRB ::
   Bool
 isParkedCertRB acquired lookupBlockInfo info
   | not (lbiHasCert (biLeios info)) = False
-  | otherwise = case certifiedEb of
-      Just ebHash -> not (isAcquiredEb ebHash acquired)
+  | otherwise = case certified of
+      Just point -> not (isAcquiredEb point acquired)
       -- Either the VolatileDB lacks the predecessor, so the block cannot
       -- be selected before it arrives anyway, or the predecessor (perhaps
       -- genesis) announces nothing, so the block can never be valid and
       -- staying parked for good is harmless.
       Nothing -> True
  where
-  certifiedEb = case biPrevHash info of
+  certified = case biPrevHash info of
     GenesisHash -> Nothing
-    BlockHash prevHash ->
-      lookupBlockInfo prevHash >>= strictMaybeToMaybe . lbiAnnouncedEb . biLeios
+    BlockHash prevHash -> do
+      prev <- lookupBlockInfo prevHash
+      MkLeiosPoint (biSlotNo prev) <$> strictMaybeToMaybe (lbiAnnouncedEb (biLeios prev))
 
 -- | Hide parked blocks ('isParkedCertRB') from a @getBlockInfo@. The given one
 -- must be the VolatileDB's own, so that it still finds every predecessor.
