@@ -115,7 +115,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (getLeiosLedgerView))
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricalChainSyncMessage (..)
   , HistoricityCheck
@@ -785,6 +785,18 @@ data ConfigEnv m blk = ConfigEnv
   , chainDbView :: ChainDbView m blk
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
+  , leiosMsgRollForwardCallback ::
+      Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> HeaderStateWithTime blk -> m ()
+  -- ^ Invoked on each valid 'MsgRollForward', with the header, the onset of its
+  -- slot, the Leios part of the ledger view at that slot, and the state as of
+  -- its predecessor.
+  , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
+  -- ^ Invoked when this peer accepts a jump, with the dynamo's fragment that the
+  -- jump carries.
+  --
+  -- A jumper does not roll forward the headers it jumps over, so this is how
+  -- the node learns that the peer has them: agreeing to the jump asserts that
+  -- it would have sent them.
   }
 
 -- | Arguments determined dynamically
@@ -1242,6 +1254,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     { mkPipelineDecision0
     , tracer
     , historicityCheck
+    , leiosMsgRollForwardCallback
+    , leiosJumpAcceptedCallback
     } = cfgEnv
 
   DynamicEnv
@@ -1351,6 +1365,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               if
                 | pt == dynamoTipPt -> do
                     Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    leiosJumpAcceptedCallback jumpInfo
                     traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                     let kis' = case jump of
                           -- Since the updated kis is needed to validate headers,
@@ -1544,6 +1559,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             setCandidate (theirFrag kis''')
           atomically $
             traceWith headerMetricsTracer (slotNo, arrivalTime)
+
+          -- The history of the state before validating the header still ends
+          -- at its predecessor; the one after ends at the header.
+          leiosMsgRollForwardCallback
+            hdr
+            hdrSlotTime
+            (hswtLeiosLedgerView (HeaderStateHistory.current (theirHeaderStateHistory kis'')))
+            (HeaderStateHistory.current (theirHeaderStateHistory kis'))
 
           continueWithState kis''' $
             nextStep mkPipelineDecision n theirTip

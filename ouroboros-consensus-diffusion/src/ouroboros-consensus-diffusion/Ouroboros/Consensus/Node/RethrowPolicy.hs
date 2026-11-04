@@ -20,6 +20,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (ExnLeiosFetchInvalidReply)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (ExnLeiosTwoCertificationClaims)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
 import Ouroboros.Consensus.Node.DbLock
 import Ouroboros.Consensus.Node.DbMarker (DbMarkerError)
@@ -124,6 +125,7 @@ consensusRethrowPolicy pb =
     -- A LeiosFetch client requested what the node does not hold.
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosInvalidRequest) -> theyBuggyOrEvil)
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosFetchInvalidReply) -> theyBuggyOrEvil)
+    <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosTwoCertificationClaims) -> theyBuggyOrEvil)
     -- Dispatch on nested exception
     <> mkRethrowPolicy
       ( \ctx (ExceptionInLinkedThread _ e) ->
