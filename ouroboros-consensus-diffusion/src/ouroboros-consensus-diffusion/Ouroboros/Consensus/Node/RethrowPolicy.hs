@@ -13,6 +13,7 @@ import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block (BlockSupportsPeras (..), StandardHash)
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Leios.TxCache.Optimized (ExnLeiosTxCacheCorruptVersion)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( BlockFetchServerException
   )
@@ -126,6 +127,7 @@ consensusRethrowPolicy pb =
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosInvalidRequest) -> theyBuggyOrEvil)
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosFetchInvalidReply) -> theyBuggyOrEvil)
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosTwoCertificationClaims) -> theyBuggyOrEvil)
+    <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosTxCacheCorruptVersion) -> shutdownNode)
     -- Dispatch on nested exception
     <> mkRethrowPolicy
       ( \ctx (ExceptionInLinkedThread _ e) ->
