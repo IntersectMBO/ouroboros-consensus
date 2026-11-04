@@ -41,14 +41,8 @@ data TraceLeiosDb
     TraceLeiosDbCopiedToImmutable
       -- | number of EBs copied
       Int
-  | -- | A sweep pass evicted EB announcement rows from the volatile
-    -- partition.
+  | -- | A garbage collection deleted rows from the volatile partition.
     TraceLeiosDbEvicted
       -- | number of rows evicted
       Int
-  | -- | The background sweeper failed a sweep pass; the connection is
-    -- dropped and the pass retried.
-    TraceLeiosDbGCError
-      -- | the error
-      String
   deriving Show

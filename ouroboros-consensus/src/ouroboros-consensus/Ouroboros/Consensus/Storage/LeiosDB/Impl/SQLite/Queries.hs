@@ -13,7 +13,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_lookup_eb_closure
   , sql_copy_closure
   , sql_copy_insert_eb
-  , sql_gc_sweep
+  , sql_gc_collect
   ) where
 
 sql_scan_ebs :: String
@@ -101,7 +101,7 @@ sql_copy_insert_eb =
 
 -- ** Garbage collection of the volatile partition
 
--- | Delete up to @?1@ rows before slot @?2@.
-sql_gc_sweep :: String
-sql_gc_sweep =
-  "DELETE FROM ebs WHERE rowid IN (SELECT rowid FROM ebs WHERE ebSlot < ?2 LIMIT ?1)"
+-- | Delete the rows before slot @?1@.
+sql_gc_collect :: String
+sql_gc_collect =
+  "DELETE FROM ebs WHERE ebSlot < ?1"

@@ -31,7 +31,7 @@
 --     with 1 typical);
 --   * @catchup@ --- 5 phases of 180 GC'able EBs each (the backlog of a ~1h
 --     outage): the first GC tick after downtime or during sync, where
---     everything that aged out meanwhile is marked at once.
+--     everything that aged out meanwhile is collected at once.
 --
 -- A phase takes the next N EBs of the schedule, so the GC frontier passed to
 -- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
@@ -41,14 +41,8 @@
 --      load, reporting the median wall time (@insertEbSeconds@);
 --   2. promote half of the N EBs, which copies them (@promoteSeconds@) ---
 --      the rest are evicted un-copied, as un-certified EBs are on a real node;
---   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
---      and wait for the background sweeper to delete the rows before the
---      frontier (@sweepSeconds@).
---
--- @--gc-pacing@ selects the sweeper pacing: @default@ is what the node runs
--- (4-EB eviction batches with 100ms pauses in between, trading drain time
--- for short write-lock holds); @zero@ removes both bounds (one unbounded
--- eviction transaction, no pauses), measuring the raw sweep work.
+--   3. call 'garbageCollect', which deletes the rows before the frontier
+--      (@gcSeconds@).
 --
 -- Reported per phase, as one CSV row on stdout (everything else goes to
 -- stderr).
@@ -67,9 +61,6 @@
 -- -- point at a disk with ~100 GB free, not a tmpfs; runs for hours)
 -- TMPDIR=\/scratch cabal run bench:leios-gc-bench -- \\
 --   --scenario catchup --load eb-no-sharing --txs-per-eb 13000 --tx-bytes 923
---
--- -- raw sweep work and unprotected lock holds: no batching, no pauses
--- cabal run bench:leios-gc-bench -- --scenario catchup --gc-pacing zero
 --
 -- -- a production volatile partition instead of the synthetic population
 -- cabal run bench:leios-gc-bench -- --scenario steady leios.vol.db
@@ -112,7 +103,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , TraceLeiosDb (..)
   , awaitAll
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteWithGcBatchSize
   , withWriter
   )
 import System.Directory (copyFile, doesFileExist)
@@ -138,9 +128,7 @@ main = do
     let benchVol = tmpDir <> "/bench.vol.db"
         benchImm = tmpDir <> "/bench.imm.db"
     (tracer, flushEvents) <- mkCollectingTracer
-    let mkDb = case optGcPacing opts of
-          GcPacingDefault -> newLeiosDBSQLite registry tracer benchVol benchImm
-          GcPacingZero -> newLeiosDBSQLiteWithGcBatchSize registry tracer benchVol benchImm 0
+    let mkDb = newLeiosDBSQLite registry tracer benchVol benchImm
     -- get the series of (slot, ebHash)
     (db, schedule) <- case optDbPath opts of
       Just path -> do
@@ -190,10 +178,8 @@ main = do
         [ ""
         , "Scheduled EBs       : " <> show (length schedule)
         , "Phases              : " <> describeSeries
-        , "GC pacing           : " <> gcPacingName (optGcPacing opts)
         , ""
         ]
-    sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
     before <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "before" before)
     latRef <- newIORef 0
@@ -201,7 +187,7 @@ main = do
     phaseStats <-
       withAsync mutator $ \_ ->
         withAsync (tickProbe latRef) $ \_ ->
-          runPhases opts db flushEvents latRef sweepBacklog schedule
+          runPhases opts db flushEvents latRef schedule
     after <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "after " after)
     hPutStr stderr (renderSummary opts phaseStats)
@@ -237,19 +223,6 @@ loadDupPreset = \case
 
 data Scenario = Steady | Catchup
 
-data GcPacing = GcPacingDefault | GcPacingZero
-
-gcPacingName :: GcPacing -> String
-gcPacingName = \case
-  GcPacingDefault -> "default"
-  GcPacingZero -> "zero"
-
-readGcPacing :: String -> Either String GcPacing
-readGcPacing = \case
-  "default" -> Right GcPacingDefault
-  "zero" -> Right GcPacingZero
-  s -> Left ("expected default|zero, got: " <> s)
-
 readScenario :: String -> Either String Scenario
 readScenario = \case
   "steady" -> Right Steady
@@ -260,7 +233,6 @@ data Opts = Opts
   { optDbPath :: Maybe FilePath
   , optLoad :: Load
   , optScenario :: Scenario
-  , optGcPacing :: GcPacing
   , optTxsPerEb :: Int
   , optTxBytes :: Int
   }
@@ -337,18 +309,6 @@ optsParser =
             "Which GC scenario to run: steady (10 phases of 1 GC'able EB, \
             \the per-tick norm of a healthy node) or catchup (5 phases of \
             \180 EBs, the backlog of a ~1h outage)"
-      )
-    <*> option
-      (eitherReader readGcPacing)
-      ( long "gc-pacing"
-          <> metavar "default|zero"
-          <> value GcPacingDefault
-          <> showDefaultWith gcPacingName
-          <> help
-            "Sweep batching: default (4-EB eviction batches, with the \
-            \writer's other work interleaved between them) or zero (one \
-            \unbounded eviction transaction) --- zero measures raw sweep \
-            \work and the unprotected worst-case write-lock hold"
       )
     <*> option
       auto
@@ -453,15 +413,13 @@ genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
 -- below the GC frontier.
 data PhaseResult = PhaseResult
   { prScenario :: !String
-  , prPacing :: !String
   , prGcable :: !Int
   , prResident :: !Int
   , prPromoted :: !Int
   , prInsertEbWall :: !DiffTime
   -- ^ median over the phase's timed full-EB insertions
   , prPromoteWall :: !DiffTime
-  , prMarkWall :: !DiffTime
-  , prSweepWall :: !DiffTime
+  , prGcWall :: !DiffTime
   , prStats :: !CycleStats
   , prTickLat :: !DiffTime
   }
@@ -471,10 +429,9 @@ runPhases ::
   LeiosDbHandle IO ->
   IO [TraceLeiosDb] ->
   IORef DiffTime ->
-  (Word64 -> IO Int) ->
   [(Word64, BS.ByteString)] ->
   IO [PhaseResult]
-runPhases opts db flushEvents latRef sweepBacklog schedule =
+runPhases opts db flushEvents latRef schedule =
   withWriter db $ \writer -> do
     remainingRef <- newIORef schedule
     freshRef <- newIORef (0 :: Int)
@@ -531,23 +488,20 @@ runPhases opts db flushEvents latRef sweepBacklog schedule =
               leiosDbPromoteToImmutable
                 db
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
-          -- 3. GC: mark, then wait for the sweeper to drain
-          (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
-          (_, sweepWall) <- timed $ awaitZero "sweep" (sweepBacklog frontier)
+          -- 3. GC
+          (_, gcWall) <- timed $ garbageCollect db (SlotNo frontier)
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents
           let stats = List.foldl' addEvent emptyCycleStats evs
               result =
                 PhaseResult
                   { prScenario = scenario
-                  , prPacing = gcPacingName (optGcPacing opts)
                   , prGcable = length due
                   , prResident = resident
                   , prPromoted = nPromote
                   , prInsertEbWall = medianTime insertWalls
                   , prPromoteWall = promoteWall
-                  , prMarkWall = markWall
-                  , prSweepWall = sweepWall
+                  , prGcWall = gcWall
                   , prStats = stats
                   , prTickLat = tickLat
                   }
@@ -558,41 +512,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule =
 medianTime :: [DiffTime] -> DiffTime
 medianTime [] = 0
 medianTime ts = List.sort ts !! (length ts `div` 2)
-
--- * Sweep backlog probes
-
--- | What the sweeper still owes: the rows before the GC frontier @?1@.
-sqlSweepBacklog :: T.Text
-sqlSweepBacklog =
-  "SELECT COUNT(*) FROM ebs WHERE ebSlot < ?1"
-
--- | A reusable single-integer probe, of the GC frontier, on its own
--- connection (WAL readers do not block the sweeper's writes; the reset after
--- each poll releases the read snapshot).
-mkBacklogProbe :: FilePath -> T.Text -> IO (Word64 -> IO Int)
-mkBacklogProbe path sql = do
-  db <- SQL.open (T.pack path)
-  stmt <- SQL.prepare db sql
-  pure $ \frontier -> do
-    SQL.bindInt64 stmt 1 (fromIntegral frontier)
-    _ <- SQL.step stmt
-    n <- SQL.columnInt64 stmt 0
-    SQL.reset stmt
-    pure (fromIntegral n)
-
--- | Poll a backlog probe until it reaches zero.
-awaitZero :: String -> IO Int -> IO ()
-awaitZero what probe = go (0 :: Int)
- where
-  go n =
-    probe >>= \case
-      0 -> pure ()
-      k ->
-        if n > 3_600_000
-          then die (what <> " timed out; backlog = " <> show k)
-          else do
-            threadDelay 1_000
-            go (n + 1)
 
 -- * Event collection
 
@@ -607,11 +526,10 @@ data CycleStats = CycleStats
   { csCopied :: !Int
   , csEvicted :: !Int
   , csCollisions :: !Int
-  , csSweepErrors :: !Int
   }
 
 emptyCycleStats :: CycleStats
-emptyCycleStats = CycleStats 0 0 0 0
+emptyCycleStats = CycleStats 0 0 0
 
 addEvent :: CycleStats -> TraceLeiosDb -> CycleStats
 addEvent cs = \case
@@ -620,7 +538,6 @@ addEvent cs = \case
   TraceLeiosDbEvicted evictedEbs ->
     cs{csEvicted = csEvicted cs + evictedEbs}
   TraceLeiosDbInsertCollision{} -> cs{csCollisions = csCollisions cs + 1}
-  TraceLeiosDbGCError{} -> cs{csSweepErrors = csSweepErrors cs + 1}
   _ -> cs
 
 -- * RTS health probe
@@ -681,7 +598,6 @@ csvHeader =
     ","
     [ "phase"
     , "scenario"
-    , "gcPacing"
     , "gcableEbs"
     , "residentEbs"
     , "promotedEbs"
@@ -689,8 +605,7 @@ csvHeader =
     , "insertEbSeconds"
     , "promoteSeconds"
     , "evictedEbRows"
-    , "markSeconds"
-    , "sweepSeconds"
+    , "gcSeconds"
     ]
 
 renderPhase :: Int -> PhaseResult -> String
@@ -698,21 +613,18 @@ renderPhase
   i
   PhaseResult
     { prScenario
-    , prPacing
     , prGcable
     , prResident
     , prPromoted
     , prInsertEbWall
     , prPromoteWall
-    , prMarkWall
-    , prSweepWall
+    , prGcWall
     , prStats = cs
     } =
     List.intercalate
       ","
       [ show i
       , prScenario
-      , prPacing
       , show prGcable
       , show prResident
       , show prPromoted
@@ -720,8 +632,7 @@ renderPhase
       , showSeconds prInsertEbWall
       , showSeconds prPromoteWall
       , show (csEvicted cs)
-      , showSeconds prMarkWall
-      , showSeconds prSweepWall
+      , showSeconds prGcWall
       ]
 
 renderStats :: String -> LeiosDbStats -> String
@@ -741,7 +652,6 @@ renderSummary opts results =
          , "  copied ebs            = " <> show (sum (map (csCopied . prStats) results))
          , "  evicted ebs           = " <> show (sum (map (csEvicted . prStats) results))
          , "  insert collisions     = " <> show (sum (map (csCollisions . prStats) results))
-         , "  sweep errors          = " <> show (sum (map (csSweepErrors . prStats) results))
          ]
       <> concatMap scenarioBlock (List.nub (map prScenario results))
  where
@@ -755,8 +665,7 @@ renderSummary opts results =
         <> " EBs GC'd):"
     , stat "insert eb (median)" (map prInsertEbWall rs)
     , stat "promote           " (map prPromoteWall rs)
-    , stat "mark              " (map prMarkWall rs)
-    , stat "sweep             " (map prSweepWall rs)
+    , stat "gc                " (map prGcWall rs)
     , stat "tick latency      " (map prTickLat rs)
     ]
    where
