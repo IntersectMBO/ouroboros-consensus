@@ -37,12 +37,19 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
+import Ouroboros.Consensus.Leios.TxCache
+  ( LeiosTxCache (..)
+  , defaultLeiosTxCacheShift
+  , newPureLeiosTxCache
+  )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
   , LeiosEbBounds (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
+  , RankingBlockHash (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
@@ -196,6 +203,9 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
+  _ <-
+    insertAnnouncement txCache slot (MkRankingBlockHash (UnsafeHash (SBS.pack (replicate 32 1)))) ebHash
   outstanding <-
     uncheckedNewMVar $
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
@@ -211,6 +221,7 @@ newContextGated point gate = do
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
         , lfcOutstanding = outstanding
         , lfcReady = ready
+        , lfcTxCache = txCache
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
@@ -221,9 +232,9 @@ newContextGated point gate = do
  where
   holdingBodies writer =
     writer
-      { writeEbBody = \p eb -> do
+      { writeEbBody = \p eb fills -> do
           release <- gate
-          written <- writeEbBody writer p eb
+          written <- writeEbBody writer p eb fills
           pure $ Promise $ release >> await written
       }
 
@@ -370,7 +381,7 @@ test_forgedAfterBody = do
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-  acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
+  acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
   -- Long enough for any further emission to have landed.
   threadDelay 100000

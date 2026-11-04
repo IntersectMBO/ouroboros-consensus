@@ -111,6 +111,7 @@ data VolStmts = VolStmts
   , stPreallocEbTxBytes :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
   , stFillEbTxBytes :: !DB.Statement
+  , stFillEbTxBytesLocally :: !DB.Statement
   , stHeldOffsets :: !DB.Statement
   , stDeclaredTxSize :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
@@ -154,6 +155,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
   stInitMissingCount <- prep sql_init_missing_tx_count
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
+  stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
   stHeldOffsets <- prep sql_held_offsets
   stDeclaredTxSize <- prep sql_declared_tx_size
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
@@ -173,6 +175,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stPreallocEbTxBytes
   dbFinalize stInitMissingCount
   dbFinalize stFillEbTxBytes
+  dbFinalize stFillEbTxBytesLocally
   dbFinalize stHeldOffsets
   dbFinalize stDeclaredTxSize
   dbFinalize stDecrMissingCount

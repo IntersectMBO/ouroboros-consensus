@@ -75,6 +75,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogPruner
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newPureLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
@@ -460,6 +461,7 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
 
+    leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
@@ -467,6 +469,7 @@ initNodeKernel
           { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
           , lfcOutstanding = outstanding
           , lfcReady = ready
+          , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime

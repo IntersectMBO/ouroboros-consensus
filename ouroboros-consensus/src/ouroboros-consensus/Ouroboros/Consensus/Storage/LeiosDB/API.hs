@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
+  , LocalFill
   , TxOffset
   ) where
 
@@ -33,6 +34,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint
   , TxHash
+  , TxLocation
   , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
@@ -99,12 +101,19 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> m (Promise m [TxOffset])
-  -- ^ Persist an EB body at this point, recording the point. Every point stores
-  -- its own body and txs, even when another point names the same EB.
+      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
+  -- ^ Persist an EB body at this point, recording the point, and fill what it
+  -- can from local bytes:
+  -- each 'LocalFill' pairs an offset in this body with the 'TxLocation' of
+  -- another point durably holding the same tx, copied in the same transaction.
+  -- Every point stores its own body and txs, even when another point names the
+  -- same EB.
   --
   -- Returns the offsets at which the point holds its txs once the write is
-  -- done: those written since an earlier delivery of the same body.
+  -- done, whether this write's fills or earlier writes filled them: a second
+  -- delivery of the same body cannot fill again what an earlier one filled. A
+  -- fill whose source does not hold the tx this body lists at its offset fills
+  -- nothing, and that tx stays fetchable.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
@@ -140,6 +149,10 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
+
+-- | A cross-point fill: fill the EB's tx at 'TxOffset' from the tx's durable
+-- 'TxLocation' at another point. See 'writeEbBody'.
+type LocalFill = (TxOffset, TxLocation)
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader
