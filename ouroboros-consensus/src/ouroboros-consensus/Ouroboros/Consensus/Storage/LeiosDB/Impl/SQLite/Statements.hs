@@ -14,9 +14,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , ReadStmts (..)
   , prepareImmStmts
   , finalizeImmStmts
-  , CopierStmts (..)
-  , prepareCopierStmts
-  , finalizeCopierStmts
+  , PromoteStmts (..)
+  , preparePromoteStmts
+  , finalizePromoteStmts
   , SweeperStmts (..)
   , prepareSweeperStmts
   , finalizeSweeperStmts
@@ -44,48 +44,44 @@ preparingStmts db k = do
         pure stmt
   k prep `onException` (readIORef preparedVar >>= mapM_ dbFinalize)
 
--- | The copy statements, prepared on the copier's immutable connection --
--- main is the immutable file, the volatile file is ATTACHed as @vol@.
-data CopierStmts = CopierStmts
-  { ccClosure :: !DB.Statement
+-- | The promotion statements, prepared on the promoter's immutable connection
+-- -- main is the immutable file, the volatile file is ATTACHed as @vol@.
+data PromoteStmts = PromoteStmts
+  { psClosure :: !DB.Statement
   -- ^ 'sql_copy_closure'
-  , ccInsertEb :: !DB.Statement
+  , psInsertEb :: !DB.Statement
   -- ^ 'sql_copy_insert_eb'
   }
 
--- | Prepare the copy statements on the copier's immutable connection, which
--- must already have the volatile partition ATTACHed as @vol@.
-prepareCopierStmts :: HasCallStack => DB.Database -> IO CopierStmts
-prepareCopierStmts db = preparingStmts db $ \prep -> do
-  ccClosure <- prep sql_copy_closure
-  ccInsertEb <- prep sql_copy_insert_eb
-  pure CopierStmts{..}
+-- | Prepare the promotion statements on the promoter's immutable connection,
+-- which must already have the volatile partition ATTACHed as @vol@.
+preparePromoteStmts :: HasCallStack => DB.Database -> IO PromoteStmts
+preparePromoteStmts db = preparingStmts db $ \prep -> do
+  psClosure <- prep sql_copy_closure
+  psInsertEb <- prep sql_copy_insert_eb
+  pure PromoteStmts{..}
 
-finalizeCopierStmts :: CopierStmts -> IO ()
-finalizeCopierStmts CopierStmts{..} = do
-  dbFinalize ccClosure
-  dbFinalize ccInsertEb
+finalizePromoteStmts :: PromoteStmts -> IO ()
+finalizePromoteStmts PromoteStmts{..} = do
+  dbFinalize psClosure
+  dbFinalize psInsertEb
 
 -- | The sweep statements, prepared on the writer's volatile connection;
--- lifecycle mirrors 'CopierStmts'.
-data SweeperStmts = SweeperStmts
-  { swSweep :: !DB.Statement
+-- lifecycle mirrors 'PromoteStmts'.
+newtype SweeperStmts = SweeperStmts
+  { swSweep :: DB.Statement
   -- ^ 'sql_gc_sweep'
-  , swFrontierEmpty :: !DB.Statement
-  -- ^ 'sql_gc_frontier_empty'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
   swSweep <- prep sql_gc_sweep
-  swFrontierEmpty <- prep sql_gc_frontier_empty
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
-finalizeSweeperStmts SweeperStmts{..} = do
+finalizeSweeperStmts SweeperStmts{..} =
   dbFinalize swSweep
-  dbFinalize swFrontierEmpty
 
 -- | Compiled SQL statements for the Volatile partition.
 data VolStmts = VolStmts

@@ -12,14 +12,10 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_lookup_eb_index
   , sql_lookup_eb_rows
   , sql_lookup_eb_closure
-  , sql_pin_eb
-  , sql_mark_as_copied
   , sql_copy_closure
   , sql_copy_insert_eb
-  , sql_next_pinned_eb
   , sql_gc_watermark
   , sql_gc_sweep
-  , sql_gc_frontier_empty
   ) where
 
 sql_scan_ebs :: String
@@ -91,25 +87,6 @@ sql_lookup_eb_closure =
 
 -- ** Promoting an EB to the immutable partition
 
--- | Pin a certified point, awaiting the copy, if the volatile partition holds
--- its EB. The durable record that survives a crash before the copy lands.
---
--- Parameters: 1 = ebSlot, 2 = ebHashBytes
-sql_pin_eb :: String
-sql_pin_eb =
-  "INSERT OR IGNORE INTO pinned (ebHashBytes, ebSlot)\n\
-  \SELECT ?2, ?1 WHERE EXISTS (SELECT 1 FROM ebs WHERE ebHashBytes = ?2)\n\
-  \"
-
--- | Retire a pin. A volatile write, so it goes through the writer as
--- @MarkCopied@ -- only ever strictly after the immutable partition committed
--- the EB.
---
--- Parameters: 1 = ebSlot, 2 = ebHashBytes
-sql_mark_as_copied :: String
-sql_mark_as_copied =
-  "DELETE FROM pinned WHERE ebSlot = ?1 AND ebHashBytes = ?2"
-
 -- | The EB's body as stored, where its txs are, and its closure, from the
 -- volatile partition.
 sql_copy_closure :: String
@@ -120,9 +97,8 @@ sql_copy_closure =
 
 -- | Copy the EB into the immutable partition, at the certified point.
 --
--- @OR IGNORE@: retiring the pin is a separate volatile write, so a crash in
--- between leaves the EB copied and still pinned, and the copier repeats the
--- copy on the next start.
+-- @OR IGNORE@: a crash before the block certifying it is appended leaves the
+-- EB copied, and the copy is repeated on the next start.
 --
 -- Parameters: 1 = ebSlot, 2 = ebHashBytes
 sql_copy_insert_eb :: String
@@ -132,16 +108,6 @@ sql_copy_insert_eb =
   \WHERE ebHashBytes = ?2 AND txCount IS NOT NULL LIMIT 1\n\
   \"
 
--- | The next points waiting to be copied into the immutable partition, oldest
--- first.
---
--- The pin is the copy work list. It is in the database rather than in
--- memory, so a copy interrupted by a crash is simply still pending on the
--- next start.
-sql_next_pinned_eb :: String
-sql_next_pinned_eb =
-  "SELECT ebSlot, ebHashBytes FROM vol.pinned ORDER BY ebSlot LIMIT ?1"
-
 -- ** Garbage collection of the volatile partition
 
 -- | The newest row: a GC collects only rows up to it, not those written after.
@@ -149,18 +115,9 @@ sql_gc_watermark :: String
 sql_gc_watermark =
   "SELECT coalesce(max(id), 0) FROM ebs"
 
--- | Delete up to @?1@ rows before slot @?2@ and up to row @?3@, but those of
--- pinned EBs.
+-- | Delete up to @?1@ rows before slot @?2@ and up to row @?3@.
 sql_gc_sweep :: String
 sql_gc_sweep =
   "DELETE FROM ebs WHERE id IN (\n\
-  \  SELECT id FROM ebs\n\
-  \  WHERE ebSlot < ?2 AND id <= ?3\n\
-  \    AND ebHashBytes NOT IN (SELECT ebHashBytes FROM pinned)\n\
-  \  LIMIT ?1)\n\
+  \  SELECT id FROM ebs WHERE ebSlot < ?2 AND id <= ?3 LIMIT ?1)\n\
   \"
-
--- | Whether no row is before slot @?1@ and up to row @?2@, pinned or not.
-sql_gc_frontier_empty :: String
-sql_gc_frontier_empty =
-  "SELECT NOT EXISTS (SELECT 1 FROM ebs WHERE ebSlot < ?1 AND id <= ?2)"

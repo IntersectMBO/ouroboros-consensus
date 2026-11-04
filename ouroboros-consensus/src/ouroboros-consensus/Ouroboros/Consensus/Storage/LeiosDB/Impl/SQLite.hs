@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ) where
 
 import Cardano.Prelude (when)
-import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , check
@@ -44,10 +43,13 @@ import Control.Monad.Class.MonadThrow
   , try
   )
 import Control.ResourceRegistry
-  ( ResourceRegistry
+  ( ResourceKey
+  , ResourceRegistry
   , Thread
+  , allocate
   , cancelThread
   , forkLinkedThread
+  , release
   , withRegistry
   )
 import Control.Tracer (Tracer, traceWith)
@@ -57,7 +59,6 @@ import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
@@ -109,9 +110,10 @@ newLeiosDBSQLiteFromEnv registry tracer = do
 -- threads. All writers submit to the one write connection created here, on
 -- its own worker thread.
 --
--- The registry owns the background threads (writer, copier and a thread that
--- samples the database's size): 'closeLeiosDbHandle' stops them in order, and
--- closing the registry cancels whatever is still running.
+-- The registry owns the background threads (writer and a thread that samples
+-- the database's size) and the promoter's connection: 'closeLeiosDbHandle'
+-- stops and closes them in order, and closing the registry releases whatever
+-- is still open.
 --
 -- Creates both files with their schemas before returning, so call it only
 -- once their directories may be non-empty (after the ChainDB marker check).
@@ -138,12 +140,9 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerThread <- startVolatileStatsSampler registry tracer statsVar volLeiosDbPath
-  -- This variable signals the copier thread to wake up and copy the rows
-  -- from the volatile to the immutable LeiosDB partition.
-  -- It starts set, so that on a node restart we continue a potentially
-  -- interrupted copy pass.
-  copierDoorbell <- newTVarIO True
-
+  -- the immutable partition's only writer
+  (promoterKey, promoterVar) <-
+    allocate registry (\_ -> openPromoter volLeiosDbPath immLeiosDbPath) closePromoter
   -- the volatile partition writer thread
   writeQueue <-
     startWriter
@@ -153,35 +152,23 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
-  -- the immutable partition writer thread
-  copierThread <-
-    startCopier
-      registry
-      tracer
-      statsVar
-      copierDoorbell
-      writeQueue
-      volLeiosDbPath
-      immLeiosDbPath
   pure
     LeiosDbHandle
-      { closeLeiosDbHandle = close samplerThread copierThread writeQueue
+      { closeLeiosDbHandle = close samplerThread promoterKey writeQueue
       , openReader = implOpenReader statsVar
       , openWriter = implOpenWriter writeQueue
       , garbageCollect = sqlGarbageCollect writeQueue
-      , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
+      , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
-  close :: Thread IO () -> Thread IO () -> WriteQueue -> IO ()
-  close samplerThread copierThread writeQueue = do
+  close :: Thread IO () -> ResourceKey IO -> WriteQueue -> IO ()
+  close samplerThread promoterKey writeQueue = do
     -- The sampler holds no connection -- it only reads counters -- so
     -- cancelling it is safe at any point.
     cancelThread samplerThread
-    -- The copier before the writer: it submits to the writer, so it must be
-    -- gone before the writer stops serving. Cancelling it rolls back any
-    -- copy in flight; the EB stays pinned, so the next start copies it again.
-    cancelThread copierThread
+    -- Waits for a promotion in flight.
+    _ <- release promoterKey
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to
     -- close, and a failed close propagates -- a leaked connection must
@@ -238,10 +225,6 @@ data WriterConns = WriterConns
   , wcImmDb :: !DB.Database
   , wcConn :: !Conn
   , wcSweeperConn :: !SweeperConn
-  , wcPinStmt :: !DB.Statement
-  -- ^ 'sql_pin_eb'
-  , wcMarkCopiedStmt :: !DB.Statement
-  -- ^ 'sql_mark_as_copied'
   }
 
 -- | Open the writer's connections, prepare its statements, and run the
@@ -260,17 +243,13 @@ withWriterConns tracer statsVar volPath immPath k =
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
       bracket (mkConn tracer statsVar volDb immDb) finalizeConnStmts $ \conn ->
         bracket (prepareSweeperStmts volDb) finalizeSweeperStmts $ \sweeperStmts ->
-          withStmt volDb sql_pin_eb $ \pinStmt ->
-            withStmt volDb sql_mark_as_copied $ \markCopiedStmt ->
-              k
-                WriterConns
-                  { wcVolDb = volDb
-                  , wcImmDb = immDb
-                  , wcConn = conn
-                  , wcSweeperConn = SweeperConn volDb sweeperStmts
-                  , wcPinStmt = pinStmt
-                  , wcMarkCopiedStmt = markCopiedStmt
-                  }
+          k
+            WriterConns
+              { wcVolDb = volDb
+              , wcImmDb = immDb
+              , wcConn = conn
+              , wcSweeperConn = SweeperConn volDb sweeperStmts
+              }
 
 -- | Start the worker draining the write queue. The worker opens the write
 -- connections itself, on its own thread ('withWriterConns'), and closes them
@@ -301,8 +280,6 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
           , wcImmDb = immDb
           , wcConn = conn
           , wcSweeperConn = sweeperConn
-          , wcPinStmt = pinStmt
-          , wcMarkCopiedStmt = markCopiedStmt
           } = serve 0 Nothing
          where
           -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
@@ -357,30 +334,10 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
-            PinEb points resultVar -> do
-              -- One transaction for the batch: the submitter awaits this while
-              -- holding the ImmutableDB write lock, so a round-trip per EB throttles
-              -- block immutalisation to this queue's drain rate.
-              publish resultVar $ dbWithWriteTransactionRaw volDb $ mapM_ (pointStep pinStmt) points
-              pure Continue
-            MarkCopied points resultVar -> do
-              -- One transaction for the batch: retiring the pin is what makes a
-              -- copied EB evictable, and under sync it otherwise costs a queue
-              -- round-trip per EB behind a saturated insert FIFO.
-              publish resultVar $ dbWithWriteTransactionRaw volDb $ mapM_ (pointStep markCopiedStmt) points
-              -- The rows of the EB may be before the GC frontier already.
-              pure ContinueAndSweep
             GcMark slot resultVar -> do
               publish resultVar $
                 writeIORef frontiersVar =<< addGcFrontier volDb slot =<< readIORef frontiersVar
               pure ContinueAndSweep
-
-          -- Run a statement whose parameters are a point.
-          pointStep stmt point =
-            useStmt stmt $ do
-              dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-              dbBindHash stmt 2 (pointEbHash point)
-              dbStep1Safe stmt
 
           -- Nothing queued and no sweep outstanding: wait for a job.
           blockUntilJob = IO.atomically $ do

@@ -11,7 +11,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (void, when)
+import Control.Monad (void)
 import Control.Monad.Class.MonadThrow (bracket)
 import Data.String (fromString)
 import Database.SQLite3
@@ -23,20 +23,14 @@ import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
--- | Delete the EBs announced after the given slot, and their pins.
+-- | Delete the EBs announced after the given slot.
 --
 -- For internal tooling. Works for both the volatile and the immutable
 -- partition files.
 truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
 truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
   withExistingLeiosDbFile dbPath $ \db ->
-    -- One transaction, so a crash cannot leave a pin without its EB.
-    dbWithTransactionAs "BEGIN IMMEDIATE" db $ do
-      dbExec db (fromString ("DELETE FROM ebs WHERE ebSlot > " <> show slot))
-      -- Only the volatile partition pins.
-      hasPins <- (/= 0) <$> queryInt64 db "SELECT COUNT(*) FROM sqlite_master WHERE name = 'pinned'"
-      when hasPins $
-        dbExec db (fromString ("DELETE FROM pinned WHERE ebSlot > " <> show slot))
+    dbExec db (fromString ("DELETE FROM ebs WHERE ebSlot > " <> show slot))
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --

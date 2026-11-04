@@ -63,10 +63,10 @@ data LeiosDbHandle m = LeiosDbHandle
   --
   --   See 'sqlGarbageCollect' for the SQL backend implementation.
   , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()
-  -- ^ Promote the given EBs' bodies and tx closures from volatile into immutable
-  --   LeiosDb. Takes a batch: the caller holds the ImmutableDB write lock and
-  --   blocks on the shared writer queue, so this must be one round-trip per
-  --   'copyToImmutableDB' pass, not one per certified EB.
+  -- ^ Copy the given EBs' bodies and tx closures from volatile into immutable
+  --   LeiosDb, before returning. Takes a batch: the caller holds the ImmutableDB
+  --   write lock, so this is one transaction per 'copyToImmutableDB' pass, not
+  --   one per certified EB. Throws if an EB's closure is incomplete.
   , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
   -- ^ Sample 'LeiosDbStats' counters.
   }
