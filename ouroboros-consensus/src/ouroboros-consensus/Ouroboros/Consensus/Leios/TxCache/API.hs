@@ -30,11 +30,6 @@ module Ouroboros.Consensus.Leios.TxCache.API
   , worstCaseCacheTxCount
 
     -- * Arrival classification
-  , FetchArrivalBytes (..)
-  , fetchArrivalInvalid
-  , fetchArrivalEvicted
-  , fetchArrivalGood
-  , fetchArrivalExtra
   , TxArrivalPrior (..)
   , bucketTxArrival
   ) where
@@ -57,6 +52,12 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , endorserBlockShortBytes
   , maxTxsPerEndorserBlock
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( FetchArrivalBytes
+  , fetchArrivalEvicted
+  , fetchArrivalExtra
+  , fetchArrivalGood
   )
 
 -- | A monadic tx-cache handle: the pure index operations, each performing its
@@ -245,39 +246,6 @@ data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
   -- ^ 'ibsCacheTxCount' as a fraction of the worst-case cache capacity
   }
   deriving (Eq, Show)
-
--- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
--- partitioned by the arriving item's /prior/ state in the LeiosTxCache. The four
--- fields sum to the message's total size.
-data FetchArrivalBytes = MkFetchArrivalBytes
-  { fabInvalid :: !BytesSize
-  -- ^ Bytes of an invalid message (the whole message).
-  , fabEvicted :: !BytesSize
-  -- ^ Bytes whose prior cache state was absent (assumed present once, since evicted).
-  , fabGood :: !BytesSize
-  -- ^ Bytes in the expected not-yet-inserted state.
-  , fabExtra :: !BytesSize
-  -- ^ Bytes already inserted (redundant).
-  }
-  deriving (Eq, Show)
-
-instance Semigroup FetchArrivalBytes where
-  MkFetchArrivalBytes a1 b1 c1 d1 <> MkFetchArrivalBytes a2 b2 c2 d2 =
-    MkFetchArrivalBytes (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2)
-
-instance Monoid FetchArrivalBytes where
-  mempty = MkFetchArrivalBytes 0 0 0 0
-
--- | The message's whole size attributed to a single bucket, the rest zero.
-fetchArrivalInvalid
-  , fetchArrivalEvicted
-  , fetchArrivalGood
-  , fetchArrivalExtra ::
-    BytesSize -> FetchArrivalBytes
-fetchArrivalInvalid n = mempty{fabInvalid = n}
-fetchArrivalEvicted n = mempty{fabEvicted = n}
-fetchArrivalGood n = mempty{fabGood = n}
-fetchArrivalExtra n = mempty{fabExtra = n}
 
 -- | A tx's state in the cache /before/ an unapplied insert, surfaced by the
 -- 'withLockedInsertUnappliedTx' step so a caller can classify an arriving tx.

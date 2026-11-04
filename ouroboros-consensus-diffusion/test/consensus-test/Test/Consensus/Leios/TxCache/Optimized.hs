@@ -24,8 +24,7 @@ import Data.Maybe (isJust)
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import Ouroboros.Consensus.Leios.TxCache
-  ( FetchArrivalBytes
-  , LeiosTxCache (..)
+  ( LeiosTxCache (..)
   , ReferencesTxsByHash (..)
   , newPureLeiosTxCache
   )
@@ -39,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchArrivalBytes)
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   ( Config (..)

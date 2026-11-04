@@ -37,7 +37,6 @@ import Data.Word (Word64)
 import Ouroboros.Consensus.Leios.TxCache.API
   ( BodyState (..)
   , EbRingIndex (UnsafeEbRingIndex)
-  , FetchArrivalBytes
   , LeiosTxCache (..)
   , RefCount (..)
   , ReferencesTxsByHash (..)
@@ -59,6 +58,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxLocation (..)
   , TxOffset
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchArrivalBytes)
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
 

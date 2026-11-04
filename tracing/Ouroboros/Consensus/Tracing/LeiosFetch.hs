@@ -12,11 +12,11 @@ import Data.Aeson (Value (String), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.Leios.TxCache.API (FetchArrivalBytes (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
-  ( TraceLeiosFetchClientEvent (..)
+  ( FetchArrivalBytes (..)
+  , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchServerEvent (..)
   )
 

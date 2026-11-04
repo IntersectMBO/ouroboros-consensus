@@ -47,10 +47,6 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LeiosTxCache (..)
   , PackedEndorserBlock (..)
-  , fetchArrivalEvicted
-  , fetchArrivalExtra
-  , fetchArrivalGood
-  , fetchArrivalInvalid
   , packEndorserBlock
   )
 import Ouroboros.Consensus.Leios.Types
@@ -95,7 +91,13 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , settleReceivingFromForge
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchClientEvent (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( TraceLeiosFetchClientEvent (..)
+  , fetchArrivalEvicted
+  , fetchArrivalExtra
+  , fetchArrivalGood
+  , fetchArrivalInvalid
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
