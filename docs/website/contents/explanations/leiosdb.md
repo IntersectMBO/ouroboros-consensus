@@ -65,8 +65,7 @@ So every block in the ImmutableDB has the EB it certifies in the immutable parti
 A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
 An EB whose transactions do not hash to its body fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
-A garbage collection at a slot collects the rows before that slot.
-The writer deletes them in batches between the jobs it serves, so a write waits for one batch at most.
+A garbage collection at a slot deletes the rows before that slot, as one job of the writer.
 It also drops the point and body writes of a point before the latest garbage collection's slot, as that collection would delete it anyway: the ChainDB collects up to the ImmutableDB tip, and the fetch logic ignores announcements older than that.
 The slot is kept in memory only: after a restart, the next garbage collection sets it again.
 

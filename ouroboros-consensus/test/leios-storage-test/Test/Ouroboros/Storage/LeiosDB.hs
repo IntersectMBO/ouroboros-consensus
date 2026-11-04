@@ -11,7 +11,6 @@ module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (threadDelay)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, try)
 import Control.Monad (forM, forM_, replicateM, void)
@@ -21,7 +20,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
-import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -62,7 +60,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
-import qualified System.Timeout as Timeout
 import Test.QuickCheck
   ( Gen
   , Property
@@ -93,14 +90,6 @@ tests =
   testGroup "LeiosDB" $
     forEachImplementation mkTestGroups
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
-         , -- InMemory only: the SQLite implementation sweeps in the background.
-           testGroup
-             "InMemory: garbage collection"
-             [ testCase "evicts an EB all of whose points are older, with its txs" $
-                 withFreshDb InMemory test_gcEvictsOldEb
-             , testCase "keeps an EB with a point at the slot" $
-                 withFreshDb InMemory test_gcKeepsEbWithPointAtSlot
-             ]
          , testGroup
              "truncateLeiosDbAfterSlot"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
@@ -171,13 +160,6 @@ withFreshDb InMemory action =
   newLeiosDBInMemory >>= action
 withFreshDb SQLite action = withFreshSQLiteDb action
 
--- | 'withFreshDb', with a wait for the SQLite implementation's sweep
--- to catch up (see 'withSettle'). The in-memory implementation has none.
-withSettledDb :: DbImpl -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
-withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (pure ())
-withSettledDb SQLite action =
-  withFreshSQLiteFile $ \volDbPath _immDbPath db -> withSettle volDbPath db action
-
 withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 
@@ -247,22 +229,29 @@ mkTestGroups impl =
           withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
+      "garbage collection"
+      [ testCase "evicts an EB all of whose points are older, with its txs" $
+          withFreshDb impl test_gcEvictsOldEb
+      , testCase "keeps an EB with a point at the slot" $
+          withFreshDb impl test_gcKeepsEbWithPointAtSlot
+      ]
+  , testGroup
       "garbage collection of an EB a newer point keeps"
       [ testCase "drops its older points and still finds it complete" $
-          withSettledDb impl test_gcDropsOlderPoints
+          withFreshDb impl test_gcDropsOlderPoints
       , testCase "finds its closure complete after dropping the point its body was written at" $
-          withSettledDb impl test_gcKeepsMissingTxCount
+          withFreshDb impl test_gcKeepsMissingTxCount
       , testCase "keeps only the newest point of an EB announced again in each round" $
-          withSettledDb impl test_gcBoundsPointsOfReannouncedEb
+          withFreshDb impl test_gcBoundsPointsOfReannouncedEb
       , testCase "drops the writes of a point older than the latest collection" $
-          withSettledDb impl test_gcDropsWritesOfCollectedPoint
+          withFreshDb impl test_gcDropsWritesOfCollectedPoint
       ]
   , testGroup
       "promotion"
       [ testCase "keeps the closure of a promoted EB its garbage collection evicts" $
           withFreshDb impl test_gcKeepsPromotedEb
       , testCase "fails for an EB whose closure is incomplete, copying nothing" $
-          withSettledDb impl test_promoteIncompleteFails
+          withFreshDb impl test_promoteIncompleteFails
       , testCase "fails for an EB whose txs do not hash to its body, copying nothing" $
           withFreshDb impl test_promoteChecksHashes
       ]
@@ -634,14 +623,12 @@ writeWholeEb con points eb = do
 -- then fetched again at a new point: a tx the new volatile copy lacks is still
 -- read from the immutable copy.
 test_retrieveFallsBackPerTx :: DbImpl -> IO ()
-test_retrieveFallsBackPerTx impl = withSettledDb impl $ \db settle -> withRW db $ \con -> do
+test_retrieveFallsBackPerTx impl = withFreshDb impl $ \db -> withRW db $ \con -> do
   let eb = mkTestEb 2
       again = mkTestPoint 10 1
   writeWholeEb con [mkTestPoint 5 1] eb
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
-  settle
   garbageCollect db 6
-  settle
   rwInsertEbPoint con again (encodeEndorserBlockSize eb)
   void $ rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
@@ -688,14 +675,13 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
 
 -- | An EB written whole at slot 5 and announced again at slot 10, collected at
 -- slot 6.
-test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO () -> IO ()
-test_gcDropsOlderPoints db settle = withRW db $ \con -> do
+test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO ()
+test_gcDropsOlderPoints db = withRW db $ \con -> do
   let eb = mkTestEb 2
       again = mkTestPoint 10 1
   writeWholeEb con [mkTestPoint 5 1] eb
   rwInsertEbPoint con again (encodeEndorserBlockSize eb)
   garbageCollect db 6
-  settle
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
   rwScanComplete con 6 >>= (@?= [again])
@@ -703,8 +689,8 @@ test_gcDropsOlderPoints db settle = withRW db $ \con -> do
 -- | An EB whose body was written at slot 5, and one of whose two transactions
 -- arrived, is announced again at slot 10 and collected at slot 6. Then its
 -- other transaction arrives.
-test_gcKeepsMissingTxCount :: LeiosDbHandle IO -> IO () -> IO ()
-test_gcKeepsMissingTxCount db settle = withRW db $ \con -> do
+test_gcKeepsMissingTxCount :: LeiosDbHandle IO -> IO ()
+test_gcKeepsMissingTxCount db = withRW db $ \con -> do
   let eb = mkTestEb 2
       older = mkTestPoint 5 1
       again = mkTestPoint 10 1
@@ -713,19 +699,17 @@ test_gcKeepsMissingTxCount db settle = withRW db $ \con -> do
   rwInsertTxs con older (take 1 (allTxsFor eb))
   rwInsertEbPoint con again (encodeEndorserBlockSize eb)
   garbageCollect db 6
-  settle
   rwInsertTxs con again (drop 1 (allTxsFor eb))
   rwScanComplete con 6 >>= (@?= [again])
 
 -- | After a collection at slot 6, a point at slot 5 and a body for another
 -- point at slot 5 are written, and one at slot 4 that an earlier collection at
 -- slot 3 would not collect.
-test_gcDropsWritesOfCollectedPoint :: LeiosDbHandle IO -> IO () -> IO ()
-test_gcDropsWritesOfCollectedPoint db settle = withRW db $ \con -> do
+test_gcDropsWritesOfCollectedPoint :: LeiosDbHandle IO -> IO ()
+test_gcDropsWritesOfCollectedPoint db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
   garbageCollect db 6
   garbageCollect db 3
-  settle
   rwInsertEbPoint con (mkTestPoint 5 2) (encodeEndorserBlockSize (mkTestEb 2))
   rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
   rwInsertEbPoint con (mkTestPoint 4 1) (encodeEndorserBlockSize (mkTestEb 2))
@@ -734,14 +718,13 @@ test_gcDropsWritesOfCollectedPoint db settle = withRW db $ \con -> do
 
 -- | An EB written whole at slot 10 is announced again in each of nine more
 -- rounds, each followed by a collection at its slot.
-test_gcBoundsPointsOfReannouncedEb :: LeiosDbHandle IO -> IO () -> IO ()
-test_gcBoundsPointsOfReannouncedEb db settle = withRW db $ \con -> do
+test_gcBoundsPointsOfReannouncedEb :: LeiosDbHandle IO -> IO ()
+test_gcBoundsPointsOfReannouncedEb db = withRW db $ \con -> do
   let eb = mkTestEb 2
   writeWholeEb con [mkTestPoint 10 1] eb
   forM_ [2 .. 10] $ \n -> do
     rwInsertEbPoint con (mkTestPoint (10 * n) 1) (encodeEndorserBlockSize eb)
     garbageCollect db (10 * n)
-    settle
   rwScanEbPoints con >>= (@?= [(100, mkTestEbHash 1)])
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
@@ -759,15 +742,14 @@ test_gcKeepsPromotedEb db = withRW db $ \con -> do
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
 -- | A complete EB promoted along with one whose closure lacks a tx.
-test_promoteIncompleteFails :: LeiosDbHandle IO -> IO () -> IO ()
-test_promoteIncompleteFails db settle = withRW db $ \con -> do
+test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
+test_promoteIncompleteFails db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 4 2] (mkTestEb 3)
   rwInsertEbPoint con (mkTestPoint 5 1) (encodeEndorserBlockSize (mkTestEb 2))
   void $ rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
   rwInsertTxs con (mkTestPoint 5 1) (take 1 (allTxsFor (mkTestEb 2)))
   assertPromoteFails db [mkTestPoint 4 2, mkTestPoint 5 1]
   garbageCollect db 6
-  settle
   holdsClosure con (mkTestEbHash 2) >>= (@?= False)
 
 -- | An EB whose txs are written but do not hash to its body, which the scan
@@ -999,21 +981,14 @@ prop_storeForgedEbThenLookup impl =
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
---
--- The SQLite implementation sweeps what the garbage collection marked in the
--- background, so how far it has got at any moment depends on its load. The
--- in-memory implementation evicts at once. So the SQLite implementation's sweep
--- catches up after each operation, before the next.
 prop_implementationsAgree :: Property
 prop_implementationsAgree =
   forAll genBodies $ \bodies ->
     forAllShrinkShow (genOps bodies) (shrinkList (const [])) show $ \ops ->
       ioProperty $ do
         ((nPromoted, nEvicted), inMemory) <-
-          withFreshDb InMemory $ \db -> observe db (pure ()) bodies ops
-        (_, sqlite) <-
-          withFreshSQLiteFile $ \volDbPath _immDbPath db ->
-            withSettle volDbPath db $ \db' settle -> observe db' settle bodies ops
+          withFreshDb InMemory $ \db -> observe db bodies ops
+        (_, sqlite) <- withFreshDb SQLite $ \db -> observe db bodies ops
         pure $
           tabulate "endorser blocks promoted" [bucket nPromoted] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
@@ -1074,11 +1049,8 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- An endorser block is also promoted at most once: the node promotes only what
 -- the immutable chain certifies, and a chain cannot certify the same endorser
 -- block twice, since it cannot be valid twice.
---
--- @settle@ runs after each operation.
 observe ::
   LeiosDbHandle IO ->
-  IO () ->
   Bodies ->
   [Op] ->
   IO
@@ -1091,7 +1063,7 @@ observe ::
       , [LeiosPoint]
       )
     )
-observe db settle bodies ops = withRW db $ \rw -> do
+observe db bodies ops = withRW db $ \rw -> do
   counts <- go rw 0 [] [] [] 0 ops
   seen <- forM (Map.toList bodies) $ \(ebHash, (eb, _)) ->
     (,,)
@@ -1105,12 +1077,10 @@ observe db settle bodies ops = withRW db $ \rw -> do
   go rw gcSlot points bodied promoted nEvicted (op : rest) = case op of
     OpPoint point -> do
       rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
-      settle
       go rw gcSlot (written point points) bodied promoted nEvicted rest
     OpBody point
       | point `notElem` bodied -> do
           rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
-          settle
           let bodied' = if collected point then bodied else point : bodied
           go rw gcSlot (written point points) bodied' promoted nEvicted rest
       | otherwise -> go rw gcSlot points bodied promoted nEvicted rest
@@ -1122,7 +1092,6 @@ observe db settle bodies ops = withRW db $ \rw -> do
         [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
         | offset <- offsets
         ]
-      settle
       go rw gcSlot points bodied promoted nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
@@ -1130,13 +1099,11 @@ observe db settle bodies ops = withRW db $ \rw -> do
         if complete
           then do
             leiosDbPromoteToImmutable db [point]
-            settle
             go rw gcSlot points bodied (nub (ebHash : promoted)) nEvicted rest
           else go rw gcSlot points bodied promoted nEvicted rest
       [] -> go rw gcSlot points bodied promoted nEvicted rest
     OpGc slot -> do
       garbageCollect db slot
-      settle
       let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
           evicted =
             nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
@@ -1162,40 +1129,3 @@ observe db settle bodies ops = withRW db $ \rw -> do
     written point ps
       | collected point || point `elem` ps = ps
       | otherwise = point : ps
-
--- | Hand the action a wait for the SQLite implementation's sweep to catch up:
--- to have deleted every row before the slot of the latest garbage collection.
--- The action gets the handle back, recording that slot.
-withSettle ::
-  FilePath -> LeiosDbHandle IO -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
-withSettle volDbPath db action = do
-  gcSlotVar <- newIORef 0
-  bracket (SQL.open (T.pack volDbPath)) SQL.close $ \conn -> do
-    SQL.exec conn (T.pack "pragma busy_timeout = 1000;")
-    let query sql k = SQL.withStatement conn (T.pack sql) $ \stmt ->
-          let loop acc =
-                SQL.step stmt >>= \case
-                  SQL.Row -> k stmt >>= loop . (: acc)
-                  SQL.Done -> pure acc
-           in loop []
-        collect slot = do
-          modifyIORef' gcSlotVar (max (unSlotNo slot))
-          garbageCollect db slot
-        -- The rows the latest garbage collection collects.
-        backlog = do
-          gcSlot <- readIORef gcSlotVar
-          sum
-            <$> query
-              ("SELECT COUNT(*) FROM ebs WHERE ebSlot < " <> show gcSlot)
-              (`SQL.columnInt64` 0)
-        poll =
-          backlog >>= \case
-            0 -> pure ()
-            _ -> threadDelay 1_000 >> poll
-        settle =
-          Timeout.timeout settleTimeoutMicros poll >>= \case
-            Just () -> pure ()
-            Nothing -> assertFailure "the SQLite implementation's sweep did not catch up"
-    action db{garbageCollect = collect} settle
- where
-  settleTimeoutMicros = 10_000_000

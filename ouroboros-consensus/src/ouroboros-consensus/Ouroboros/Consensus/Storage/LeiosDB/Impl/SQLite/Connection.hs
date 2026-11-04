@@ -102,6 +102,8 @@ connectionPragmas =
     "pragma wal_autocheckpoint = 1000;"
   , -- Sweep-sized sorts otherwise spill to a temp file.
     "pragma temp_store = memory;"
+  , -- Some builds zero freed pages by default, which rewrites every row GC deletes.
+    "pragma secure_delete = off;"
   , -- Without this the WAL keeps whatever high-water mark it ever reached:
     -- SQLite reuses the file in place rather than truncating it after a
     -- checkpoint, so one write burst sets the footprint for the life of the
