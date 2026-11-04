@@ -295,14 +295,16 @@ startWriter registry tracer statsVar volPath immPath = do
           isCollected :: LeiosPoint -> IO Bool
           isCollected point = (pointSlotNo point <) <$> readIORef gcSlotVar
 
-          collect :: SlotNo -> IO ()
+          -- Whether rows before the slot are left.
+          collect :: SlotNo -> IO Bool
           collect slot = do
             modifyIORef' gcSlotVar (max slot)
-            evicted <- deleteEbsBefore volDb =<< readIORef gcSlotVar
+            evicted <- deleteEbsBefore volDb gcBatchSize =<< readIORef gcSlotVar
             when (evicted > 0) $ do
               bumpVolatileStatsVar statsVar (negate evicted)
               dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
               traceWith tracer $ TraceLeiosDbEvicted evicted
+            pure (evicted == gcBatchSize)
 
       -- Nothing can be queued after the seal ('submitJob'), and awaiting a
       -- job left in the queue throws the cause.

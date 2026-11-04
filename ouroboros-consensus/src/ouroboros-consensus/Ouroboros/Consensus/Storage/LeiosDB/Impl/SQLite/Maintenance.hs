@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 
     -- * Garbage collection
   , sqlGarbageCollect
+  , gcBatchSize
   , deleteEbsBefore
 
     -- * Stats
@@ -34,7 +35,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
-import Control.Monad (forever, unless, void)
+import Control.Monad (forever, unless, when)
 import Control.ResourceRegistry
   ( ResourceRegistry
   , Thread
@@ -161,18 +162,28 @@ copyEb db PromoteStmts{psClosure, psInsertEb} point = do
 
 -- * Garbage collection of the volatile partition
 
--- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect', as a
--- 'GarbageCollect' job on the writer, which deletes the rows before the slot.
--- The slot is in memory only: after a restart, the next GC sets it again.
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect', as
+-- 'GarbageCollect' jobs on the writer, each deleting up to 'gcBatchSize' rows
+-- before the slot, until none is left. The writes queued meanwhile run in
+-- between. The slot is in memory only: after a restart, the next GC sets it
+-- again.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
-sqlGarbageCollect writeQueue gcSlot =
-  void . await =<< submitJob writeQueue (GarbageCollect gcSlot)
+sqlGarbageCollect writeQueue gcSlot = do
+  more <- await =<< submitJob writeQueue (GarbageCollect gcSlot)
+  when more $ sqlGarbageCollect writeQueue gcSlot
 
--- | Delete the rows before the slot, in one transaction. Returns how many.
-deleteEbsBefore :: HasCallStack => DB.Database -> SlotNo -> IO Int
-deleteEbsBefore db gcSlot =
+-- | How many rows a 'GarbageCollect' job deletes at most, which bounds how
+-- long a write waits behind it.
+gcBatchSize :: Int
+gcBatchSize = 16
+
+-- | Delete up to the given number of rows before the slot, in one
+-- transaction. Returns how many.
+deleteEbsBefore :: HasCallStack => DB.Database -> Int -> SlotNo -> IO Int
+deleteEbsBefore db limit gcSlot =
   dbWithWriteTransactionRaw db $ withStmt db sql_gc_collect $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral (unSlotNo gcSlot))
+    dbBindInt64 stmt 2 (fromIntegral limit)
     dbStep1Safe stmt
     DB.changes db
 
