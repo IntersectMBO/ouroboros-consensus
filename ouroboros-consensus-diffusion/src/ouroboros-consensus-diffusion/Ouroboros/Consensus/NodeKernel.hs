@@ -75,7 +75,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogPruner
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
-import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newPureLeiosTxCache)
+import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
@@ -185,7 +185,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
-import System.Random (StdGen)
+import System.Random (StdGen, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -270,7 +270,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
-  -- ^ Seeds the LeiosFetch decision loop's PRNG.
+  -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -461,10 +461,15 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
 
-    leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
+    -- The LeiosTxCache's keys are chosen by peers, so its hash table is salted
+    -- with a secret of this node's.
+    let (leiosFetchPrng, saltRng) = splitGen leiosFetchRng
+        (salt0, saltRng') = uniform saltRng
+        (salt1, _) = uniform saltRng'
+    leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
+      newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
         MkLeiosFetchClientContext
           { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
           , lfcOutstanding = outstanding
