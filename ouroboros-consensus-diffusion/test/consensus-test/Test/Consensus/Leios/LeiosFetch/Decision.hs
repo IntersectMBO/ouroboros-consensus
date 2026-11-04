@@ -69,6 +69,9 @@ tests =
             "a peer offering the body and the closure is asked for the body once, even after its reply"
             test_bodyAskedOnceOfBothOfferer
         , testCase
+            "a closure offered while the decision is pruning a body offer is still asked of the peer"
+            test_closureOfferedMeanwhile
+        , testCase
             "an endorser block rejected as too big at a point is never fetched again at that point"
             test_noRefetchOversized
         , testCase "per-peer byte budget exhausted skips that peer" $
@@ -184,6 +187,40 @@ test_bodyAskedOnceOfBothOfferer = do
       (maxJobTxCount env)
       (IntMap.singleton 0 (txHashOf 0, 100))
   (_, reqs3, _) = decide (acquireEbBody p jobPool outstanding2) offers1
+
+-- | A peer offers the body, and then the closure after a decision has read its
+-- offers but before they are pruned. Whether the body was still to fetch or
+-- already held, the closure is asked of the peer once the body is held.
+test_closureOfferedMeanwhile :: IO ()
+test_closureOfferedMeanwhile = do
+  requestedOffsets (closureRequests missing) @?= IntSet.singleton 0
+  requestedOffsets (closureRequests (acquireEbBody p jobPool missing)) @?= IntSet.singleton 0
+ where
+  p = point 1 'a'
+  missing = scOutstanding (empty & withMissingBody p 1024)
+  jobPool =
+    Jobs.mkLeiosJobPool
+      (maxJobBytesSize env)
+      (maxJobTxCount env)
+      (IntMap.singleton 0 (txHashOf 0, 100))
+  bodyOffered = Map.singleton p (MkPeerOffer SNothing (SJust 1024) TxsClosureNotOffered)
+  closureOffered = MkPeerOffer SNothing SNothing TxsClosureOffered
+  decide outstanding offers =
+    leiosFetchLogicIteration
+      env
+      anyBounds
+      (Just minBound)
+      (Map.singleton peerA offers)
+      Map.empty
+      outstanding
+  closureRequests outstanding0 = reqs
+   where
+    (outstanding1, _, prunes) = decide outstanding0 bodyOffered
+    offers =
+      pruneOffers
+        (maybe Map.empty NEMap.toMap (Map.lookup peerA prunes))
+        (Map.insertWith (<>) p closureOffered bodyOffered)
+    (_, reqs, _) = decide (acquireEbBody p jobPool (refundEbRequest peerA p 1024 outstanding1)) offers
 
 -- | An endorser block rejected as too big, then offered at the same point at
 -- bounds that admit its closure but not its body, at bounds that admit its body

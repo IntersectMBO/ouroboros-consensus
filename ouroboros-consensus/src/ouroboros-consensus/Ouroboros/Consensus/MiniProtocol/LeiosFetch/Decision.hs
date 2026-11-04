@@ -190,11 +190,16 @@ data PeerOffer = MkPeerOffer
 
 -- | What of a peer's offer of a point the decision logic found can no longer
 -- help.
+--
+-- The peer may offer the point again after the decision logic read its offers
+-- and before they are pruned, and that offer merges into the one read. So the
+-- whole offer is pruned only when nothing offered meanwhile could help either.
 data OfferPrune
   = -- | The whole offer.
     PruneOffer
-  | -- | Its body half: the body was requested of this peer, which is asked for
-    -- it at most once, although its closure may still be requested.
+  | -- | Its body half, and the whole offer unless it offers the closure: the
+    -- body is held, or was requested of this peer, which is asked for it at
+    -- most once.
     PruneOfferedBody
   deriving (Eq, Show)
 
@@ -204,7 +209,10 @@ pruneOffers prunes offers = Map.foldlWithKey' prune offers prunes
  where
   prune acc point = \case
     PruneOffer -> Map.delete point acc
-    PruneOfferedBody -> Map.adjust (\offer -> offer{poOfferedBody = SNothing}) point acc
+    PruneOfferedBody -> Map.update withoutBody point acc
+  withoutBody offer = case poClosure offer of
+    TxsClosureNotOffered -> Nothing
+    TxsClosureOffered -> Just offer{poOfferedBody = SNothing}
 
 -- | Each field on its own terms: the leftmost size wins, which for
 -- 'Map.insertWith' is the newer offer's, and a peer that makes that choice
@@ -914,11 +922,10 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
         pruneThisOffer
       Just (MkEbState _onset fetchState) -> case (fetchState, poClosure offerKind) of
         (NoBody, TxsClosureNotOffered) ->
-          -- Body-only offer: request the body. If that's all that was
-          -- offered, prune it.
+          -- Body-only offer: request the body, and prune it.
           let (acc2, dec2) =
                 fromMaybe (acc1, dec1) $ assignBody forecastEbBounds peer point offerKind (acc1, dec1)
-           in (acc2, dec2, Map.insert point PruneOffer drops)
+           in (acc2, dec2, Map.insert point PruneOfferedBody drops)
         (NoBody, TxsClosureOffered) ->
           -- Request the body now, and prune only the body half of the offer:
           -- we will request the closure from this peer once we hold the body,
@@ -927,9 +934,8 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
             Nothing -> (acc1, dec1, drops)
             Just (acc2, dec2) -> (acc2, dec2, Map.insert point PruneOfferedBody drops)
         (BodyAcquired _jobPool, TxsClosureNotOffered) ->
-          -- We hold the body and the peer never offered the closure, so it can
-          -- no longer help.
-          pruneThisOffer
+          -- We hold the body, and the peer offered only the body.
+          (acc1, dec1, Map.insert point PruneOfferedBody drops)
         (BodyAcquired jobPool, TxsClosureOffered)
           | Jobs.nullLeiosJobPool jobPool ->
               -- Nothing left to fetch --- the whole datum is in hand, or we
