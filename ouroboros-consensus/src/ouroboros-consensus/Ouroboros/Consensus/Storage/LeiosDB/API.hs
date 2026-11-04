@@ -56,10 +56,7 @@ data LeiosDbHandle m = LeiosDbHandle
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
-  -- ^ Trigger garbage collection of the LeiosDB.
-  --
-  --   This function does not do have to do the actual GC, but rather
-  --   act as the MARK phase of GC and "create work" for a background SWEEP thread.
+  -- ^ Delete the volatile EBs announced before the slot, before returning.
   --
   --   See 'sqlGarbageCollect' for the SQL backend implementation.
   , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()

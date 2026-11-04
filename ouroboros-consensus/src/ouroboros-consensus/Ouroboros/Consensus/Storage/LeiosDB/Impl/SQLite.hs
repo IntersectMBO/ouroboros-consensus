@@ -5,7 +5,6 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteWithGcBatchSize
   , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -20,15 +19,14 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ) where
 
 import Cardano.Prelude (when)
+import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
-  , check
-  , isEmptyTBQueue
   , newTBQueueIO
   , newTVarIO
   , putTMVar
+  , readTBQueue
   , readTVarIO
-  , tryReadTBQueue
   , writeTVar
   )
 import Control.Exception
@@ -38,8 +36,6 @@ import Control.Exception
 import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
-  , catch
-  , displayException
   , try
   )
 import Control.ResourceRegistry
@@ -54,10 +50,7 @@ import Control.ResourceRegistry
   )
 import Control.Tracer (Tracer, traceWith)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
-import Data.Int (Int64)
-import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
-import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -77,7 +70,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
@@ -120,19 +112,7 @@ newLeiosDBSQLiteFromEnv registry tracer = do
 -- once their directories may be non-empty (after the ChainDB marker check).
 newLeiosDBSQLite ::
   ResourceRegistry IO -> Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
-newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath =
-  newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
-
--- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
--- the writer evicts per turn, between the jobs it serves.
-newLeiosDBSQLiteWithGcBatchSize ::
-  ResourceRegistry IO ->
-  Tracer IO TraceLeiosDb ->
-  FilePath ->
-  FilePath ->
-  Int64 ->
-  IO (LeiosDbHandle IO)
-newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
+newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   -- create .db files
@@ -150,7 +130,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       registry
       tracer
       statsVar
-      gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
   pure
@@ -223,9 +202,7 @@ withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
 -- partitions and the statements prepared on them.
 data WriterConns = WriterConns
   { wcVolDb :: !DB.Database
-  , wcImmDb :: !DB.Database
   , wcConn :: !Conn
-  , wcSweeperConn :: !SweeperConn
   }
 
 -- | Open the writer's connections, prepare its statements, and run the
@@ -243,14 +220,11 @@ withWriterConns tracer statsVar volPath immPath k =
   bracket (openRawConnection volPath) closeChecked $ \volDb ->
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
       bracket (mkConn tracer statsVar volDb immDb) finalizeConnStmts $ \conn ->
-        bracket (prepareSweeperStmts volDb) finalizeSweeperStmts $ \sweeperStmts ->
-          k
-            WriterConns
-              { wcVolDb = volDb
-              , wcImmDb = immDb
-              , wcConn = conn
-              , wcSweeperConn = SweeperConn volDb sweeperStmts
-              }
+        k
+          WriterConns
+            { wcVolDb = volDb
+            , wcConn = conn
+            }
 
 -- | Start the worker draining the write queue. The worker opens the write
 -- connections itself, on its own thread ('withWriterConns'), and closes them
@@ -263,63 +237,32 @@ startWriter ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
-  Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  -- The slot of the latest GC: the sweep collects the rows before it, and the
-  -- writes of a point before it are dropped, as GC collects that point.
-  -- Only the worker touches it.
+  -- The slot of the latest GC: the writes of a point before it are dropped,
+  -- as GC collected that point. Only the worker touches it.
   gcSlotVar <- newIORef 0
   let worker :: WriterConns -> IO ()
       worker
         WriterConns
           { wcVolDb = volDb
-          , wcImmDb = immDb
           , wcConn = conn
-          , wcSweeperConn = sweeperConn
-          } = serve 0 Nothing
+          } = serve
          where
-          -- The write worker takes care of two types of jobs: queued jobs (values of `WriteJob`)
-          -- and maintenance jobs.
-          -- We prioritise queued jobs first: writes arrive in bursts, and the quiet in
-          -- between is the time to do maintenance. But a burst can go on for as
-          -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
-          --
-          -- The second argument is the state of the GC sweep pass: 'Nothing'
-          -- when no sweep is in progress; 'Just' the rows evicted so far while a
-          -- pass is in progress.
-          serve :: Int -> Maybe Int -> IO ()
-          serve served sweep = do
-            mJob <-
-              if served >= maxJobsBetweenMaintenance
-                then
-                  -- we've served enough queued jobs, time to do maintenance
-                  pure Nothing
-                else
-                  -- 'Nothing' when there are no queued jobs: do maintenance
-                  atomically $ tryReadTBQueue queue
-            case mJob of
-              -- do a normal queue job
-              Just job -> do
-                next <- runJob job
-                traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-                case next of
-                  Stop -> pure ()
-                  Continue -> serve (served + 1) sweep
-                  ContinueAndSweep -> serve (served + 1) (Just (fromMaybe 0 sweep))
-              -- do maintenance
-              Nothing -> do
-                sweep' <- stepMaintenance sweep
-                case sweep' of
-                  Nothing -> blockUntilJob
-                  Just _ -> pure ()
-                serve 0 sweep'
+          serve :: IO ()
+          serve = do
+            job <- atomically $ readTBQueue queue
+            next <- runJob job
+            traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
+            case next of
+              Stop -> pure ()
+              Continue -> serve
 
           runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
@@ -341,48 +284,21 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
-            GcMark slot resultVar -> do
-              publish resultVar $ modifyIORef' gcSlotVar (max slot)
-              pure ContinueAndSweep
+            GarbageCollect slot resultVar ->
+              publish resultVar (collect slot) >> pure Continue
 
           -- Whether GC collected the point, so its writes are dropped.
           isCollected :: LeiosPoint -> IO Bool
           isCollected point = (pointSlotNo point <) <$> readIORef gcSlotVar
 
-          -- Nothing queued and no sweep outstanding: wait for a job.
-          blockUntilJob = IO.atomically $ do
-            noJobs <- isEmptyTBQueue queue
-            check (not noJobs)
-
-          -- Advance a sweep by one batch, returning the new sweep state.
-          -- A failure here is the maintenance's problem, not the writer's:
-          -- trace it, roll back anything left open, and let the next GC tick
-          -- bring the work back. Hence 'catch' rather than 'bracket': the
-          -- exception must stop here, not take the writer down, and the
-          -- cleanup is for failure only.
-          stepMaintenance :: Maybe Int -> IO (Maybe Int)
-          stepMaintenance sweep =
-            step `catch` \(e :: LeiosDbException) -> do
-              _ <- DB.exec volDb "ROLLBACK"
-              _ <- DB.exec immDb "ROLLBACK"
-              traceWith tracer $ TraceLeiosDbGCError (displayException e)
-              pure Nothing
-           where
-            step =
-              case sweep of
-                Nothing -> pure Nothing
-                Just nEbs -> do
-                  evicted <- sweepEbBatch sweeperConn gcBatchSize =<< readIORef gcSlotVar
-                  if evicted == 0
-                    then do
-                      when (nEbs > 0) $ do
-                        -- Flush the WAL only after real work.
-                        dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
-                        traceWith tracer $ TraceLeiosDbEvicted nEbs
-                      pure Nothing
-                    else do
-                      bumpVolatileStatsVar statsVar (negate evicted)
-                      pure (Just (nEbs + evicted))
+          collect :: SlotNo -> IO ()
+          collect slot = do
+            modifyIORef' gcSlotVar (max slot)
+            evicted <- deleteEbsBefore volDb =<< readIORef gcSlotVar
+            when (evicted > 0) $ do
+              bumpVolatileStatsVar statsVar (negate evicted)
+              dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
+              traceWith tracer $ TraceLeiosDbEvicted evicted
 
       -- Nothing can be queued after the seal ('submitJob'), and awaiting a
       -- job left in the queue throws the cause.
@@ -427,5 +343,3 @@ data WhetherContinueServing
     Stop
   | -- | Keep serving.
     Continue
-  | -- | Keep serving, and start a GC sweep pass or extend the one in progress.
-    ContinueAndSweep

@@ -17,9 +17,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , PromoteStmts (..)
   , preparePromoteStmts
   , finalizePromoteStmts
-  , SweeperStmts (..)
-  , prepareSweeperStmts
-  , finalizeSweeperStmts
   ) where
 
 import Control.Exception (mask_, onException)
@@ -65,23 +62,6 @@ finalizePromoteStmts :: PromoteStmts -> IO ()
 finalizePromoteStmts PromoteStmts{..} = do
   dbFinalize psClosure
   dbFinalize psInsertEb
-
--- | The sweep statements, prepared on the writer's volatile connection;
--- lifecycle mirrors 'PromoteStmts'.
-newtype SweeperStmts = SweeperStmts
-  { swSweep :: DB.Statement
-  -- ^ 'sql_gc_sweep'
-  }
-
--- | Prepare the sweep statements on the writer's volatile connection.
-prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
-prepareSweeperStmts db = preparingStmts db $ \prep -> do
-  swSweep <- prep sql_gc_sweep
-  pure SweeperStmts{..}
-
-finalizeSweeperStmts :: SweeperStmts -> IO ()
-finalizeSweeperStmts SweeperStmts{..} =
-  dbFinalize swSweep
 
 -- | Compiled SQL statements for the Volatile partition.
 data VolStmts = VolStmts

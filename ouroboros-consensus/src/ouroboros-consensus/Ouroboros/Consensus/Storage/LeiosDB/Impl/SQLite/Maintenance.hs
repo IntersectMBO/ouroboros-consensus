@@ -14,15 +14,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   , closePromoter
   , sqlPromoteToImmutable
 
-    -- * GC mark
+    -- * Garbage collection
   , sqlGarbageCollect
-
-    -- * GC sweep
-  , SweeperConn (..)
-  , sweepEbBatch
-
-    -- * GC batch sizes
-  , defaultGcBatchSize
+  , deleteEbsBefore
 
     -- * Stats
   , initialStats
@@ -47,7 +41,6 @@ import Control.ResourceRegistry
   , forkLinkedThread
   )
 import Control.Tracer (Tracer, traceWith)
-import Data.Int (Int64)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
@@ -61,6 +54,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries (sql_gc_collect)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (closureMatches, splitClosure)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
@@ -167,40 +161,20 @@ copyEb db PromoteStmts{psClosure, psInsertEb} point = do
 
 -- * Garbage collection of the volatile partition
 
--- | How many rows one sweep transaction takes, by default.
-defaultGcBatchSize :: Int64
-defaultGcBatchSize = 4
-
--- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the
--- MARK phase of GC mark-and-sweep, as a 'GcMark' job on the writer, which
--- raises the slot the sweep collects before. The slot is in memory only: after
--- a restart, the next GC sets it again.
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect', as a
+-- 'GarbageCollect' job on the writer, which deletes the rows before the slot.
+-- The slot is in memory only: after a restart, the next GC sets it again.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
-  void . await =<< submitJob writeQueue (GcMark gcSlot)
+  void . await =<< submitJob writeQueue (GarbageCollect gcSlot)
 
--- * Sweeping collected rows out of the volatile partition
-
--- | The sweeper's connection and its prepared statements.
-data SweeperConn = SweeperConn
-  { swDb :: !DB.Database
-  -- ^ The writer's connection to the volatile partition.
-  , swStmts :: !SweeperStmts
-  -- ^ Precompiled statements used by the sweeper.
-  }
-
--- | One sweep transaction: delete up to the given number of rows before the
--- slot of the latest GC. Returns the number of rows deleted. Runs on the
--- writer, one batch per turn, so an insert waits for a batch at most.
-sweepEbBatch :: SweeperConn -> Int64 -> SlotNo -> IO Int
-sweepEbBatch SweeperConn{swDb, swStmts = SweeperStmts{swSweep}} batchSize gcSlot =
-  dbWithWriteTransactionRaw swDb $ useStmt swSweep $ do
-    -- batchSize will never be negative, but we handle a negative batch size
-    -- gracefully here with a negative LIMIT, which means no limit in SQLite.
-    dbBindInt64 swSweep 1 (if batchSize <= 0 then -1 else batchSize)
-    dbBindInt64 swSweep 2 (fromIntegral (unSlotNo gcSlot))
-    dbStep1Safe swSweep
-    DB.changes swDb
+-- | Delete the rows before the slot, in one transaction. Returns how many.
+deleteEbsBefore :: HasCallStack => DB.Database -> SlotNo -> IO Int
+deleteEbsBefore db gcSlot =
+  dbWithWriteTransactionRaw db $ withStmt db sql_gc_collect $ \stmt -> do
+    dbBindInt64 stmt 1 (fromIntegral (unSlotNo gcSlot))
+    dbStep1Safe stmt
+    DB.changes db
 
 -- * Stats
 

@@ -10,7 +10,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   , WriteQueue (..)
   , submitJob
   , describeJob
-  , maxJobsBetweenMaintenance
   , writerQueueDepth
   ) where
 
@@ -57,8 +56,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 -- The insert jobs come from 'LeiosDbWriter', the rest from the handle's
 -- GC entry point. One worker running them all is what makes the
 -- single-writer property total: no two in-process connections ever contend
--- for a write lock on the volatile partition. Sweeping is not a job at all
--- -- the worker does it between jobs; see 'startWriter'.
+-- for a write lock on the volatile partition.
 data WriteJob
   = WriteEbPoint
       -- | the announced EB
@@ -84,9 +82,9 @@ data WriteJob
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | The GC MARK phase; see 'sqlGarbageCollect'.
-    GcMark
-      -- | the GC frontier slot
+  | -- | Garbage collection; see 'sqlGarbageCollect'.
+    GarbageCollect
+      -- | the GC slot
       !SlotNo
       -- | where the worker puts the result
       !(WriteResult ())
@@ -164,20 +162,8 @@ describeJob = \case
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  GcMark slot _ -> "GcMark " <> show slot
+  GarbageCollect slot _ -> "GarbageCollect " <> show slot
   Shutdown _ -> "Shutdown"
-
--- | How many queued jobs the writer serves back-to-back before it takes a
--- turn of maintenance anyway.
---
--- Maintenance runs when the queue drains, which is the common case; this is
--- the floor under a queue that never does. One queue-full: under saturation
--- maintenance still gets a turn as often as the producers can refill, and
--- the resulting share (one turn in @'writerQueueDepth' + 1@) is far above
--- what eviction asks for -- it is per expired EB, not per write. 'TraceLeiosDbStats' is where a volatile partition that
--- still grows would show up.
-maxJobsBetweenMaintenance :: Int
-maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance

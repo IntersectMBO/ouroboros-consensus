@@ -32,8 +32,6 @@ instance LogFormatting TraceLeiosDb where
       mconcat ["kind" .= String "LeiosDbCopiedToImmutable", "copiedEbs" .= copiedEbs]
     TraceLeiosDbEvicted evictedEbs ->
       mconcat ["kind" .= String "LeiosDbEvicted", "evictedEbs" .= evictedEbs]
-    TraceLeiosDbGCError reason ->
-      mconcat ["kind" .= String "LeiosDbSweepError", "reason" .= reason]
 
   forHuman = \case
     TraceLeiosDbInsertCollision table key ->
@@ -56,8 +54,6 @@ instance LogFormatting TraceLeiosDb where
       "Copied " <> showT copiedEbs <> " EBs to the LeiosDB's immutable partition"
     TraceLeiosDbEvicted evictedEbs ->
       "Evicted " <> showT evictedEbs <> " EB rows from the LeiosDB's volatile partition"
-    TraceLeiosDbGCError reason ->
-      "A LeiosDB sweep pass failed and will be retried: " <> Text.pack reason
 
   asMetrics = \case
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
@@ -69,8 +65,6 @@ instance LogFormatting TraceLeiosDb where
       [CounterM "leiosDbCopiedEbs" (Just copiedEbs)]
     TraceLeiosDbEvicted evictedEbs ->
       [CounterM "leiosDbEvictedEbs" (Just evictedEbs)]
-    TraceLeiosDbGCError{} ->
-      [CounterM "leiosDbSweepErrors" (Just 1)]
     TraceLeiosDbWriteAbandoned{} ->
       [CounterM "leiosDbWritesAbandoned" (Just 1)]
     TraceLeiosDbInsertCollision{} -> []
@@ -86,7 +80,6 @@ instance MetaTrace TraceLeiosDb where
     TraceLeiosDbStats{} -> Namespace [] ["Stats"]
     TraceLeiosDbCopiedToImmutable{} -> Namespace [] ["Copied"]
     TraceLeiosDbEvicted{} -> Namespace [] ["Evicted"]
-    TraceLeiosDbGCError{} -> Namespace [] ["SweepError"]
 
   severityFor (Namespace _ ["InsertCollision"]) _ = Just Info
   severityFor (Namespace _ ["WriterQueueFull"]) _ = Just Info
@@ -95,7 +88,6 @@ instance MetaTrace TraceLeiosDb where
   severityFor (Namespace _ ["Stats"]) _ = Just Info
   severityFor (Namespace _ ["Copied"]) _ = Just Info
   severityFor (Namespace _ ["Evicted"]) _ = Just Info
-  severityFor (Namespace _ ["SweepError"]) _ = Just Warning
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["InsertCollision"]) =
@@ -113,9 +105,7 @@ instance MetaTrace TraceLeiosDb where
   documentFor (Namespace _ ["Copied"]) =
     Just "A promotion committed EBs' closures to the immutable partition."
   documentFor (Namespace _ ["Evicted"]) =
-    Just "A sweep pass evicted EB announcement rows from the volatile partition."
-  documentFor (Namespace _ ["SweepError"]) =
-    Just "A sweep pass failed. It is retried."
+    Just "A garbage collection deleted EB rows from the volatile partition."
   documentFor _ = Nothing
 
   metricsDocFor (Namespace _ ["Stats"]) =
@@ -130,8 +120,6 @@ instance MetaTrace TraceLeiosDb where
     [("leiosDbCopiedEbs", "EBs copied into the immutable partition")]
   metricsDocFor (Namespace _ ["Evicted"]) =
     [("leiosDbEvictedEbs", "EB announcement rows evicted from the volatile partition")]
-  metricsDocFor (Namespace _ ["SweepError"]) =
-    [("leiosDbSweepErrors", "Failed sweep passes, each retried")]
   metricsDocFor (Namespace _ ["WriteAbandoned"]) =
     [("leiosDbWritesAbandoned", "Writes lost while waiting for room in the writer's queue")]
   metricsDocFor _ = []
@@ -144,5 +132,4 @@ instance MetaTrace TraceLeiosDb where
     , Namespace [] ["Stats"]
     , Namespace [] ["Copied"]
     , Namespace [] ["Evicted"]
-    , Namespace [] ["SweepError"]
     ]
