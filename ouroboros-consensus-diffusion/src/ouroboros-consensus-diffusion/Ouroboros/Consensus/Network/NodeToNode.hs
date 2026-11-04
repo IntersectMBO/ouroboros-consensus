@@ -390,6 +390,7 @@ mkHandlers
     , getLeiosAnnounceState
     , getLeiosVoteState
     , getLeiosNotifyLog
+    , getLeiosAnnouncementAgeLimits
     }
   txSubmissionLogicVersion =
     Handlers
@@ -508,6 +509,7 @@ mkHandlers
             systemTime
             chainSyncFutureCheck
             maxClockSkew
+            getLeiosAnnouncementAgeLimits
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog
       , hLeiosFetchClient = \_version controlMessageSTM _peer -> leiosFetchClient controlMessageSTM

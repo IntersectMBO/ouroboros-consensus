@@ -39,7 +39,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( maxAnnouncementAgeRecv
+  ( LeiosAnnouncementAgeLimits (..)
+  , defaultLeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -437,7 +438,7 @@ nodeClientAgainstAnnouncements blks = withNode $ \node -> do
 -- | The announcement arrives long after its slot: the peer connects only then.
 nodeClientTooOld :: IOSim s NodeClientOutcome
 nodeClientTooOld = withNode $ \node -> do
-  threadDelay (realToFrac maxAnnouncementAgeRecv + 100)
+  threadDelay (realToFrac (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits) + 100)
   queue <- newTQueueIO
   atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
   runNodeClientAgainst node (readTQueue queue) (leiosNotifyPipelineDepth + 1)
