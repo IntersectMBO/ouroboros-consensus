@@ -62,6 +62,7 @@ module Ouroboros.Consensus.Leios.Types
   , decodeSerialisedEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
+  , LeiosEbBounds (..)
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -490,6 +491,16 @@ maxTxsPerEndorserBlock =
 -- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
+
+-- | The ledger's bounds on an endorser block, as of its slot.
+data LeiosEbBounds = MkLeiosEbBounds
+  { lebMaxBodySize :: !BytesSize
+  -- ^ the largest body the ledger admits
+  , lebMaxTxsSize :: !BytesSize
+  -- ^ the largest total size of the transactions a body may reference
+  }
+  deriving stock (Eq, Show, Bounded, Generic)
+  deriving anyclass NoThunks
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.
