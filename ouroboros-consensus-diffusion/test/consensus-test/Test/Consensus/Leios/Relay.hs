@@ -63,7 +63,7 @@ import Data.Void (Void)
 import Data.Word (Word16)
 import Ouroboros.Consensus.Block (Header, SlotNo (..), blockHash, blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), addRelTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.AnnounceState
@@ -98,9 +98,11 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcemen
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancElectionId)
   , ValidAnnouncement (..)
+  , defaultLeiosAnnouncementAgeLimits
   , maxAnnouncementAgeRecv
   , maxAnnouncementAgeSend
   , mkAnnouncingHeader
+  , mkLeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( VoteWindow (..)
@@ -178,9 +180,13 @@ tests :: TestTree
 tests =
   testGroup
     "Relay"
-    [ testCase "the node relays an announcement to a peer" $ do
+    [ testCase "the node relays an announcement to a peer, but not before its slot begins" $ do
+        -- It arrives at 0 s, a second before its slot begins, which is within
+        -- the clock skew the node tolerates.
         down <- relayToOne 0 [[announce someAnnouncingBlock]]
         announcements down @?= [ltbHeader someAnnouncingBlock]
+        assertBool ("relayed at " <> show (announcementTimes down)) $
+          all (>= Time 1) (announcementTimes down)
     , testCase "the node relays an announcement it hears from two peers once" $ do
         down <- relayToOne 0 [[announce someAnnouncingBlock], [announce someAnnouncingBlock]]
         announcements down @?= [ltbHeader someAnnouncingBlock]
@@ -206,10 +212,10 @@ tests =
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
     , testCase "the node does not relay an announcement of an election pruned while validating it" $
         prunedWhileValidating @?= []
-    , testCase "a vote is relayed no longer than its announcement, however long its diffusion period" $
-        voteUntil
-          (leiosVoteWindow leiosLedgerView{llvDiffusionPeriod = Milliseconds32 1000000} (RelativeTime 1))
-          @?= addRelTime maxAnnouncementAgeSend (RelativeTime 1)
+    , testCase "the node relays no announcement older than its configured limit" $
+        map (\sendLimit -> relayedWithSendLimit sendLimit 10 (RelativeTime 0)) [5, 20] @?= [[], [()]]
+    , testCase "the node relays an announcement until its configured limit after its slot began" $
+        map (relayedWithSendLimit 20 0) [RelativeTime 21, RelativeTime 21.001] @?= [[()], []]
     , testCase "the log prunes each notification once it is no longer worth relaying" $
         notifyLogAt [(9, 'a'), (300, 'b'), (5, 'c')] 6 @?= "ab"
     , testCase "the log does not take a notification it was pruned past already" $
@@ -487,7 +493,8 @@ honestViolations = snd . Foldable.foldl' step ((Announcements.empty, Map.empty, 
           ( (seen', Map.insert (rbHashOf hdr) (blockSlot hdr) announced, voted)
           , errs
               <> [ "too old, at " <> show at <> ": " <> show hdr
-                 | toSeconds at - slotStart (blockSlot hdr) > realToFrac maxAnnouncementAgeRecv
+                 | toSeconds at - slotStart (blockSlot hdr)
+                     > realToFrac (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits)
                  ]
           )
     NotifyVotes vs -> Foldable.foldl' (checkVote at) ((seen, announced, voted), errs) vs
@@ -539,6 +546,9 @@ voteOf blk seat = signedBy (seatKeys !! fromIntegral seat) blk seat
 
 voteTimes :: PeerOutcome -> [Time]
 voteTimes o = [at | (at, NotifyVotes _) <- poReceived o]
+
+announcementTimes :: PeerOutcome -> [Time]
+announcementTimes o = [at | (at, NotifyAnnouncement _) <- poReceived o]
 
 {-------------------------------------------------------------------------------
   Running a scenario
@@ -723,20 +733,36 @@ topLevelConfig = singleNodeLeiosTestConfig ledgerConfig k
 prunedWhileValidating :: [()]
 prunedWhileValidating = runSimOrThrow $ do
   notifyLog <- newNotifyLog
-  st <- newAnnounceState notifyLog
+  st <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
   atomically $ pruneAnnounceState st (blockSlot someAnnouncingBlock + 1)
-  atomically $ onValidAnnouncement st valid
+  atomically $ onValidAnnouncement st (someValidAnnouncement 0)
+  atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
+
+-- | What the node relays of a new announcement of the given age, if it relays
+-- none older than the given limit, once its log is pruned at the given time.
+relayedWithSendLimit :: NominalDiffTime -> NominalDiffTime -> RelativeTime -> [()]
+relayedWithSendLimit sendLimit age now = runSimOrThrow $ do
+  notifyLog <- newNotifyLog
+  st <- newAnnounceState limits notifyLog
+  atomically $ onValidAnnouncement st (someValidAnnouncement age)
+  atomically $ pruneNotifyLog notifyLog now
   atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
  where
-  valid =
-    MkValidAnnouncement
-      { announcingHeader =
-          fromMaybe (error "prunedWhileValidating: an announcement") $
-            mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
-      , announcementOnset = RelativeTime 1
-      , announcementAge = 0
-      , announcementStaleness = FreshOCIN
-      }
+  limits =
+    either (error . show) id $
+      mkLeiosAnnouncementAgeLimits sendLimit (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits)
+
+-- | 'someAnnouncingBlock''s announcement, validated at the given age.
+someValidAnnouncement :: NominalDiffTime -> ValidAnnouncement LeiosTestBlock
+someValidAnnouncement age =
+  MkValidAnnouncement
+    { announcingHeader =
+        fromMaybe (error "someValidAnnouncement: an announcement") $
+          mkAnnouncingHeader topLevelConfig (ltbHeader someAnnouncingBlock)
+    , announcementOnset = RelativeTime 1
+    , announcementAge = age
+    , announcementStaleness = FreshOCIN
+    }
 
 -- | The log's notifications once pruned at the given time, of entries worth
 -- relaying until the given times, each a vote of the seat its name stands for.
@@ -776,7 +802,10 @@ prop_notifyLogPruneCadence =
     [ counterexample "the vote grace" $
         notifyLogPruneCadence `farBelow` voteLateGrace
     , counterexample "the announcement grace" $
-        notifyLogPruneCadence `farBelow` (maxAnnouncementAgeRecv - maxAnnouncementAgeSend)
+        notifyLogPruneCadence
+          `farBelow` ( maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits
+                         - maxAnnouncementAgeSend defaultLeiosAnnouncementAgeLimits
+                     )
     ]
  where
   farBelow a b = 10 * a <= b

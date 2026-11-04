@@ -39,7 +39,9 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( maxAnnouncementAgeRecv
+  ( defaultLeiosAnnouncementAgeLimits
+  , maxAnnouncementAgeRecv
+  , mkLeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -143,6 +145,10 @@ tests =
           @?= Just (NodeClientDisconnected AnnouncementInFuture)
     , testCase "the node's client disconnects a peer that relays a too-old announcement" $
         runSimOrThrow (timeout 1000 nodeClientTooOld)
+          @?= Just (NodeClientDisconnected AnnouncementTooOld)
+    , testCase
+        "the node's client disconnects a peer that relays an announcement older than its configured limit"
+        $ runSimOrThrow (timeout 1000 nodeClientOlderThanConfigured)
           @?= Just (NodeClientDisconnected AnnouncementTooOld)
     , testCase "the node prunes its clients' state as its immutable tip advances" $
         runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1, 1, 1), (0, 0, 0, 0))
@@ -436,8 +442,23 @@ nodeClientAgainstAnnouncements blks = withNode $ \node -> do
 
 -- | The announcement arrives long after its slot: the peer connects only then.
 nodeClientTooOld :: IOSim s NodeClientOutcome
-nodeClientTooOld = withNode $ \node -> do
-  threadDelay (realToFrac maxAnnouncementAgeRecv + 100)
+nodeClientTooOld =
+  withNode $
+    nodeClientConnectingAt (realToFrac (maxAnnouncementAgeRecv defaultLeiosAnnouncementAgeLimits) + 100)
+
+-- | The announcement arrives 39 s after its slot began, which only a receive
+-- limit smaller than the default rejects.
+nodeClientOlderThanConfigured :: IOSim s NodeClientOutcome
+nodeClientOlderThanConfigured =
+  withNodeAgeLimits limits $ nodeClientConnectingAt 40
+ where
+  limits = either (error . show) id $ mkLeiosAnnouncementAgeLimits 10 30
+
+-- | The peer connects only at the given time, and relays the announcement of
+-- 'firstLeiosBlock', whose slot begins at 1 s.
+nodeClientConnectingAt :: DiffTime -> NodeUnderTest (IOSim s) -> IOSim s NodeClientOutcome
+nodeClientConnectingAt at node = do
+  threadDelay at
   queue <- newTQueueIO
   atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
   runNodeClientAgainst node (readTQueue queue) (leiosNotifyPipelineDepth + 1)

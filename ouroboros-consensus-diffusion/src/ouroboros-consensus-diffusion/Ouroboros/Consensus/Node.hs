@@ -122,6 +122,10 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( LeiosAnnouncementAgeLimits
+  , defaultLeiosAnnouncementAgeLimits
+  )
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.DbLock
@@ -397,6 +401,10 @@ data StdRunNodeArgs m blk
   -- ^ Determine whether to use the system default mempool capacity or explicitly set
   -- capacity of the mempool.
   , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , srnLeiosAnnouncementAgeLimits :: Maybe LeiosAnnouncementAgeLimits
+  -- ^ Overrides 'defaultLeiosAnnouncementAgeLimits', how old an announcement
+  -- the node relays or accepts. A network whose immutable tip is only minutes
+  -- old, such as a test network, has to set its own, smaller limits.
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
@@ -1078,6 +1086,7 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
@@ -1264,6 +1273,7 @@ stdLowLevelRunNodeArgsIO
     llrnCustomiseNodeKernelArgs =
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
+        . modifyLeiosAnnouncementAgeLimits
      where
       modifyBlockFetchConfiguration =
         maybe
@@ -1279,6 +1289,11 @@ stdLowLevelRunNodeArgsIO
           id
           (\mc nka -> nka{mempoolCapacityOverride = mc})
           srnMaybeMempoolCapacityOverride
+      modifyLeiosAnnouncementAgeLimits =
+        maybe
+          id
+          (\limits nka -> nka{leiosAnnouncementAgeLimits = limits})
+          srnLeiosAnnouncementAgeLimits
 
     -- Limit the node version unless srnEnableInDevelopmentVersions is set
     limitToLatestReleasedVersion ::
