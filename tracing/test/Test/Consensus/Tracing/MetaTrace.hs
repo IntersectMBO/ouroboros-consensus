@@ -39,7 +39,10 @@ import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server (TraceBlockFetchServer
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server (TraceChainSyncServerEvent)
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( TraceLeiosFetchClientEvent
+  , TraceLeiosFetchServerEvent
+  )
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent
   )
@@ -130,7 +133,8 @@ tests =
         ]
     , testGroup
         "leios"
-        [ metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
+        [ metaTrace @TraceLeiosFetchClientEvent "TraceLeiosFetchClientEvent"
+        , metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
         , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]
     ]
