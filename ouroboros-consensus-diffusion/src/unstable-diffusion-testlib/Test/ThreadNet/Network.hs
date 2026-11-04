@@ -1083,6 +1083,9 @@ runThreadNetwork
               , -- These nodes' ChainDBs subscribe to nothing; see
                 -- 'fromMinimalChainDbArgs'.
                 leiosAcquisitions = noLeiosAcquisitions
+              , -- Split off a generator the node uses anyway, so that the others'
+                -- streams stay as they were.
+                leiosFetchRng = fst (splitGen chainSyncRng)
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =

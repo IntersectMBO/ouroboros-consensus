@@ -37,6 +37,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , StrictTQueue
   , StrictTVar
   , atomically
+  , check
   , modifyTVar
   , newTQueueIO
   , newTVarIO
@@ -45,7 +46,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTQueue
   )
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, void)
 import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -73,14 +74,21 @@ import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  , newLeiosAcquisitions
+  )
 import Ouroboros.Consensus.Leios.AnnounceState
-  ( newAnnounceState
+  ( hasAnnouncement
+  , newAnnounceState
   , onValidAnnouncement
   , pruneAnnounceState
   )
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , appendNotifyLog
+  , leiosOfferRelay
   , newNotifyLog
   , nextNotifyLog
   , notifyLogStart
@@ -89,7 +97,9 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
 import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint
+  ( BytesSize
+  , EndorserBlockHash
+  , LeiosPoint (..)
   , LeiosVote (..)
   , RankingBlockHash
   , milliseconds32ToNominalDiffTime
@@ -167,6 +177,7 @@ import Test.Consensus.Leios.TestBlock
   , setCounterBelowImmTips
   , setSlot
   , singleNodeLeiosTestConfig
+  , successorLeiosBlock
   )
 import Test.QuickCheck
   ( Gen
@@ -206,16 +217,17 @@ tests =
         announcements down @?= [ltbHeader someAnnouncingBlock]
     , testCase "the node relays both announcements of an election, but no third" $ do
         down <-
-          relayToOne
-            0
-            [[announce someAnnouncingBlock, announce equivocation], [announceAt 1 thirdAnnouncement]]
+          relayAfter
+            [ PeerSpec 0 [] [announce someAnnouncingBlock, announce equivocation]
+            , PeerSpec 0 [someAnnouncingBlock, equivocation] [announce thirdAnnouncement]
+            ]
         announcements down @?= map ltbHeader [someAnnouncingBlock, equivocation]
     , testCase "the node does not relay an announcement too old to relay" $ do
         -- connecting late, since a connection without KeepAlive times out
         (_, downs) <-
           relayPeers
             400
-            [PeerSpec 340 [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
+            [PeerSpec 340 [] [announceAt 350 someAnnouncingBlock, announceAt 350 lateAnnouncingBlock]]
             [340]
         map announcements downs @?= [[ltbHeader lateAnnouncingBlock]]
     , testCase "the node does not relay an announcement of a revoked operational certificate" $ do
@@ -234,6 +246,10 @@ tests =
         notifyLogAt [(9, 'a'), (300, 'b'), (5, 'c')] 6 @?= "ab"
     , testCase "the log does not take a notification it was pruned past already" $
         notifyLogPrunedAt 6 [(9, 'a'), (5, 'c'), (6, 'd')] @?= "ad"
+    , testCase
+        "the relay offers an acquisition only at its own point, though the log holds announcements of the endorser block at others"
+        $ offersRelayed
+          @?= [OfferedBody somePoint 1000, OfferedClosure somePoint]
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -247,25 +263,22 @@ tests =
     , testCase "the node relays only the first vote of a seat in an election" $ do
         down <- relayToOne 0 [votedFor0, [announce equivocation, (5.5, vote equivocation 0)]]
         votes down @?= [voteOf someAnnouncingBlock 0]
-    , testCase "the node disconnects a peer that sends a badly signed vote, and does not relay it" $ do
-        (ups, downs) <- relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock 0)]]) [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, False]
-    , testCase "the node disconnects a peer that sends a vote from a seat outside the committee" $ do
-        (ups, downs) <-
-          relay 20 (withControl [[(5, badlySignedVote someAnnouncingBlock seatOutside)]]) [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, False]
-    , testCase "the node disconnects a peer that sends a vote from a seat without a key" $ do
-        (ups, downs) <-
-          relay
-            20
-            ( withControl
-                [[(5, vote someAnnouncingBlock seatNoKey)], [(5, vote someAnnouncingBlock seatBadPoP)]]
-            )
-            [0]
-        concatMap votes downs @?= [control]
-        map invalidVoteDisconnected ups @?= [True, True, False]
+    , testCase
+        "the node disconnects each peer that sends an invalid vote, and relays none of them: badly signed, from a seat outside the committee, from a seat without a key, or from one whose key's proof of possession fails"
+        $ do
+          (ups, downs) <-
+            relay
+              20
+              ( withControl
+                  [ [(5, badlySignedVote someAnnouncingBlock 0)]
+                  , [(5, badlySignedVote someAnnouncingBlock seatOutside)]
+                  , [(5, vote someAnnouncingBlock seatNoKey)]
+                  , [(5, vote someAnnouncingBlock seatBadPoP)]
+                  ]
+              )
+              [0]
+          concatMap votes downs @?= [control]
+          map invalidVoteDisconnected ups @?= [True, True, True, True, False]
     , testCase "the node does not verify a vote of a seat it already has a vote of" $ do
         (ups, downs) <-
           relay
@@ -276,11 +289,13 @@ tests =
         map poNodeClientEnded ups @?= [Nothing, Nothing]
     , testCase "the node does not relay a vote for an announcement it did not relay" $ do
         down <-
-          relayToOne
-            0
-            ( withControl
-                [[announce equivocation], [announceAt 1 thirdAnnouncement, (5, vote thirdAnnouncement 0)]]
-            )
+          relayAfter $
+            PeerSpec 0 [] [announce someAnnouncingBlock, announce equivocation]
+              : PeerSpec
+                0
+                [someAnnouncingBlock, equivocation]
+                [announce thirdAnnouncement, (5, vote thirdAnnouncement 0)]
+              : map (PeerSpec 0 []) (withControl [])
         votes down @?= [control]
     , testCase "the node relays a vote that arrives after its voting period, within its diffusion period" $ do
         -- Voting ends 8 s in, and diffusion 9 s in.
@@ -309,7 +324,7 @@ tests =
         map votes runDowns @?= [[voteOf someAnnouncingBlock 0]]
     , testCase "the node keeps a certificate until its election slot is before the immutable tip" $ do
         let RelayRun{runAfter} =
-              runRelayThen (VerifyingTime 0) 20 [PeerSpec 0 quorumFor] [] $ \node -> do
+              runRelayThen (VerifyingTime 0) 20 [PeerSpec 0 [] quorumFor] [] $ \node -> do
                 let st = getLeiosVoteState (nodeKernel node)
                     certified = isJust <$> getCertificate st (rbHashOf (ltbHeader someAnnouncingBlock))
                     prunedAt slot = atomically $ pruneCertificates st slot >> certified
@@ -467,7 +482,7 @@ prop_relay peers =
  where
   ups = allPeers peers
   RelayRun{runUps = upOutcomes, runDowns, runAfter = certified, runVoteStateTraces} =
-    runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0) ups) [0]
+    runRelay (VerifyingTime (nodeVerifying peers)) 20 (map (PeerSpec 0 []) ups) [0]
   down = case runDowns of
     [down'] -> down'
     _ -> error "prop_relay: one downstream peer"
@@ -642,6 +657,9 @@ showNotification = \case
 -- | A peer: when it connects, and what it sends the node when.
 data PeerSpec = PeerSpec
   { psConnectAt :: DiffTime
+  , psAfterAccepting :: [LeiosTestBlock]
+  -- ^ The announcements the node must have accepted before the peer sends
+  -- anything, however late that makes its sends.
   , psSends :: [(DiffTime, Notification)]
   }
 
@@ -658,7 +676,7 @@ data PeerOutcome = PeerOutcome
 -- the node relays to it, and the test fails if an honest peer's client would
 -- disconnect the node for it.
 relay :: DiffTime -> [[(DiffTime, Notification)]] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
-relay end ups = relayPeers end (map (PeerSpec 0) ups)
+relay end ups = relayPeers end (map (PeerSpec 0 []) ups)
 
 -- | 'relay', with upstream peers that connect when they say.
 relayPeers :: DiffTime -> [PeerSpec] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
@@ -708,7 +726,7 @@ runRelayThen verifying end ups downs after = runSimOrThrow $ do
     let (ups', downs') = splitAt (length ups) outcomes
     RelayRun ups' downs' <$> getTraces <*> pure a
  where
-  specs = ups <> [PeerSpec at [] | at <- downs]
+  specs = ups <> [PeerSpec at [] [] | at <- downs]
 
 -- | 'relay' for 20 seconds, past every vote's diffusion period, to one downstream peer
 -- connecting at the given time.
@@ -718,8 +736,16 @@ relayToOne at ups =
     (_, [down]) -> pure down
     _ -> error "relayToOne: one downstream peer"
 
+-- | 'relayToOne', with upstream peers that connect and wait as they say, to a
+-- downstream peer that connects at once.
+relayAfter :: [PeerSpec] -> IO PeerOutcome
+relayAfter ups =
+  relayPeers 20 ups [0] >>= \case
+    (_, [down]) -> pure down
+    _ -> error "relayAfter: one downstream peer"
+
 runPeer :: NodeUnderTest (IOSim s) -> DiffTime -> PeerAddr -> PeerSpec -> IOSim s PeerOutcome
-runPeer node end addr PeerSpec{psConnectAt, psSends} = do
+runPeer node end addr PeerSpec{psConnectAt, psAfterAccepting, psSends} = do
   threadDelay psConnectAt
   queue <- newTQueueIO
   received <- newTVarIO []
@@ -731,7 +757,18 @@ runPeer node end addr PeerSpec{psConnectAt, psSends} = do
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
-  withAsync (feedAt queue psSends) $ \_feeder ->
+  let awaitAccepted =
+        atomically $
+          mapM_
+            ( \blk ->
+                check
+                  =<< hasAnnouncement
+                    (getLeiosAnnounceState (nodeKernel node))
+                    (blockSlot (ltbHeader blk))
+                    (rbHashOf (ltbHeader blk))
+            )
+            psAfterAccepting
+  withAsync (awaitAccepted >> feedAt queue psSends) $ \_feeder ->
     withNodeVsEnvConnection node addr envPeer $ \conn -> do
       Time now <- getMonotonicTime
       threadDelay (end - now)
@@ -841,7 +878,7 @@ certifiedOncePruned :: Bool
 certifiedOncePruned = runSimOrThrow $ withNode (VerifyingTime 0) nullTracer $ \node -> do
   let st = getLeiosVoteState (nodeKernel node)
   atomically $ pruneCertificates st (blockSlot someAnnouncingBlock + 1)
-  _ <- runPeer node 20 (PeerAddr 1) (PeerSpec 0 quorumFor)
+  _ <- runPeer node 20 (PeerAddr 1) (PeerSpec 0 [] quorumFor)
   atomically $ isJust <$> getCertificate st (rbHashOf (ltbHeader someAnnouncingBlock))
 
 -- | Why the node fails to aggregate the votes of seats 0 to 2 for
@@ -892,7 +929,7 @@ prunedWhileValidating = runSimOrThrow $ do
   notifyLog <- newNotifyLog
   st <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
   atomically $ pruneAnnounceState st (blockSlot someAnnouncingBlock + 1)
-  atomically $ onValidAnnouncement st (someValidAnnouncement 0)
+  void $ atomically $ onValidAnnouncement st (someValidAnnouncement 0)
   atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
 
 -- | What the node relays of a new announcement of the given age, if it relays
@@ -901,7 +938,7 @@ relayedWithSendLimit :: NominalDiffTime -> NominalDiffTime -> RelativeTime -> [(
 relayedWithSendLimit sendLimit age now = runSimOrThrow $ do
   notifyLog <- newNotifyLog
   st <- newAnnounceState limits notifyLog
-  atomically $ onValidAnnouncement st (someValidAnnouncement age)
+  void $ atomically $ onValidAnnouncement st (someValidAnnouncement age)
   atomically $ pruneNotifyLog notifyLog now
   atomically $ ([()] <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure []
  where
@@ -919,6 +956,7 @@ someValidAnnouncement age =
     , announcementOnset = RelativeTime 1
     , announcementAge = age
     , announcementStaleness = FreshOCIN
+    , announcementEbBounds = maxBound
     }
 
 -- | The log's notifications once pruned at the given time, of entries worth
@@ -949,6 +987,38 @@ notifyLogPrunedAt now appends = runSimOrThrow $ do
         (RelativeTime expires)
   atomically $ map nameOf <$> notifyLogNotifications notifyLog
 
+-- | An offer the relay adds to the log.
+data Offered = OfferedBody LeiosPoint BytesSize | OfferedClosure LeiosPoint
+  deriving (Eq, Show)
+
+-- | The log holds announcements of the endorser block of
+-- 'someAnnouncingBlock' there and at the next two slots. Then the relay sees
+-- it acquired, body and closure, at 'someAnnouncingBlock'. The offers the
+-- relay adds to the log.
+offersRelayed :: [Offered]
+offersRelayed = runSimOrThrow $ do
+  notifyLog <- newNotifyLog @_ @Blk
+  acquisitions <- newLeiosAcquisitions
+  atomically $
+    for_ (take 3 (iterate reannouncing someAnnouncingBlock)) $ \blk ->
+      for_ (mkAnnouncingHeader topLevelConfig (ltbHeader blk)) $ \anc ->
+        appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
+  withAsync (leiosOfferRelay acquisitions notifyLog) $ \_ -> do
+    -- Until the relay has subscribed.
+    threadDelay 1
+    atomically $ do
+      emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
+      emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+    threadDelay 1
+    atomically $ concatMap offered <$> notifyLogNotifications notifyLog
+ where
+  reannouncing blk = setAnnouncement someEbHash 1000 (successorLeiosBlock blk)
+  offered = \case
+    NotifyLog.NotifyBlockOffer p size -> [OfferedBody p size]
+    NotifyLog.NotifyBlockTxsOffer p -> [OfferedClosure p]
+    NotifyLog.NotifyAnnouncement _ -> []
+    NotifyLog.NotifyVote _ -> []
+
 -- | The seat a name stands for in a log, 'a' for seat 0.
 seatOf :: Char -> Word16
 seatOf name = fromIntegral (fromEnum name - fromEnum 'a')
@@ -958,6 +1028,8 @@ nameOf :: NotifyLog.Notification Blk -> Char
 nameOf = \case
   NotifyLog.NotifyVote v -> toEnum (fromEnum 'a' + fromIntegral (leiosSeatIndex (voteSeatId v)))
   NotifyLog.NotifyAnnouncement _ -> '?'
+  NotifyLog.NotifyBlockOffer _ _ -> '?'
+  NotifyLog.NotifyBlockTxsOffer _ -> '?'
 
 -- | Every notification in the log.
 notifyLogNotifications :: NotifyLog (IOSim s) Blk -> STM (IOSim s) [NotifyLog.Notification Blk]
@@ -1041,9 +1113,16 @@ announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
 rbHashOf :: Header Blk -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
 
--- | Announces an endorser block in slot 1.
+-- | Announces 'someEbHash' in slot 1.
 someAnnouncingBlock :: LeiosTestBlock
-someAnnouncingBlock = setAnnouncement (UnsafeHash (SBS.replicate 32 1)) 1000 (firstLeiosBlock 0)
+someAnnouncingBlock = setAnnouncement someEbHash 1000 (firstLeiosBlock 0)
+
+someEbHash :: EndorserBlockHash
+someEbHash = UnsafeHash (SBS.replicate 32 1)
+
+-- | Where 'someAnnouncingBlock' announces 'someEbHash'.
+somePoint :: LeiosPoint
+somePoint = MkLeiosPoint (blockSlot someAnnouncingBlock) someEbHash
 
 -- | Another announcement in the election of 'someAnnouncingBlock'.
 equivocation :: LeiosTestBlock
