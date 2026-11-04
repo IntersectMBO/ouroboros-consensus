@@ -31,20 +31,20 @@
 --     with 1 typical);
 --   * @catchup@ --- 5 phases of 180 GC'able EBs each (the backlog of a ~1h
 --     outage): the first GC tick after downtime or during sync, where
---     everything that aged out meanwhile is marked at once.
+--     everything that aged out meanwhile becomes collectable at once.
 --
 -- A phase takes the next N EBs of the schedule, so the GC frontier passed to
 -- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
 -- order:
 --
---   1. insert 5 fresh full EBs (announcement + body + txs) at the current
+--   1. insert 5 fresh full EBs (body + txs) at the current
 --      load, reporting the median wall time (@insertEbSeconds@);
 --   2. promote half of the N EBs and wait for the background copier to land
 --      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
 --      un-copied, as un-certified EBs are on a real node;
---   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
---      and wait for the background sweeper to drain the marks
---      (@sweepSeconds@).
+--   3. call 'garbageCollect' --- which only raises the writer's GC frontier
+--      (@gcSeconds@) --- and wait for the background sweeper to evict what
+--      is older (@sweepSeconds@).
 --
 -- @--gc-pacing@ selects the sweeper pacing: @default@ is what the node runs
 -- (4-EB eviction batches with 100ms pauses in between, trading drain time
@@ -194,12 +194,7 @@ main = do
         , "GC pacing           : " <> gcPacingName (optGcPacing opts)
         , ""
         ]
-    -- Await the sweeper's startup self-heal (resume of persisted marks), so
-    -- it is not attributed to phase 1.
     sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
-    initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
-    (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
-    hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
     before <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "before" before)
     latRef <- newIORef 0
@@ -402,10 +397,9 @@ populateDb opts db =
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
-      pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
       bodyWritten <- writeEbBody writer point eb
       txsWritten <- writeTxs writer point txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      awaitAll [void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- * Deterministic data generation (as in leios-db-bench)
@@ -467,7 +461,7 @@ data PhaseResult = PhaseResult
   -- ^ median over the phase's timed full-EB insertions
   , prPromoteWall :: !DiffTime
   , prCopyWaitWall :: !DiffTime
-  , prMarkWall :: !DiffTime
+  , prGcWall :: !DiffTime
   , prSweepWall :: !DiffTime
   , prStats :: !CycleStats
   , prTickLat :: !DiffTime
@@ -478,7 +472,7 @@ runPhases ::
   LeiosDbHandle IO ->
   IO [TraceLeiosDb] ->
   IORef DiffTime ->
-  IO Int ->
+  (Word64 -> IO Int) ->
   [(Word64, BS.ByteString)] ->
   Int ->
   IO [PhaseResult]
@@ -487,7 +481,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
     remainingRef <- newIORef schedule
     promotedRef <- newIORef (0 :: Int)
     freshRef <- newIORef (0 :: Int)
-    -- Time one fresh full-EB insertion (announcement + body + txs) through the
+    -- Time one fresh full-EB insertion (body + txs) through the
     -- given connection; the fresh EBs live at slots no frontier ever reaches.
     let timedInsertEbWith w = do
           k <- atomicModifyIORef' freshRef (\cnt -> (cnt + 1, cnt))
@@ -498,11 +492,10 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           snd
             <$> timed
               ( do
-                  pointWritten <- writeEbPoint w point (encodeEndorserBlockSize eb)
                   bodyWritten <- writeEbBody w point eb
                   txsWritten <- writeTxs w point txs
-                  -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  -- Awaiting both times them to durability.
+                  awaitAll [void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup
@@ -542,9 +535,9 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
-          -- 3. GC: mark, then wait for the sweeper to drain
-          (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
-          (_, sweepWall) <- timed $ awaitZero "sweep" sweepBacklog
+          -- 3. GC: raise the frontier, then wait for the sweeper to evict
+          (_, gcWall) <- timed $ garbageCollect db (SlotNo frontier)
+          (_, sweepWall) <- timed $ awaitZero "sweep" (sweepBacklog frontier)
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents
           let stats = List.foldl' addEvent emptyCycleStats evs
@@ -558,7 +551,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                   , prInsertEbWall = medianTime insertWalls
                   , prPromoteWall = promoteWall
                   , prCopyWaitWall = copyWaitWall
-                  , prMarkWall = markWall
+                  , prGcWall = gcWall
                   , prSweepWall = sweepWall
                   , prStats = stats
                   , prTickLat = tickLat
@@ -591,23 +584,21 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 
 -- * Sweep backlog probes
 
--- | What the sweeper still owes: GC-marked rows.
+-- | What the sweeper still owes below the GC frontier @?1@: the points that
+-- are not pinned.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT COUNT(*) FROM ebs WHERE status = 3"
+  "SELECT COUNT(*) FROM ebs WHERE status IN (0, 2) AND ebSlot < ?1"
 
--- | What the sweeper owes at startup: the marks a previous run persisted.
-sqlInitialBacklog :: T.Text
-sqlInitialBacklog = sqlSweepBacklog
-
--- | A reusable single-integer probe on its own connection (WAL readers do
--- not block the sweeper's writes; the reset after each poll releases the
--- read snapshot).
-mkBacklogProbe :: FilePath -> T.Text -> IO (IO Int)
+-- | A reusable single-integer probe, of the GC frontier, on its own
+-- connection (WAL readers do not block the sweeper's writes; the reset after
+-- each poll releases the read snapshot).
+mkBacklogProbe :: FilePath -> T.Text -> IO (Word64 -> IO Int)
 mkBacklogProbe path sql = do
   db <- SQL.open (T.pack path)
   stmt <- SQL.prepare db sql
-  pure $ do
+  pure $ \frontier -> do
+    SQL.bindInt64 stmt 1 (fromIntegral frontier)
     _ <- SQL.step stmt
     n <- SQL.columnInt64 stmt 0
     SQL.reset stmt
@@ -725,7 +716,7 @@ csvHeader =
     , "promoteSeconds"
     , "copyWaitSeconds"
     , "evictedEbRows"
-    , "markSeconds"
+    , "gcSeconds"
     , "sweepSeconds"
     ]
 
@@ -741,7 +732,7 @@ renderPhase
     , prInsertEbWall
     , prPromoteWall
     , prCopyWaitWall
-    , prMarkWall
+    , prGcWall
     , prSweepWall
     , prStats = cs
     } =
@@ -758,7 +749,7 @@ renderPhase
       , showSeconds prPromoteWall
       , showSeconds prCopyWaitWall
       , show (csEvicted cs)
-      , showSeconds prMarkWall
+      , showSeconds prGcWall
       , showSeconds prSweepWall
       ]
 
@@ -795,7 +786,7 @@ renderSummary opts results =
     , stat "insert eb (median)" (map prInsertEbWall rs)
     , stat "promote           " (map prPromoteWall rs)
     , stat "copy wait         " (map prCopyWaitWall rs)
-    , stat "mark              " (map prMarkWall rs)
+    , stat "gc                " (map prGcWall rs)
     , stat "sweep             " (map prSweepWall rs)
     , stat "tick latency      " (map prTickLat rs)
     ]

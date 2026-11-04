@@ -47,6 +47,7 @@ import Ouroboros.Consensus.Config
   , configStorage
   , emptyCheckpointsMap
   )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), noLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
@@ -191,6 +192,8 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
           snapshotDelayRng
           flavargs
           leiosDb
+          -- It fetches nothing, so it acquires nothing.
+          (subscribeLeiosAcquisitions noLeiosAcquisitions)
           $ ChainDB.defaultArgs
 
     -- The KES agent client only reports a failure to connect by tracing it, so
