@@ -37,6 +37,10 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
+import Ouroboros.Consensus.Leios.TxCache
+  ( defaultLeiosTxCacheShift
+  , newPureLeiosTxCache
+  )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
@@ -44,6 +48,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
   , Serialised (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
@@ -206,6 +211,7 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   outstanding <-
     uncheckedNewMVar $
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
@@ -221,6 +227,7 @@ newContextGated point gate = do
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
         , lfcOutstanding = outstanding
         , lfcReady = ready
+        , lfcTxCache = txCache
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
@@ -678,7 +685,7 @@ test_txsAfterForged = do
 
 -- | The 'fixture''s endorser block, as the node's own forge produces it.
 fixtureForged :: ForgedEndorserBlock
-fixtureForged = forgeLeiosEb (fmap leiosTxBytes fixtureTxs)
+fixtureForged = forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs)
 
 -- | The election announcing the endorser block at this point.
 fixtureElection :: LeiosPoint -> ElectionId
