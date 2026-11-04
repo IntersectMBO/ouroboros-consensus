@@ -35,6 +35,8 @@ data TraceLeiosDb
     TraceLeiosDbWriteJobDone
       -- | the job
       String
+      -- | seconds the writer spent on it
+      Double
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
   | -- | A promotion committed EBs' closures to the immutable partition.
