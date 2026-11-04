@@ -14,9 +14,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
   , ReadStmts (..)
   , prepareImmStmts
   , finalizeImmStmts
-  , GcStmts (..)
-  , prepareGcStmts
-  , finalizeGcStmts
   , CopierStmts (..)
   , prepareCopierStmts
   , finalizeCopierStmts
@@ -54,10 +51,6 @@ data CopierStmts = CopierStmts
   -- ^ 'sql_copy_closure'
   , ccInsertEb :: !DB.Statement
   -- ^ 'sql_copy_insert_eb'
-  , ccInsertEbBody :: !DB.Statement
-  -- ^ 'sql_copy_insert_ebBody'
-  , ccInsertEbClosures :: !DB.Statement
-  -- ^ 'sql_copy_insert_ebClosures'
   }
 
 -- | Prepare the copy statements on the copier's immutable connection, which
@@ -66,73 +59,42 @@ prepareCopierStmts :: HasCallStack => DB.Database -> IO CopierStmts
 prepareCopierStmts db = preparingStmts db $ \prep -> do
   ccClosure <- prep sql_copy_closure
   ccInsertEb <- prep sql_copy_insert_eb
-  ccInsertEbBody <- prep sql_copy_insert_ebBody
-  ccInsertEbClosures <- prep sql_copy_insert_ebClosures
   pure CopierStmts{..}
 
 finalizeCopierStmts :: CopierStmts -> IO ()
 finalizeCopierStmts CopierStmts{..} = do
   dbFinalize ccClosure
   dbFinalize ccInsertEb
-  dbFinalize ccInsertEbBody
-  dbFinalize ccInsertEbClosures
-
--- | The GC tick's prepared statements, prepared once on the writer's
--- volatile connection.
-data GcStmts = GcStmts
-  { gsHasWork :: !DB.Statement
-  -- ^ 'sql_gc_has_work'
-  , gsMarkEbForGC :: !DB.Statement
-  -- ^ 'sql_gc_mark'
-  }
-
-prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
-prepareGcStmts db = preparingStmts db $ \prep -> do
-  gsHasWork <- prep sql_gc_has_work
-  gsMarkEbForGC <- prep sql_gc_mark
-  pure GcStmts{..}
-
-finalizeGcStmts :: GcStmts -> IO ()
-finalizeGcStmts GcStmts{..} = do
-  dbFinalize gsHasWork
-  dbFinalize gsMarkEbForGC
 
 -- | The sweep statements, prepared on the writer's volatile connection;
 -- lifecycle mirrors 'CopierStmts'.
 data SweeperStmts = SweeperStmts
-  { swPickMarked :: !DB.Statement
-  -- ^ 'sql_sweep_pick_marked'
-  , swEvictEbBodies :: !DB.Statement
-  -- ^ 'sql_gc_ebBodies'
-  , swEvictEbClosures :: !DB.Statement
-  -- ^ 'sql_gc_ebClosures'
-  , swEvictEbs :: !DB.Statement
-  -- ^ 'sql_gc_ebs_by_hash'
+  { swSweep :: !DB.Statement
+  -- ^ 'sql_gc_sweep'
+  , swFrontierEmpty :: !DB.Statement
+  -- ^ 'sql_gc_frontier_empty'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
 prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
-  swPickMarked <- prep sql_sweep_pick_marked
-  swEvictEbBodies <- prep sql_gc_ebBodies
-  swEvictEbClosures <- prep sql_gc_ebClosures
-  swEvictEbs <- prep sql_gc_ebs_by_hash
+  swSweep <- prep sql_gc_sweep
+  swFrontierEmpty <- prep sql_gc_frontier_empty
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
-  dbFinalize swPickMarked
-  dbFinalize swEvictEbBodies
-  dbFinalize swEvictEbClosures
-  dbFinalize swEvictEbs
+  dbFinalize swSweep
+  dbFinalize swFrontierEmpty
 
 -- | Compiled SQL statements for the Volatile partition.
 data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
+  , stInsertEbCopy :: !DB.Statement
   , stHasPoint :: !DB.Statement
   , stInsertEbBody :: !DB.Statement
-  , stInsertEbClosure :: !DB.Statement
+  , stLookupEbRows :: !DB.Statement
   , stScanEbsSince :: !DB.Statement
   , stReads :: !ReadStmts
   }
@@ -178,9 +140,10 @@ prepareVolStmts :: DB.Database -> IO VolStmts
 prepareVolStmts db = preparingStmts db $ \prep -> do
   stScanEbPoints <- prep sql_scan_ebs
   stInsertEbPoint <- prep sql_insert_eb
+  stInsertEbCopy <- prep sql_insert_eb_copy
   stHasPoint <- prep sql_has_point
   stInsertEbBody <- prep sql_insert_eb_body
-  stInsertEbClosure <- prep sql_insert_eb_closure
+  stLookupEbRows <- prep sql_lookup_eb_rows
   stScanEbsSince <- prep sql_scan_ebs_since
   stReads <- prepareReadStmts prep
   pure VolStmts{..}
@@ -191,8 +154,9 @@ finalizeVolStmts :: VolStmts -> IO ()
 finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
+  dbFinalize stInsertEbCopy
   dbFinalize stHasPoint
   dbFinalize stInsertEbBody
-  dbFinalize stInsertEbClosure
+  dbFinalize stLookupEbRows
   dbFinalize stScanEbsSince
   finalizeReadStmts stReads

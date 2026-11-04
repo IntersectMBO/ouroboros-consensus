@@ -113,9 +113,10 @@ data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size.
+  -- ^ Record an announced EB's point and expected size. If another point of
+  -- the EB holds its body, the new point holds a copy of the body and closure.
   , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m ())
-  -- ^ Persist an EB body.
+  -- ^ Persist an EB body into each point of the EB.
   --
   -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::

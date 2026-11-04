@@ -208,10 +208,7 @@ closureFrom ReadStmts{rsLookupEbClosure = stmt} ebHash =
       DB.Done -> pure Nothing
       DB.Row -> do
         bounds <- DB.columnBlob stmt 0
-        txs <-
-          DB.columnType stmt 1 >>= \case
-            DB.NullColumn -> pure (BS.replicate (boundAt bounds (BS.length bounds `div` 4 - 1)) 0)
-            _ -> DB.columnBlob stmt 1
+        txs <- DB.columnBlob stmt 1
         pure $ Just (splitClosure bounds txs)
 
 lookupBlob :: DB.Statement -> EndorserBlockHash -> IO (Maybe ByteString)
@@ -222,12 +219,10 @@ lookupBlob stmt ebHash =
       DB.Done -> pure Nothing
       DB.Row -> Just <$> DB.columnBlob stmt 0
 
--- | Where an EB's blobs are.
+-- | A row holding the EB.
 data EbIndex = EbIndex
-  { eiBodyRowid :: !Int64
+  { eiRowid :: !Int64
   , eiTxCount :: !Int
-  , eiClosureRowid :: !(Maybe Int64)
-  -- ^ 'Nothing' until a tx is written
   }
 
 -- | Where the EB's blobs are, or 'Nothing' if its body is not stored.
@@ -238,19 +233,15 @@ lookupEbIndex stmt ebHash =
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
       DB.Row -> do
-        eiBodyRowid <- DB.columnInt64 stmt 0
+        eiRowid <- DB.columnInt64 stmt 0
         eiTxCount <- fromIntegral <$> DB.columnInt64 stmt 1
-        eiClosureRowid <-
-          DB.columnType stmt 2 >>= \case
-            DB.NullColumn -> pure Nothing
-            _ -> Just <$> DB.columnInt64 stmt 2
-        pure (Just EbIndex{eiBodyRowid, eiTxCount, eiClosureRowid})
+        pure (Just EbIndex{eiRowid, eiTxCount})
 
 -- | The bounds of the txs at offsets @[lo, hi]@: where each starts in the
 -- closure, and where the last one ends.
 readTxBounds :: DB.Database -> EbIndex -> Int -> Int -> IO ByteString
-readTxBounds db EbIndex{eiBodyRowid} lo hi =
-  withBlob db "ebBodies" "txBounds" eiBodyRowid False $ \blob ->
+readTxBounds db EbIndex{eiRowid} lo hi =
+  withBlob db "ebs" "txBounds" eiRowid False $ \blob ->
     withDie db (DB.blobRead blob ((hi - lo + 2) * 4) (lo * 4))
 
 -- | The bytes of the txs at these offsets, which must be ascending, distinct
@@ -258,20 +249,15 @@ readTxBounds db EbIndex{eiBodyRowid} lo hi =
 -- consecutive offsets.
 readTxBytes :: DB.Database -> EbIndex -> [Int] -> IO [(Int, Maybe ByteString)]
 readTxBytes _ _ [] = pure []
-readTxBytes db ix@EbIndex{eiClosureRowid} (lo : rest) = do
+readTxBytes db ix@EbIndex{eiRowid} (lo : rest) = do
   bounds <- readTxBounds db ix lo (NE.last (lo :| rest))
   let start o = boundAt bounds (o - lo)
       end o = boundAt bounds (o - lo + 1)
-      runs = consecutiveRuns id (lo : rest)
-  concat <$> case eiClosureRowid of
-    Nothing ->
-      pure [[(o, Nothing) | o <- NE.toList run] | run <- runs]
-    Just rowid ->
-      withBlob db "ebClosures" "txs" rowid False $ \blob ->
-        forM runs $ \run -> do
-          let at = start (NE.head run)
-          bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
-          pure [(o, written (BS.take (end o - start o) (BS.drop (start o - at) bytes))) | o <- NE.toList run]
+  fmap concat $ withBlob db "ebs" "txs" eiRowid False $ \blob ->
+    forM (consecutiveRuns id (lo : rest)) $ \run -> do
+      let at = start (NE.head run)
+      bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
+      pure [(o, written (BS.take (end o - start o) (BS.drop (start o - at) bytes))) | o <- NE.toList run]
 
 -- | A tx's bytes as the closure holds them, or 'Nothing' if they are zeroes,
 -- as the closure is allocated: a valid tx is never all zeroes.

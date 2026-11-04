@@ -22,6 +22,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -186,7 +187,7 @@ withFreshDb SQLite action = withFreshSQLiteDb action
 withSettledDb :: DbImpl -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
 withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (pure ())
 withSettledDb SQLite action =
-  withFreshSQLiteFile $ \volDbPath _immDbPath db -> withSettle volDbPath (action db)
+  withFreshSQLiteFile $ \volDbPath _immDbPath db -> withSettle volDbPath db action
 
 withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
@@ -253,6 +254,15 @@ mkTestGroups impl =
           withFreshDb impl test_multipleSlotsSameHash
       , testCase "a scan finds a complete EB at a point written after the closure completed" $
           withFreshDb impl test_scanFindsLaterPoint
+      ]
+  , testGroup
+      "garbage collection of an EB a newer point keeps"
+      [ testCase "drops its older points and still finds it complete" $
+          withSettledDb impl test_gcDropsOlderPoints
+      , testCase "finds its closure complete after dropping the point its body was written at" $
+          withSettledDb impl test_gcKeepsMissingTxCount
+      , testCase "keeps only the newest point of an EB announced again in each round" $
+          withSettledDb impl test_gcBoundsPointsOfReannouncedEb
       ]
   , testGroup
       "lookupEbClosure"
@@ -660,6 +670,50 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   void $ rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
   holdsClosure con (mkTestEbHash 3) >>= (@?= False)
 
+-- | An EB written whole at slot 5 and announced again at slot 10, collected at
+-- slot 6.
+test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO () -> IO ()
+test_gcDropsOlderPoints db settle = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      again = mkTestPoint 10 1
+  writeWholeEb con [mkTestPoint 5 1] eb
+  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  garbageCollect db 6
+  settle
+  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+  rwScanComplete con 6 >>= (@?= [again])
+
+-- | An EB whose body was written at slot 5, and one of whose two transactions
+-- arrived, is announced again at slot 10 and collected at slot 6. Then its
+-- other transaction arrives.
+test_gcKeepsMissingTxCount :: LeiosDbHandle IO -> IO () -> IO ()
+test_gcKeepsMissingTxCount db settle = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      older = mkTestPoint 5 1
+      again = mkTestPoint 10 1
+  rwInsertEbPoint con older (encodeEndorserBlockSize eb)
+  void $ rwInsertEbBody con older eb
+  rwInsertTxs con older (take 1 (allTxsFor eb))
+  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  garbageCollect db 6
+  settle
+  rwInsertTxs con again (drop 1 (allTxsFor eb))
+  rwScanComplete con 6 >>= (@?= [again])
+
+-- | An EB written whole at slot 10 is announced again in each of nine more
+-- rounds, each followed by a collection at its slot.
+test_gcBoundsPointsOfReannouncedEb :: LeiosDbHandle IO -> IO () -> IO ()
+test_gcBoundsPointsOfReannouncedEb db settle = withRW db $ \con -> do
+  let eb = mkTestEb 2
+  writeWholeEb con [mkTestPoint 10 1] eb
+  forM_ [2 .. 10] $ \n -> do
+    rwInsertEbPoint con (mkTestPoint (10 * n) 1) (encodeEndorserBlockSize eb)
+    garbageCollect db (10 * n)
+    settle
+  rwScanEbPoints con >>= (@?= [(100, mkTestEbHash 1)])
+  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
@@ -754,7 +808,6 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
 
   truncateLeiosDbAfterSlot volDbPath 10
   ebBodyRows volDbPath droppedHash >>= (@?= 0)
-  orphanedClosures volDbPath >>= (@?= 0)
 
   withRW db $ \con -> do
     points <- rwScanEbPoints con
@@ -799,16 +852,11 @@ test_schemaAtHandleCreation volDbPath immDbPath =
     vol <- schemaObjects volDbPath
     imm <- schemaObjects immDbPath
     forM_ [(vol, "vol"), (imm, "imm")] $ \(objs, file) ->
-      forM_ ["ebs", "idx_ebs_ebHashBytes", "ebBodies", "ebClosures"] $ \name ->
+      forM_ ["ebs", "idx_ebs_ebHashBytes"] $ \name ->
         assertBool (file <> " has " <> name) (name `elem` objs)
-    forM_
-      [ "idx_ebs_sweepable"
-      , "idx_ebs_markedForGc"
-      , "idx_ebs_pinned"
-      ]
-      $ \name -> do
-        assertBool ("vol has " <> name) (name `elem` vol)
-        assertBool ("imm lacks " <> name) (name `notElem` imm)
+    forM_ ["pinned"] $ \name -> do
+      assertBool ("vol has " <> name) (name `elem` vol)
+      assertBool ("imm lacks " <> name) (name `notElem` imm)
 
 -- | A file that exists without a schema, as a crash between creating the file
 -- and applying the schema leaves it.
@@ -843,17 +891,12 @@ withSqlFile path k =
 sqlBlob :: EndorserBlockHash -> String
 sqlBlob ebHash = "x'" <> hashToStringAsHex ebHash <> "'"
 
--- | How many 'ebBodies' rows the file holds for the EB.
+-- | How many rows of the file hold the EB's body.
 ebBodyRows :: FilePath -> EndorserBlockHash -> IO Int
 ebBodyRows path ebHash =
-  queryCount path ("SELECT COUNT(*) FROM ebBodies WHERE ebHashBytes = " <> sqlBlob ebHash)
-
--- | How many closures the file holds without their body.
-orphanedClosures :: FilePath -> IO Int
-orphanedClosures path =
   queryCount
     path
-    "SELECT COUNT(*) FROM ebClosures WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM ebBodies)"
+    ("SELECT COUNT(*) FROM ebs WHERE ebHashBytes = " <> sqlBlob ebHash <> " AND txCount IS NOT NULL")
 
 queryCount :: FilePath -> String -> IO Int
 queryCount path query =
@@ -951,8 +994,8 @@ prop_storeForgedEbThenLookup impl =
             ]
 
 -- | Property: running the same operations against both implementations, a
--- reader sees the same in each, each body write fills the same offsets, and
--- the scan finds the same endorser blocks complete.
+-- reader sees the same in each, and the scan finds the same endorser blocks
+-- complete.
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
@@ -971,7 +1014,7 @@ prop_implementationsAgree =
           withFreshDb InMemory $ \db -> observe db (pure ()) bodies ops
         (_, sqlite) <-
           withFreshSQLiteFile $ \volDbPath _immDbPath db ->
-            withSettle volDbPath $ \settle -> observe db settle bodies ops
+            withSettle volDbPath db $ \db' settle -> observe db' settle bodies ops
         pure $
           tabulate "endorser blocks pinned" [bucket nPinned] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
@@ -1017,14 +1060,17 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
--- body is written once per point, for a point the database holds; and an
+-- body is written once per point, for a point the database holds, where a
+-- point the garbage collection carried an older point's body write over to
+-- counts as written, since the node then holds the endorser block; and an
 -- endorser block is promoted only with a complete closure, as the node pins
 -- only what an immutable block certifies, and its ChainSel adopts a block
 -- certifying an endorser block only once it holds that endorser block's
 -- closure. So this tracks which points and
 -- bodies the garbage collection evicts: those of every endorser block all of
 -- whose points are older than its slot, pinned or not, since a pinned one has
--- a complete closure, so has been copied.
+-- a complete closure, so has been copied; and every other point older than its
+-- slot.
 --
 -- An endorser block is also promoted at most once: the node pins only what the
 -- immutable chain certifies, and a chain cannot certify the same endorser
@@ -1094,37 +1140,64 @@ observe db settle bodies ops = withRW db $ \rw -> do
       let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
           evicted =
             nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
-          kept p = pointEbHash p `notElem` evicted
-      go rw (filter kept points) (filter kept bodied) pinned (nEvicted + length evicted) rest
+          kept p = pointSlotNo p >= slot
+          carried =
+            [ q
+            | p <- bodied
+            , not (kept p)
+            , q <- points
+            , pointEbHash q == pointEbHash p
+            , kept q
+            ]
+      go
+        rw
+        (filter kept points)
+        (nub (filter kept bodied <> carried))
+        pinned
+        (nEvicted + length evicted)
+        rest
 
 -- | Hand the action a wait for the SQLite implementation's background work to
--- catch up: for its sweep to have evicted every row the garbage collection
--- marked, and the transactions that left orphaned, and for its copier to have
--- copied every pinned endorser block.
-withSettle :: FilePath -> (IO () -> IO a) -> IO a
-withSettle volDbPath action =
+-- catch up: for its sweep to have deleted every row it collects, and for its
+-- copier to have copied every pinned point. The action gets the handle back,
+-- recording what each garbage collection collects: the rows before its slot,
+-- written before it ran.
+withSettle ::
+  FilePath -> LeiosDbHandle IO -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
+withSettle volDbPath db action = do
+  frontiersVar <- newIORef []
   bracket (SQL.open (T.pack volDbPath)) SQL.close $ \conn -> do
     SQL.exec conn (T.pack "pragma busy_timeout = 1000;")
-    bracket (SQL.prepare conn sqlBackgroundWork) SQL.finalize $ \stmt -> do
-      let backlog = do
-            _ <- SQL.step stmt
-            n <- SQL.columnInt64 stmt 0
-            SQL.reset stmt
-            pure n
-          poll =
-            backlog >>= \case
-              0 -> pure ()
-              _ -> threadDelay 1_000 >> poll
-          settle =
-            Timeout.timeout settleTimeoutMicros poll >>= \case
-              Just () -> pure ()
-              Nothing -> assertFailure "the SQLite implementation's background work did not catch up"
-      action settle
+    let query sql k = SQL.withStatement conn (T.pack sql) $ \stmt ->
+          let loop acc =
+                SQL.step stmt >>= \case
+                  SQL.Row -> k stmt >>= loop . (: acc)
+                  SQL.Done -> pure acc
+           in loop []
+        collect slot = do
+          rowId <- sum <$> query "SELECT coalesce(max(id), 0) FROM ebs" (`SQL.columnInt64` 0)
+          modifyIORef' frontiersVar ((unSlotNo slot, rowId) :)
+          garbageCollect db slot
+        -- The pinned points, and the rows some garbage collection collects.
+        backlog = do
+          frontiers <- readIORef frontiersVar
+          pinned <- sum <$> query "SELECT COUNT(*) FROM pinned" (`SQL.columnInt64` 0)
+          rows <-
+            query
+              "SELECT ebSlot, id FROM ebs WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM pinned)"
+              (\stmt -> (,) <$> SQL.columnInt64 stmt 0 <*> SQL.columnInt64 stmt 1)
+          pure $
+            pinned
+              + fromIntegral
+                (length [() | (slot, rowId) <- rows, any (\(s, r) -> slot < fromIntegral s && rowId <= r) frontiers])
+        poll =
+          backlog >>= \case
+            0 -> pure ()
+            _ -> threadDelay 1_000 >> poll
+        settle =
+          Timeout.timeout settleTimeoutMicros poll >>= \case
+            Just () -> pure ()
+            Nothing -> assertFailure "the SQLite implementation's background work did not catch up"
+    action db{garbageCollect = collect} settle
  where
   settleTimeoutMicros = 10_000_000
-
--- | How many rows the SQLite implementation's background work has yet to deal
--- with: those pinned (status 1) or marked for the sweep (status 3).
-sqlBackgroundWork :: T.Text
-sqlBackgroundWork =
-  T.pack "SELECT COUNT(*) FROM ebs WHERE status IN (1, 3)"

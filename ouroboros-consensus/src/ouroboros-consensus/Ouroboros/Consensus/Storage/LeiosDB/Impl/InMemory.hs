@@ -68,7 +68,7 @@ import Ouroboros.Consensus.Util.IOLike
 data InMemoryLeiosDb = InMemoryLeiosDb
   { imEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
   -- ^ Tx bytes owned by the referencing EB, keyed by offset -- the SQLite
-  -- backend's @ebClosures@ table, one tx at a time. A tx shared by two EBs is
+  -- backend's @txs@ column, one tx at a time. A tx shared by two EBs is
   -- stored twice, deliberately.
   , imEbPoints :: !(Map LeiosPoint BytesSize)
   -- ^ Inserted EB points with their expected sizes. The same EB
@@ -90,8 +90,8 @@ data InMemoryLeiosDb = InMemoryLeiosDb
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
 emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
--- | An EB body: the bytes it arrived in, as the SQLite backend's @ebBodies@
--- row, and the txs it lists by offset.
+-- | An EB body: the bytes it arrived in, as the SQLite backend's @body@
+-- column, and the txs it lists by offset.
 data StoredBody = StoredBody
   { sbBytes :: !ByteString
   , sbTxs :: !(IntMap {- txOffset -} EbTxEntry)
@@ -162,16 +162,15 @@ imPromoteToImmutable stateVar points = do
       "leiosDbPromoteToImmutable: incomplete closure (programmer error): " <> show incomplete
 
 -- | Evict every EB all of whose points are older than the slot, with its body
--- and tx bytes. A promoted EB keeps its copy in 'imImmutableEbBodies' and
--- 'imImmutableEbTxBytes'.
+-- and tx bytes, and drop the older points of every other EB. A promoted EB
+-- keeps its copy in 'imImmutableEbBodies' and 'imImmutableEbTxBytes'.
 imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
   let newestPointSlots =
         Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Map.keys (imEbPoints s)]
       evicted = Map.keysSet (Map.filter (< slot) newestPointSlots)
-      kept p = pointEbHash p `Set.notMember` evicted
    in s
-        { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
+        { imEbPoints = Map.filterWithKey (\p _ -> pointSlotNo p >= slot) (imEbPoints s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
         }
@@ -253,9 +252,7 @@ imLookupEbBody stateVar ebHash = atomically $ do
     sbBytes
       <$> (Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state))
 
--- | Mirrors the SQLite backend: the body, then the local fills, the first of
--- which wins an offset. A fill copies the source's bytes only if they hash to
--- the tx this body lists at the fill's offset.
+-- | Mirrors the SQLite backend: the body, once per EB hash.
 imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->

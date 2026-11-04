@@ -23,14 +23,10 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   , dbStep1
   , dbStepSafe
   , dbStep1Safe
-  , readSingleInt64
   , readReturningInt64
   , queryInt64
-  , collectBlobs
-  , execJson
   , dbStepInsert
   , dbStepInsertOrTrace
-  , jsonHexArray
   , jsonIntArray
   , withDie
   , withDieStmt
@@ -161,19 +157,6 @@ dbStepSafe stmt = withDieStmt stmt $ DB.step stmt
 dbStep1Safe :: HasCallStack => DB.Statement -> IO ()
 dbStep1Safe stmt = withDieDoneStmt stmt $ DB.step stmt
 
--- | Read a single-row, single-column integer result, stepping (safe FFI)
--- through to completion -- which also suits @RETURNING@ statements, whose
--- write only certainly happened once they report 'DB.Done'.
-readSingleInt64 :: HasCallStack => DB.Statement -> IO Int64
-readSingleInt64 stmt =
-  dbStepSafe stmt >>= \case
-    DB.Done -> throwLeiosDbException "readSingleInt64: expected a row"
-    DB.Row -> do
-      n <- DB.columnInt64 stmt 0
-      dbStepSafe stmt >>= \case
-        DB.Done -> pure n
-        DB.Row -> throwLeiosDbException "readSingleInt64: expected exactly one row"
-
 -- | Read a single-column @Int64@ from a statement that uses a
 -- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
 -- row followed by 'DB.Done'). Any other shape is a programmer error.
@@ -195,25 +178,6 @@ queryInt64 db sql =
     dbStep stmt >>= \case
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
-
--- | Step a statement (safe FFI) to completion, collecting blob column 0.
-collectBlobs :: HasCallStack => DB.Statement -> IO [ByteString]
-collectBlobs stmt = loop []
- where
-  loop acc =
-    dbStepSafe stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        b <- DB.columnBlob stmt 0
-        loop (b : acc)
-
--- | Bind a JSON payload ('jsonHexArray') to parameter 1 and execute the statement
---   via non-blocking Safe FFI.
-execJson :: HasCallStack => DB.Statement -> ByteString -> IO ()
-execJson stmt json =
-  useStmt stmt $ do
-    dbBindUtf8 stmt 1 json
-    dbStep1Safe stmt
 
 -- | Like 'dbStep1' but returns 'True' on success and 'False' on constraint
 -- violation (duplicate key). Other errors are thrown as usual.
@@ -248,21 +212,8 @@ dbStepInsertOrTrace tracer table key stmt = do
 
 -- ** JSON payloads
 
--- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
--- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.
-jsonHexArray :: [ByteString] -> ByteString
-jsonHexArray xs =
-  BSL.toStrict . BB.toLazyByteString $
-    BB.char7 '[' <> commaSep (map hexElem xs) <> BB.char7 ']'
- where
-  hexElem b = BB.char7 '"' <> BB.byteStringHex b <> BB.char7 '"'
-  commaSep = mconcat . intersperseB (BB.char7 ',')
-  intersperseB _ [] = []
-  intersperseB _ [x] = [x]
-  intersperseB s (x : rest) = x : s : intersperseB s rest
-
--- | Build a JSON array of integers: @[1,2,3,...]@. Same consumer pattern
--- as 'jsonHexArray' (values are already ints, so no decoding step).
+-- | Build a JSON array of integers: @[1,2,3,...]@, consumed on the SQL side
+-- via @json_each(?)@.
 jsonIntArray :: [Int] -> ByteString
 jsonIntArray xs =
   BSL.toStrict . BB.toLazyByteString $

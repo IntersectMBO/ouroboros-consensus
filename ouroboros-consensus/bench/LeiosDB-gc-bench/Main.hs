@@ -43,8 +43,8 @@
 --      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
 --      un-copied, as un-certified EBs are on a real node;
 --   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
---      and wait for the background sweeper to drain the marks
---      (@sweepSeconds@).
+--      and wait for the background sweeper to delete the rows before the
+--      frontier (@sweepSeconds@).
 --
 -- @--gc-pacing@ selects the sweeper pacing: @default@ is what the node runs
 -- (4-EB eviction batches with 100ms pauses in between, trading drain time
@@ -194,12 +194,7 @@ main = do
         , "GC pacing           : " <> gcPacingName (optGcPacing opts)
         , ""
         ]
-    -- Await the sweeper's startup self-heal (resume of persisted marks), so
-    -- it is not attributed to phase 1.
     sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
-    initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
-    (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
-    hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
     before <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "before" before)
     latRef <- newIORef 0
@@ -478,7 +473,7 @@ runPhases ::
   LeiosDbHandle IO ->
   IO [TraceLeiosDb] ->
   IORef DiffTime ->
-  IO Int ->
+  (Word64 -> IO Int) ->
   [(Word64, BS.ByteString)] ->
   Int ->
   IO [PhaseResult]
@@ -544,7 +539,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain
           (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
-          (_, sweepWall) <- timed $ awaitZero "sweep" sweepBacklog
+          (_, sweepWall) <- timed $ awaitZero "sweep" (sweepBacklog frontier)
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents
           let stats = List.foldl' addEvent emptyCycleStats evs
@@ -591,23 +586,20 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 
 -- * Sweep backlog probes
 
--- | What the sweeper still owes: GC-marked rows.
+-- | What the sweeper still owes: the rows before the GC frontier @?1@.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT COUNT(*) FROM ebs WHERE status = 3"
+  "SELECT COUNT(*) FROM ebs WHERE ebSlot < ?1"
 
--- | What the sweeper owes at startup: the marks a previous run persisted.
-sqlInitialBacklog :: T.Text
-sqlInitialBacklog = sqlSweepBacklog
-
--- | A reusable single-integer probe on its own connection (WAL readers do
--- not block the sweeper's writes; the reset after each poll releases the
--- read snapshot).
-mkBacklogProbe :: FilePath -> T.Text -> IO (IO Int)
+-- | A reusable single-integer probe, of the GC frontier, on its own
+-- connection (WAL readers do not block the sweeper's writes; the reset after
+-- each poll releases the read snapshot).
+mkBacklogProbe :: FilePath -> T.Text -> IO (Word64 -> IO Int)
 mkBacklogProbe path sql = do
   db <- SQL.open (T.pack path)
   stmt <- SQL.prepare db sql
-  pure $ do
+  pure $ \frontier -> do
+    SQL.bindInt64 stmt 1 (fromIntegral frontier)
     _ <- SQL.step stmt
     n <- SQL.columnInt64 stmt 0
     SQL.reset stmt
@@ -688,14 +680,14 @@ tickProbe latRef = forever $ do
 
 -- * Fixture inspection
 
--- | Distinct volatile EB hashes with their newest announcement slot, ascending.
+-- | Distinct EB hashes with their newest announcement slot, ascending.
 readEbSchedule :: FilePath -> IO [(Word64, BS.ByteString)]
 readEbSchedule path = do
   db <- SQL.open (T.pack path)
   stmt <-
     SQL.prepare
       db
-      "SELECT MAX(ebSlot) AS s, ebHashBytes FROM ebs WHERE status = 0 GROUP BY ebHashBytes ORDER BY s"
+      "SELECT MAX(ebSlot) AS s, ebHashBytes FROM ebs GROUP BY ebHashBytes ORDER BY s"
   let loop acc =
         SQL.step stmt >>= \case
           SQL.Row -> do
