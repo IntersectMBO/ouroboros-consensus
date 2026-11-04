@@ -138,7 +138,6 @@ import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.Serialisation
@@ -453,9 +452,9 @@ putBlockImpl
           , currentMap = currentMap'
           , currentRevMap = currentRevMap'
           , currentSuccMap = insertMapSet biPrevHash biHash currentSuccMap
-          , currentAnnouncers = case lbiAnnouncement biLeios of
+          , currentAnnouncers = case lbiAnnouncedEb biLeios of
               SNothing -> currentAnnouncers
-              SJust ann -> insertMapSet (announcementEbHash ann) biHash currentAnnouncers
+              SJust ebHash -> insertMapSet ebHash biHash currentAnnouncers
           , currentMaxSlotNo = currentMaxSlotNo `max` MaxSlotNo biSlotNo
           }
 
@@ -561,8 +560,7 @@ garbageCollectFile hasFS (fileId, fileInfo) = do
         [ (ebHash, h)
         | h <- Set.toList hashes
         , Just ibi <- [Map.lookup h currentRevMap]
-        , SJust ann <- [lbiAnnouncement (biLeios (ibiBlockInfo ibi))]
-        , let ebHash = announcementEbHash ann
+        , SJust ebHash <- [lbiAnnouncedEb (biLeios (ibiBlockInfo ibi))]
         ]
       currentAnnouncers' =
         List.foldl' (flip (uncurry deleteMapSet)) currentAnnouncers deletedAnnouncements

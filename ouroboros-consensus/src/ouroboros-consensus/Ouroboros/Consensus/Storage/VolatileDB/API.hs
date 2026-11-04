@@ -41,7 +41,6 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Util.IOLike
@@ -74,7 +73,7 @@ data VolatileDB m blk = VolatileDB
   -- Returns after the block has been written to disk.
   , getLeiosAnnouncers :: HasCallStack => STM m (EndorserBlockHash -> Set (HeaderHash blk))
   -- ^ Return a function that returns the blocks that announce the endorser
-  -- block with the given hash ('lbiAnnouncement').
+  -- block with the given hash ('lbiAnnouncedEb').
   , filterByPredecessor :: HasCallStack => STM m (ChainHash blk -> Set (HeaderHash blk))
   -- ^ Return a function that returns the successors of the block with the
   -- given hash.
@@ -206,8 +205,8 @@ data LeiosBlockInfo = LeiosBlockInfo
   { lbiHasCert :: !Bool
   -- ^ Whether the block contains a Leios certificate, which certifies the
   -- endorser block its predecessor announced.
-  , lbiAnnouncement :: !(StrictMaybe LeiosAnnouncement)
-  -- ^ The block's announcement of an endorser block, if any.
+  , lbiAnnouncedEb :: !(StrictMaybe EndorserBlockHash)
+  -- ^ The endorser block the block announces, if any.
   }
   deriving (Eq, Show, Generic, NoThunks)
 

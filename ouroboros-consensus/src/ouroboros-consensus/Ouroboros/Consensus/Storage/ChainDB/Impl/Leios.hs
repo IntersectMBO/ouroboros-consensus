@@ -74,7 +74,8 @@ leiosBlockInfo ::
 leiosBlockInfo bcfg blk =
   LeiosBlockInfo
     { lbiHasCert = getContainsLeiosCert p view
-    , lbiAnnouncement = maybeToStrictMaybe $ getLeiosAnnouncement p view
+    , lbiAnnouncedEb =
+        maybeToStrictMaybe $ announcementEbHash <$> getLeiosAnnouncement p view
     }
  where
   p = Proxy @(BlockProtocol blk)
@@ -146,8 +147,7 @@ isParkedCertRB acquired lookupBlockInfo info
     GenesisHash -> Nothing
     BlockHash prevHash -> do
       prev <- lookupBlockInfo prevHash
-      announcement <- strictMaybeToMaybe (lbiAnnouncement (biLeios prev))
-      pure $ MkLeiosPoint (biSlotNo prev) (announcementEbHash announcement)
+      MkLeiosPoint (biSlotNo prev) <$> strictMaybeToMaybe (lbiAnnouncedEb (biLeios prev))
 
 -- | Hide parked blocks ('isParkedCertRB') from a @getBlockInfo@. The given one
 -- must be the VolatileDB's own, so that it still finds every predecessor.

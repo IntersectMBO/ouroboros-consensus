@@ -55,7 +55,6 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
@@ -425,8 +424,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity leiosInfo validationPolicy tracer ma
             (<>)
             [ (ebHash, Set.singleton hash)
             | (hash, ibi) <- Map.toList currentRevMap'
-            , SJust ann <- [lbiAnnouncement (biLeios (ibiBlockInfo ibi))]
-            , let ebHash = announcementEbHash ann
+            , SJust ebHash <- [lbiAnnouncedEb (biLeios (ibiBlockInfo ibi))]
             ]
       , currentForgotten = Set.empty
       , currentMaxSlotNo = FileInfo.maxSlotNoInFiles (Index.elems currentMap')
