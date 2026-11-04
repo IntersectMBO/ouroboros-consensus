@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
--- | The Leios database. Hands out readers, writers and subscriptions.
+-- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
   { closeLeiosDbHandle :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs

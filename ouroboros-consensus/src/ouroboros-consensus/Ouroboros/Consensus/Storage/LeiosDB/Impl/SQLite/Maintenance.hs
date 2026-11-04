@@ -269,12 +269,20 @@ defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
 -- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': a
--- 'GarbageCollect' job that raises the writer's GC frontier. The writer then
--- evicts what is older one batch per turn ('sweepEbBatch'), so an insert waits
--- for a batch at most.
+-- 'GarbageCollect' job that raises the writer's GC frontier to the given slot,
+-- if that is newer, and starts a sweep pass. The frontier is the newest slot
+-- any call has given, so it never moves back.
 --
--- The frontier lives only in the writer, so after a restart what an
--- interrupted sweep left waits for the next call.
+-- A sweep pass evicts the points older than the frontier that are not pinned,
+-- oldest first, one batch per turn of the writer between its jobs
+-- ('sweepEbBatch'), so an insert waits for a batch at most. The pass ends at
+-- the first batch that evicts nothing. So a point that is pinned then, or one
+-- written afterwards at a slot older than the frontier, waits for the next
+-- call's pass. The call returns once the writer takes up its job, before the
+-- pass.
+--
+-- The frontier is only in memory, not persisted in the database, so after a
+-- restart what an interrupted sweep left waits for the next call.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
   await =<< submitJob writeQueue (GarbageCollect gcSlot)

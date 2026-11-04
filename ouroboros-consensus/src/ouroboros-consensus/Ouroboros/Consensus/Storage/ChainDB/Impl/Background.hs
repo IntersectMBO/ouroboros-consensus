@@ -179,6 +179,9 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
           acquired <- readTVar cdbAcquiredLeiosEbs
           let acquired' = insertAcquiredLeiosEb point acquired
           writeTVar cdbAcquiredLeiosEbs acquired'
+          -- Not if the seed already held the point: the subscription precedes
+          -- the seeding's scan, so a closure acquired in between is in both.
+          -- Nor if the point is older than what has been pruned.
           pure $
             not (isAcquiredLeiosEb point acquired)
               && isAcquiredLeiosEb point acquired'

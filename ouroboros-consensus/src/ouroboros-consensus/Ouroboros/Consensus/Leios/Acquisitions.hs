@@ -48,6 +48,16 @@ data LeiosAcquisitions m = MkLeiosAcquisitions
   -- until there is one.
   }
 
+-- | A new broadcast, with no subscriber yet.
+--
+-- Its channel is unbounded: each subscriber holds every acquisition emitted
+-- since it subscribed that it has yet to read. That stays small, as long as
+-- each subscriber reads its next acquisition as soon as it has handled the
+-- previous one, and handles one without waiting long; the ChainDB's waits at
+-- most on ChainSel's queue, which ChainSel drains. The node emits at most two
+-- acquisitions per point, and acquires only the points it focuses its
+-- elections on: the first announcement it accepts in each, or a certified one.
+-- So acquisitions arrive at the rate of elections, whatever its peers do.
 newLeiosAcquisitions :: MonadSTM m => m (LeiosAcquisitions m)
 newLeiosAcquisitions = do
   chan <- atomically newBroadcastTChan
@@ -57,8 +67,8 @@ newLeiosAcquisitions = do
       , subscribeLeiosAcquisitions = readTChan <$> atomically (dupTChan chan)
       }
 
--- | For a node that fetches nothing, such as a tool replaying its own
--- databases: nothing is ever emitted.
+-- | For what opens a ChainDB but fetches nothing, such as a tool replaying its
+-- own databases: nothing is ever emitted.
 noLeiosAcquisitions :: MonadSTM m => LeiosAcquisitions m
 noLeiosAcquisitions =
   MkLeiosAcquisitions

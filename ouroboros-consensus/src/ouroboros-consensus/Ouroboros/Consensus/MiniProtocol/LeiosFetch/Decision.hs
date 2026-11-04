@@ -824,7 +824,7 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- static stub for now.
   }
 
--- | The prototype's settings, given 'maxRequestedBytesSizePerBigLedgerPeer'.
+-- | The settings the node runs with, given 'maxRequestedBytesSizePerBigLedgerPeer'.
 defaultLeiosFetchStaticEnv :: BytesSize -> LeiosFetchStaticEnv
 defaultLeiosFetchStaticEnv maxPerBigLedgerPeer =
   MkLeiosFetchStaticEnv

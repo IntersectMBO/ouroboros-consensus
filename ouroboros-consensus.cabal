@@ -1044,6 +1044,7 @@ test-suite leios-storage-test
     bytestring,
     cardano-crypto-class,
     cardano-slotting,
+    cborg,
     containers,
     contra-tracer,
     deepseq,

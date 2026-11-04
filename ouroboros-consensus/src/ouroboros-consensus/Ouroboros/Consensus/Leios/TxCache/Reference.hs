@@ -20,8 +20,7 @@
 -- The type parameters are payloads the index does not interpret:
 --
 --   * @a@ is what we record for a tx that has been inserted (fetched) but not
---     yet applied; @()@ in a proper node, or the tx's bytes in a
---     test\/prototype.
+--     yet applied; @()@ in the node, or the tx's bytes in a test.
 --
 --   * @v@ is what we record for a tx that has been applied. Kept polymorphic so
 --     the index is not coupled to any ledger type.

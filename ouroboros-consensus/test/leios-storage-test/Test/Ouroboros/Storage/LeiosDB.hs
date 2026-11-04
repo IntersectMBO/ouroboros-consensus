@@ -11,6 +11,7 @@ module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
+import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
@@ -19,6 +20,7 @@ import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
 import Data.List (mapAccumL, sort)
@@ -34,7 +36,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation (..)
   , TxOffset
-  , deserialiseEndorserBlock
+  , decodeEndorserBlock
   , endorserBlockBytes
   , endorserBlockReferences
   , mkEndorserBlock
@@ -240,14 +242,14 @@ mkTestGroups impl =
           withFreshDb impl test_fillWithoutSourceBytes
       , testCase "a body whose fills complete its closure completes it" $
           withFreshDb impl test_fillCompletesClosure
-      , testCase "a second write of a body reports what the point holds" $
+      , testCase "a second write of a body reports all txs the point already holds" $
           withFreshDb impl test_secondBodyWriteReportsHeld
       ]
   , testGroup
-      "completion"
-      [ testCase "a closure completes once its body and every tx are written" $
+      "closures"
+      [ testCase "lookupEbClosure gives a point's closure once its body and every tx are written" $
           withFreshDb impl test_completion
-      , testCase "each point of an endorser block completes on its own" $
+      , testCase "lookupEbClosure gives the closure at each point of an endorser block on its own" $
           withFreshDb impl test_multipleSlotsSameHash
       , testCase "a scan finds a point whose body filled every tx from an older point of its endorser block" $
           withFreshDb impl test_scanFindsLaterPoint
@@ -442,7 +444,9 @@ test_bodyKeepsReceivedBytes db = do
       BS.concat
         [BS.pack [0xa1, 0x58, 0x20], hashToBytes (mkTestTxHash 1), BS.pack [0x1a, 0, 0, 0, 101]]
     point = mkTestPoint (SlotNo 1) 1
-  eb <- either (assertFailure . show) pure (deserialiseEndorserBlock received)
+  eb <- case CBOR.deserialiseFromBytes decodeEndorserBlock (BSL.fromStrict received) of
+    Left failure -> assertFailure (show failure)
+    Right (_rest, mkEb) -> pure (mkEb (BSL.fromStrict received))
   assertBool
     "the ledger encodes these references in other bytes"
     (endorserBlockBytes (mkEndorserBlock (endorserBlockReferences eb)) /= received)
