@@ -4,13 +4,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | The Leios types that the storage layer needs: hashes, points, endorser
--- block bodies and their sizes.
---
--- This is the slice of the Leios prototype's types that
--- "Ouroboros.Consensus.Storage.LeiosDB" depends on. The rest of the Leios
--- machinery (announcements, fetch, voting, certificates) extends this module
--- as it lands.
+-- | The Leios types that the rest of the Leios machinery shares: hashes,
+-- points, transactions, votes, endorser block bodies and their sizes.
 module Ouroboros.Consensus.Leios.Types
   ( -- * Hashes
     EndorserBlockHash
@@ -53,6 +48,10 @@ module Ouroboros.Consensus.Leios.Types
   , decodeEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
+  , endorserBlockBytes
+  , TemporaryEndorserBlockOnlyForEncode
+  , temporaryEndorserBlockFromBytes
+  , unsafeEndorserBlockForEncodeOnly
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -94,12 +93,13 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
-  , SafeToHash (originalBytesSize)
+  , SafeToHash (originalBytes, originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
   )
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.MemoBytes (MemoBytes (Memo))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
@@ -112,6 +112,7 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
@@ -435,6 +436,40 @@ maxTxsPerEndorserBlock =
 -- received in, or of the ledger's encoding of one this node built.
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
+
+-- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
+-- received in, or the ledger's encoding of one this node built.
+endorserBlockBytes :: EndorserBlock -> ByteString
+endorserBlockBytes (MkEndorserBlock references) = originalBytes references
+
+-- | An 'EndorserBlock' made from just the bytes it was received in, without
+-- decoding them, for the LeiosFetch server to send. It encodes to exactly
+-- those bytes, and its hash and size are theirs, but it references no
+-- transactions, so nothing may inspect it:
+-- 'unsafeEndorserBlockForEncodeOnly' is only for putting it in a message to
+-- send.
+--
+-- TODO Temporary, until the LeiosFetch server runs a variant of the protocol
+-- whose endorser blocks are their bytes, as the BlockFetch server's blocks are
+-- ('Ouroboros.Network.Block.Serialised'), so that it needs no 'EndorserBlock'.
+newtype TemporaryEndorserBlockOnlyForEncode
+  = MkTemporaryEndorserBlockOnlyForEncode EndorserBlock
+
+-- | The bytes must be ones 'endorserBlockBytes' gave.
+temporaryEndorserBlockFromBytes :: ByteString -> TemporaryEndorserBlockOnlyForEncode
+temporaryEndorserBlockFromBytes bytes =
+  MkTemporaryEndorserBlockOnlyForEncode $
+    MkEndorserBlock $
+      Ledger.MkEbReferences $
+        Memo noReferences (SBS.toShort bytes)
+ where
+  -- The ledger's representation of the references holds them decoded beside
+  -- their bytes, but encodes and hashes only the bytes.
+  Ledger.MkEbReferences (Memo noReferences _) =
+    Ledger.mkEbReferences endorserBlockVersion (IsList.fromList [])
+
+unsafeEndorserBlockForEncodeOnly :: TemporaryEndorserBlockOnlyForEncode -> EndorserBlock
+unsafeEndorserBlockForEncodeOnly (MkTemporaryEndorserBlockOnlyForEncode eb) = eb
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

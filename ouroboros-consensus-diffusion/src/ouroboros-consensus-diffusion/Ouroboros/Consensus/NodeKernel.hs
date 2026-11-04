@@ -61,6 +61,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
@@ -248,6 +249,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , chainDB :: ChainDB m blk
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
+  , leiosAcquisitions :: LeiosAcquisitions m
+  -- ^ Where the node emits what it acquires.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -292,6 +295,7 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosAcquisitions
     , leiosAnnouncementAgeLimits
     , initChainDB
     , blockFetchConfiguration
@@ -490,7 +494,8 @@ initNodeKernel
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st) blockForging
+        blockForging' <-
+          traverse (forkBlockForging st (emitLeiosAcquisition leiosAcquisitions)) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -623,9 +628,11 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
+  -- | Where to emit the acquisition of each endorser block it forges
+  (LeiosEbNotification -> STM m ()) ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} emitAcquisition (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
@@ -641,7 +648,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (storeForgedEb leiosDbWriter . blockSlot)
+              (storeForgedEb emitAcquisition leiosDbWriter . blockSlot)
               currentSlot
     )
  where

@@ -30,7 +30,6 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , TxHash
-  , encodeEndorserBlockSize
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
@@ -188,7 +187,6 @@ heldTx = MkLeiosTx . heldTxBytes
 -- | Write 'heldEb' and all its transactions but the last.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
-  await =<< writeEbPoint writer heldPoint (encodeEndorserBlockSize heldEb)
   _ <- await =<< writeEbBody writer heldPoint heldEb
   _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
   pure ()

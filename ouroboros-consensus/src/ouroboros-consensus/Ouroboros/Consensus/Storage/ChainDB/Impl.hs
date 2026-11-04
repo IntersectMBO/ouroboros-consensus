@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -93,8 +92,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
-  , LeiosDbReader (..)
+  ( LeiosDbReader (..)
   , withReader
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -243,7 +241,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Subscribe before seeding, so that no closure acquired in between is
     -- missed. The seed is every closure the LeiosDB holds that a block the
     -- initial chain selection could select may certify.
-    nextLeiosEbNotification <- readTChan <$> subscribeEbNotifications leiosDb
+    nextLeiosEbNotification <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
