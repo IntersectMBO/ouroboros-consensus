@@ -81,7 +81,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
   , acquireEbBody
-  , completeHeldTxs
   , completeTxRequest
   , ebStateOnset
   , newLeiosJobPool
@@ -352,10 +351,8 @@ processLeiosBlock ctx peer req eb = do
   tooBig = bodyTooBig || closureTooBig
 
 -- | Hold the body, now that its write is durable, with the jobs for the txs
--- the point does not hold yet, and emit what is acquired. If another delivery
--- of it settled first, complete instead the jobs for txs this write found held,
--- which may be more than that delivery's write found. Nothing if the point was
--- pruned meanwhile.
+-- the point does not hold yet, and emit what is acquired. Nothing if the point
+-- was pruned meanwhile, or another delivery of it settled first.
 --
 -- TODO The LeiosDB's GC normally collects a point only after the fetch state
 -- has pruned it, but nothing enforces that order; checking the LeiosDB's GC
@@ -371,12 +368,12 @@ settleBody ::
   m ()
 settleBody ctx point eb now bodyWritten = do
   heldOffs <- await bodyWritten
-  let held = IntSet.fromList heldOffs
   acquired <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
       Just (MkEbState onset NoBody) -> do
         let
-          jobPool = newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` held)
+          jobPool =
+            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList heldOffs)
         atomically $ do
           lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
           when (Jobs.nullLeiosJobPool jobPool) $
@@ -391,15 +388,7 @@ settleBody ctx point eb now bodyWritten = do
           )
       -- Only the forge's writes settle it.
       Just (MkEbState _onset ReceivingFromForge{}) -> pure (outstanding, [])
-      Just (MkEbState _onset (BodyAcquired before)) -> do
-        let outstanding' = completeHeldTxs point held outstanding
-        case Map.lookup point (ebState outstanding') of
-          Just (MkEbState onset (BodyAcquired after))
-            | not (Jobs.nullLeiosJobPool before)
-            , Jobs.nullLeiosJobPool after -> do
-                atomically $ lfcNotify $ AcquiredEbTxs point
-                pure (outstanding', [TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)])
-          _ -> pure (outstanding', [])
+      Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, [])
       Nothing -> pure (outstanding, [])
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.

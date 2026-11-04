@@ -53,6 +53,8 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), CurrentSlot (..))
 import Ouroboros.Consensus.Config (TopLevelConfig, configBlock, configLedger)
 import Ouroboros.Consensus.Forecast (forecastFor)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   , HeaderStateWithTime (..)
@@ -68,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
   , LeiosProtocol (..)
   , leiosEbBounds
   )
@@ -78,6 +81,7 @@ import Ouroboros.Consensus.Leios.Types
   , ForgedEndorserBlock (..)
   , LeiosPoint (..)
   , endorserBlockHash
+  , minCertificationSlot
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
@@ -92,8 +96,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosEbBounds (..)
   , LeiosFetchRequest
   , LeiosOutstanding (..)
+  , OfferedHalves (..)
   , PeerOffer (..)
-  , WhetherTxsClosureOffered (..)
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
@@ -337,8 +341,7 @@ recordLeiosCertOffer cfg kernel peerVars hdr predState =
         recordLeiosOffer kernel peerVars (MkLeiosPoint slot ebHash) $
           MkPeerOffer
             { poEbBounds = SJust (leiosEbBounds llv)
-            , poOfferedBody = SJust (announcementEbSize announcement)
-            , poClosure = TxsClosureOffered
+            , poOffered = OfferedBodyAndClosure (announcementEbSize announcement)
             }
       _ -> pure ()
  where
@@ -525,7 +528,7 @@ onForgedLeiosEb kernel anc forged = do
 -- request from every peer, at most twice a second.
 leiosFetchDecisionLoop ::
   forall m peer blk.
-  (IOLike m, Ord peer, LedgerSupportsProtocol blk) =>
+  (IOLike m, Ord peer, LedgerSupportsProtocol blk, HasHardForkHistory blk) =>
   TopLevelConfig blk ->
   ChainDB m blk ->
   BlockchainTime m ->
@@ -543,24 +546,39 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
       peersVars <- readTVar lfkPeers
       offerings <- traverse (readTVar . lfpOfferings) peersVars
       (,,,) peersVars offerings <$> getCurrentSlot btime <*> ChainDB.getImmutableLedger chainDB
-    let mbCurrentSlot = case currentSlot of
-          CurrentSlot s -> Just s
-          CurrentSlotUnknown -> Nothing
-        -- One forecast anchor for the whole pass: the immutable tip, which is
-        -- also what the announcement validation a LeiosNotify offer rides on
-        -- forecast from, so it reaches every slot such an offer names.
-        forecastEbBounds slot =
-          maybe (MkLeiosEbBounds 0 0) leiosEbBounds . getLeiosLedgerView (Proxy @(BlockProtocol blk))
-            <$> runExcept
-              (forecastFor (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger)) slot)
-        (!outstanding', requests, offerDrops) =
-          leiosFetchLogicIteration
-            (lfcStaticEnv lfkContext)
-            forecastEbBounds
-            mbCurrentSlot
-            offerings
-            (Map.map lfpIsBigLedgerPeer peersVars)
-            outstanding
+    let
+      -- One forecast anchor for the whole pass: the immutable tip, which is
+      -- also what the announcement validation a LeiosNotify offer rides on
+      -- forecast from, so it reaches every slot such an offer names.
+      forecastLeiosView slot =
+        getLeiosLedgerView (Proxy @(BlockProtocol blk))
+          <$> runExcept
+            (forecastFor (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger)) slot)
+      forecastEbBounds slot = maybe (MkLeiosEbBounds 0 0) leiosEbBounds <$> forecastLeiosView slot
+      -- The current slot, and how many slots before it a point is still worth
+      -- voting on, by the Leios periods of the ledger there, if the ledger
+      -- reaches that far.
+      mbHorizon = case currentSlot of
+        CurrentSlotUnknown -> Nothing
+        CurrentSlot slot -> do
+          llv <- either (const Nothing) id (forecastLeiosView slot)
+          (_onset, slotLength) <-
+            either (const Nothing) Just $
+              HardFork.runQuery
+                (HardFork.slotToWallclock slot)
+                (hardForkSummary (configLedger cfg) (ledgerState immLedger))
+          let MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} = llv
+              SlotNo window =
+                minCertificationSlot slotLength llvAnnouncementPeriod llvVotePeriod llvDiffusionPeriod 0
+          pure (slot, window)
+      (!outstanding', requests, offerDrops) =
+        leiosFetchLogicIteration
+          (lfcStaticEnv lfkContext)
+          forecastEbBounds
+          mbHorizon
+          offerings
+          (Map.map lfpIsBigLedgerPeer peersVars)
+          outstanding
     pure (outstanding', (requests, offerDrops, peersVars))
   atomically $ do
     -- Prune what of the offers the decision found can no longer help.

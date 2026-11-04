@@ -15,14 +15,11 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , check
   , modifyTVar
   , newEmptyTMVarIO
-  , newTQueueIO
   , newTVarIO
   , putTMVar
   , readTMVar
-  , readTQueue
   , readTVar
   , readTVarIO
-  , writeTQueue
   )
 import Control.Exception (SomeException, try)
 import Control.Tracer (nullTracer)
@@ -44,7 +41,6 @@ import Ouroboros.Consensus.Leios.TxCache
   , defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
-import Ouroboros.Consensus.Leios.TxCache.API (packEndorserBlock)
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
@@ -73,8 +69,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosBlockTxsRequest
   , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
+  , OfferedHalves (..)
   , PeerOffer (..)
-  , WhetherTxsClosureOffered (..)
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
@@ -115,9 +111,6 @@ tests =
     , testCase
         "the client acquires no closure whose transactions are not the sizes its endorser block declares, and disconnects the peer that served them"
         test_wrongSizedTxs
-    , testCase
-        "the client acquires the closure from a later delivery of a body whose write found more transactions held than the first's"
-        test_laterDeliveryHoldsMore
     , testCase
         "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
         test_forgedAfterBody
@@ -229,8 +222,8 @@ closureRequest ctx point = do
             leiosFetchLogicIteration
               (lfcStaticEnv ctx)
               (\_slot -> Right maxBound)
-              (Just (SlotNo 6))
-              (Map.singleton peer (Map.singleton point (MkPeerOffer SNothing SNothing TxsClosureOffered)))
+              (Just (SlotNo 6, 10))
+              (Map.singleton peer (Map.singleton point (MkPeerOffer SNothing OfferedClosure)))
               Map.empty
               outstanding
       pure (outstanding', [r | LeiosBlockTxsRequest r <- foldMap toList decisions])
@@ -324,41 +317,6 @@ test_prunedWhileWriting = do
   readTVarIO notes >>= (@?= [])
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
-
--- | Two peers deliver the 'fixture''s body before either write settles. An
--- older point holds the first of its transactions when the first write lands,
--- which copies it, and the other too by the time the second write lands, which
--- copies both. The first write settles first.
-test_laterDeliveryHoldsMore :: Assertion
-test_laterDeliveryHoldsMore = do
-  let (point, eb, txs) = fixture
-      older = MkLeiosPoint (SlotNo 3) (pointEbHash point)
-      (heldFirst, heldLater) = splitAt 1 (zip [0 ..] txs)
-      req = MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound
-  settleFirst <- newEmptyTMVarIO
-  settleSecond <- newEmptyTMVarIO
-  gates <- newTQueueIO
-  atomically $
-    mapM_
-      (writeTQueue gates)
-      [pure (), atomically (readTMVar settleFirst), atomically (readTMVar settleSecond)]
-  (ctx, notes) <- newContextGated point (atomically (readTQueue gates))
-  let holdAtOlder held = do
-        dropped <- await =<< writeTxs (lfcWriter ctx) older [(off, leiosTxBytes tx) | (off, tx) <- held]
-        dropped @?= []
-        setTxLocations (lfcTxCache ctx) older [(off, hashLeiosTx tx) | (off, tx) <- held]
-  _ <- insertBody (lfcTxCache ctx) (pointEbHash point) (packEndorserBlock eb) () (\w _ _ _ _ -> w)
-  _ <- await =<< writeEbBody (lfcWriter ctx) older eb []
-  holdAtOlder heldFirst
-  processLeiosBlock ctx peer req eb
-  holdAtOlder heldLater
-  processLeiosBlock ctx otherPeer req eb
-  atomically $ putTMVar settleFirst ()
-  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
-  atomically $ putTMVar settleSecond ()
-  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
- where
-  otherPeer = peer + 1
 
 -- | A peer delivers the 'fixture''s body, and then the node's own forge
 -- produces the same endorser block at the same point, while the closure is

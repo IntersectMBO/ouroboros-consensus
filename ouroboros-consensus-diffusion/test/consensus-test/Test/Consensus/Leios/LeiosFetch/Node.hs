@@ -85,8 +85,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosOutstanding (..)
+  , OfferedHalves (..)
   , PeerOffer (..)
-  , WhetherTxsClosureOffered (..)
   , isFocusedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
@@ -657,8 +657,7 @@ nodeIgnoresPrunedOffer = withNode $ \node -> do
       offer =
         MkPeerOffer
           { poEbBounds = SNothing
-          , poOfferedBody = SNothing
-          , poClosure = TxsClosureOffered
+          , poOffered = OfferedClosure
           }
       peer = ConnectionId (PeerAddr 0) (PeerAddr 1)
   IOLike.atomically $ IOLike.writeTVar (lfkPrunedSlot kernel) (SlotNo 5)

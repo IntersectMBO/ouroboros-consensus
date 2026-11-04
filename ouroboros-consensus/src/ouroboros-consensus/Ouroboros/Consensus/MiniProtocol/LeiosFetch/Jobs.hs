@@ -29,7 +29,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
   , pickLeastRequestedJobExcept
   , unpickJob
   , completeJob
-  , completeHeldJobs
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -255,14 +254,6 @@ completeJob (MkLeiosJobId jid) pool =
   -- reverse-index delete) while deleting the entry.
   delete1 Nothing = (Nothing, Nothing)
   delete1 (Just (MkLeiosJobState _job (MkLeiosJobMultiplicity m))) = (Just m, Nothing)
-
--- | Remove every job whose txs are all among these offsets.
-completeHeldJobs :: IntSet -> LeiosJobPool -> LeiosJobPool
-completeHeldJobs held pool = IntMap.foldlWithKey' complete pool (jobs pool)
- where
-  complete acc jid (MkLeiosJobState (MkLeiosJob offs _bytes _root) _multiplicity)
-    | offs `IntSet.isSubsetOf` held = completeJob (MkLeiosJobId jid) acc
-    | otherwise = acc
 
 bucketDelete :: Int -> Int -> IntMap NEIntSet -> IntMap NEIntSet
 bucketDelete m jid = IntMap.update (NEIntSet.nonEmptySet . NEIntSet.delete jid) m

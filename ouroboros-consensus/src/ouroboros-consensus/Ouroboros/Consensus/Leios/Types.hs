@@ -4,13 +4,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | The Leios types that the storage layer needs: hashes, points, endorser
--- block bodies and their sizes.
---
--- This is the slice of the Leios prototype's types that
--- "Ouroboros.Consensus.Storage.LeiosDB" depends on. The rest of the Leios
--- machinery (announcements, fetch, voting, certificates) extends this module
--- as it lands.
+-- | The Leios types that the rest of the Leios machinery shares: hashes,
+-- points, transactions, votes, endorser block bodies and their sizes.
 module Ouroboros.Consensus.Leios.Types
   ( -- * Hashes
     EndorserBlockHash

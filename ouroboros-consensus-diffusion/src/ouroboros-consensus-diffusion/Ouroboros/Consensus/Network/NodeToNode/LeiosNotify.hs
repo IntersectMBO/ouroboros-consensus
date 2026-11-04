@@ -46,8 +46,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   , SomeHeaderInFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( PeerOffer (..)
-  , WhetherTxsClosureOffered (..)
+  ( OfferedHalves (..)
+  , PeerOffer (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -151,10 +151,10 @@ leiosNotifyClient
             atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate_ $ checkLeiosBlockOffer cfg immLedger point claimed
-            recordOffer point $ MkPeerOffer SNothing (SJust claimed) TxsClosureNotOffered
+            recordOffer point $ MkPeerOffer SNothing (OfferedBody claimed)
           MsgLeiosBlockTxsOffer point -> do
             atomically $ checkAndUpdate_ $ checkLeiosClosureOffer point
-            recordOffer point $ MkPeerOffer SNothing SNothing TxsClosureOffered
+            recordOffer point $ MkPeerOffer SNothing OfferedClosure
           MsgLeiosVotes votes -> do
             now <- systemTimeCurrent systemTime
             accepted <- atomically $ do

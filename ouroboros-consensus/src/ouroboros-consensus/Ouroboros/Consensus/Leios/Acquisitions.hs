@@ -25,9 +25,12 @@ import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 
 -- | Something LeiosFetch acquired at a 'LeiosPoint'.
 --
--- LeiosFetch sends each at most once per point: 'AcquiredEb' once the point's
--- body is durable, and 'AcquiredEbTxs' once its closure is. It sends neither
--- for a point whose closure the LeiosDB already held when the node started.
+-- LeiosFetch emits each at most once per point: 'AcquiredEb' once the point's
+-- body is durable, and 'AcquiredEbTxs' once its closure is. It emits neither
+-- for a point whose closure the LeiosDB already held when the node started. So
+-- a subscriber that subscribes before it scans the LeiosDB at start-up, as the
+-- ChainDB does, hears of each point once at most, and only of one its scan did
+-- not find.
 data LeiosEbNotification
   = -- | The node holds the EB's body.
     AcquiredEb

@@ -166,8 +166,8 @@ launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
 
 -- | Grow 'cdbAcquiredLeiosEbs' from the node's Leios acquisitions, and enqueue a
--- reprocess of the blocks parked on each endorser block the first time its
--- closure is acquired.
+-- reprocess of the blocks parked on each endorser block once its closure is
+-- acquired.
 leiosAcquiredEbsRunner ::
   IOLike m => ChainDbEnv m blk -> STM m LeiosEbNotification -> m Void
 leiosAcquiredEbsRunner CDB{..} nextNotification =
@@ -175,19 +175,14 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
     atomically nextNotification >>= \case
       AcquiredEb{} -> pure ()
       AcquiredEbTxs point -> do
-        novel <- atomically $ do
-          acquired <- readTVar cdbAcquiredLeiosEbs
-          let acquired' = insertAcquiredLeiosEb point acquired
+        recorded <- atomically $ do
+          acquired' <- insertAcquiredLeiosEb point <$> readTVar cdbAcquiredLeiosEbs
           writeTVar cdbAcquiredLeiosEbs acquired'
-          -- Not if the seed already held the point: the subscription precedes
-          -- the seeding's scan, so a closure acquired in between is in both.
-          -- Nor if the point is older than what has been pruned.
-          pure $
-            not (isAcquiredLeiosEb point acquired)
-              && isAcquiredLeiosEb point acquired'
+          -- Not if the point is older than what has been pruned.
+          pure $ isAcquiredLeiosEb point acquired'
         -- The set has already grown, so ChainSel sees the closure even while
         -- this enqueue blocks on a full queue.
-        when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
+        when recorded $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
