@@ -389,7 +389,8 @@ runNodeClientAgainst node next target = do
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
           , epLeiosNotifyClient = Nothing
           , -- The node requests what the peer offers.
             epLeiosFetchServer = silentLeiosFetchServer node
@@ -475,7 +476,8 @@ nodeClientGated = withNodeForecastingOnly 5 $ \node -> do
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests retry
           , epLeiosNotifyClient = Nothing
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
@@ -495,7 +497,8 @@ nodePrunesClientState = withNodeCommittee committee 100000 $ \node -> do
   queue <- newTQueueIO
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests (readTQueue queue)
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
           , -- The node requests what the peer offers.
             epLeiosFetchServer = silentLeiosFetchServer node
@@ -641,7 +644,8 @@ nodeServerCancels = withNode $ \node -> do
   let codec' = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer codec' requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient = Just $ runPipelinedClient codec' replies 3 stop
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
@@ -664,7 +668,8 @@ nodeServerExcessive = withNode $ \node -> do
   let codec' = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runReplyingServer codec' requests retry
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient =
               Just $ runPipelinedClient codec' replies (leiosNotifyPipelineDepth + 1) stop
           , epLeiosFetchServer = refusingLeiosFetchServer node
