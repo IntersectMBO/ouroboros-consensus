@@ -226,6 +226,8 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -1528,6 +1530,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Forge
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Codec
+    Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Leios.LeiosNotify.Codec
@@ -1595,6 +1598,7 @@ test-suite consensus-diffusion-test
     monoidal-containers ^>=0.6,
     mtl,
     network-mux,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
