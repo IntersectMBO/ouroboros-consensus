@@ -44,13 +44,14 @@ import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
-import Data.Foldable (traverse_)
+import Data.Foldable (for_, traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
@@ -64,14 +65,20 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( AnnounceState
+  , newAnnounceState
+  , onValidAnnouncement
+  )
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , leiosOfferRelay
   , newNotifyLog
   , pruneNotifyLog
   )
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -96,9 +103,12 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , leiosFetchDecisionLoop
   , leiosFetchPruner
   , newLeiosFetchKernel
+  , onForgedLeiosEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
+  , ValidAnnouncement (..)
+  , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
@@ -123,13 +133,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
-  , LeiosDbWriter (..)
-  , allocateWriter
-  , openWriter
-  , storeForgedEb
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle, allocateWriter)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -266,7 +270,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
-  -- ^ Where the node emits what it acquires.
+  -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
   -- ^ Seeds the LeiosFetch decision loop's PRNG.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
@@ -437,10 +441,6 @@ initNodeKernel
     -- acquisition.
     nextLeiosAcquisition <- subscribeLeiosAcquisitions leiosAcquisitions
 
-    void $
-      forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
-
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
     void $
@@ -490,6 +490,20 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
 
+    -- The forge hands each endorser block it produces, with the header
+    -- announcing it, to the handlers an announcement and an endorser block from
+    -- a peer go through, with no peer. As for a header ChainSync validated, the
+    -- announcement needs no further check: the forge built the header.
+    let onForgedEb hdr onset leiosView forged = do
+          mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
+          -- A forged header announces the endorser block forged with it.
+          for_ mbValid $ \valid -> do
+            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
+            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+    void $
+      forkLinkedThread registry "NodeKernel.blockForging" $
+        blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
+
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
@@ -532,16 +546,16 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
+      (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st getBlockForging = go []
+    blockForgingController st onForgedEb getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <-
-          traverse (forkBlockForging st (emitLeiosAcquisition leiosAcquisitions)) blockForging
+        blockForging' <- traverse (forkBlockForging st onForgedEb) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -674,17 +688,17 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
-  -- | Where to emit the acquisition of each endorser block it forges
-  (LeiosEbNotification -> STM m ()) ->
+  -- | What 'forge' does with each endorser block it produces
+  (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} emitAcquisition (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
-    allocateForging
-    finalizeForging
-    ( \(bf, leiosDbWriter) -> knownSlotWatcher btime $
+    blockForgingMLabel
+    finalize
+    ( \bf -> knownSlotWatcher btime $
         \currentSlot ->
           withEarlyExit_ $
             forge
@@ -694,23 +708,17 @@ forkBlockForging IS{..} emitAcquisition (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (storeForgedEb emitAcquisition leiosDbWriter . blockSlot)
+              onForgedEb
               currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
 
-  allocateForging = do
+  blockForgingMLabel = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosDbWriter <- openWriter leiosDB
-    pure (bf, leiosDbWriter)
-
-  -- 'finalize' erases the KES key, so it runs first: 'closeWriter' waits for
-  -- the LeiosDB write queue.
-  finalizeForging (bf, leiosDbWriter) =
-    finalize bf `finally` closeWriter leiosDbWriter
+    pure bf
 
 {-------------------------------------------------------------------------------
   Leios pruning

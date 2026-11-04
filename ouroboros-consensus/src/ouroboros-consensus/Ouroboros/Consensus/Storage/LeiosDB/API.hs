@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
-  , storeForgedEb
   , LocalFills
   , TxOffset
   ) where
@@ -27,37 +26,23 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
 import Cardano.Slotting.Slot (SlotNo)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
-import Data.Foldable (toList, traverse_)
+import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
-  , ForgedEndorserBlock
+  , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised
+  , TxHash
   , TxLocation
   , TxOffset
-  , encodeEndorserBlockSize
-  , endorserBlockHash
-  , forgedEbBody
-  , forgedEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
-import Ouroboros.Consensus.Util.IOLike
-  ( IOLike
-  , MonadThrow
-  , NoThunks (..)
-  , STM
-  , async
-  , atomically
-  , bracket
-  , link
-  )
+import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
 -- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
@@ -207,32 +192,3 @@ allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) clo
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter
-
--- | Write an endorser block that this node forged to the LeiosDB, and emit its
--- acquisition, of its body and then of its closure, once both writes are
--- durable.
---
--- The slot is the slot of the ranking block that announces the endorser block.
--- That ranking block must announce the 'endorserBlockHash' and the
--- 'encodeEndorserBlockSize' of the endorser block body.
---
--- This function does not await the writes. On SQLite, it blocks while the
--- write queue is full, and if a write fails, the node stops. Peers can get the
--- header before the endorser block is stored.
-storeForgedEb ::
-  IOLike m =>
-  (LeiosEbNotification -> STM m ()) ->
-  LeiosDbWriter m ->
-  SlotNo ->
-  ForgedEndorserBlock ->
-  m ()
-storeForgedEb emit writer slot forgedEb = do
-  bodyWritten <- writeEbBody writer point body mempty
-  txsWritten <- writeTxs writer point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forgedEb))))
-  link =<< async (await bodyWritten >> await txsWritten >> atomically emitBoth)
- where
-  body = forgedEbBody forgedEb
-  point = MkLeiosPoint slot (endorserBlockHash body)
-  emitBoth = do
-    emit $ AcquiredEb point (encodeEndorserBlockSize body)
-    emit $ AcquiredEbTxs point
