@@ -55,7 +55,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 -- | One queued write, carrying the variable its result lands in.
 --
 -- The insert jobs come from 'LeiosDbWriter', the rest from the handle's
--- promote\/GC entry points. One worker running them all is what makes the
+-- GC entry point. One worker running them all is what makes the
 -- single-writer property total: no two in-process connections ever contend
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
@@ -84,19 +84,6 @@ data WriteJob
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | Pin certified points for promotion; see 'sqlPromoteToImmutable'.
-    PinEb
-      -- | the points to pin
-      ![LeiosPoint]
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | -- | The volatile half of a copy: the EB is in the immutable partition
-    -- now, so its pin retires. Submitted by 'startCopier'.
-    MarkCopied
-      -- | the points now in the immutable partition
-      ![LeiosPoint]
-      -- | where the worker puts the result
-      !(WriteResult ())
   | -- | The GC MARK phase; see 'sqlGarbageCollect'.
     GcMark
       -- | the GC frontier slot
@@ -177,8 +164,6 @@ describeJob = \case
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb points _ -> "PinEb (" <> show (length points) <> " ebs)"
-  MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " ebs)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
@@ -189,16 +174,14 @@ describeJob = \case
 -- the floor under a queue that never does. One queue-full: under saturation
 -- maintenance still gets a turn as often as the producers can refill, and
 -- the resulting share (one turn in @'writerQueueDepth' + 1@) is far above
--- what copying and eviction ask for -- they are per promoted or expired EB,
--- not per write. 'TraceLeiosDbStats' is where a volatile partition that
+-- what eviction asks for -- it is per expired EB, not per write. 'TraceLeiosDbStats' is where a volatile partition that
 -- still grows would show up.
 maxJobsBetweenMaintenance :: Int
 maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
--- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
--- little slack. Deliberately shallow: depth beyond that adds no throughput
+-- schedulers (the ChainDB's GC calls) -- and a little slack. Deliberately shallow: depth beyond that adds no throughput
 -- (there is one worker) and only delays the commits that gate vote
 -- scheduling and chain selection. A producer that outruns the disk
 -- blocks on submission, which is the backpressure.

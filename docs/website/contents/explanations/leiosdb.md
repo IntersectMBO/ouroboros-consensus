@@ -6,7 +6,7 @@ Its SQLite backend keeps them in two files, called partitions:
 - **Volatile partition** stores fresh EB announcements, bodies and transaction that the node downloads or forges.
 - **Immutable partition** stores complete EBs (and their closure transactions) that a certificate on the immutable chain refers to.
 
-The EBs and their closures are copied from the volatile to the immutable partition when they become older than [`k`](../references/glossary.md#security-parameter) (the Praos security parameter). See also the [ImmutableDB](../references/glossary.md#chaindb) glossary entry.
+The EBs and their closures are copied from the volatile to the immutable partition when the blocks certifying them become older than [`k`](../references/glossary.md#security-parameter) (the Praos security parameter). See also the [ImmutableDB](../references/glossary.md#chaindb) glossary entry.
 
 ## Database schema
 
@@ -41,12 +41,6 @@ erDiagram
         BLOB body "as received"
         BLOB txs "zeroes until written"
     }
-    pinned {
-        BLOB ebHashBytes PK
-        INTEGER ebSlot PK
-    }
-
-    pinned }o--|{ ebs : "ebHashBytes"
 ```
 
 - When a point is announced, its row is inserted. If another row holds the EB, the new row copies its body and closure in the same transaction.
@@ -66,16 +60,18 @@ The unique key on `(ebSlot, ebHashBytes)` serves the lookups by point, and the g
 
 ### Promotion and garbage collection
 
-Promoting an EB to the immutable partition pins its certified point in `pinned`.
-The copier copies the EB into the immutable partition, at that point, and then deletes the pin.
-The pin is the durable copy work list: a copy interrupted by a crash is still pending on the next start.
+Before the ChainDB appends blocks to the ImmutableDB, it promotes the EBs they certify: it copies each into the immutable partition, at its certified point, in one transaction.
+An EB the immutable partition holds already is not copied again: a crash can lose the volatile writes that completed it, and nothing fetches them again.
+So every block in the ImmutableDB has the EB it certifies in the immutable partition.
+A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
+An EB whose transactions do not hash to its body fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
-A garbage collection at a slot collects the rows before that slot, written before it ran, but those of pinned EBs.
+A garbage collection at a slot collects the rows before that slot, written before it ran.
 The writer deletes them in batches between the jobs it serves, so a write waits for one batch at most.
 What a garbage collection collects is kept in memory only: after a restart, the next one collects again.
 
 ## Immutable partition
 
-The immutable partition has the same `ebs` table, and no `pinned` table.
-The copier copies only EBs whose certificate is on the chain, and only once each of their transactions hashes to what the body lists, and GC never removes EBs from this partition.
+The immutable partition has the same `ebs` table.
+Promotion copies only EBs whose certificate is on the chain, and only once each of their transactions hashes to what the body lists, and GC never removes EBs from this partition.
 Thus every row holds its whole EB.

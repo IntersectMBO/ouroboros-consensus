@@ -206,10 +206,11 @@ leiosAcquiredEbsRunner CDB{..} nextAcquiredClosure =
 -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
 -- returned. This can be used for a garbage collection on the VolatileDB.
 --
--- Before copying any of the blocks, this pins in the LeiosDB the endorser
--- blocks they certify, so that the LeiosDB's garbage collection never evicts
--- them. A crash in between leaves only the pins, and copying the same blocks
--- again after the restart pins the same endorser blocks.
+-- Before copying any of the blocks, this copies the endorser blocks they
+-- certify into the LeiosDB's immutable partition, so every block in the
+-- ImmutableDB has its certified endorser block there. A crash in between leaves
+-- only the endorser blocks, and copying the same blocks again after the restart
+-- copies the same endorser blocks.
 copyToImmutableDB ::
   forall m blk.
   ( IOLike m
@@ -515,8 +516,8 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
 -- the VolatileDB, and for the endorser blocks in the LeiosDB all of whose
--- announcements are older than it. 'copyToImmutableDB' has already pinned the
--- certified ones, which the LeiosDB keeps.
+-- announcements are older than it. 'copyToImmutableDB' has already copied the
+-- certified ones into the LeiosDB's immutable partition.
 --
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --

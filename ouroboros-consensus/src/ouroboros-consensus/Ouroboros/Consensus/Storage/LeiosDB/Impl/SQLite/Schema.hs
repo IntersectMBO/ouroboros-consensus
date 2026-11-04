@@ -1,7 +1,6 @@
 -- | The schema of the LeiosDB partition files.
 --
--- Both partitions have the same 'ebs' table. The volatile one adds the table
--- that tracks promotion.
+-- Both partitions have the same 'ebs' table.
 --
 -- Every statement is @IF NOT EXISTS@, so the schemas are idempotent:
 -- @initialiseLeiosDbFiles@ applies them on every handle creation.
@@ -10,20 +9,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
   , sql_schema_imm
   ) where
 
--- | Schema of the volatile partition (@leios.vol.db@): 'sql_schema_imm' with
--- the table that tracks promotion.
+-- | Schema of the volatile partition (@leios.vol.db@).
 sql_schema_vol :: String
-sql_schema_vol =
-  unlines $
-    ebsTable
-      <> [ -- The certified points awaiting the copy into the immutable
-           -- partition. GC keeps every row of their EBs.
-           "CREATE TABLE IF NOT EXISTS pinned ("
-         , "  ebHashBytes BLOB NOT NULL,"
-         , "  ebSlot INTEGER NOT NULL,"
-         , "  PRIMARY KEY (ebHashBytes, ebSlot)"
-         , ");"
-         ]
+sql_schema_vol = unlines ebsTable
 
 -- | Schema of the immutable partition (@leios.imm.db@). EBs land here complete
 -- and are never collected.

@@ -12,12 +12,11 @@ module Test.Ouroboros.Storage.LeiosDB (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Control.Tracer (Tracer (..), emit, nullTracer)
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
@@ -53,7 +52,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
-  , TraceLeiosDb (..)
   , newLeiosDBInMemory
   , storeForgedEb
   , truncateLeiosDbAfterSlot
@@ -106,10 +104,6 @@ tests =
                  withFreshDb InMemory test_gcEvictsOldEb
              , testCase "keeps an EB with a point at the slot" $
                  withFreshDb InMemory test_gcKeepsEbWithPointAtSlot
-             , testCase "keeps a pinned EB" $
-                 withFreshDb InMemory test_gcKeepsPinnedEb
-             , testCase "promoting an EB whose closure is incomplete fails" $
-                 withFreshDb InMemory test_promoteIncompleteFails
              ]
          , testGroup
              "truncateLeiosDbAfterSlot"
@@ -119,11 +113,10 @@ tests =
                  withTempLeiosDbPaths test_truncateImmutablePartition
              ]
          , testGroup
-             "close"
-             [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
+             "promotion (SQLite)"
+             [ testCase "promotes an EB again after a crash lost the volatile txs that completed it" $
+                 withTempLeiosDbPaths test_promoteAgainAfterLosingVolatileTxs
              ]
-         , testCase "SQLite: the copier does not copy a pinned EB whose txs do not hash to its body" $
-             test_copyChecksHashes
          , testGroup
              "file initialisation (SQLite)"
              [ testCase "handle creation applies both schemas" $
@@ -182,7 +175,7 @@ withFreshDb InMemory action =
   newLeiosDBInMemory >>= action
 withFreshDb SQLite action = withFreshSQLiteDb action
 
--- | 'withFreshDb', with a wait for the SQLite implementation's background work
+-- | 'withFreshDb', with a wait for the SQLite implementation's sweep
 -- to catch up (see 'withSettle'). The in-memory implementation has none.
 withSettledDb :: DbImpl -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
 withSettledDb InMemory action = newLeiosDBInMemory >>= \db -> action db (pure ())
@@ -263,6 +256,15 @@ mkTestGroups impl =
           withSettledDb impl test_gcKeepsMissingTxCount
       , testCase "keeps only the newest point of an EB announced again in each round" $
           withSettledDb impl test_gcBoundsPointsOfReannouncedEb
+      ]
+  , testGroup
+      "promotion"
+      [ testCase "keeps the closure of a promoted EB its garbage collection evicts" $
+          withFreshDb impl test_gcKeepsPromotedEb
+      , testCase "fails for an EB whose closure is incomplete, copying nothing" $
+          withSettledDb impl test_promoteIncompleteFails
+      , testCase "fails for an EB whose txs do not hash to its body, copying nothing" $
+          withFreshDb impl test_promoteChecksHashes
       ]
   , testGroup
       "lookupEbClosure"
@@ -650,6 +652,23 @@ test_retrieveFallsBackPerTx impl = withSettledDb impl $ \db settle -> withRW db 
     >>= (@?= [(off, Just (txBytesFor eb off)) | off <- [0, 1]])
   rwLookupEbClosure con (mkTestEbHash 1) >>= (@?= Just (map snd (allTxsFor eb)))
 
+-- | A crash can lose the volatile writes that completed a promoted EB, but not
+-- its immutable copy. Promoting it again, as when the crash lost the block
+-- certifying it too, succeeds, and the closure is read from the immutable copy.
+test_promoteAgainAfterLosingVolatileTxs :: FilePath -> FilePath -> IO ()
+test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
+  let eb = mkTestEb 2
+      point = mkTestPoint 5 1
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
+    writeWholeEb con [point] eb
+    leiosDbPromoteToImmutable db [point]
+  -- What the crash leaves of the volatile partition: the body, but no txs.
+  withSqlFile volDbPath $ \sql ->
+    SQL.exec sql (T.pack "UPDATE ebs SET txs = zeroblob(length(txs))")
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
+    leiosDbPromoteToImmutable db [point]
+    rwLookupEbClosure con (mkTestEbHash 1) >>= (@?= Just (map snd (allTxsFor eb)))
+
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> EndorserBlockHash -> IO Bool
 holdsClosure con ebHash = isJust <$> rwLookupEbClosure con ebHash
@@ -720,19 +739,40 @@ test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   garbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
-test_gcKeepsPinnedEb :: LeiosDbHandle IO -> IO ()
-test_gcKeepsPinnedEb db = withRW db $ \con -> do
+test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
+test_gcKeepsPromotedEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
   garbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
-test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
-test_promoteIncompleteFails db = withRW db $ \con -> do
+-- | A complete EB promoted along with one whose closure lacks a tx.
+test_promoteIncompleteFails :: LeiosDbHandle IO -> IO () -> IO ()
+test_promoteIncompleteFails db settle = withRW db $ \con -> do
+  writeWholeEb con [mkTestPoint 4 2] (mkTestEb 3)
   rwInsertEbPoint con (mkTestPoint 5 1) (encodeEndorserBlockSize (mkTestEb 2))
   void $ rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
-  result <- tryDb $ leiosDbPromoteToImmutable db [mkTestPoint 5 1]
-  case result of
+  rwInsertTxs con (mkTestPoint 5 1) (take 1 (allTxsFor (mkTestEb 2)))
+  assertPromoteFails db [mkTestPoint 4 2, mkTestPoint 5 1]
+  garbageCollect db 6
+  settle
+  holdsClosure con (mkTestEbHash 2) >>= (@?= False)
+
+-- | An EB whose txs are written but do not hash to its body, which the scan
+-- would take as complete in the immutable partition.
+test_promoteChecksHashes :: LeiosDbHandle IO -> IO ()
+test_promoteChecksHashes db = withRW db $ \con -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+  rwInsertEbPoint con point (encodeEndorserBlockSize eb)
+  void $ rwInsertEbBody con point eb
+  rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
+  assertPromoteFails db [point]
+  rwScanComplete con 0 >>= (@?= [])
+
+assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
+assertPromoteFails db points =
+  tryDb (leiosDbPromoteToImmutable db points) >>= \case
     Left _ -> pure ()
     Right () -> assertFailure "promoting an EB whose closure is incomplete succeeded"
  where
@@ -854,9 +894,6 @@ test_schemaAtHandleCreation volDbPath immDbPath =
     forM_ [(vol, "vol"), (imm, "imm")] $ \(objs, file) ->
       forM_ ["ebs", "idx_ebs_ebHashBytes"] $ \name ->
         assertBool (file <> " has " <> name) (name `elem` objs)
-    forM_ ["pinned"] $ \name -> do
-      assertBool ("vol has " <> name) (name `elem` vol)
-      assertBool ("imm lacks " <> name) (name `notElem` imm)
 
 -- | A file that exists without a schema, as a crash between creating the file
 -- and applying the schema leaves it.
@@ -903,55 +940,6 @@ queryCount path query =
   withSqlFile path $ \sql ->
     SQL.withStatement sql (T.pack query) $ \stmt ->
       SQL.step stmt >> fromIntegral <$> SQL.columnInt64 stmt 0
-
--- | A pinned EB whose tx closure never arrives cannot be copied, so the
--- copier keeps retrying it for as long as the database is open. 'close' must
--- still return.
-test_closeWithPinnedEb :: Assertion
-test_closeWithPinnedEb =
-  withTempLeiosDbPaths $ \volDbPath immDbPath -> do
-    copyFailed <- newEmptyMVar
-    let
-      -- The copier traces one of these per pass that cannot retire the pin.
-      -- Waiting for the first one leaves the copier on the retry path, which
-      -- is the case a stop check on the idle wait alone does not reach.
-      tracer = Tracer . emit $ \case
-        TraceLeiosDbCopyError{} -> void $ tryPutMVar copyFailed ()
-        _ -> pure ()
-      point = mkTestPoint 5 1
-    closed <-
-      Timeout.timeout closeTimeoutMicros $
-        withLeiosDBSQLite tracer volDbPath immDbPath $ \db -> do
-          -- The body never lands, so the closure stays incomplete and every
-          -- attempt to copy this EB fails.
-          withRW db $ \con -> rwInsertEbPoint con point (encodeEndorserBlockSize (mkTestEb 2))
-          leiosDbPromoteToImmutable db [point]
-          takeMVar copyFailed
-    case closed of
-      Nothing -> assertFailure "close did not return while an EB stayed pinned"
-      Just () -> pure ()
- where
-  closeTimeoutMicros = 30_000_000
-
--- | A pinned EB whose txs are written but do not hash to its body is not
--- copied to the immutable partition, where the scan would take it as complete.
-test_copyChecksHashes :: Assertion
-test_copyChecksHashes =
-  withTempLeiosDbPaths $ \volDbPath immDbPath -> do
-    copyFailed <- newEmptyMVar
-    let tracer = Tracer . emit $ \case
-          TraceLeiosDbCopyError{} -> void $ tryPutMVar copyFailed ()
-          _ -> pure ()
-        point = mkTestPoint 5 1
-        eb = mkTestEb 2
-    withLeiosDBSQLite tracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-      rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-      void $ rwInsertEbBody con point eb
-      rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
-      leiosDbPromoteToImmutable db [point]
-      Timeout.timeout 30_000_000 (takeMVar copyFailed)
-        >>= maybe (assertFailure "the copier did not refuse the EB") pure
-      rwScanComplete con 0 >>= (@?= [])
 
 -- * The two implementations agree
 
@@ -1000,23 +988,22 @@ prop_storeForgedEbThenLookup impl =
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
 --
--- The SQLite implementation copies pinned endorser blocks and sweeps what the
--- garbage collection marked in the background, so how far it has got at any
--- moment depends on its load. The in-memory implementation does both at once.
--- So the SQLite implementation's background work catches up after each
--- operation, before the next.
+-- The SQLite implementation sweeps what the garbage collection marked in the
+-- background, so how far it has got at any moment depends on its load. The
+-- in-memory implementation evicts at once. So the SQLite implementation's sweep
+-- catches up after each operation, before the next.
 prop_implementationsAgree :: Property
 prop_implementationsAgree =
   forAll genBodies $ \bodies ->
     forAllShrinkShow (genOps bodies) (shrinkList (const [])) show $ \ops ->
       ioProperty $ do
-        ((nPinned, nEvicted), inMemory) <-
+        ((nPromoted, nEvicted), inMemory) <-
           withFreshDb InMemory $ \db -> observe db (pure ()) bodies ops
         (_, sqlite) <-
           withFreshSQLiteFile $ \volDbPath _immDbPath db ->
             withSettle volDbPath db $ \db' settle -> observe db' settle bodies ops
         pure $
-          tabulate "endorser blocks pinned" [bucket nPinned] $
+          tabulate "endorser blocks promoted" [bucket nPromoted] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
               inMemory === sqlite
  where
@@ -1056,24 +1043,23 @@ poolTxBytes :: Int -> BS.ByteString
 poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 
 -- | Run the operations, then read back everything a reader can see of each
--- endorser block. Also how many endorser blocks the operations pinned and
+-- endorser block. Also how many endorser blocks the operations promoted and
 -- evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
 -- body is written once per point, for a point the database holds, where a
 -- point the garbage collection carried an older point's body write over to
 -- counts as written, since the node then holds the endorser block; and an
--- endorser block is promoted only with a complete closure, as the node pins
+-- endorser block is promoted only with a complete closure, as the node promotes
 -- only what an immutable block certifies, and its ChainSel adopts a block
 -- certifying an endorser block only once it holds that endorser block's
 -- closure. So this tracks which points and
 -- bodies the garbage collection evicts: those of every endorser block all of
--- whose points are older than its slot, pinned or not, since a pinned one has
--- a complete closure, so has been copied; and every other point older than its
--- slot.
+-- whose points are older than its slot, promoted or not, since a promoted one
+-- has been copied; and every other point older than its slot.
 --
--- An endorser block is also promoted at most once: the node pins only what the
--- immutable chain certifies, and a chain cannot certify the same endorser
+-- An endorser block is also promoted at most once: the node promotes only what
+-- the immutable chain certifies, and a chain cannot certify the same endorser
 -- block twice, since it cannot be valid twice.
 --
 -- @settle@ runs after each operation.
@@ -1102,18 +1088,18 @@ observe db settle bodies ops = withRW db $ \rw -> do
   complete <- rwScanComplete rw 0
   pure (counts, (seen, complete))
  where
-  go _rw _points _bodied pinned nEvicted [] = pure (length pinned, nEvicted)
-  go rw points bodied pinned nEvicted (op : rest) = case op of
+  go _rw _points _bodied promoted nEvicted [] = pure (length promoted, nEvicted)
+  go rw points bodied promoted nEvicted (op : rest) = case op of
     OpPoint point -> do
       rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
       settle
-      go rw (point : points) bodied pinned nEvicted rest
+      go rw (point : points) bodied promoted nEvicted rest
     OpBody point
       | point `elem` points && point `notElem` bodied -> do
           rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
           settle
-          go rw points (point : bodied) pinned nEvicted rest
-      | otherwise -> go rw points bodied pinned nEvicted rest
+          go rw points (point : bodied) promoted nEvicted rest
+      | otherwise -> go rw points bodied promoted nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
       rwInsertTxs
@@ -1123,17 +1109,17 @@ observe db settle bodies ops = withRW db $ \rw -> do
         | offset <- offsets
         ]
       settle
-      go rw points bodied pinned nEvicted rest
-    OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` pinned] of
+      go rw points bodied promoted nEvicted rest
+    OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
         complete <- holdsClosure rw ebHash
         if complete
           then do
             leiosDbPromoteToImmutable db [point]
             settle
-            go rw points bodied (nub (ebHash : pinned)) nEvicted rest
-          else go rw points bodied pinned nEvicted rest
-      [] -> go rw points bodied pinned nEvicted rest
+            go rw points bodied (nub (ebHash : promoted)) nEvicted rest
+          else go rw points bodied promoted nEvicted rest
+      [] -> go rw points bodied promoted nEvicted rest
     OpGc slot -> do
       garbageCollect db slot
       settle
@@ -1153,13 +1139,12 @@ observe db settle bodies ops = withRW db $ \rw -> do
         rw
         (filter kept points)
         (nub (filter kept bodied <> carried))
-        pinned
+        promoted
         (nEvicted + length evicted)
         rest
 
--- | Hand the action a wait for the SQLite implementation's background work to
--- catch up: for its sweep to have deleted every row it collects, and for its
--- copier to have copied every pinned point. The action gets the handle back,
+-- | Hand the action a wait for the SQLite implementation's sweep to catch up:
+-- to have deleted every row it collects. The action gets the handle back,
 -- recording what each garbage collection collects: the rows before its slot,
 -- written before it ran.
 withSettle ::
@@ -1178,18 +1163,15 @@ withSettle volDbPath db action = do
           rowId <- sum <$> query "SELECT coalesce(max(id), 0) FROM ebs" (`SQL.columnInt64` 0)
           modifyIORef' frontiersVar ((unSlotNo slot, rowId) :)
           garbageCollect db slot
-        -- The pinned points, and the rows some garbage collection collects.
+        -- The rows some garbage collection collects.
         backlog = do
           frontiers <- readIORef frontiersVar
-          pinned <- sum <$> query "SELECT COUNT(*) FROM pinned" (`SQL.columnInt64` 0)
           rows <-
             query
-              "SELECT ebSlot, id FROM ebs WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM pinned)"
+              "SELECT ebSlot, id FROM ebs"
               (\stmt -> (,) <$> SQL.columnInt64 stmt 0 <*> SQL.columnInt64 stmt 1)
           pure $
-            pinned
-              + fromIntegral
-                (length [() | (slot, rowId) <- rows, any (\(s, r) -> slot < fromIntegral s && rowId <= r) frontiers])
+            length [() | (slot, rowId) <- rows, any (\(s, r) -> slot < fromIntegral s && rowId <= r) frontiers]
         poll =
           backlog >>= \case
             0 -> pure ()
@@ -1197,7 +1179,7 @@ withSettle volDbPath db action = do
         settle =
           Timeout.timeout settleTimeoutMicros poll >>= \case
             Just () -> pure ()
-            Nothing -> assertFailure "the SQLite implementation's background work did not catch up"
+            Nothing -> assertFailure "the SQLite implementation's sweep did not catch up"
     action db{garbageCollect = collect} settle
  where
   settleTimeoutMicros = 10_000_000
