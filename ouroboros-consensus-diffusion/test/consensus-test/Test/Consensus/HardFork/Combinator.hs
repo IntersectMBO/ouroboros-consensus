@@ -55,7 +55,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, forgeLeiosEb)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, ProtVerParity (..), forgeLeiosEb)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -139,7 +139,7 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
       }
 
   mkForgedLeiosEb :: NonEmpty (GenTx BlockA) -> ForgedEndorserBlock
-  mkForgedLeiosEb = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
+  mkForgedLeiosEb = forgeLeiosEb EvenProtVer . fmap (fromShort . toRawTxIdHash . txId)
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB

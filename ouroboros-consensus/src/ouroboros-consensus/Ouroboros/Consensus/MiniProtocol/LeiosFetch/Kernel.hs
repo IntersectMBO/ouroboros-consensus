@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol (..)
   , leiosEbByteSizeBounds
   )
+import Ouroboros.Consensus.Leios.TxCache.API (LeiosTxCache (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
@@ -83,10 +84,13 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
+  , acquireCachedBody
   , acquireForgedEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosFetchRequest
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosFetchRequest
   , LeiosOutstanding (..)
   , OfferedHalves (..)
   , PeerOffer (..)
@@ -481,6 +485,10 @@ leiosFetchAnnouncementFocuser kernel =
 -- tracking its endorser block too would let a pool double what its won slots
 -- cost us. If that one turns out to be the certified one, a verified
 -- certificate gives it an entry then.
+--
+-- If the announcement takes the focus and the LeiosTxCache holds its endorser
+-- block's body, taken in for another point, this acquires it at this point
+-- from there ('acquireCachedBody'), rather than fetching it again.
 onNewLeiosAnnouncement ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
@@ -497,12 +505,12 @@ onNewLeiosAnnouncement kernel valid = do
           if tooOld || not introducesFocus
             then (outstanding, False)
             else (outstanding', True)
-  when changed $
-    void $
-      tryPutMVar lfcReady ()
+  when changed $ do
+    acquireCachedBody (lfkContext kernel) point announcementEbBounds
+    void $ tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
-  MkValidAnnouncement{announcingHeader = anc, announcementOnset} = valid
+  MkValidAnnouncement{announcingHeader = anc, announcementOnset, announcementEbBounds} = valid
   announcement = ancAnnouncement anc
   elId = ancElectionId anc
   slot = electionSlot elId
@@ -616,6 +624,11 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- it started, comes to fetch the certified one. Each iteration focuses the
 -- elections certified since the one before, so a certificate verified after
 -- the offer arrived still moves the focus. A pruning alone does not wake it.
+--
+-- If that moves an election's focus onto an endorser block whose body the
+-- LeiosTxCache holds, taken in for another point, this acquires it at the
+-- certified point from there ('acquireCachedBody'), rather than fetching it
+-- again.
 leiosFetchCertificateFocuser ::
   IOLike m =>
   ChainDB m blk ->
@@ -636,21 +649,39 @@ leiosFetchCertificateFocuser chainDB kernel = go SNothing
     let arrived =
           forgetFingerprint certified
             `Map.difference` strictMaybe Map.empty forgetFingerprint seen
-    modifyMVar_ lfcOutstanding $ \outstanding ->
-      pure $ Map.foldlWithKey' focus outstanding arrived
+    missing <- modifyMVar lfcOutstanding $ \outstanding ->
+      pure $ Map.foldlWithKey' focus (outstanding, []) arrived
+    -- The committee voted for each at its point, so the ledger's bounds there
+    -- admit it.
+    forM_ missing $ \point -> acquireCachedBody (lfkContext kernel) point maxBound
     void $ tryPutMVar lfcReady ()
     go (SJust certified)
 
-  focus outstanding elId ebHash = focusCertifiedEb elId ebHash outstanding
+  focus (outstanding, missing) elId ebHash =
+    let outstanding' = focusCertifiedEb elId ebHash outstanding
+        point = MkLeiosPoint (electionSlot elId) ebHash
+     in ( outstanding'
+        , case ebState outstanding' Map.!? point of
+            Just (MkEbState _onset NoBody) -> point : missing
+            _ -> missing
+        )
 
--- | Prune the node's LeiosFetch state, and the peers' offers and claims, to
--- the immutable tip's slot.
+-- | Prune the node's LeiosFetch state, the peers' offers and claims, and the
+-- LeiosTxCache to the immutable tip's slot.
+--
+-- The LeiosTxCache must be pruned to a slot strictly before the LeiosDB is;
+-- see 'evictOlderThan'. The ChainDB prunes the LeiosDB only to the slot of the
+-- blocks it has copied to the ImmutableDB, after a delay, so pruning the cache
+-- as soon as the immutable tip advances comes first.
+--
+-- TODO Make that ordering structural rather than a matter of timing.
 pruneLeiosFetchToImmTip ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
   SlotNo ->
   m ()
 pruneLeiosFetchToImmTip kernel immTipSlot = do
+  _ <- evictOlderThan lfcTxCache immTipSlot
   modifyMVar_ lfcOutstanding $ pure . pruneOutstandingToImmTip immTipSlot
   -- Offers are keyed by point and claims by election, which both order by
   -- slot first.
@@ -664,4 +695,4 @@ pruneLeiosFetchToImmTip kernel immTipSlot = do
         (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers, lfkPrunedSlot} = kernel
-  MkLeiosFetchClientContext{lfcOutstanding} = lfkContext
+  MkLeiosFetchClientContext{lfcOutstanding, lfcTxCache} = lfkContext
