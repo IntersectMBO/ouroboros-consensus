@@ -3,6 +3,7 @@
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
+  , LeiosTxCacheInsertBodySummary (..)
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
   , fetchArrivalEvicted
@@ -25,6 +26,10 @@ data TraceLeiosFetchClientEvent peer
     -- write is durable, and was needed only if no other delivery's write
     -- settled first.
     TraceLeiosFetchClientBlockArrived !peer !LeiosPoint !FetchArrivalBytes
+  | -- | The node took the endorser block at this point from the body the
+    -- LeiosTxCache held for another point, rather than fetching it. Traced once
+    -- the write is durable, if no delivery's write settled first.
+    TraceLeiosFetchClientBlockFromCache !LeiosPoint
   | -- | Some of an endorser block's transactions arrived from this peer, their
     -- bytes classified by whether the node needed them.
     TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
@@ -37,6 +42,24 @@ data TraceLeiosFetchClientEvent peer
     TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
   deriving (Show, Functor)
 
+-- | Summary of an EB body inserted into the LeiosTxCache, for observability.
+-- The counts nest: @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
+data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
+  { ibsTxsInEb :: !Int
+  -- ^ txs the EB body references
+  , ibsTracked :: !Int
+  -- ^ of those, how many the cache already tracked
+  , ibsAcquired :: !Int
+  -- ^ of those tracked, how many were already acquired (inserted or validated)
+  , ibsValidated :: !Int
+  -- ^ of those acquired, how many were already validated
+  , ibsCacheTxCount :: !Int
+  -- ^ total txs the cache tracks after this insert
+  , ibsCacheLoad :: !Double
+  -- ^ 'ibsCacheTxCount' as a fraction of the worst-case cache capacity
+  }
+  deriving (Eq, Show)
+
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
 -- partitioned by what the node already had of them. The four fields sum to the
 -- message's total size.
@@ -45,7 +68,7 @@ data FetchArrivalBytes = MkFetchArrivalBytes
   -- ^ Bytes of an invalid message (the whole message).
   , fabEvicted :: !BytesSize
   -- ^ Bytes the node no longer tracked, though it presumably once did: their
-  -- point was pruned.
+  -- point was pruned, or the LeiosTxCache had evicted them.
   , fabGood :: !BytesSize
   -- ^ Bytes the node needed.
   , fabExtra :: !BytesSize
