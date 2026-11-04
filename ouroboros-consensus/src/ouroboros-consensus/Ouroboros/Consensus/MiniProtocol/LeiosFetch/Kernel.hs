@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , withLeiosFetchPeer
   , recordLeiosOffer
   , onNewLeiosAnnouncement
+  , onForgedLeiosEb
   , leiosFetchDecisionLoop
   , leiosFetchPruner
   ) where
@@ -52,10 +53,15 @@ import Ouroboros.Consensus.Leios.Protocol
   )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
+  , ForgedEndorserBlock (..)
   , LeiosPoint (..)
+  , endorserBlockHash
   , minCertificationSlot
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (..)
+  , acquireForgedEb
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosEbBounds (..)
   , LeiosFetchRequest
@@ -64,6 +70,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
+  , markReceivingFromForge
   , pruneOffers
   , pruneOutstandingToImmTip
   , recordReferencedPoint
@@ -284,6 +291,36 @@ onNewLeiosAnnouncement kernel valid = do
   elId = ancElectionId anc
   slot = electionSlot elId
   ebHash = announcementEbHash announcement
+  point = MkLeiosPoint slot ebHash
+
+-- | The forge's counterpart to receiving an announcement and its endorser block
+-- from a peer: take in the endorser block the node's own forge produced, and
+-- the header announcing it, with no peer.
+--
+-- The point is marked 'ReceivingFromForge' at once, before any peer could relay the
+-- announcement back, so the node never fetches it, and its election is focused
+-- on it. Then 'acquireForgedEb' writes and acquires it. Nothing here waits for
+-- the writes.
+--
+-- The header must announce this endorser block.
+onForgedLeiosEb ::
+  IOLike m =>
+  LeiosFetchKernel m peer blk ->
+  AnnouncingHeader blk ->
+  ForgedEndorserBlock ->
+  m ()
+onForgedLeiosEb kernel anc forged = do
+  modifyMVar_ lfcOutstanding $ \outstanding ->
+    pure $
+      if slot < outstandingPrunedSlot outstanding
+        then outstanding
+        else focusElectionIfUnfocused elId ebHash $ markReceivingFromForge point outstanding
+  acquireForgedEb (lfkContext kernel) point forged
+ where
+  MkLeiosFetchClientContext{lfcOutstanding} = lfkContext kernel
+  elId = ancElectionId anc
+  slot = electionSlot elId
+  ebHash = endorserBlockHash (forgedEbBody forged)
   point = MkLeiosPoint slot ebHash
 
 -- | Each time something might give a peer something new to do, decide what to
