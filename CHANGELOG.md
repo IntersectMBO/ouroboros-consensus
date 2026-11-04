@@ -6,6 +6,28 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.4.0.0'></a>
+## 5.4.0.0 -- 2026-11-04
+
+### Breaking
+
+- `Ouroboros.Consensus.Storage.ChainDB.Impl.Query.getPerasVotingView` and
+  `getTimeResolutionContext` no longer take a `LedgerConfig` argument; they read
+  the ledger config from the `ChainDbEnv`, like the other ChainDB queries.
+
+- Bump `cardano-ledger-core` to `^>=1.23`, `cardano-ledger-alonzo` to `^>=1.18`
+  and `cardano-ledger-dijkstra` to `^>=0.5`.
+
+### Non-Breaking
+
+- The ChainDB no longer keeps its arguments reachable for its whole lifetime.
+  The Peras voting view and time resolution context handles took the ledger
+  config from the arguments in a closure that is only evaluated when the handle
+  is used, so until then (with Peras disabled, forever) it kept the arguments
+  reachable, including the LedgerDB's `lgrGenesis` and with it the genesis
+  ledger state and its tables. On networks with a large genesis UTxO or
+  delegation set this cost several hundred MiB of live data.
+
 <a id='changelog-5.3.0.0'></a>
 ## 5.3.0.0 -- 2026-10-30
 
