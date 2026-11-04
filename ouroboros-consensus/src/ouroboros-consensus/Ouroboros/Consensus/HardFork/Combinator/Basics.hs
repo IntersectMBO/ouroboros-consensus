@@ -6,7 +6,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -749,18 +748,3 @@ instance
               getPerasCertInBlock block
         )
       $ nsBlock
-
-  readPerasPrivateKeyFromEnv _proxy =
-    fmap PerEraPerasPrivateKey $
-      hsequence' $
-        hcpure proxySingle dispatchReadKey
-   where
-    dispatchReadKey ::
-      forall blk.
-      SingleEraBlock blk =>
-      (Either String :.: WrapPerasPrivateKey) blk
-    dispatchReadKey =
-      Comp
-        . fmap WrapPerasPrivateKey
-        . readPerasPrivateKeyFromEnv
-        $ Proxy @blk
