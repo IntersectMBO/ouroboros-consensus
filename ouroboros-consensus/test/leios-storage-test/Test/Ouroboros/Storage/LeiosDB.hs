@@ -93,10 +93,6 @@ tests =
   testGroup "LeiosDB" $
     forEachImplementation mkTestGroups
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
-         , -- InMemory only: on SQLite a failed write also stops the writer, which
-           -- is linked to the thread that opened the database.
-           testCase "InMemory: writing a body for an unwritten point fails, as on SQLite" $
-             withFreshDb InMemory test_ebBodyWithoutPointFails
          , -- InMemory only: the SQLite implementation sweeps in the background.
            testGroup
              "InMemory: garbage collection"
@@ -220,6 +216,8 @@ mkTestGroups impl =
       "points"
       [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
       , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
+      , testCase "a body for an unwritten point writes the point" $
+          withFreshDb impl test_ebBodyWritesPoint
       ]
   , testGroup
       "ebs"
@@ -256,6 +254,8 @@ mkTestGroups impl =
           withSettledDb impl test_gcKeepsMissingTxCount
       , testCase "keeps only the newest point of an EB announced again in each round" $
           withSettledDb impl test_gcBoundsPointsOfReannouncedEb
+      , testCase "drops the writes of a point older than the latest collection" $
+          withSettledDb impl test_gcDropsWritesOfCollectedPoint
       ]
   , testGroup
       "promotion"
@@ -583,15 +583,12 @@ test_scanFindsLaterPoint db = do
 
 -- | A body can only be written for a point already written, by 'writeEbPoint'
 -- on the announcement path.
-test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
-test_ebBodyWithoutPointFails db = withRW db $ \con -> do
-  result <- tryDb $ rwInsertEbBody con (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
-  case result of
-    Left _ -> pure ()
-    Right _ -> assertFailure "writeEbBody succeeded for a point that was never written"
- where
-  tryDb :: IO a -> IO (Either LeiosDbException a)
-  tryDb = try
+test_ebBodyWritesPoint :: LeiosDbHandle IO -> IO ()
+test_ebBodyWritesPoint db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+  void $ rwInsertEbBody con (mkTestPoint 1 1) eb
+  rwScanEbPoints con >>= (@?= [(1, mkTestEbHash 1)])
+  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
 -- | A tx write only fills a tx the body declares, at its declared size, the
 -- first of a write winning. Anything else changes nothing.
@@ -719,6 +716,21 @@ test_gcKeepsMissingTxCount db settle = withRW db $ \con -> do
   settle
   rwInsertTxs con again (drop 1 (allTxsFor eb))
   rwScanComplete con 6 >>= (@?= [again])
+
+-- | After a collection at slot 6, a point at slot 5 and a body for another
+-- point at slot 5 are written, and one at slot 4 that an earlier collection at
+-- slot 3 would not collect.
+test_gcDropsWritesOfCollectedPoint :: LeiosDbHandle IO -> IO () -> IO ()
+test_gcDropsWritesOfCollectedPoint db settle = withRW db $ \con -> do
+  writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
+  garbageCollect db 6
+  garbageCollect db 3
+  settle
+  rwInsertEbPoint con (mkTestPoint 5 2) (encodeEndorserBlockSize (mkTestEb 2))
+  rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
+  rwInsertEbPoint con (mkTestPoint 4 1) (encodeEndorserBlockSize (mkTestEb 2))
+  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
+  rwLookupEbBody con (mkTestEbHash 3) >>= (@?= Nothing)
 
 -- | An EB written whole at slot 10 is announced again in each of nine more
 -- rounds, each followed by a collection at its slot.
@@ -1047,16 +1059,17 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
--- body is written once per point, for a point the database holds, where a
--- point the garbage collection carried an older point's body write over to
--- counts as written, since the node then holds the endorser block; and an
+-- body is written once per point, where a point the garbage collection carried
+-- an older point's body write over to counts as written, since the node then
+-- holds the endorser block; and an
 -- endorser block is promoted only with a complete closure, as the node promotes
 -- only what an immutable block certifies, and its ChainSel adopts a block
 -- certifying an endorser block only once it holds that endorser block's
 -- closure. So this tracks which points and
 -- bodies the garbage collection evicts: those of every endorser block all of
 -- whose points are older than its slot, promoted or not, since a promoted one
--- has been copied; and every other point older than its slot.
+-- has been copied; and every other point older than its slot. A point older
+-- than the latest garbage collection is not written at all.
 --
 -- An endorser block is also promoted at most once: the node promotes only what
 -- the immutable chain certifies, and a chain cannot certify the same endorser
@@ -1079,7 +1092,7 @@ observe ::
       )
     )
 observe db settle bodies ops = withRW db $ \rw -> do
-  counts <- go rw [] [] [] 0 ops
+  counts <- go rw 0 [] [] [] 0 ops
   seen <- forM (Map.toList bodies) $ \(ebHash, (eb, _)) ->
     (,,)
       <$> rwLookupEbBody rw ebHash
@@ -1088,18 +1101,19 @@ observe db settle bodies ops = withRW db $ \rw -> do
   complete <- rwScanComplete rw 0
   pure (counts, (seen, complete))
  where
-  go _rw _points _bodied promoted nEvicted [] = pure (length promoted, nEvicted)
-  go rw points bodied promoted nEvicted (op : rest) = case op of
+  go _rw _gcSlot _points _bodied promoted nEvicted [] = pure (length promoted, nEvicted)
+  go rw gcSlot points bodied promoted nEvicted (op : rest) = case op of
     OpPoint point -> do
       rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
       settle
-      go rw (point : points) bodied promoted nEvicted rest
+      go rw gcSlot (written point points) bodied promoted nEvicted rest
     OpBody point
-      | point `elem` points && point `notElem` bodied -> do
+      | point `notElem` bodied -> do
           rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
           settle
-          go rw points (point : bodied) promoted nEvicted rest
-      | otherwise -> go rw points bodied promoted nEvicted rest
+          let bodied' = if collected point then bodied else point : bodied
+          go rw gcSlot (written point points) bodied' promoted nEvicted rest
+      | otherwise -> go rw gcSlot points bodied promoted nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
       rwInsertTxs
@@ -1109,7 +1123,7 @@ observe db settle bodies ops = withRW db $ \rw -> do
         | offset <- offsets
         ]
       settle
-      go rw points bodied promoted nEvicted rest
+      go rw gcSlot points bodied promoted nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
         complete <- holdsClosure rw ebHash
@@ -1117,9 +1131,9 @@ observe db settle bodies ops = withRW db $ \rw -> do
           then do
             leiosDbPromoteToImmutable db [point]
             settle
-            go rw points bodied (nub (ebHash : promoted)) nEvicted rest
-          else go rw points bodied promoted nEvicted rest
-      [] -> go rw points bodied promoted nEvicted rest
+            go rw gcSlot points bodied (nub (ebHash : promoted)) nEvicted rest
+          else go rw gcSlot points bodied promoted nEvicted rest
+      [] -> go rw gcSlot points bodied promoted nEvicted rest
     OpGc slot -> do
       garbageCollect db slot
       settle
@@ -1137,20 +1151,25 @@ observe db settle bodies ops = withRW db $ \rw -> do
             ]
       go
         rw
+        (max slot gcSlot)
         (filter kept points)
         (nub (filter kept bodied <> carried))
         promoted
         (nEvicted + length evicted)
         rest
+   where
+    collected point = pointSlotNo point < gcSlot
+    written point ps
+      | collected point || point `elem` ps = ps
+      | otherwise = point : ps
 
 -- | Hand the action a wait for the SQLite implementation's sweep to catch up:
--- to have deleted every row it collects. The action gets the handle back,
--- recording what each garbage collection collects: the rows before its slot,
--- written before it ran.
+-- to have deleted every row before the slot of the latest garbage collection.
+-- The action gets the handle back, recording that slot.
 withSettle ::
   FilePath -> LeiosDbHandle IO -> (LeiosDbHandle IO -> IO () -> IO a) -> IO a
 withSettle volDbPath db action = do
-  frontiersVar <- newIORef []
+  gcSlotVar <- newIORef 0
   bracket (SQL.open (T.pack volDbPath)) SQL.close $ \conn -> do
     SQL.exec conn (T.pack "pragma busy_timeout = 1000;")
     let query sql k = SQL.withStatement conn (T.pack sql) $ \stmt ->
@@ -1160,18 +1179,15 @@ withSettle volDbPath db action = do
                   SQL.Done -> pure acc
            in loop []
         collect slot = do
-          rowId <- sum <$> query "SELECT coalesce(max(id), 0) FROM ebs" (`SQL.columnInt64` 0)
-          modifyIORef' frontiersVar ((unSlotNo slot, rowId) :)
+          modifyIORef' gcSlotVar (max (unSlotNo slot))
           garbageCollect db slot
-        -- The rows some garbage collection collects.
+        -- The rows the latest garbage collection collects.
         backlog = do
-          frontiers <- readIORef frontiersVar
-          rows <-
-            query
-              "SELECT ebSlot, id FROM ebs"
-              (\stmt -> (,) <$> SQL.columnInt64 stmt 0 <*> SQL.columnInt64 stmt 1)
-          pure $
-            length [() | (slot, rowId) <- rows, any (\(s, r) -> slot < fromIntegral s && rowId <= r) frontiers]
+          gcSlot <- readIORef gcSlotVar
+          sum
+            <$> query
+              ("SELECT COUNT(*) FROM ebs WHERE ebSlot < " <> show gcSlot)
+              (`SQL.columnInt64` 0)
         poll =
           backlog >>= \case
             0 -> pure ()

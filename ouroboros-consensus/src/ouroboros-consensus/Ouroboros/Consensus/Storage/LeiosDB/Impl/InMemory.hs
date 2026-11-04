@@ -83,12 +83,15 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- reads fall back to this and 'imImmutableEbTxBytes'.
   , imImmutableEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
+  , imGcSlot :: !SlotNo
+  -- ^ The slot of the latest garbage collection. The writes of a point before
+  -- it are dropped, as the SQLite backend's are.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty 0
 
 -- | An EB body: the bytes it arrived in, as the SQLite backend's @body@
 -- column, and the txs it lists by offset.
@@ -173,6 +176,7 @@ imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
         { imEbPoints = Map.filterWithKey (\p _ -> pointSlotNo p >= slot) (imEbPoints s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
+        , imGcSlot = max slot (imGcSlot s)
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -240,9 +244,16 @@ imScanEbPoints stateVar = atomically $ do
 -- | Insert an announced EB point. Idempotent: a second insert at the
 -- same point keeps the first-seen size.
 imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
-imInsertEbPoint stateVar point ebBytesSize = atomically $
-  modifyTVar stateVar $ \s ->
-    s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
+imInsertEbPoint stateVar point ebBytesSize =
+  atomically $
+    modifyTVar stateVar (insertPoint point ebBytesSize)
+
+-- | 'imInsertEbPoint' on the state, unless the latest garbage collection
+-- collects the point.
+insertPoint :: LeiosPoint -> BytesSize -> InMemoryLeiosDb -> InMemoryLeiosDb
+insertPoint point ebBytesSize s
+  | pointSlotNo point < imGcSlot s = s
+  | otherwise = s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
 imLookupEbBody ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe ByteString)
@@ -252,7 +263,8 @@ imLookupEbBody stateVar ebHash = atomically $ do
     sbBytes
       <$> (Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state))
 
--- | Mirrors the SQLite backend: the body, once per EB hash.
+-- | Mirrors the SQLite backend: the point if not written yet, then the body.
+-- Nothing, if the latest garbage collection collects the point.
 imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
@@ -262,18 +274,18 @@ imInsertEbBody ::
 imInsertEbBody stateVar point eb = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
-  unless known $
-    throwLeiosDbException "writeEbBody: point not registered (programmer error)"
   atomically $ do
+    collected <- (pointSlotNo point <) . imGcSlot <$> readTVar stateVar
+    if collected then pure () else fill
+ where
+  fill = do
     modifyTVar stateVar $ \s ->
-      s
+      (insertPoint point (fromIntegral (BS.length (sbBytes body))) s)
         { -- The body is fully determined by the EB content hash, so a second
           -- insertion at the same hash is a no-op.
           imEbBodies =
             Map.insertWith (\_ old -> old) ebHash body (imEbBodies s)
         }
- where
   ebHash = pointEbHash point
   refs =
     IntMap.fromList

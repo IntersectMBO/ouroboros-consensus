@@ -88,7 +88,6 @@ data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
   , stInsertEbCopy :: !DB.Statement
-  , stHasPoint :: !DB.Statement
   , stInsertEbBody :: !DB.Statement
   , stLookupEbRows :: !DB.Statement
   , stScanEbsSince :: !DB.Statement
@@ -137,7 +136,6 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stScanEbPoints <- prep sql_scan_ebs
   stInsertEbPoint <- prep sql_insert_eb
   stInsertEbCopy <- prep sql_insert_eb_copy
-  stHasPoint <- prep sql_has_point
   stInsertEbBody <- prep sql_insert_eb_body
   stLookupEbRows <- prep sql_lookup_eb_rows
   stScanEbsSince <- prep sql_scan_ebs_since
@@ -151,7 +149,6 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
   dbFinalize stInsertEbCopy
-  dbFinalize stHasPoint
   dbFinalize stInsertEbBody
   dbFinalize stLookupEbRows
   dbFinalize stScanEbsSince
