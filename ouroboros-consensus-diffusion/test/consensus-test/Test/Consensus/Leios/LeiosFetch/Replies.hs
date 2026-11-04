@@ -26,6 +26,7 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
+import qualified Data.IntMap.NonEmpty as NEIntMap
 import Data.List (isInfixOf)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
@@ -66,7 +67,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
-  , LeiosBlockTxsRequest
+  , LeiosBlockTxsRequest (..)
   , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
   , OfferedHalves (..)
@@ -79,6 +80,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullLeiosJobPool)
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , newLeiosDBInMemory
@@ -92,7 +94,7 @@ import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, un
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests =
@@ -109,7 +111,7 @@ tests =
         "the client acquires nothing for a body whose point was pruned while it was being written, and fetches the endorser block again at a newer point"
         test_prunedWhileWriting
     , testCase
-        "the client acquires no closure whose transactions are not the sizes its endorser block declares, and disconnects the peer that served them"
+        "the client acquires no closure whose transactions are not the sizes its endorser block declares, fetches no more of it, and disconnects the peer that served them"
         test_wrongSizedTxs
     , testCase
         "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
@@ -231,24 +233,32 @@ closureRequest ctx point = do
     [req] -> pure req
     _ -> assertFailure $ "expected one request, got " <> show (length reqs)
 
--- | An endorser block that misstates the sizes of its two transactions, by
--- amounts that cancel out, so that their job's count, total size and hashes
--- all check out. The LeiosDB drops both, so the client acquires no closure, and
--- its settlement throws, through its link to the client's thread.
+-- | An endorser block that misstates the sizes of its first two transactions,
+-- by amounts that cancel out, so that their job's count, total size and hashes
+-- all check out. Its third transaction is too big to share their job. The
+-- LeiosDB drops the first two, so the client acquires no closure, fetches no
+-- more of it, not even the third's job, and its settlement throws, through its
+-- link to the client's thread.
 test_wrongSizedTxs :: Assertion
 test_wrongSizedTxs = do
   let tx0 = MkLeiosTx (BS8.pack "tx zero")
       tx1 = MkLeiosTx (BS8.pack "tx one")
-      eb = mkEndorserBlock [(hashLeiosTx tx0, 6), (hashLeiosTx tx1, 7)]
+      tx2 = MkLeiosTx (BS8.replicate (64 * 1024) 'x')
+      eb = mkEndorserBlock [(hashLeiosTx tx0, 6), (hashLeiosTx tx1, 7), (hashLeiosTx tx2, 64 * 1024)]
       point = MkLeiosPoint (SlotNo 5) (endorserBlockHash eb)
       expected = ExnLeiosBlockTxsWrongSize point [0, 1]
   (ctx, notes) <- newContextAt point (pure ())
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
-  req <- closureRequest ctx point
+  MkLeiosBlockTxsRequest _point jobs <- closureRequest ctx point
+  NEIntMap.size jobs @?= 2
   result <-
     try $ do
-      processLeiosBlockTxs ctx peer req (V.fromList [tx0, tx1])
+      processLeiosBlockTxs
+        ctx
+        peer
+        (MkLeiosBlockTxsRequest point (uncurry NEIntMap.singleton (NEIntMap.findMin jobs)))
+        (V.fromList [tx0, tx1])
       -- Until the settlement's exception interrupts this.
       threadDelay 2000000
   case result of
@@ -257,6 +267,7 @@ test_wrongSizedTxs = do
       | otherwise -> assertFailure $ "unexpected exception: " <> show exn
     Right () -> assertFailure "the client settled the transactions without disconnecting the peer"
   readTVarIO notes >>= (@?= [AcquiredBody point])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
 
 test_wrongHash :: Assertion
 test_wrongHash = do
@@ -339,4 +350,12 @@ assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of
   Just (MkEbState _onset NoBody) -> pure ()
   Just (MkEbState _onset ReceivingFromForge{}) -> assertFailure "the point is being received from the forge"
   Just (MkEbState _onset BodyAcquired{}) -> assertFailure "the point holds a body"
+  Nothing -> assertFailure "the point has no entry"
+
+assertNoJobLeft :: LeiosPoint -> LeiosOutstanding peer -> Assertion
+assertNoJobLeft point outstanding = case Map.lookup point (ebState outstanding) of
+  Just (MkEbState _onset (BodyAcquired jobPool)) ->
+    assertBool "the point has jobs left" (nullLeiosJobPool jobPool)
+  Just (MkEbState _onset ReceivingFromForge{}) -> assertFailure "the point is being received from the forge"
+  Just (MkEbState _onset NoBody) -> assertFailure "the point holds no body"
   Nothing -> assertFailure "the point has no entry"

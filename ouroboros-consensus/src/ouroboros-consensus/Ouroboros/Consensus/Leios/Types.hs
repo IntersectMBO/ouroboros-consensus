@@ -530,7 +530,8 @@ data LeiosEbSizes = MkLeiosEbSizes
   { lesBodySize :: !BytesSize
   -- ^ the size of 'encodeEndorserBlock'
   , lesTxsSize :: !Word64
-  -- ^ the total size of the transactions it references
+  -- ^ the total size of the transactions it references, which, unlike any one
+  -- of their sizes, can exceed what a 'BytesSize' holds
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

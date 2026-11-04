@@ -8,15 +8,12 @@
 
 -- | The downstream side of LeiosFetch.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
-  ( LeiosFetchClientPeer
-  , leiosFetchClientPeerIdle
-  , LeiosFetchClientPeerPipelined
+  ( LeiosFetchClientPeerPipelined
   , SomeLeiosFetchJob (..)
   , leiosFetchClientPeerPipelined
   , toLeiosFetchClientPeerPipelined
   ) where
 
-import Control.Monad.Class.MonadSTM (MonadSTM (..))
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Functor ((<&>))
 import Data.Primitive.MutVar (MutVar)
@@ -38,22 +35,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch (..)
   , Message (..)
   )
-
-type LeiosFetchClientPeer point eb tx m a =
-  Peer (LeiosFetch point eb tx) AsClient NonPipelined StIdle m a
-
--- | A client that requests nothing: it waits until told to stop, then sends
--- 'MsgDone'.
-leiosFetchClientPeerIdle ::
-  MonadSTM m =>
-  -- | blocks until the client should stop
-  STM m a ->
-  LeiosFetchClientPeer point eb tx m a
-leiosFetchClientPeerIdle awaitStop =
-  Effect $
-    atomically awaitStop <&> \x ->
-      Yield ReflClientAgency MsgDone $
-        Done ReflNobodyAgency x
 
 -- | A request to send, and what to do with its reply.
 data SomeLeiosFetchJob point eb tx m
