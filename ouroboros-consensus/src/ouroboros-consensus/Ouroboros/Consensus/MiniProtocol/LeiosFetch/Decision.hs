@@ -39,6 +39,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , refundEbRequest
   , refundTxRequest
   , completeTxRequest
+  , completeHeldTxs
 
     -- * Deciding
   , LeiosFetchStaticEnv (..)
@@ -706,6 +707,17 @@ completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
   dropJobs held =
     NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
   nonEmptyMap m = if Map.null m then Nothing else Just m
+
+-- | On a body write that found the txs at these offsets held at the point,
+-- remove the jobs it leaves nothing to fetch for: those whose txs are all held.
+completeHeldTxs :: LeiosPoint -> IntSet.IntSet -> LeiosOutstanding peer -> LeiosOutstanding peer
+completeHeldTxs point held o =
+  o{ebState = Map.adjust completeInJobPool point (ebState o)}
+ where
+  completeInJobPool (MkEbState onset fetchState) =
+    MkEbState onset $ case fetchState of
+      NoBody -> NoBody
+      BodyAcquired jobPool -> BodyAcquired $! Jobs.completeHeldJobs held jobPool
 
 {-------------------------------------------------------------------------------
   Deciding
