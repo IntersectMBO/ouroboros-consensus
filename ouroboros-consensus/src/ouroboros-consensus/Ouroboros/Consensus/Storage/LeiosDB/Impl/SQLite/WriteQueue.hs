@@ -36,14 +36,12 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
-  , EndorserBlockHash
+  ( EndorserBlock
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -61,49 +59,44 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
-  = WriteEbPoint
-      -- | the announced EB
-      !LeiosPoint
-      -- | its announced size
-      !BytesSize
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | WriteEbBody
+  = WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
       !EndorserBlock
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult [TxOffset])
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
-      -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      -- | where the worker puts the offsets dropped because the EB referenced
+      -- them with the wrong size
+      !(WriteResult [TxOffset])
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
+  | -- | Pin points for promotion; see 'sqlPromoteToImmutable'.
     PinEb
-      -- | the EBs to pin
-      ![EndorserBlockHash]
+      -- | the points to pin
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
-  | -- | The volatile half of a copy: the EB is in the immutable partition
+  | -- | The volatile half of a copy: the point is in the immutable partition
     -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
     MarkCopied
-      -- | the EBs now in the immutable partition
-      ![EndorserBlockHash]
+      -- | the points now in the immutable partition
+      ![LeiosPoint]
       -- | where the worker puts the result
       !(WriteResult ())
-  | -- | The GC MARK phase; see 'gcMark'.
-    GcMark
+  | -- | Raise the GC frontier to this slot: the worker's sweep then evicts
+    -- every point older than it that is not pinned; see 'sweepEbBatch'.
+    GarbageCollect
       -- | the GC frontier slot
       !SlotNo
-      -- | where the worker puts the number of 'ebs' rows marked
-      !(WriteResult Int)
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
@@ -174,13 +167,12 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 -- never its payload.
 describeJob :: WriteJob -> String
 describeJob = \case
-  WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
-  MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
-  GcMark slot _ -> "GcMark " <> show slot
+  PinEb points _ -> "PinEb (" <> show (length points) <> " points)"
+  MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " points)"
+  GarbageCollect slot _ -> "GarbageCollect " <> show slot
   Shutdown _ -> "Shutdown"
 
 -- | How many queued jobs the writer serves back-to-back before it takes a
@@ -207,7 +199,7 @@ writerQueueDepth :: Natural
 writerQueueDepth = numUpstreamPeers + forge + maintenance + slack
  where
   numUpstreamPeers = 20
-  -- the point, the body and the txs of a forged endorser block
-  forge = 3
+  -- the body and the txs of a forged endorser block
+  forge = 2
   maintenance = 4
   slack = 2
