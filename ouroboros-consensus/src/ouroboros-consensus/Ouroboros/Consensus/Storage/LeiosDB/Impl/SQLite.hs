@@ -35,7 +35,7 @@ import Control.Exception
   ( throwIO
   , toException
   )
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -53,12 +53,13 @@ import Control.ResourceRegistry
   , withRegistry
   )
 import Control.Tracer (Tracer, traceWith)
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
@@ -271,8 +272,10 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  -- What the sweep has yet to collect. Only the worker touches it.
-  frontiersVar <- newIORef []
+  -- The slot of the latest GC: the sweep collects the rows before it, and the
+  -- writes of a point before it are dropped, as GC collects that point.
+  -- Only the worker touches it.
+  gcSlotVar <- newIORef 0
   let worker :: WriterConns -> IO ()
       worker
         WriterConns
@@ -326,18 +329,25 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               -- outcome of that close to this job's awaiter.
               writeIORef shutdownVar (Just resultVar)
               pure Stop
-            WriteEbPoint point size resultVar ->
-              publish resultVar (sqlInsertEbPoint conn point size) >> pure Continue
-            WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody conn point eb) >> pure Continue
+            WriteEbPoint point size resultVar -> do
+              collected <- isCollected point
+              publish resultVar (unless collected $ sqlInsertEbPoint conn point size)
+                >> pure Continue
+            WriteEbBody point eb resultVar -> do
+              collected <- isCollected point
+              publish resultVar (unless collected $ sqlInsertEbBody conn point eb)
+                >> pure Continue
             WriteTxs point txs resultVar ->
               publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
             GcMark slot resultVar -> do
-              publish resultVar $
-                writeIORef frontiersVar =<< addGcFrontier volDb slot =<< readIORef frontiersVar
+              publish resultVar $ modifyIORef' gcSlotVar (max slot)
               pure ContinueAndSweep
+
+          -- Whether GC collected the point, so its writes are dropped.
+          isCollected :: LeiosPoint -> IO Bool
+          isCollected point = (pointSlotNo point <) <$> readIORef gcSlotVar
 
           -- Nothing queued and no sweep outstanding: wait for a job.
           blockUntilJob = IO.atomically $ do
@@ -362,8 +372,7 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               case sweep of
                 Nothing -> pure Nothing
                 Just nEbs -> do
-                  (evicted, frontiers) <- sweepEbBatch sweeperConn gcBatchSize =<< readIORef frontiersVar
-                  writeIORef frontiersVar frontiers
+                  evicted <- sweepEbBatch sweeperConn gcBatchSize =<< readIORef gcSlotVar
                   if evicted == 0
                     then do
                       when (nEbs > 0) $ do

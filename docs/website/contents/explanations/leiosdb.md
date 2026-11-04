@@ -32,9 +32,8 @@ Once its body is written, a row changes only through SQLite's incremental blob A
 ```mermaid
 erDiagram
     ebs {
-        INTEGER id PK "never reused"
-        INTEGER ebSlot UK
-        BLOB ebHashBytes UK
+        INTEGER ebSlot PK
+        BLOB ebHashBytes PK
         INTEGER ebBytesSize
         INTEGER txCount
         BLOB txBounds "n + 1 u32 positions in txs"
@@ -44,7 +43,7 @@ erDiagram
 ```
 
 - When a point is announced, its row is inserted. If another row holds the EB, the new row copies its body and closure in the same transaction.
-- When an EB body arrives, it is written into every row of the EB, with a closure of zeroes.
+- When an EB body arrives, it is written into every row of the EB, with a closure of zeroes, and its point's row is inserted if the announcement did not.
 - Each transaction write fills its transactions in place, in every row of the EB, through SQLite's incremental blob API. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A transaction whose bytes are still zeroes reads as not written: a valid transaction never is.
 - Only at startup, to seed what the node holds, does LeiosDB judge completeness: an EB is complete if each of its transactions hashes to what its body lists, or if the immutable partition holds it.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
@@ -56,7 +55,7 @@ Indexes:
 |-----------------------|--------------------|---------------------------|
 | `idx_ebs_ebHashBytes` | `ebs(ebHashBytes)` | Looking up an EB by hash  |
 
-The unique key on `(ebSlot, ebHashBytes)` serves the lookups by point, and the garbage collection's scan by slot.
+The primary key `(ebSlot, ebHashBytes)` serves the lookups by point, and the garbage collection's scan by slot. The blob API opens a row by its implicit rowid.
 
 ### Promotion and garbage collection
 
@@ -66,9 +65,10 @@ So every block in the ImmutableDB has the EB it certifies in the immutable parti
 A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
 An EB whose transactions do not hash to its body fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
-A garbage collection at a slot collects the rows before that slot, written before it ran.
+A garbage collection at a slot collects the rows before that slot.
 The writer deletes them in batches between the jobs it serves, so a write waits for one batch at most.
-What a garbage collection collects is kept in memory only: after a restart, the next one collects again.
+It also drops the point and body writes of a point before the latest garbage collection's slot, as that collection would delete it anyway: the ChainDB collects up to the ImmutableDB tip, and the fetch logic ignores announcements older than that.
+The slot is kept in memory only: after a restart, the next garbage collection sets it again.
 
 ## Immutable partition
 

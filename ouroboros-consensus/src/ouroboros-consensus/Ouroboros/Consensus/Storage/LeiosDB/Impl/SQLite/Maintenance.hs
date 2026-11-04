@@ -18,8 +18,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   , sqlGarbageCollect
 
     -- * GC sweep
-  , GcFrontier
-  , addGcFrontier
   , SweeperConn (..)
   , sweepEbBatch
 
@@ -63,7 +61,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (closureMatches, splitClosure)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
@@ -175,9 +172,9 @@ defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
 -- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the
--- MARK phase of GC mark-and-sweep, as a 'GcMark' job on the writer, which adds
--- a 'GcFrontier' for the sweep. The frontiers are in memory only: after a
--- restart, the next GC adds one again.
+-- MARK phase of GC mark-and-sweep, as a 'GcMark' job on the writer, which
+-- raises the slot the sweep collects before. The slot is in memory only: after
+-- a restart, the next GC sets it again.
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
 sqlGarbageCollect writeQueue gcSlot =
   void . await =<< submitJob writeQueue (GcMark gcSlot)
@@ -192,46 +189,18 @@ data SweeperConn = SweeperConn
   -- ^ Precompiled statements used by the sweeper.
   }
 
--- | What one GC collects: the rows before its slot, up to the newest row when
--- it ran. A point written after it ran stays until the next GC, even if it is
--- before the slot.
-data GcFrontier
-  = GcFrontier
-      -- | Collect the rows before this slot,
-      !SlotNo
-      -- | up to this row.
-      !Int64
-
--- | Add the frontier of a GC at the given slot to those the sweep has yet to
--- collect. It covers every frontier of a slot no later than its own.
-addGcFrontier :: DB.Database -> SlotNo -> [GcFrontier] -> IO [GcFrontier]
-addGcFrontier db slot frontiers = do
-  rowId <- queryInt64 db sql_gc_watermark
-  pure $ GcFrontier slot rowId : [f | f@(GcFrontier s _) <- frontiers, s > slot]
-
--- | One sweep transaction: delete up to the given number of rows a frontier
--- collects. Returns the number of rows deleted, and the frontiers left: a
--- frontier goes once it holds no rows. Runs on the writer, one batch per turn,
--- so an insert waits for a batch at most.
-sweepEbBatch :: SweeperConn -> Int64 -> [GcFrontier] -> IO (Int, [GcFrontier])
-sweepEbBatch SweeperConn{swDb, swStmts = SweeperStmts{swSweep}} batchSize = go
- where
-  go [] = pure (0, [])
-  go (frontier : rest) = do
-    deleted <- dbWithWriteTransactionRaw swDb $ useStmt swSweep $ do
-      -- batchSize will never be negative, but we handle a negative batch size
-      -- gracefully here with a negative LIMIT, which means no limit in SQLite.
-      dbBindInt64 swSweep 1 (if batchSize <= 0 then -1 else batchSize)
-      bindFrontier swSweep 2 frontier
-      dbStep1Safe swSweep
-      DB.changes swDb
-    if deleted > 0
-      then pure (deleted, frontier : rest)
-      else go rest
-
-  bindFrontier stmt i (GcFrontier slot rowId) = do
-    dbBindInt64 stmt i (fromIntegral (unSlotNo slot))
-    dbBindInt64 stmt (i + 1) rowId
+-- | One sweep transaction: delete up to the given number of rows before the
+-- slot of the latest GC. Returns the number of rows deleted. Runs on the
+-- writer, one batch per turn, so an insert waits for a batch at most.
+sweepEbBatch :: SweeperConn -> Int64 -> SlotNo -> IO Int
+sweepEbBatch SweeperConn{swDb, swStmts = SweeperStmts{swSweep}} batchSize gcSlot =
+  dbWithWriteTransactionRaw swDb $ useStmt swSweep $ do
+    -- batchSize will never be negative, but we handle a negative batch size
+    -- gracefully here with a negative LIMIT, which means no limit in SQLite.
+    dbBindInt64 swSweep 1 (if batchSize <= 0 then -1 else batchSize)
+    dbBindInt64 swSweep 2 (fromIntegral (unSlotNo gcSlot))
+    dbStep1Safe swSweep
+    DB.changes swDb
 
 -- * Stats
 

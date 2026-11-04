@@ -48,14 +48,17 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 -- | Persist a point. If another point of the EB holds it, the new row copies
 -- its body and closure, so each row holds the whole EB.
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ do
-    copied <- insertWith stInsertEbCopy
-    if copied > 0 then pure copied else insertWith stInsertEbPoint
-  bumpVolatileStats conn inserted
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint, stInsertEbCopy}} = conn
+sqlInsertEbPoint conn point ebBytesSize =
+  dbWithWriteTransaction conn (insertPoint conn point ebBytesSize)
+    >>= bumpVolatileStats conn
 
+-- | 'sqlInsertEbPoint' within the caller's transaction, returning the rows it
+-- inserted.
+insertPoint :: Conn -> LeiosPoint -> BytesSize -> IO Int
+insertPoint conn point ebBytesSize = do
+  copied <- insertWith stInsertEbCopy
+  if copied > 0 then pure copied else insertWith stInsertEbPoint
+ where
   insertWith stmt = useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
     dbBindHash stmt 2 (pointEbHash point)
@@ -63,10 +66,11 @@ sqlInsertEbPoint conn point ebBytesSize = do
     dbStep1 stmt
     DB.changes db
 
+  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint, stInsertEbCopy}} = conn
+
 -- | Persist an EB body into each point of the EB: the bytes it arrived in,
--- where each of its txs will be in the closure, and the closure, zeroes. The
--- point MUST already be present (inserted via 'sqlInsertEbPoint' on the
--- announcement path).
+-- where each of its txs will be in the closure, and the closure, zeroes.
+-- Writes the point too, if 'sqlInsertEbPoint' has not.
 sqlInsertEbBody ::
   Conn ->
   LeiosPoint ->
@@ -75,23 +79,23 @@ sqlInsertEbBody ::
 sqlInsertEbBody conn point eb = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  dbWithWriteTransaction conn $ do
-    known <- useStmt stHasPoint $ do
-      dbBindInt64 stHasPoint 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-      dbBindHash stHasPoint 2 (pointEbHash point)
-      (== DB.Row) <$> dbStep stHasPoint
-    unless known $
-      throwLeiosDbException "writeEbBody: point not registered (programmer error)"
-    useStmt stInsertEbBody $ do
-      dbBindHash stInsertEbBody 1 (pointEbHash point)
-      dbBindInt64 stInsertEbBody 2 (fromIntegral (length refs))
-      dbBindBlob stInsertEbBody 3 (encodeTxBounds eb)
-      dbBindBlob stInsertEbBody 4 (serialiseEndorserBlock eb)
-      dbBindInt64 stInsertEbBody 5 (fromIntegral (sum (map snd refs)))
-      dbStep1 stInsertEbBody
+  inserted <- dbWithWriteTransaction conn $ do
+    inserted <- insertPoint conn point (fromIntegral (BS.length bodyBytes))
+    insertBody
+    pure inserted
+  bumpVolatileStats conn inserted
  where
+  insertBody = useStmt stInsertEbBody $ do
+    dbBindHash stInsertEbBody 1 (pointEbHash point)
+    dbBindInt64 stInsertEbBody 2 (fromIntegral (length refs))
+    dbBindBlob stInsertEbBody 3 (encodeTxBounds eb)
+    dbBindBlob stInsertEbBody 4 bodyBytes
+    dbBindInt64 stInsertEbBody 5 (fromIntegral (sum (map snd refs)))
+    dbStep1 stInsertEbBody
+
+  bodyBytes = serialiseEndorserBlock eb
   refs = endorserBlockReferences eb
-  Conn{connVolStmts = VolStmts{stHasPoint, stInsertEbBody}} = conn
+  Conn{connVolStmts = VolStmts{stInsertEbBody}} = conn
 
 -- | Persist tx bytes for one EB, in place in the closure of each of its
 -- points. How many txs a write carries is the caller's to decide; whether the

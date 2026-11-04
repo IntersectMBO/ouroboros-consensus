@@ -6,7 +6,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_scan_ebs_since
   , sql_insert_eb
   , sql_insert_eb_copy
-  , sql_has_point
   , sql_insert_eb_body
   , sql_lookup_eb_body
   , sql_lookup_eb_index
@@ -14,7 +13,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_lookup_eb_closure
   , sql_copy_closure
   , sql_copy_insert_eb
-  , sql_gc_watermark
   , sql_gc_sweep
   ) where
 
@@ -46,13 +44,6 @@ sql_insert_eb_copy =
   \SELECT ?1, ?2, ?3, txCount, txBounds, body, txs FROM ebs\n\
   \WHERE ebHashBytes = ?2 AND txCount IS NOT NULL LIMIT 1\n\
   \"
-
--- | Whether the point was written.
---
--- Parameters: 1 = ebSlot, 2 = ebHashBytes
-sql_has_point :: String
-sql_has_point =
-  "SELECT 1 FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
 
 -- | Write an EB's body into each of its points, with a closure of zeroes. A
 -- second delivery of the same body changes nothing.
@@ -110,14 +101,7 @@ sql_copy_insert_eb =
 
 -- ** Garbage collection of the volatile partition
 
--- | The newest row: a GC collects only rows up to it, not those written after.
-sql_gc_watermark :: String
-sql_gc_watermark =
-  "SELECT coalesce(max(id), 0) FROM ebs"
-
--- | Delete up to @?1@ rows before slot @?2@ and up to row @?3@.
+-- | Delete up to @?1@ rows before slot @?2@.
 sql_gc_sweep :: String
 sql_gc_sweep =
-  "DELETE FROM ebs WHERE id IN (\n\
-  \  SELECT id FROM ebs WHERE ebSlot < ?2 AND id <= ?3 LIMIT ?1)\n\
-  \"
+  "DELETE FROM ebs WHERE rowid IN (SELECT rowid FROM ebs WHERE ebSlot < ?2 LIMIT ?1)"
