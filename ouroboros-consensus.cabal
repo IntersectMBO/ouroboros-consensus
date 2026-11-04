@@ -2074,7 +2074,7 @@ test-suite cardano-test
     QuickCheck,
     base16-bytestring,
     bytestring,
-    cardano-crypto-leios:testlib,
+    cardano-crypto-leios:{cardano-crypto-leios, testlib},
     cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,

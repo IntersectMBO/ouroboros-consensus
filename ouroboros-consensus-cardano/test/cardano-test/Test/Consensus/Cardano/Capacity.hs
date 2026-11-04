@@ -7,9 +7,11 @@
 -- endorser-block capacity from its protocol parameters.
 module Test.Consensus.Cardano.Capacity (tests) where
 
+import Cardano.Crypto.Leios (LeiosCommittee (..))
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.PParams
-  ( ppMaxEndorserBlockExUnitsL
+  ( ppLeiosQuorumStakeThresholdL
+  , ppMaxEndorserBlockExUnitsL
   , ppMaxEndorserBlockReferencesSizeL
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
@@ -17,10 +19,15 @@ import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Genesis as Genesis
 import Cardano.Ledger.Plutus.ExUnits (ExUnits (..), OrdExUnits (..))
 import Cardano.Ledger.Shelley.API (ShelleyGenesis (..))
-import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
+import Cardano.Ledger.Shelley.LedgerState
+  ( curPParamsEpochStateL
+  , esSnapshotsL
+  , nesEsL
+  )
 import Cardano.Ledger.Shelley.Translation
   ( emptyFromByronTranslationContext
   )
+import Cardano.Ledger.State (ssLeiosCommitteeL, ssStakeSetL)
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
@@ -103,6 +110,7 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
+    , testProperty "Dijkstra without a quorum" prop_dijkstraNoQuorum
     , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
     ]
 
@@ -142,7 +150,7 @@ prop_shelleyBased genTranslationContext st =
 -- | Each of the four endorser-block parameters lands in its own field of the
 -- endorser-block capacity. The values differ, so a swapped lens fails. The
 -- references capacity is the parameter minus the 5 bytes of the widest CBOR map
--- header.
+-- header. A zero quorum threshold lets any committee reach the quorum.
 --
 -- Few runs: setting the parameters forces the whole arbitrary ledger state,
 -- which is slow to generate, and the result depends only on the parameters.
@@ -185,6 +193,30 @@ prop_dijkstra st =
             .~ OrdExUnits (ExUnits 2002 3003)
           & nesEsL . curPParamsEpochStateL . ppMaxRefScriptSizePerEndorserBlockL .~ 4004
           & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockReferencesSizeL .~ 5005
+          & nesEsL . curPParamsEpochStateL . ppLeiosQuorumStakeThresholdL .~ minBound
+      )
+      ledgerTables
+      cumulativeTxBytes
+
+-- | A committee that cannot reach the quorum leaves no endorser-block capacity,
+-- whatever the parameters.
+prop_dijkstraNoQuorum ::
+  LedgerState (ShelleyBlock (Praos2 Crypto) DijkstraEra) EmptyMK ->
+  Property
+prop_dijkstraNoQuorum st =
+  withNumTests 10 $
+    forAllBlind arbitrary $ \translationContext ->
+      prop_capacityHasNoEndorserBlock @(ShelleyBlock (Praos2 Crypto) DijkstraEra)
+        (fixedShelleyLedgerConfig translationContext)
+        (withoutQuorum (tickShelley st))
+ where
+  withoutQuorum (TickedShelleyLedgerState tip transition nes ledgerTables cumulativeTxBytes) =
+    TickedShelleyLedgerState
+      tip
+      transition
+      ( nes
+          & nesEsL . esSnapshotsL . ssStakeSetL . ssLeiosCommitteeL .~ UnsafeLeiosCommittee mempty
+          & nesEsL . curPParamsEpochStateL . ppLeiosQuorumStakeThresholdL .~ maxBound
       )
       ledgerTables
       cumulativeTxBytes
