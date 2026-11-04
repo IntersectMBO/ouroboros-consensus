@@ -146,6 +146,7 @@ import Test.Consensus.Leios.Environment
   , LeiosNotifyCodec
   , NodeVsEnvConnection (..)
   , envLeiosNotifyCodec
+  , quietChainSyncServer
   , refusingLeiosFetchServer
   , withNodeVsEnvConnection
   )
@@ -650,7 +651,8 @@ runPeer node end addr PeerSpec{psConnectAt, psAfterAccepting, psSends} = do
   let c = envLeiosNotifyCodec node
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runFeedingServer c (readTQueue queue)
+          { epChainSyncServer = quietChainSyncServer
+          , epLeiosNotifyServer = runFeedingServer c (readTQueue queue)
           , epLeiosNotifyClient = Just $ runRecordingClient c received
           , epLeiosFetchServer = refusingLeiosFetchServer node
           , epLeiosFetchClient = Nothing
