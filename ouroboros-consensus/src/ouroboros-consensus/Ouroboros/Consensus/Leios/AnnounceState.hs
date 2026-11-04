@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Leios.AnnounceState
   , hasAnnouncement
   , newAnnounceState
   , onValidAnnouncement
+  , WhetherNewAnnouncement (..)
   , pruneAnnounceState
   ) where
 
@@ -67,6 +68,9 @@ newAnnounceState limits notifyLog =
     <*> pure notifyLog
     <*> pure limits
 
+-- | Whether the node accepted an announcement it had not accepted before.
+data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
+
 -- | Accept a valid announcement, and relay it if it is new and fresh enough,
 -- until 'maxAnnouncementAgeSend' after its election slot began.
 --
@@ -76,20 +80,23 @@ onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
   ValidAnnouncement blk ->
-  STM m ()
+  STM m WhetherNewAnnouncement
 onValidAnnouncement st valid = do
   pruned <- readTVar prunedTo
-  when (announcementStaleness == FreshOCIN && electionSlot electionId >= pruned) $ do
-    seen <- readTVar announced
-    case Announcements.insert @_ @Void electionId announcingHeader seen of
-      Left _repeatedOrThird -> pure ()
-      Right seen' -> do
-        writeTVar announced seen'
-        when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
-          appendNotifyLog
-            relayLog
-            (NotifyAnnouncement announcingHeader)
-            (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
+  if announcementStaleness /= FreshOCIN || electionSlot electionId < pruned
+    then pure NotNewAnnouncement
+    else do
+      seen <- readTVar announced
+      case Announcements.insert @_ @Void electionId announcingHeader seen of
+        Left _repeatedOrThird -> pure NotNewAnnouncement
+        Right seen' -> do
+          writeTVar announced seen'
+          when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
+            appendNotifyLog
+              relayLog
+              (NotifyAnnouncement announcingHeader)
+              (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
+          pure NewAnnouncement
  where
   electionId = ancElectionId announcingHeader
 

@@ -23,6 +23,7 @@ import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
@@ -44,10 +45,15 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+  ( OfferedHalves (..)
+  , PeerOffer (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancHeader)
   , LeiosAnnouncementAgeLimits
+  , ValidAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -88,6 +94,10 @@ leiosNotifyClient ::
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
   LeiosAnnouncementAgeLimits ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> m ()) ->
+  -- | record an offer the peer made
+  (LeiosPoint -> PeerOffer -> m ()) ->
   ControlMessageSTM m ->
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
@@ -102,6 +112,8 @@ leiosNotifyClient
   chainSyncFutureCheck
   maxClockSkew
   ageLimits
+  onNewAnnouncement
+  recordOffer
   controlMessageSTM
   stateVar =
     leiosNotifyClientPeerHandlingReplies
@@ -125,6 +137,7 @@ leiosNotifyClient
                       chainSyncFutureCheck
                       cfg
                       announceState
+                      onNewAnnouncement
                       immLedger
                       st
                       hdr
@@ -134,12 +147,14 @@ leiosNotifyClient
             atomically $ do
               pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
               writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-          MsgLeiosBlockOffer point claimed ->
+          MsgLeiosBlockOffer point claimed -> do
             atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate_ $ checkLeiosBlockOffer cfg immLedger point claimed
-          MsgLeiosBlockTxsOffer point ->
+            recordOffer point $ MkPeerOffer SNothing (OfferedBody claimed)
+          MsgLeiosBlockTxsOffer point -> do
             atomically $ checkAndUpdate_ $ checkLeiosClosureOffer point
+            recordOffer point $ MkPeerOffer SNothing OfferedClosure
           MsgLeiosVotes votes -> do
             now <- systemTimeCurrent systemTime
             accepted <- atomically $ do
@@ -205,6 +220,8 @@ leiosNotifyServer notifyLog = do
       -- One vote per message: the client pipelines its requests, so several
       -- messages cost about what several votes in one would.
       NotifyVote v -> MsgLeiosVotes (v :| [])
+      NotifyBlockOffer point size -> MsgLeiosBlockOffer point size
+      NotifyBlockTxsOffer point -> MsgLeiosBlockTxsOffer point
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.
