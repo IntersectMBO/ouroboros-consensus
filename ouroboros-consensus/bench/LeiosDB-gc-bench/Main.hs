@@ -92,8 +92,10 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
   , encodeEndorserBlockSize
+  , hashLeiosTx
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -355,7 +357,7 @@ populateDb opts db =
           hashBytes = hashToBytes ebHash
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
-          txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
+          txs = zip [0 ..] (ebTxsFor opts ebIdx)
       pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
       bodyWritten <- writeEbBody writer point eb
       txsWritten <- writeTxs writer point txs
@@ -373,20 +375,24 @@ genEbHash i = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
 -- | The txs of a synthetic EB: the first @dup-fraction@ of them come from a
 -- pool shared between EBs (a rotating slice, so consecutive EBs overlap),
 -- the rest are unique to this EB. With dup fraction 0 every tx is unique.
-ebTxHashesFor :: Opts -> Int -> [TxHash]
-ebTxHashesFor opts ebIdx =
+ebTxsFor :: Opts -> Int -> [BS.ByteString]
+ebTxsFor opts ebIdx = map (genTx opts) (ebTxIdsFor opts ebIdx)
+
+-- | The ids 'ebTxsFor' generates the txs from.
+ebTxIdsFor :: Opts -> Int -> [TxHash]
+ebTxIdsFor opts ebIdx =
   [genSharedTxHash ((ebIdx * nShared + k) `mod` poolSize) | k <- [0 .. nShared - 1]]
     ++ [genTxHash ebIdx txIdx | txIdx <- [nShared .. optTxsPerEb opts - 1]]
  where
   nShared = floor (effDup opts * fromIntegral (optTxsPerEb opts) :: Double)
   poolSize = max 1 (4 * optTxsPerEb opts)
 
--- | 'EndorserBlock' over 'ebTxHashesFor' with 'optTxBytes' per transaction.
+-- | 'EndorserBlock' naming the txs of 'ebTxsFor' by their hashes.
 genEb :: Opts -> Int -> EndorserBlock
 genEb opts ebIdx =
   mkEndorserBlock $
-    [ (h, fromIntegral (optTxBytes opts) :: BytesSize)
-    | h <- ebTxHashesFor opts ebIdx
+    [ (hashLeiosTx (MkLeiosTx tx), fromIntegral (BS.length tx) :: BytesSize)
+    | tx <- ebTxsFor opts ebIdx
     ]
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
@@ -401,11 +407,11 @@ genSharedTxHash j = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 3
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
--- | Generate a TX payload: the TX hash bytes padded with zeros to 'optTxBytes'.
+-- | Generate a TX payload: the id's bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
-genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+genTx opts txId = h <> BS.replicate (optTxBytes opts - BS.length h) 0
  where
-  h = hashToBytes txHash
+  h = hashToBytes txId
 
 -- * Measurement phases
 
@@ -442,7 +448,7 @@ runPhases opts db flushEvents latRef schedule =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
+              txs = zip [0 ..] (ebTxsFor opts ebIdx)
           snd
             <$> timed
               ( do
