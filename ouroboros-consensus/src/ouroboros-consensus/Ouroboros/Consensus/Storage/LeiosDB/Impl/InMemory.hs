@@ -129,7 +129,7 @@ newLeiosDBInMemoryWith stateVar =
       }
 
 -- | Copy the closures of the given EBs to 'imImmutableEbBodies' and
--- 'imImmutableEbTxBytes', unless they are there already. The node pins only what
+-- 'imImmutableEbTxBytes', unless they are there already. The node promotes only what
 -- the immutable chain certifies, and only once it holds its closure, so a
 -- closure that is incomplete is a caller's bug: this then fails, changing
 -- nothing.

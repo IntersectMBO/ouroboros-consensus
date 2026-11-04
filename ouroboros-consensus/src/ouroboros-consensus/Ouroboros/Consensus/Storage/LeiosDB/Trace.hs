@@ -37,8 +37,7 @@ data TraceLeiosDb
       String
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
-  | -- | The background copier committed EBs' closures to the immutable
-    -- partition.
+  | -- | A promotion committed EBs' closures to the immutable partition.
     TraceLeiosDbCopiedToImmutable
       -- | number of EBs copied
       Int
@@ -51,12 +50,5 @@ data TraceLeiosDb
     -- dropped and the pass retried.
     TraceLeiosDbGCError
       -- | the error
-      String
-  | -- | Copying an EB failed. It stays pinned, so it is still the next one
-    -- to copy.
-    TraceLeiosDbCopyError
-      -- | the EB hash
-      String
-      -- | the reason
       String
   deriving Show

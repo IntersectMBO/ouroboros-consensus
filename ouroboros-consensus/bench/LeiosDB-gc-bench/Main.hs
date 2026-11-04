@@ -39,9 +39,8 @@
 --
 --   1. insert 5 fresh full EBs (announcement + body + txs) at the current
 --      load, reporting the median wall time (@insertEbSeconds@);
---   2. promote half of the N EBs and wait for the background copier to land
---      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
---      un-copied, as un-certified EBs are on a real node;
+--   2. promote half of the N EBs, which copies them (@promoteSeconds@) ---
+--      the rest are evicted un-copied, as un-certified EBs are on a real node;
 --   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
 --      and wait for the background sweeper to delete the rows before the
 --      frontier (@sweepSeconds@).
@@ -202,7 +201,7 @@ main = do
     phaseStats <-
       withAsync mutator $ \_ ->
         withAsync (tickProbe latRef) $ \_ ->
-          runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
+          runPhases opts db flushEvents latRef sweepBacklog schedule
     after <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "after " after)
     hPutStr stderr (renderSummary opts phaseStats)
@@ -461,7 +460,6 @@ data PhaseResult = PhaseResult
   , prInsertEbWall :: !DiffTime
   -- ^ median over the phase's timed full-EB insertions
   , prPromoteWall :: !DiffTime
-  , prCopyWaitWall :: !DiffTime
   , prMarkWall :: !DiffTime
   , prSweepWall :: !DiffTime
   , prStats :: !CycleStats
@@ -475,12 +473,10 @@ runPhases ::
   IORef DiffTime ->
   (Word64 -> IO Int) ->
   [(Word64, BS.ByteString)] ->
-  Int ->
   IO [PhaseResult]
-runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
+runPhases opts db flushEvents latRef sweepBacklog schedule =
   withWriter db $ \writer -> do
     remainingRef <- newIORef schedule
-    promotedRef <- newIORef (0 :: Int)
     freshRef <- newIORef (0 :: Int)
     -- Time one fresh full-EB insertion (announcement + body + txs) through the
     -- given connection; the fresh EBs live at slots no frontier ever reaches.
@@ -524,10 +520,10 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           -- 1. quiescent full-EB insertion latency at the current load
           insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
           resident <- volatileEbs <$> leiosDbSampleStats db
-          -- 2. promote a fraction, wait for the copier to land them
+          -- 2. promote a fraction
           let nPromote =
                 -- ceiling, so the 1-EB steady phases promote their EB and
-                -- exercise the copier (floor would promote none)
+                -- exercise the promotion (floor would promote none)
                 ceiling (promoteFraction * fromIntegral (length due) :: Double)
           -- One batched call, as 'copyToImmutableDB' does it.
           (_, promoteWall) <-
@@ -535,8 +531,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
               leiosDbPromoteToImmutable
                 db
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
-          promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
-          (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain
           (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
           (_, sweepWall) <- timed $ awaitZero "sweep" (sweepBacklog frontier)
@@ -552,7 +546,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                   , prPromoted = nPromote
                   , prInsertEbWall = medianTime insertWalls
                   , prPromoteWall = promoteWall
-                  , prCopyWaitWall = copyWaitWall
                   , prMarkWall = markWall
                   , prSweepWall = sweepWall
                   , prStats = stats
@@ -561,24 +554,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           putStrLn (renderPhase i result)
           pure (Just result)
     pure (catMaybes results)
- where
-  awaitCopier target = go (0 :: Int)
-   where
-    go n = do
-      stats <- leiosDbSampleStats db
-      if immutableEbs stats >= target
-        then pure ()
-        else
-          if n > 3_600_000
-            then
-              die $
-                "copy wait timed out: immutableEbs = "
-                  <> show (immutableEbs stats)
-                  <> ", expected "
-                  <> show target
-            else do
-              threadDelay 1_000
-              go (n + 1)
 
 medianTime :: [DiffTime] -> DiffTime
 medianTime [] = 0
@@ -632,12 +607,11 @@ data CycleStats = CycleStats
   { csCopied :: !Int
   , csEvicted :: !Int
   , csCollisions :: !Int
-  , csCopyErrors :: !Int
   , csSweepErrors :: !Int
   }
 
 emptyCycleStats :: CycleStats
-emptyCycleStats = CycleStats 0 0 0 0 0
+emptyCycleStats = CycleStats 0 0 0 0
 
 addEvent :: CycleStats -> TraceLeiosDb -> CycleStats
 addEvent cs = \case
@@ -646,7 +620,6 @@ addEvent cs = \case
   TraceLeiosDbEvicted evictedEbs ->
     cs{csEvicted = csEvicted cs + evictedEbs}
   TraceLeiosDbInsertCollision{} -> cs{csCollisions = csCollisions cs + 1}
-  TraceLeiosDbCopyError{} -> cs{csCopyErrors = csCopyErrors cs + 1}
   TraceLeiosDbGCError{} -> cs{csSweepErrors = csSweepErrors cs + 1}
   _ -> cs
 
@@ -715,7 +688,6 @@ csvHeader =
     , "copiedEbRows"
     , "insertEbSeconds"
     , "promoteSeconds"
-    , "copyWaitSeconds"
     , "evictedEbRows"
     , "markSeconds"
     , "sweepSeconds"
@@ -732,7 +704,6 @@ renderPhase
     , prPromoted
     , prInsertEbWall
     , prPromoteWall
-    , prCopyWaitWall
     , prMarkWall
     , prSweepWall
     , prStats = cs
@@ -748,7 +719,6 @@ renderPhase
       , show (csCopied cs)
       , showSeconds prInsertEbWall
       , showSeconds prPromoteWall
-      , showSeconds prCopyWaitWall
       , show (csEvicted cs)
       , showSeconds prMarkWall
       , showSeconds prSweepWall
@@ -771,7 +741,6 @@ renderSummary opts results =
          , "  copied ebs            = " <> show (sum (map (csCopied . prStats) results))
          , "  evicted ebs           = " <> show (sum (map (csEvicted . prStats) results))
          , "  insert collisions     = " <> show (sum (map (csCollisions . prStats) results))
-         , "  copy errors           = " <> show (sum (map (csCopyErrors . prStats) results))
          , "  sweep errors          = " <> show (sum (map (csSweepErrors . prStats) results))
          ]
       <> concatMap scenarioBlock (List.nub (map prScenario results))
@@ -786,7 +755,6 @@ renderSummary opts results =
         <> " EBs GC'd):"
     , stat "insert eb (median)" (map prInsertEbWall rs)
     , stat "promote           " (map prPromoteWall rs)
-    , stat "copy wait         " (map prCopyWaitWall rs)
     , stat "mark              " (map prMarkWall rs)
     , stat "sweep             " (map prSweepWall rs)
     , stat "tick latency      " (map prTickLat rs)
