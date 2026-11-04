@@ -58,6 +58,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withWriter
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (gcBatchSize)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
@@ -234,6 +235,8 @@ mkTestGroups impl =
           withFreshDb impl test_gcEvictsOldEb
       , testCase "keeps an EB with a point at the slot" $
           withFreshDb impl test_gcKeepsEbWithPointAtSlot
+      , testCase "collects more points than one job deletes" $
+          withFreshDb impl test_gcCollectsManyPoints
       ]
   , testGroup
       "garbage collection of an EB a newer point keeps"
@@ -733,6 +736,17 @@ test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
   garbageCollect db 6
   holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+
+-- | More points before the slot than the SQLite implementation deletes in one
+-- job, and one at the slot.
+test_gcCollectsManyPoints :: LeiosDbHandle IO -> IO ()
+test_gcCollectsManyPoints db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      n = 2 * gcBatchSize + 1
+  forM_ [1 .. n] $ \slot ->
+    rwInsertEbPoint con (mkTestPoint (fromIntegral slot) 1) (encodeEndorserBlockSize eb)
+  garbageCollect db (fromIntegral n)
+  rwScanEbPoints con >>= (@?= [(fromIntegral n, mkTestEbHash 1)])
 
 test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
 test_gcKeepsPromotedEb db = withRW db $ \con -> do
