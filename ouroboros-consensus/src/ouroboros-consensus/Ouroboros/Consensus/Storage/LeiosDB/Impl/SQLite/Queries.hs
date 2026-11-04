@@ -101,7 +101,7 @@ sql_copy_insert_eb =
 
 -- ** Garbage collection of the volatile partition
 
--- | Delete the rows before slot @?1@.
+-- | Delete up to @?2@ rows before slot @?1@.
 sql_gc_collect :: String
 sql_gc_collect =
-  "DELETE FROM ebs WHERE ebSlot < ?1"
+  "DELETE FROM ebs WHERE rowid IN (SELECT rowid FROM ebs WHERE ebSlot < ?1 LIMIT ?2)"

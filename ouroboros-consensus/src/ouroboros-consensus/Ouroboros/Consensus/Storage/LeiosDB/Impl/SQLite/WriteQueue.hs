@@ -86,8 +86,8 @@ data WriteJob
     GarbageCollect
       -- | the GC slot
       !SlotNo
-      -- | where the worker puts the result
-      !(WriteResult ())
+      -- | where the worker puts whether rows before the slot are left
+      !(WriteResult Bool)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
