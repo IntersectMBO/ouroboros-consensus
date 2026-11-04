@@ -18,6 +18,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , recordLeiosJumpOffers
   , ExnLeiosTwoCertificationClaims (..)
   , onNewLeiosAnnouncement
+  , onForgedLeiosEb
   , leiosFetchDecisionLoop
   , leiosFetchFocuser
   , leiosFetchPruner
@@ -74,13 +75,16 @@ import Ouroboros.Consensus.Leios.TxCache.API (LeiosTxCache (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
+  , ForgedEndorserBlock (..)
   , LeiosPoint (..)
+  , endorserBlockHash
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , acquireCachedBody
+  , acquireForgedEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
@@ -94,6 +98,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
+  , markReceivingFromForge
   , pruneOffers
   , pruneOutstandingToImmTip
   , recordReferencedPoint
@@ -477,6 +482,43 @@ onNewLeiosAnnouncement kernel valid = do
   elId = ancElectionId anc
   slot = electionSlot elId
   ebHash = announcementEbHash announcement
+  point = MkLeiosPoint slot ebHash
+
+-- | The forge's counterpart to receiving an announcement and its endorser block
+-- from a peer: take in the endorser block the node's own forge produced, and
+-- the header announcing it, with no peer.
+--
+-- The point is marked 'ReceivingFromForge' at once, before any peer could relay the
+-- announcement back, so the node never fetches it, and its election is focused
+-- on it. Then 'acquireForgedEb' writes and acquires it. Nothing here waits for
+-- the writes.
+--
+-- The header must announce this endorser block.
+onForgedLeiosEb ::
+  forall m peer blk.
+  (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
+  LeiosFetchKernel m peer blk ->
+  AnnouncingHeader blk ->
+  ForgedEndorserBlock ->
+  m ()
+onForgedLeiosEb kernel anc forged = do
+  void $
+    insertAnnouncement
+      lfcTxCache
+      slot
+      (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
+      ebHash
+  modifyMVar_ lfcOutstanding $ \outstanding ->
+    pure $
+      if slot < outstandingPrunedSlot outstanding
+        then outstanding
+        else focusElectionIfUnfocused elId ebHash $ markReceivingFromForge point outstanding
+  acquireForgedEb (lfkContext kernel) point forged
+ where
+  MkLeiosFetchClientContext{lfcOutstanding, lfcTxCache} = lfkContext kernel
+  elId = ancElectionId anc
+  slot = electionSlot elId
+  ebHash = endorserBlockHash (forgedEbBody forged)
   point = MkLeiosPoint slot ebHash
 
 -- | Each time something might give a peer something new to do, decide what to

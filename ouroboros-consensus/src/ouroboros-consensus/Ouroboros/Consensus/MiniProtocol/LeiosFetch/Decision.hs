@@ -26,6 +26,9 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , initializeLeiosOutstanding
   , newLeiosJobPool
   , acquireEbBody
+  , AlreadyEmitted (..)
+  , markReceivingFromForge
+  , settleReceivingFromForge
   , recordReferencedPoint
   , focusElectionIfUnfocused
   , focusCertifiedEb
@@ -340,6 +343,16 @@ data EbState
 data EbFetchState
   = -- | We've only ever received an announcement.
     NoBody
+  | -- | Our own forge produced this endorser block, and its body and closure
+    -- are being written. Nothing is requested at this point, every offer of it
+    -- is pruned, and every reply for it is discarded.
+    --
+    -- It overrides whatever the point was in ('markReceivingFromForge'), recording
+    -- what of its acquisition the node had already emitted, and only the
+    -- forge's writes settle it ('settleReceivingFromForge'), into 'BodyAcquired' with
+    -- no job left, once the whole closure is durable. So there is no state in
+    -- which the body is held and its txs are still to fetch.
+    ReceivingFromForge !AlreadyEmitted
   | -- | The job pool: the jobs whose txs are not yet durably written.
     --
     -- A body too big for the point's bounds is held with an empty pool too. It
@@ -356,6 +369,18 @@ data EbFetchState
     -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
     -- deferred.
     BodyAcquired !Jobs.LeiosJobPool
+  deriving (Eq, Show)
+
+-- | What of a point's acquisition the node had emitted when its own forge
+-- produced the endorser block there.
+data AlreadyEmitted
+  = -- | Neither 'AcquiredEb' nor 'AcquiredEbTxs'
+    EmittedNothing
+  | -- | 'AcquiredEb'
+    EmittedBody
+  | -- | 'AcquiredEb' and 'AcquiredEbTxs', or neither for a body too big for
+    -- the point's bounds, which is never emitted
+    EmittedBodyAndClosure
   deriving (Eq, Show)
 
 -- | The recorded onset of the point's slot, if any (see 'MkEbState'); the
@@ -393,9 +418,47 @@ acquireEbBody point jobPool =
     Nothing -> Nothing
     Just (MkEbState onset fetchState) -> case fetchState of
       NoBody -> Just $ MkEbState onset (BodyAcquired jobPool)
+      -- Only the forge's writes settle it.
+      ReceivingFromForge{} -> Nothing
       -- Already acquired -- e.g. a concurrent redundant delivery landed
       -- first; keep the existing pool rather than clobbering it.
       BodyAcquired{} -> Nothing
+
+-- | Record that our own forge produced the endorser block at this point, whose
+-- body and closure it is about to write, so that nothing is fetched there,
+-- whatever the point was in.
+--
+-- If another forge of this node already produced it, the point stays as that
+-- forge marked it, and whichever forge's writes are durable first settle it.
+markReceivingFromForge :: LeiosPoint -> LeiosOutstanding peer -> LeiosOutstanding peer
+markReceivingFromForge point =
+  alterEbState point $ \case
+    -- A forged endorser block records no onset: its age on arrival says nothing
+    -- about diffusion.
+    Nothing -> Just $ MkEbState SNothing (ReceivingFromForge EmittedNothing)
+    Just (MkEbState onset fetchState) -> case fetchState of
+      NoBody -> Just $ MkEbState onset (ReceivingFromForge EmittedNothing)
+      ReceivingFromForge{} -> Nothing
+      BodyAcquired jobPool
+        | Jobs.nullLeiosJobPool jobPool -> Just $ MkEbState onset (ReceivingFromForge EmittedBodyAndClosure)
+        | otherwise -> Just $ MkEbState onset (ReceivingFromForge EmittedBody)
+
+-- | The forge's writes of the endorser block at this point are durable, so hold
+-- it with no job left, and say what of its acquisition is still to emit:
+-- 'Nothing' unless the point is 'ReceivingFromForge', as when another forge's writes
+-- settled it first or the point was pruned.
+settleReceivingFromForge ::
+  LeiosPoint -> LeiosOutstanding peer -> (LeiosOutstanding peer, Maybe AlreadyEmitted)
+settleReceivingFromForge point outstanding =
+  case Map.lookup point (ebState outstanding) of
+    Just (MkEbState onset (ReceivingFromForge emitted)) ->
+      ( alterEbState
+          point
+          (\_ -> Just $ MkEbState onset (BodyAcquired Jobs.emptyLeiosJobPool))
+          outstanding
+      , Just emitted
+      )
+    _ -> (outstanding, Nothing)
 
 -- | Record that this point is referenced --- announced, or named by a verified
 -- certificate --- along with its slot's wall-clock onset if known. A
@@ -546,6 +609,7 @@ isFocusedPoint (MkLeiosPoint slot ebHash) =
 wantsBody :: EbState -> Int
 wantsBody (MkEbState _onset fetchState) = case fetchState of
   NoBody -> 1
+  ReceivingFromForge{} -> 0
   BodyAcquired{} -> 0
 
 -- | Upsert a point's 'ebState' entry, keeping 'numMissingBodies' in step. The
@@ -629,6 +693,7 @@ removePeerFromOutstanding peer o =
   releaseJobs jobIds (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
+      imminent@ReceivingFromForge{} -> imminent
       BodyAcquired jobPool -> BodyAcquired $! release jobPool
    where
     release jobPool =
@@ -700,6 +765,7 @@ completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
   completeInJobPool (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
+      imminent@ReceivingFromForge{} -> imminent
       BodyAcquired jobPool -> BodyAcquired $! complete jobPool
    where
     complete jobPool =
@@ -717,6 +783,7 @@ completeHeldTxs point held o =
   completeInJobPool (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
+      imminent@ReceivingFromForge{} -> imminent
       BodyAcquired jobPool -> BodyAcquired $! Jobs.completeHeldJobs held jobPool
 
 {-------------------------------------------------------------------------------
@@ -933,6 +1000,10 @@ assignPeer env forecastEbBounds mbCurrentSlot isBig peer offers acc =
         -- prune it now.
         pruneThisOffer
       Just (MkEbState _onset fetchState) -> case (fetchState, poClosure offerKind) of
+        (ReceivingFromForge{}, _) ->
+          -- Our own forge produced it, so there is nothing to fetch, and no
+          -- offer of it can help.
+          pruneThisOffer
         (NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body, and prune it.
           let (acc2, dec2) =
@@ -1047,6 +1118,7 @@ assignClosure env isBig peer point st@(acc, dec) =
   case Map.lookup point (ebState acc) of
     Nothing -> (st, PeerEbNotExhausted)
     Just (MkEbState _onset NoBody) -> (st, PeerEbNotExhausted)
+    Just (MkEbState _onset ReceivingFromForge{}) -> (st, PeerEbNotExhausted)
     Just (MkEbState onset (BodyAcquired jobPool)) ->
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $

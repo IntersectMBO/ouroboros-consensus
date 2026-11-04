@@ -50,16 +50,19 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
   , RankingBlockHash (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , forgeLeiosEb
   , hashLeiosTx
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , LeiosFetchClientContext (..)
+  , acquireForgedEb
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -76,6 +79,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
+  , markReceivingFromForge
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
@@ -114,6 +118,9 @@ tests =
     , testCase
         "the client acquires the closure from a later delivery of a body whose write found more transactions held than the first's"
         test_laterDeliveryHoldsMore
+    , testCase
+        "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
+        test_forgedAfterBody
     ]
 
 -- | What a notification says, comparably.
@@ -122,12 +129,13 @@ data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
 
 -- | An endorser block of two transactions, announced in slot 5.
 fixture :: (LeiosPoint, EndorserBlock, [LeiosTx])
-fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, txs)
+fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, toList fixtureTxs)
  where
-  tx0 = MkLeiosTx (BS8.pack "tx zero")
-  tx1 = MkLeiosTx (BS8.pack "tx one")
-  txs = [tx0, tx1]
-  eb = endorserBlockFromTxBytes (leiosTxBytes tx0 :| [leiosTxBytes tx1])
+  eb = endorserBlockFromTxBytes (fmap leiosTxBytes fixtureTxs)
+
+-- | The 'fixture''s transactions.
+fixtureTxs :: NonEmpty LeiosTx
+fixtureTxs = MkLeiosTx (BS8.pack "tx zero") :| [MkLeiosTx (BS8.pack "tx one")]
 
 peer :: Int
 peer = 0
@@ -352,8 +360,25 @@ test_laterDeliveryHoldsMore = do
  where
   otherPeer = peer + 1
 
+-- | A peer delivers the 'fixture''s body, and then the node's own forge
+-- produces the same endorser block at the same point, while the closure is
+-- still to fetch.
+test_forgedAfterBody :: Assertion
+test_forgedAfterBody = do
+  let (point, eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  -- Long enough for any further emission to have landed.
+  threadDelay 100000
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
 assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of
   Just (MkEbState _onset NoBody) -> pure ()
+  Just (MkEbState _onset ReceivingFromForge{}) -> assertFailure "the point is being received from the forge"
   Just (MkEbState _onset BodyAcquired{}) -> assertFailure "the point holds a body"
   Nothing -> assertFailure "the point has no entry"

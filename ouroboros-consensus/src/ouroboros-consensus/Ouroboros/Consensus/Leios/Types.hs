@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Leios.Types
   , ForgedEndorserBlock
   , forgedEbBody
   , forgedEbTxs
+  , forgedEbTxsParity
   , forgeLeiosEb
   , endorserBlockHash
   , endorserBlockReferences
@@ -330,17 +331,20 @@ data ForgedEndorserBlock = ForgedEndorserBlock
   , forgedEbTxs :: !(NonEmpty ByteString)
   -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
   -- same order.
+  , forgedEbTxsParity :: !ProtVerParity
+  -- ^ The protocol version the forge validated those transactions under.
   }
   deriving stock (Show, Eq)
 
 -- | The endorser block that references the given transactions, in the given
--- order. The reference to a transaction holds the Blake2b-256 hash and the
--- length of its bytes.
-forgeLeiosEb :: NonEmpty ByteString -> ForgedEndorserBlock
-forgeLeiosEb txBytes =
+-- order, validated under a protocol version of this parity. The reference to a
+-- transaction holds the Blake2b-256 hash and the length of its bytes.
+forgeLeiosEb :: ProtVerParity -> NonEmpty ByteString -> ForgedEndorserBlock
+forgeLeiosEb parity txBytes =
   ForgedEndorserBlock
     { forgedEbBody = endorserBlockFromTxBytes txBytes
     , forgedEbTxs = txBytes
+    , forgedEbTxsParity = parity
     }
 
 -- | Where a transaction's durable bytes live: an endorser block point that

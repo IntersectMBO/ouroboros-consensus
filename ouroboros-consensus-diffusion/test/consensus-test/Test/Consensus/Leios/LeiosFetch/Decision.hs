@@ -41,6 +41,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
+  , markReceivingFromForge
   , pruneOffers
   , recordReferencedPoint
   , refundEbRequest
@@ -71,6 +72,9 @@ tests =
         , testCase
             "a closure offered while the decision is pruning a body offer is still asked of the peer"
             test_closureOfferedMeanwhile
+        , testCase
+            "nothing of an endorser block the node's own forge produced is asked of a peer offering it"
+            test_forgedNotFetched
         , testCase
             "an endorser block rejected as too big at a point is never fetched again at that point"
             test_noRefetchOversized
@@ -221,6 +225,25 @@ test_closureOfferedMeanwhile = do
         (maybe Map.empty NEMap.toMap (Map.lookup peerA prunes))
         (Map.insertWith (<>) p closureOffered bodyOffered)
     (_, reqs, _) = decide (acquireEbBody p jobPool (refundEbRequest peerA p 1024 outstanding1)) offers
+
+-- | The forge marks a point 'ReceivingFromForge' while it writes the endorser block.
+-- A peer offering its body and its closure is asked for neither, and its whole
+-- offer is pruned.
+test_forgedNotFetched :: IO ()
+test_forgedNotFetched = do
+  assertNoRequests reqs
+  pruneOffers (maybe Map.empty NEMap.toMap (Map.lookup peerA prunes)) offers @?= Map.empty
+ where
+  p = point 1 'a'
+  offers = Map.singleton p (MkPeerOffer SNothing (SJust 1024) TxsClosureOffered)
+  (_, reqs, prunes) =
+    leiosFetchLogicIteration
+      env
+      anyBounds
+      (Just minBound)
+      (Map.singleton peerA offers)
+      Map.empty
+      (markReceivingFromForge p (scOutstanding (empty & withMissingBody p 1024)))
 
 -- | An endorser block rejected as too big, then offered at the same point at
 -- bounds that admit its closure but not its body, at bounds that admit its body
