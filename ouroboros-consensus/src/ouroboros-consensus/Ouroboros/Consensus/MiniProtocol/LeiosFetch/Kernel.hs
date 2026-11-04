@@ -75,6 +75,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol (..)
   , leiosEbByteSizeBounds
   )
+import Ouroboros.Consensus.Leios.TxCache.API (LeiosTxCache (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlockHash
@@ -639,14 +640,22 @@ leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
       (announcementEbHash ann)
       outstanding
 
--- | Prune the node's LeiosFetch state, and the peers' offers and claims, to
--- the immutable tip's slot.
+-- | Prune the node's LeiosFetch state, the peers' offers and claims, and the
+-- LeiosTxCache to the immutable tip's slot.
+--
+-- The LeiosTxCache must be pruned to a slot strictly before the LeiosDB is;
+-- see 'evictOlderThan'. The ChainDB prunes the LeiosDB only to the slot of the
+-- blocks it has copied to the ImmutableDB, after a delay, so pruning the cache
+-- as soon as the immutable tip advances comes first.
+--
+-- TODO Make that ordering structural rather than a matter of timing.
 pruneLeiosFetchToImmTip ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
   SlotNo ->
   m ()
 pruneLeiosFetchToImmTip kernel immTipSlot = do
+  _ <- evictOlderThan lfcTxCache immTipSlot
   modifyMVar_ lfcOutstanding $ pure . pruneOutstandingToImmTip immTipSlot
   -- Offers are keyed by point and claims by election, which both order by
   -- slot first.
@@ -660,4 +669,4 @@ pruneLeiosFetchToImmTip kernel immTipSlot = do
         (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers, lfkPrunedSlot} = kernel
-  MkLeiosFetchClientContext{lfcOutstanding} = lfkContext
+  MkLeiosFetchClientContext{lfcOutstanding, lfcTxCache} = lfkContext
