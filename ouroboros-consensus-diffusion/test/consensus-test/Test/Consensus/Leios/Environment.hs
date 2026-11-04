@@ -27,6 +27,7 @@ module Test.Consensus.Leios.Environment
   , envLeiosFetchCodec
   , envLeiosNotifyCodec
   , refusingLeiosFetchServer
+  , silentLeiosFetchServer
   , withNodeVsEnvConnection
   ) where
 
@@ -41,12 +42,14 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion, NodeToNodeVersionD
 import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable (..))
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
+import Control.Monad (when)
 import Control.Monad.IOSim (IOSim)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Traversable (for)
 import qualified Network.Mux as Mx
 import Network.Mux.Bearer.Queues (QueueChannel (..), queueChannelAsBearer)
@@ -160,7 +163,7 @@ withNodeVsEnvConnection ::
   EnvPeer (IOSim s) ->
   (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeVsEnvConnection node addr envPeer body = do
+withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ do
   nodeToPeer <- Strict.newTBQueueIO bearerQueueCapacity
   peerToNode <- Strict.newTBQueueIO bearerQueueCapacity
   let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerToNode, writeQueue = nodeToPeer}
@@ -252,6 +255,22 @@ withNodeVsEnvConnection node addr envPeer body = do
       Mx.stop nodeMux
       Mx.stop peerMux
       pure result
+
+-- | Run the action as the node's only connection to the peer at the given
+-- address, as the diffusion layer would: two connections with the same
+-- 'ConnectionId' never run mini-protocols at the same time (see
+-- "Ouroboros.Network.ConnectionId#exclusivity"), and the node relies on that.
+withOnlyConnection :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s a -> IOSim s a
+withOnlyConnection node addr = bracket_ connect disconnect
+ where
+  connect = atomically $ do
+    connected <- readTVar (nodeConnectedPeers node)
+    when (Set.member addr connected) $
+      throwSTM $
+        userError $
+          "the node connects to " <> show addr <> " while still connected to it"
+    writeTVar (nodeConnectedPeers node) (Set.insert addr connected)
+  disconnect = atomically $ modifyTVar (nodeConnectedPeers node) (Set.delete addr)
 
 -- | The node's own address.
 nodeAddr :: PeerAddr
@@ -371,6 +390,14 @@ envLeiosNotifyCodec node = NTN.cLeiosNotifyCodec (envCodecs node maxBound)
 
 envLeiosFetchCodec :: NodeUnderTest (IOSim s) -> LeiosFetchCodec s
 envLeiosFetchCodec node = NTN.cLeiosFetchCodec (envCodecs node maxBound)
+
+-- | A LeiosFetch server that never replies, as a peer that offers what it then
+-- does not serve.
+silentLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+silentLeiosFetchServer node chan =
+  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer silent)
+ where
+  silent = MkLeiosFetchRequestHandler $ \_request -> atomically retry
 
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
