@@ -121,9 +121,8 @@ data LeiosDbWriter m = LeiosDbWriter
   -- offset, so a stale or wrong location fills nothing, and that tx stays
   -- fetchable.
   --
-  -- Returns the offsets the fills filled. It does not report the txs an
-  -- earlier delivery of the body to the point left there: the caller wrote
-  -- those, unless it restarted since, and then it fetches them again.
+  -- Returns the offsets at which the point holds its txs once the write is
+  -- done: those filled, or written since an earlier delivery of the same body.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])

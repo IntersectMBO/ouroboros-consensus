@@ -11,10 +11,10 @@ The EBs and their closures are copied from the volatile to the immutable partiti
 ## Database schema
 
 Both partitions have one table, `ebs`, with one row for each pair of slot and EB hash that an announcement named.
-Announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written.
+Announcements that name the same pair share the row.
 Each row holds the whole EB:
 
-- `txCount` is how many transactions the body lists.
+- `txWritten` is a byte per transaction the body lists, set once the transaction is written.
 - `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size.
 - `body` is the body in the bytes it was received in.
 - `txs` is the closure: the bytes of the EB's transactions, concatenated.
@@ -34,17 +34,16 @@ erDiagram
     ebs {
         INTEGER ebSlot PK
         BLOB ebHashBytes PK
-        INTEGER ebBytesSize
-        INTEGER txCount
+        BLOB txWritten "a byte per tx, set once written"
         BLOB txBounds "n + 1 u32 positions in txs"
         BLOB body "as received"
         BLOB txs "zeroes until written"
     }
 ```
 
-- When an EB body arrives at a point, the point's row is inserted, with a closure of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
-- Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A transaction whose bytes are still zeroes reads as not written: a valid transaction never is.
-- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions hashes to what its body lists, or, for a point read from the immutable partition, if that holds it.
+- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
+- Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
+- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written and hashes to what its body lists, and only the closures whose markers are all set are read, or, for a point read from the immutable partition, if that holds it.
 - Reads take the row at the requested point: in the immutable partition if the point is older than the latest garbage collection, else in the volatile one, and never fall back to the other. A read of the volatile partition that a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which the promotion filled before that collection. At startup, that slot is the one after the newest point in the immutable partition.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.

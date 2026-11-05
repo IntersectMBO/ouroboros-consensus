@@ -15,7 +15,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , EbIndex (..)
   , lookupEbIndex
   , readTxBounds
+  , readTxWritten
   , readTxBytes
+  , isWritten
   , consecutiveRuns
   , boundAt
   , encodeTxBounds
@@ -34,6 +36,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -53,41 +56,53 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
 -- | Each point at or after the slot whose closure is complete in the partition
 -- its reads go to ('readPartition'). In the volatile partition, a closure is
--- complete if each of its txs hashes to what the body lists. In the immutable
--- one, every closure is complete, since only complete closures are copied
--- there.
+-- complete if each of its txs is marked written and hashes to what the body
+-- lists; only those whose markers are all set are read and hashed. In the
+-- immutable one, every closure is complete, since only complete closures are
+-- copied there.
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbPointsSince conn sinceSlot = do
   gcSlot <- readTVarIO gcSlotVar
-  vol <- dbWithTransaction volDb $ pointsIn volDb
-  imm <- Set.fromList <$> dbWithTransaction immDb (pointsIn immDb)
-  filterM
-    ( \point ->
-        if pointSlotNo point < gcSlot
-          then pure (Set.member point imm)
-          else dbWithTransaction volDb $ do
-            mbBody <- lookupBlob volDb point
-            mbTxs <- closureFrom volDb point
-            pure $ case (mbBody, mbTxs) of
-              (Just body, Just txs) -> maybe False (closureMatches body) (sequence txs)
-              _ -> False
-    )
-    (Set.toAscList (Set.fromList vol <> imm))
+  marked <-
+    dbWithTransaction volDb $
+      withStmt volDb "SELECT ebSlot, ebHashBytes, txWritten FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
+        let loop acc =
+              dbStep stmt >>= \case
+                DB.Done -> pure (reverse acc)
+                DB.Row -> do
+                  point <- columnPoint stmt
+                  allWritten <- BS.all (/= 0) <$> DB.columnBlob stmt 2
+                  loop (if allWritten then point : acc else acc)
+        loop []
+  vol <- filterM matches [point | point <- marked, pointSlotNo point >= gcSlot]
+  imm <-
+    dbWithTransaction immDb $
+      withStmt immDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1 AND ebSlot < ?2" $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
+        dbBindInt64 stmt 2 (fromIntegral $ unSlotNo gcSlot)
+        let loop acc =
+              dbStep stmt >>= \case
+                DB.Done -> pure (reverse acc)
+                DB.Row -> do
+                  point <- columnPoint stmt
+                  loop (point : acc)
+        loop []
+  pure $ Set.toAscList (Set.fromList vol <> Set.fromList imm)
  where
   Conn{conVolDb = volDb, conImmDb = immDb, connGcSlot = gcSlotVar} = conn
 
-  pointsIn db =
-    withStmt db "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
-      dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-      loop stmt []
+  columnPoint stmt =
+    MkLeiosPoint
+      <$> (SlotNo . fromIntegral <$> DB.columnInt64 stmt 0)
+      <*> dbColumnHash stmt 1
 
-  loop stmt acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        hash <- dbColumnHash stmt 1
-        loop stmt (MkLeiosPoint slot hash : acc)
+  matches point = dbWithTransaction volDb $ do
+    mbBody <- lookupBlob volDb point
+    mbTxs <- completeClosureAt volDb point
+    pure $ case (mbBody, mbTxs) of
+      (Just body, Just txs) -> closureMatches body txs
+      _ -> False
 
 -- | Whether these txs are the closure of the EB with these body bytes: each
 -- hashes to what the body lists at its offset.
@@ -100,13 +115,19 @@ closureMatches body txs = case deserialiseEndorserBlock body of
    where
     refs = endorserBlockReferences eb
 
--- | Split a closure at its 'encodeTxBounds' into its txs, 'Nothing' where no
--- tx was written.
-splitClosure :: ByteString -> ByteString -> [Maybe ByteString]
-splitClosure bounds txs =
-  [ written (BS.take (boundAt bounds (i + 1) - boundAt bounds i) (BS.drop (boundAt bounds i) txs))
+-- | Split a closure at its 'encodeTxBounds' into its txs, 'Nothing' where its
+-- marker in @txWritten@ is not set.
+splitClosure :: ByteString -> ByteString -> ByteString -> [Maybe ByteString]
+splitClosure txWritten bounds txs =
+  [ if isWritten txWritten i
+      then Just (BS.take (boundAt bounds (i + 1) - boundAt bounds i) (BS.drop (boundAt bounds i) txs))
+      else Nothing
   | i <- [0 .. BS.length bounds `div` 4 - 2]
   ]
+
+-- | Whether the marker of the tx at this index of the markers is set.
+isWritten :: ByteString -> Int -> Bool
+isWritten txWritten i = BS.index txWritten i /= 0
 
 -- | Read the point in one transaction of the partition its reads go to: the
 -- immutable one if the point is older than the latest garbage collection, else
@@ -163,22 +184,30 @@ sqlBatchRetrieveTxs conn point offsets =
 -- unless each of them is written.
 sqlLookupEbClosure :: Conn -> LeiosPoint -> IO (Maybe [ByteString])
 sqlLookupEbClosure conn point =
-  (evaluate . force . (sequence =<<) =<<) $
-    readPartition conn point (`closureFrom` point)
+  (evaluate . force =<<) $
+    readPartition conn point (`completeClosureAt` point)
 
 -- * Lookups
 
-closureFrom :: DB.Database -> LeiosPoint -> IO (Maybe [Maybe ByteString])
-closureFrom db point =
-  withStmt db "SELECT txBounds, txs FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
+-- | The txs of the EB at the point in body order, or 'Nothing' unless each of
+-- them is marked written. The closure is read only if each is.
+completeClosureAt :: DB.Database -> LeiosPoint -> IO (Maybe [ByteString])
+completeClosureAt db point =
+  withStmt db "SELECT txWritten, txBounds, rowid FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
     dbBindHash stmt 2 (pointEbHash point)
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
       DB.Row -> do
-        bounds <- DB.columnBlob stmt 0
-        txs <- DB.columnBlob stmt 1
-        pure $ Just (splitClosure bounds txs)
+        txWritten <- DB.columnBlob stmt 0
+        if BS.all (/= 0) txWritten
+          then do
+            bounds <- DB.columnBlob stmt 1
+            rowid <- DB.columnInt64 stmt 2
+            txs <- withBlob db "ebs" "txs" rowid False $ \blob ->
+              withDie db (DB.blobRead blob (boundAt bounds (BS.length txWritten)) 0)
+            pure $ sequence (splitClosure txWritten bounds txs)
+          else pure Nothing
 
 -- | An EB's body.
 lookupBlob :: DB.Database -> LeiosPoint -> IO (Maybe ByteString)
@@ -199,7 +228,7 @@ data EbIndex = EbIndex
 -- | Where the EB's blobs are at the point, or 'Nothing' if no row holds it.
 lookupEbIndex :: DB.Database -> LeiosPoint -> IO (Maybe EbIndex)
 lookupEbIndex db point =
-  withStmt db "SELECT rowid, txCount FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
+  withStmt db "SELECT rowid, length(txWritten) FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
     dbBindHash stmt 2 (pointEbHash point)
     dbStep stmt >>= \case
@@ -216,27 +245,35 @@ readTxBounds db EbIndex{eiRowid} lo hi =
   withBlob db "ebs" "txBounds" eiRowid False $ \blob ->
     withDie db (DB.blobRead blob ((hi - lo + 2) * 4) (lo * 4))
 
+-- | The markers of the txs at offsets @[lo, hi]@, a byte each, set once the tx
+-- is written.
+readTxWritten :: DB.Database -> EbIndex -> Int -> Int -> IO ByteString
+readTxWritten db EbIndex{eiRowid} lo hi =
+  withBlob db "ebs" "txWritten" eiRowid False $ \blob ->
+    withDie db (DB.blobRead blob (hi - lo + 1) lo)
+
 -- | The bytes of the txs at these offsets, which must be ascending, distinct
--- and in the body, or 'Nothing' where no tx was written: one read per run of
--- consecutive offsets.
+-- and in the body, or 'Nothing' where no tx is marked written: one read per run
+-- of consecutive written offsets.
 readTxBytes :: DB.Database -> EbIndex -> [Int] -> IO [(Int, Maybe ByteString)]
 readTxBytes _ _ [] = pure []
 readTxBytes db ix@EbIndex{eiRowid} (lo : rest) = do
-  bounds <- readTxBounds db ix lo (NE.last (lo :| rest))
-  let start o = boundAt bounds (o - lo)
-      end o = boundAt bounds (o - lo + 1)
-  fmap concat $ withBlob db "ebs" "txs" eiRowid False $ \blob ->
-    forM (consecutiveRuns id (lo : rest)) $ \run -> do
-      let at = start (NE.head run)
-      bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
-      pure [(o, written (BS.take (end o - start o) (BS.drop (start o - at) bytes))) | o <- NE.toList run]
-
--- | A tx's bytes as the closure holds them, or 'Nothing' if they are zeroes,
--- as the closure is allocated: a valid tx is never all zeroes.
-written :: ByteString -> Maybe ByteString
-written bytes
-  | BS.all (== 0) bytes = Nothing
-  | otherwise = Just bytes
+  let hi = NE.last (lo :| rest)
+  txWritten <- readTxWritten db ix lo hi
+  let present = [o | o <- lo : rest, isWritten txWritten (o - lo)]
+  bytesOf <-
+    if null present
+      then pure IntMap.empty
+      else do
+        bounds <- readTxBounds db ix lo hi
+        let start o = boundAt bounds (o - lo)
+            end o = boundAt bounds (o - lo + 1)
+        fmap (IntMap.fromList . concat) $ withBlob db "ebs" "txs" eiRowid False $ \blob ->
+          forM (consecutiveRuns id present) $ \run -> do
+            let at = start (NE.head run)
+            bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
+            pure [(o, BS.take (end o - start o) (BS.drop (start o - at) bytes)) | o <- NE.toList run]
+  pure [(o, IntMap.lookup o bytesOf) | o <- lo : rest]
 
 -- | Open a blob of the main database, for the duration of the action.
 withBlob :: DB.Database -> DB.Utf8 -> DB.Utf8 -> Int64 -> Bool -> (DB.Blob -> IO a) -> IO a

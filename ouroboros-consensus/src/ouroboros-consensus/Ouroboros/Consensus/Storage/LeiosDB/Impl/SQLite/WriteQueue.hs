@@ -64,7 +64,7 @@ data WriteJob
       !EndorserBlock
       -- | the txs to fill from local bytes
       ![LocalFill]
-      -- | where the worker puts the offsets the fills filled
+      -- | where the worker puts the offsets the point holds
       !(ResolveWriteJob [TxOffset])
   | WriteTxs
       -- | the EB the txs belong to
