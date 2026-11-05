@@ -18,10 +18,11 @@ sql_schema_vol = unlines ebsTable
 sql_schema_imm :: String
 sql_schema_imm = unlines ebsTable
 
--- | One row per announced point, holding the whole EB: its body as received,
--- where each of its txs is in the closure ('Read.encodeTxBounds'), and the
--- closure, its txs' bytes concatenated. The body's arrival allocates the
--- closure with zeroes, and every write fills its txs in place.
+-- | One row per announced point, holding the whole EB: which of its txs are
+-- written, a byte each, its body as received, where each of its txs is in the
+-- closure ('Read.encodeTxBounds'), and the closure, its txs' bytes
+-- concatenated. The body's arrival allocates the closure and the markers with
+-- zeroes, and every write fills its txs and sets their markers in place.
 --
 -- An EB announced at several points has a row at each, fetched and written on
 -- its own, so neither a write nor collecting a point touches another's row.
@@ -37,8 +38,7 @@ ebsTable =
   [ "CREATE TABLE IF NOT EXISTS ebs ("
   , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
-  , "  ebBytesSize INTEGER NOT NULL,"
-  , "  txCount INTEGER NOT NULL,"
+  , "  txWritten BLOB NOT NULL,"
   , "  txBounds BLOB NOT NULL,"
   , "  body BLOB NOT NULL,"
   , "  txs BLOB NOT NULL,"

@@ -43,21 +43,26 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , boundAt
   , consecutiveRuns
   , encodeTxBounds
+  , isWritten
   , lookupEbIndex
   , readTxBounds
   , readTxBytes
+  , readTxWritten
   , withBlob
   )
 
 -- | Persist an EB body at its point, recording the point: the bytes it arrived
--- in, where each of its txs will be in the closure, and the closure, zeroes.
--- Each point holds its own copy, so a write never touches another point's row.
--- Then fill what it can from the bytes other EBs hold, in the same transaction.
+-- in, where each of its txs will be in the closure, and the closure and the
+-- markers of its written txs, zeroes. Each point holds its own copy, so a write
+-- never touches another point's row. Then fill what it can from the bytes
+-- other EBs hold, in the same transaction.
 --
 -- A fill copies the source's bytes only if they hash to the tx this body lists
 -- at the fill's offset, so a stale or wrong location fills nothing.
 --
--- Returns the offsets the fills filled.
+-- Returns the offsets the point then holds: those filled, or written since an
+-- earlier delivery of the body, which its markers tell without reading the
+-- closure.
 sqlInsertEbBody ::
   Conn ->
   LeiosPoint ->
@@ -69,12 +74,25 @@ sqlInsertEbBody conn point eb fills = do
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (inserted, held) <- dbWithWriteTransaction conn $ do
     inserted <- insertWithBody
-    filled <- IntMap.toAscList <$> readLocalFills
-    dropped <- writeTxBytes conn point filled
-    pure (inserted, [txOffset | (txOffset, _) <- filled, txOffset `notElem` dropped])
+    -- Nothing inserted: the point holds the body of an earlier delivery, and
+    -- the txs written since.
+    atPoint <- if inserted > 0 then pure IntSet.empty else markedAtPoint
+    filled <- readLocalFills
+    let toWrite = IntMap.toAscList (filled `IntMap.withoutKeys` atPoint)
+    dropped <- writeTxBytes conn point toWrite
+    let written = IntSet.fromList [txOffset | (txOffset, _) <- toWrite, txOffset `notElem` dropped]
+    pure (inserted, IntSet.toAscList (atPoint <> written))
   bumpVolatileStats conn inserted
   pure held
  where
+  -- The offsets of the txs marked written at the point.
+  markedAtPoint =
+    lookupEbIndex db point >>= \case
+      Nothing -> pure IntSet.empty
+      Just ix@EbIndex{eiTxCount = n} -> do
+        txWritten <- readTxWritten db ix 0 (n - 1)
+        pure $ IntSet.fromList [o | o <- [0 .. n - 1], isWritten txWritten o]
+
   -- The bytes of the fills, by offset in this body: those the node holds that
   -- hash to the tx this body lists there. Each source is read once, in
   -- ascending offsets, as each blob handle walks the blob's pages from its
@@ -106,7 +124,7 @@ sqlInsertEbBody conn point eb fills = do
   -- The written txs at these offsets of the EB, from the first of its points
   -- that holds each.
   readFromSource srcHash wanted = do
-    rows <- withStmt db "SELECT rowid, txCount FROM ebs WHERE ebHashBytes = ?1" $ \stmt -> do
+    rows <- withStmt db "SELECT rowid, length(txWritten) FROM ebs WHERE ebHashBytes = ?1" $ \stmt -> do
       dbBindHash stmt 1 srcHash
       let loop acc =
             dbStep stmt >>= \case
@@ -130,16 +148,15 @@ sqlInsertEbBody conn point eb fills = do
     withStmt
       db
       "INSERT OR IGNORE INTO ebs\n\
-      \  (ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs)\n\
-      \VALUES (?1, ?2, ?3, ?4, ?5, ?6, zeroblob(?7))"
+      \  (ebSlot, ebHashBytes, txWritten, txBounds, body, txs)\n\
+      \VALUES (?1, ?2, zeroblob(?3), ?4, ?5, zeroblob(?6))"
       $ \stmt -> do
         dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
         dbBindHash stmt 2 (pointEbHash point)
-        dbBindInt64 stmt 3 (fromIntegral (BS.length bodyBytes))
-        dbBindInt64 stmt 4 (fromIntegral (length refs))
-        dbBindBlob stmt 5 (encodeTxBounds eb)
-        dbBindBlob stmt 6 bodyBytes
-        dbBindInt64 stmt 7 (fromIntegral (sum (map snd refs)))
+        dbBindInt64 stmt 3 (fromIntegral (length refs))
+        dbBindBlob stmt 4 (encodeTxBounds eb)
+        dbBindBlob stmt 5 bodyBytes
+        dbBindInt64 stmt 6 (fromIntegral (sum (map snd refs)))
         dbStep1 stmt
         DB.changes db
 
@@ -166,8 +183,9 @@ sqlInsertTxs conn point txBytesWithOffsets =
   dbWithWriteTransaction conn $
     writeTxBytes conn point txBytesWithOffsets
 
--- | Write txs into the closure of the EB at the point, within the caller's
--- transaction, and return the offsets of those dropped for their size. A
+-- | Write txs into the closure of the EB at the point, and mark them written,
+-- within the caller's transaction, and return the offsets of those dropped for
+-- their size. A
 -- transaction is dropped if:
 --
 -- * the EB's body is not stored;
@@ -186,10 +204,14 @@ writeTxBytes conn point txBytesWithOffsets =
           accepted =
             IntMap.toAscList $
               IntMap.fromListWith (\_new old -> old) (filter sized inBody)
-      unless (null accepted) $
+          runs = consecutiveRuns fst accepted
+      unless (null accepted) $ do
         withBlob db "ebs" "txs" eiRowid True $ \blob ->
-          forM_ (consecutiveRuns fst accepted) $ \run ->
+          forM_ runs $ \run ->
             withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) (start (fst (NE.head run))))
+        withBlob db "ebs" "txWritten" eiRowid True $ \blob ->
+          forM_ runs $ \run ->
+            withDie db (DB.blobWrite blob (BS.replicate (NE.length run) 1) (fst (NE.head run)))
       pure [txOffset | tx@(txOffset, _) <- inBody, not (sized tx)]
  where
   Conn{conVolDb = db} = conn
