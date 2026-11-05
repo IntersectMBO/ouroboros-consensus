@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -69,7 +70,11 @@ import Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, onValidAnnouncement)
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( AnnounceState
+  , WhetherNewAnnouncement (..)
+  , onValidAnnouncement
+  )
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -88,6 +93,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   ( AnnouncementInvalidity
   , AnnouncingHeader (ancAnnouncement, ancElectionId)
   , LeiosAnnouncementAgeLimits (..)
+  , ValidAnnouncement
   , announcementValidity
   , announcingRbHash
   , mkAnnouncingHeader
@@ -188,9 +194,10 @@ data ExnLeiosNotifyInvalidOffer
   | -- | An offer below the slot this peer's state has been pruned to, which is
     -- therefore unanswerable on its own terms.
     --
-    -- TODO When the honest server offers endorser blocks, explain why it never
-    -- trips this, eg because it offers one only while it is at least a minimum
-    -- lead younger than its own immutable tip.
+    -- An honest server never trips this: it offers an endorser block only at an
+    -- announcement it relays, and only until shortly after that announcement is
+    -- 'maxAnnouncementAgeSend' old, which must be far younger than any peer's
+    -- immutable tip.
     ExnLeiosOfferTooOld
       !LeiosPoint
       -- | the slot this peer's state has been pruned to
@@ -289,7 +296,8 @@ instance
 
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
--- An accepted announcement goes on to the node's 'AnnounceState'.
+-- An accepted announcement goes on to the node's 'AnnounceState', and, if it
+-- is new there, to the given action.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
@@ -301,12 +309,14 @@ onLeiosNotifyAnnouncement ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement ageLimits systemTime futureCheck cfg announceState immLedger st hdr = do
+onLeiosNotifyAnnouncement ageLimits systemTime futureCheck cfg announceState onNew immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
@@ -314,7 +324,10 @@ onLeiosNotifyAnnouncement ageLimits systemTime futureCheck cfg announceState imm
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
     valid <- announcementValidity ageLimits systemTime futureCheck cfg immLedger anc
-    lift $ atomically $ onValidAnnouncement announceState valid
+    lift $
+      atomically (onValidAnnouncement announceState valid) >>= \case
+        NewAnnouncement -> onNew valid
+        NotNewAnnouncement -> pure ()
     pure
       st
         { lnpsAnnouncements = announcements

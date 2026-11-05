@@ -66,6 +66,8 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
 import Data.Maybe.Strict (StrictMaybe (SJust))
 import Data.Proxy (Proxy (..))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Network.Mux as Mux
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
 import Ouroboros.Consensus.BlockchainTime
@@ -201,7 +203,9 @@ data NodeUnderTest m = NodeUnderTest
   , nodeSeeds :: Seeds StdGen
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where a test emits the endorser blocks and closures the node
-  -- acquires.
+  -- acquires, as the node's LeiosFetch would.
+  , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
+  -- ^ The peers the node has a connection to.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -349,6 +353,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 peerMetrics
                 (const encodePeerAddr)
                 (const decodePeerAddr)
+        connectedPeers <- newTVarIO Set.empty
         body
           NodeUnderTest
             { nodeChainDB = chainDB
@@ -364,6 +369,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   apps
             , nodeSeeds = seeds
             , nodeLeiosAcquisitions = leiosAcquisitions
+            , nodeConnectedPeers = connectedPeers
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
