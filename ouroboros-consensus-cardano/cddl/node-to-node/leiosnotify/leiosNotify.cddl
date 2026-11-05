@@ -1,9 +1,7 @@
-; The messages of the LeiosNotify mini-protocol, as the cardano-blueprint's
-; network/node-to-node/leios-notify/messages.cddl has them, except that a
-; MsgLeiosVotes holds at most sixteen votes, which the blueprint does not bound.
+; The messages of the LeiosNotify mini-protocol
 ;
-; TODO Bound the votes in the blueprint too; then drop this file in favour of
-; the blueprint's.
+; TODO Upstream this from ouroboroso-consensus into cardano-blueprint and not
+; only sync it using a GHA workflow
 
 leiosNotifyMessage
   = msgDone

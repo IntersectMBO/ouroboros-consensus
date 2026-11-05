@@ -16,13 +16,13 @@ import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , deserialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
@@ -42,13 +42,13 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
-import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
   , MonadCatch (..)
   , MonadSTM (..)
   , MonadThrow (..)
   )
+import Ouroboros.Network.Block (Serialised (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
@@ -63,7 +63,7 @@ import Ouroboros.Network.Mux
 leiosFetchClient ::
   MonadSTM m =>
   ControlMessageSTM m ->
-  LeiosFetchClientPeer LeiosPoint EndorserBlock LeiosTx m ()
+  LeiosFetchClientPeer LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
 leiosFetchClient controlMessageSTM =
   leiosFetchClientPeerIdle $
     controlMessageSTM >>= \case
@@ -77,7 +77,7 @@ leiosFetchServer ::
   MonadCatch m =>
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
-  LeiosFetchServerPeer LeiosPoint EndorserBlock LeiosTx m ()
+  LeiosFetchServerPeer LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
 leiosFetchServer tracer reader =
   leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
     MsgLeiosBlockRequest point ->
@@ -96,17 +96,17 @@ serveEb ::
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
-  m EndorserBlock
+  m (Serialised EndorserBlock)
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
   lookupEbBody reader point >>= \case
     Nothing -> throwIO $ ExnLeiosUnknownBlockRequested point
-    Just bytes -> case deserialiseEndorserBlock bytes of
-      Left err -> throwLeiosDbException ("stored endorser block body does not decode: " <> err)
-      Right eb -> do
-        traceWith tracer $ TraceLeiosFetchServerBlockServed point (BS.length bytes)
-        pure eb
+    -- The bytes as they arrived, sent without decoding them.
+    Just eb -> do
+      traceWith tracer $
+        TraceLeiosFetchServerBlockServed point (fromIntegral (BSL.length (unSerialised eb)))
+      pure eb
 
 serveTxs ::
   MonadThrow m =>
