@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | The insert writes behind
 -- 'Ouroboros.Consensus.Storage.LeiosDB.API.LeiosDbWriter'. They run on the
@@ -43,7 +44,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , readTxBounds
   , withBlob
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 
 -- | Persist a point. If another point of the EB holds it, the new row copies
 -- its body and closure, so each row holds the whole EB.
@@ -56,17 +56,25 @@ sqlInsertEbPoint conn point ebBytesSize =
 -- inserted.
 insertPoint :: Conn -> LeiosPoint -> BytesSize -> IO Int
 insertPoint conn point ebBytesSize = do
-  copied <- insertWith stInsertEbCopy
-  if copied > 0 then pure copied else insertWith stInsertEbPoint
+  -- With the EB another point of it holds, if any.
+  copied <-
+    insertWith
+      "INSERT OR IGNORE INTO ebs\n\
+      \  (ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs)\n\
+      \SELECT ?1, ?2, ?3, txCount, txBounds, body, txs FROM ebs\n\
+      \WHERE ebHashBytes = ?2 AND txCount IS NOT NULL LIMIT 1"
+  if copied > 0
+    then pure copied
+    else insertWith "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?1, ?2, ?3)"
  where
-  insertWith stmt = useStmt stmt $ do
+  insertWith sql = withStmt db sql $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
     dbBindHash stmt 2 (pointEbHash point)
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
     DB.changes db
 
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint, stInsertEbCopy}} = conn
+  Conn{conVolDb = db} = conn
 
 -- | Persist an EB body into each point of the EB: the bytes it arrived in,
 -- where each of its txs will be in the closure, and the closure, zeroes.
@@ -85,17 +93,24 @@ sqlInsertEbBody conn point eb = do
     pure inserted
   bumpVolatileStats conn inserted
  where
-  insertBody = useStmt stInsertEbBody $ do
-    dbBindHash stInsertEbBody 1 (pointEbHash point)
-    dbBindInt64 stInsertEbBody 2 (fromIntegral (length refs))
-    dbBindBlob stInsertEbBody 3 (encodeTxBounds eb)
-    dbBindBlob stInsertEbBody 4 bodyBytes
-    dbBindInt64 stInsertEbBody 5 (fromIntegral (sum (map snd refs)))
-    dbStep1 stInsertEbBody
+  -- Into each point of the EB. A second delivery of the same body changes
+  -- nothing.
+  insertBody =
+    withStmt
+      db
+      "UPDATE ebs SET txCount = ?2, txBounds = ?3, body = ?4, txs = zeroblob(?5)\n\
+      \WHERE ebHashBytes = ?1 AND txCount IS NULL"
+      $ \stmt -> do
+        dbBindHash stmt 1 (pointEbHash point)
+        dbBindInt64 stmt 2 (fromIntegral (length refs))
+        dbBindBlob stmt 3 (encodeTxBounds eb)
+        dbBindBlob stmt 4 bodyBytes
+        dbBindInt64 stmt 5 (fromIntegral (sum (map snd refs)))
+        dbStep1 stmt
 
   bodyBytes = serialiseEndorserBlock eb
   refs = endorserBlockReferences eb
-  Conn{connVolStmts = VolStmts{stInsertEbBody}} = conn
+  Conn{conVolDb = db} = conn
 
 -- | Persist tx bytes for one EB, in place in the closure of each of its
 -- points. How many txs a write carries is the caller's to decide; whether the
@@ -122,7 +137,7 @@ sqlInsertTxs conn point txBytesWithOffsets =
 -- * or its size is not the declared one.
 writeTxBytes :: Conn -> EndorserBlockHash -> [(TxOffset, ByteString)] -> IO [TxOffset]
 writeTxBytes conn ebHash txBytesWithOffsets =
-  lookupEbIndex rsLookupEbIndex ebHash >>= \case
+  lookupEbIndex db ebHash >>= \case
     Nothing -> pure []
     Just ix@EbIndex{eiTxCount = n} -> do
       bounds <- readTxBounds db ix 0 (n - 1)
@@ -139,12 +154,12 @@ writeTxBytes conn ebHash txBytesWithOffsets =
                 , BS.length txBytes == end txOffset - start txOffset
                 ]
       unless (null accepted) $ do
-        rowids <- useStmt stLookupEbRows $ do
-          dbBindHash stLookupEbRows 1 ebHash
+        rowids <- withStmt db "SELECT rowid FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL" $ \stmt -> do
+          dbBindHash stmt 1 ebHash
           let loop acc =
-                dbStep stLookupEbRows >>= \case
+                dbStep stmt >>= \case
                   DB.Done -> pure acc
-                  DB.Row -> DB.columnInt64 stLookupEbRows 0 >>= loop . (: acc)
+                  DB.Row -> DB.columnInt64 stmt 0 >>= loop . (: acc)
           loop []
         forM_ rowids $ \rowid ->
           withBlob db "ebs" "txs" rowid True $ \blob ->
@@ -152,7 +167,4 @@ writeTxBytes conn ebHash txBytesWithOffsets =
               withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) (start (fst (NE.head run))))
       pure (map fst accepted)
  where
-  Conn
-    { conVolDb = db
-    , connVolStmts = VolStmts{stLookupEbRows, stReads = ReadStmts{rsLookupEbIndex}}
-    } = conn
+  Conn{conVolDb = db} = conn

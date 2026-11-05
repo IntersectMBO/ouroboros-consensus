@@ -55,9 +55,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries (sql_gc_collect)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (closureMatches, splitClosure)
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
   , WriteQueue
@@ -69,32 +67,26 @@ import System.Directory (doesFileExist, getFileSize)
 
 -- * Copying EBs to the immutable partition
 
--- | The connection that copies EBs into the immutable partition, and its
--- prepared statements. One promotion at a time uses it.
-data Promoter = Promoter
-  { prDb :: !DB.Database
-  -- ^ main = immutable partition, @vol@ = attached volatile partition
-  , prStmts :: !PromoteStmts
-  }
+-- | The connection that copies EBs into the immutable partition: main is the
+-- immutable partition, @vol@ the attached volatile one. One promotion at a
+-- time uses it.
+newtype Promoter = Promoter DB.Database
 
 -- | Open the promoter's connection to the immutable partition, with the
--- volatile partition attached, and prepare its statements.
+-- volatile partition attached.
 openPromoter :: FilePath -> FilePath -> IO (MVar Promoter)
 openPromoter volPath immPath = do
   db <- openRawConnection immPath
-  stmts <- orCloseOnError db $ do
+  orCloseOnError db $
     withStmt db "ATTACH ? AS vol" $ \stmt -> do
       dbBindUtf8 stmt 1 (fromString volPath)
       dbStep1Safe stmt
-    preparePromoteStmts db
-  newMVar (Promoter db stmts)
+  newMVar (Promoter db)
 
 -- | Close the promoter's connection, once no promotion is using it.
 closePromoter :: MVar Promoter -> IO ()
 closePromoter promoterVar =
-  withMVar promoterVar $ \Promoter{prDb, prStmts} -> do
-    finalizePromoteStmts prStmts
-    closeChecked prDb
+  withMVar promoterVar $ \(Promoter db) -> closeChecked db
 
 -- | Implements 'leiosDbPromoteToImmutable': copy the EBs into the immutable
 -- partition, at the given points, in one transaction.
@@ -111,53 +103,59 @@ sqlPromoteToImmutable ::
   [LeiosPoint] ->
   IO ()
 sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) $ do
-  copied <- withMVar promoterVar $ \Promoter{prDb, prStmts} ->
+  copied <- withMVar promoterVar $ \(Promoter db) ->
     -- Deferred, not 'dbWithWriteTransactionRaw': @BEGIN IMMEDIATE@ takes the
     -- write lock of every database on the connection, the attached volatile
     -- partition too, and would hold off the writer for the whole promotion.
     -- Promotion only reads the volatile partition, and the immutable one has
     -- no other writer, so taking its lock at the first insert cannot fail.
-    dbWithTransaction prDb $
-      sum <$> mapM (copyEb prDb prStmts) points
+    dbWithTransaction db $
+      sum <$> mapM (copyEbToImmutable db) points
   bumpImmutableStats statsVar copied
   traceWith tracer $ TraceLeiosDbCopiedToImmutable copied
-
--- | Copy one EB into the immutable partition. Returns the number of rows
--- copied: none if the immutable partition holds the EB already, as after a
--- crash between this copy and appending the block.
-copyEb :: HasCallStack => DB.Database -> PromoteStmts -> LeiosPoint -> IO Int
-copyEb db PromoteStmts{psClosure, psInsertEb} point = do
-  -- The immutable partition is read by hash, so an EB it holds at any point
-  -- is promoted already. Check that first: a crash can lose the volatile
-  -- writes that completed the EB, and nothing fetches them again, since the
-  -- startup scan takes the immutable copy as complete.
-  promoted <-
-    withStmt db "SELECT 1 FROM ebs WHERE ebHashBytes = ?1 LIMIT 1" $ \stmt -> do
-      dbBindHash stmt 1 ebHash
-      dbStepSafe stmt >>= \case
-        DB.Done -> pure False
-        DB.Row -> pure True
-  if promoted then pure 0 else copyFromVolatile
  where
-  ebHash = pointEbHash point
+  copyEbToImmutable db point = do
+    let ebHash = pointEbHash point
+    -- The immutable partition is read by hash, so an EB it holds at any point
+    -- is promoted already. Check that first: a crash can lose the volatile
+    -- writes that completed the EB, and nothing fetches them again, since the
+    -- startup scan takes the immutable copy as complete.
+    promoted <-
+      withStmt db "SELECT 1 FROM ebs WHERE ebHashBytes = ?1 LIMIT 1" $ \stmt -> do
+        dbBindHash stmt 1 ebHash
+        dbStepSafe stmt >>= \case
+          DB.Done -> pure False
+          DB.Row -> pure True
+    if promoted then pure 0 else copyFromVolatile db point ebHash
 
-  copyFromVolatile = do
-    complete <- useStmt psClosure $ do
-      dbBindHash psClosure 1 ebHash
-      dbStepSafe psClosure >>= \case
-        DB.Done -> pure False
-        DB.Row -> do
-          body <- DB.columnBlob psClosure 0
-          bounds <- DB.columnBlob psClosure 1
-          txs <- DB.columnBlob psClosure 2
-          pure $ maybe False (closureMatches body) (sequence (splitClosure bounds txs))
+  copyFromVolatile db point ebHash = do
+    complete <-
+      withStmt
+        db
+        "SELECT body, txBounds, txs FROM vol.ebs\n\
+        \WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1"
+        $ \stmt -> do
+          dbBindHash stmt 1 ebHash
+          dbStepSafe stmt >>= \case
+            DB.Done -> pure False
+            DB.Row -> do
+              body <- DB.columnBlob stmt 0
+              bounds <- DB.columnBlob stmt 1
+              txs <- DB.columnBlob stmt 2
+              pure $ maybe False (closureMatches body) (sequence (splitClosure bounds txs))
     unless complete $
       throwLeiosDbException $
         "leiosDbPromoteToImmutable: no complete closure in the volatile partition: " <> show point
-    useStmt psInsertEb $ do
-      dbBindInt64 psInsertEb 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-      dbBindHash psInsertEb 2 ebHash
-      dbStep1Safe psInsertEb
+    withStmt
+      db
+      "INSERT OR IGNORE INTO ebs\n\
+      \  (ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs)\n\
+      \SELECT ?1, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs FROM vol.ebs\n\
+      \WHERE ebHashBytes = ?2 AND txCount IS NOT NULL LIMIT 1"
+      $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+        dbBindHash stmt 2 ebHash
+        dbStep1Safe stmt
     DB.changes db
 
 -- * Garbage collection of the volatile partition
@@ -181,11 +179,15 @@ gcBatchSize = 16
 -- transaction. Returns how many.
 deleteEbsBefore :: HasCallStack => DB.Database -> Int -> SlotNo -> IO Int
 deleteEbsBefore db limit gcSlot =
-  dbWithWriteTransactionRaw db $ withStmt db sql_gc_collect $ \stmt -> do
-    dbBindInt64 stmt 1 (fromIntegral (unSlotNo gcSlot))
-    dbBindInt64 stmt 2 (fromIntegral limit)
-    dbStep1Safe stmt
-    DB.changes db
+  withStmt
+    db
+    "DELETE FROM ebs WHERE rowid IN\n\
+    \  (SELECT rowid FROM ebs WHERE ebSlot < ?1 LIMIT ?2)"
+    $ \stmt -> dbWithWriteTransactionRaw db $ do
+      dbBindInt64 stmt 1 (fromIntegral (unSlotNo gcSlot))
+      dbBindInt64 stmt 2 (fromIntegral limit)
+      dbStep1Safe stmt
+      DB.changes db
 
 -- * Stats
 
@@ -203,7 +205,8 @@ initialStats volPath immPath = do
       }
  where
   countEbs path =
-    fromIntegral <$> withReadOnlyConn path (\db -> queryInt64 db "SELECT COUNT(*) FROM ebs")
+    withReadOnlyConn path $ \db ->
+      fromIntegral <$> queryInt64 db "SELECT COUNT(*) FROM ebs"
 
 -- * Stats sampling
 

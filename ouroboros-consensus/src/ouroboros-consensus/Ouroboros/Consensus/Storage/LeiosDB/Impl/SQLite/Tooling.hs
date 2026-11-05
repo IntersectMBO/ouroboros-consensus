@@ -40,7 +40,7 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
 vacuumLeiosDb :: HasCallStack => FilePath -> IO ()
 vacuumLeiosDb dbPath =
   withExistingLeiosDbFile dbPath $ \db ->
-    dbExec db (fromString "VACUUM")
+    dbExec db "VACUUM"
 
 -- | Open the LeiosDb file at the given path, which must already exist.
 --
