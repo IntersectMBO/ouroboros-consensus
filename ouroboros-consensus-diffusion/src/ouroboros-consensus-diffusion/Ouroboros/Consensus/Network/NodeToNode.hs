@@ -48,7 +48,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
-import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -58,7 +57,6 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
-import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Void (Void)
 import qualified Network.Mux as Mux
@@ -166,7 +164,6 @@ import Ouroboros.Network.BlockFetch.Client
   , blockFetchClient
   )
 import Ouroboros.Network.Channel
-import Ouroboros.Network.DeltaQ
 import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
@@ -318,7 +315,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      TVar.Unchecked.StrictTVar m (Map (ConnectionId addr) PeerGSV) ->
+      KeepAliveClientContext (ConnectionId addr) m ->
       KeepAliveInterval ->
       KeepAliveClient m ()
   , hKeepAliveServer ::
@@ -504,7 +501,7 @@ mkHandlers
             (perasVoteDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
             (makePerasVotePoolReaderFromChainDB $ getChainDB)
             version
-      , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
+      , hKeepAliveClient = \_version -> keepAliveClientWithRtt (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
@@ -1284,7 +1281,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       }
     channel = do
       labelThisThread "KeepAliveClient"
-      let kacApp = \dqCtx ->
+      let kacApp = \keepAliveCtx ->
             runPeerWithLimits
               (TraceLabelPeer them `contramap` tKeepAliveTracer)
               (cKeepAliveCodec (mkCodecs version))
@@ -1296,11 +1293,11 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 version
                 controlMessageSTM
                 them
-                dqCtx
+                keepAliveCtx
                 (KeepAliveInterval 10)
 
       ((), trailing) <-
-        bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
+        bracketKeepAliveClientWithRtt (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
