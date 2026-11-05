@@ -17,11 +17,10 @@ sql_schema_vol :: String
 sql_schema_vol =
   unlines
     ( ebsTable
-        [ -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
+        [ -- NULL = no body yet, >0 = txs missing, 0 = closure complete
           "  missingTxCount INTEGER,"
         , -- 0 = volatile, 1 = certified/pinned awaiting copy,
-          -- 2 = copied to the immutable partition (evictable),
-          -- 3 = marked for GC, awaiting the sweeper
+          -- 2 = copied to the immutable partition (evictable)
           "  status INTEGER NOT NULL DEFAULT 0,"
         ]
         <> sharedTables
@@ -32,11 +31,8 @@ sql_schema_vol =
 sql_schema_gc :: String
 sql_schema_gc =
   unlines
-    [ -- What the mark scan reads; marking removes the row from it, so
-      -- each row is marked at most once.
+    [ -- What the sweeper's batch pick reads: the points it may evict.
       "CREATE INDEX IF NOT EXISTS idx_ebs_sweepable ON ebs(ebSlot) WHERE status IN (0, 2);"
-    , -- What the sweeper's batch pick reads.
-      "CREATE INDEX IF NOT EXISTS idx_ebs_markedForGc ON ebs(ebHashBytes) WHERE status = 3;"
     , -- Pinned EBs awaiting the copy into the immutable partition; see
       -- 'sql_next_pinned_eb'.
       "CREATE INDEX IF NOT EXISTS idx_ebs_pinned ON ebs(ebSlot) WHERE status = 1;"
@@ -53,8 +49,8 @@ sql_schema_gc =
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 
--- | The 'ebs' table and its hash index, with the given columns added after
--- the ones both partitions have.
+-- | The 'ebs' table, with the given columns added after the ones both
+-- partitions have.
 --
 -- The volatile columns go in here rather than through a later
 -- @ALTER TABLE ... ADD COLUMN@: that has no @IF NOT EXISTS@, so it would
@@ -64,40 +60,41 @@ ebsTable extraColumns =
   [ "CREATE TABLE IF NOT EXISTS ebs ("
   , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
-  , "  ebBytesSize INTEGER NOT NULL,"
+  , -- The bytes the endorser block was received in.
+    "  ebBytes BLOB NOT NULL,"
   ]
     <> extraColumns
     <> [ "  PRIMARY KEY (ebSlot, ebHashBytes)"
        , ");"
-       , -- Lookups by hash alone, e.g. 'sql_imm_filter_present'.
-         "CREATE INDEX IF NOT EXISTS idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
        ]
 
 -- | The tables that are identical in both partitions.
 --
--- Tx bytes are owned by the referencing EB: 'ebTxBytes' shares the
--- @(ebHashBytes, txOffset)@ key with 'ebTxs', so writing and evicting an EB's
--- closure touches one contiguous key range, and a tx shared by two EBs is
--- stored twice, deliberately. A row is allocated as a @zeroblob@ of the
+-- Bodies and tx bytes are owned by the point: 'ebTxs' and 'ebTxBytes' share
+-- the @(ebSlot, ebHashBytes, txOffset)@ key, so writing and evicting a point's
+-- closure touches one contiguous key range, and a tx shared by two points, even
+-- two points of the same EB, is stored twice, deliberately. A row is allocated as a @zeroblob@ of the
 -- declared size when the body arrives and filled in place when the tx does
 -- (@filled = 1@). It never changes size, so SQLite overwrites it in place,
 -- without moving rows between B-tree pages.
 sharedTables :: [String]
 sharedTables =
   [ "CREATE TABLE IF NOT EXISTS ebTxs ("
+  , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
   , "  txOffset INTEGER NOT NULL,"
   , "  txHashBytes BLOB NOT NULL,"
   , "  txBytesSize INTEGER NOT NULL,"
-  , "  PRIMARY KEY (ebHashBytes, txOffset)"
+  , "  PRIMARY KEY (ebSlot, ebHashBytes, txOffset)"
   , ");"
   , "CREATE TABLE IF NOT EXISTS ebTxBytes ("
+  , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
   , "  txOffset INTEGER NOT NULL,"
   , "  filled INTEGER NOT NULL DEFAULT 0,"
   , -- The blob is the rightmost column, so probing @filled@ never touches
     -- overflow pages.
     "  txBytes BLOB NOT NULL,"
-  , "  PRIMARY KEY (ebHashBytes, txOffset)"
+  , "  PRIMARY KEY (ebSlot, ebHashBytes, txOffset)"
   , ");"
   ]

@@ -202,6 +202,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
@@ -1033,12 +1034,13 @@ test-suite leios-storage-test
     bytestring,
     cardano-crypto-class,
     cardano-slotting,
+    cborg,
     containers,
     contra-tracer,
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:{si-timers, strict-stm},
+    io-classes:si-timers,
     ouroboros-consensus,
     QuickCheck,
     tasty,
@@ -1518,6 +1520,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.AcquiredEbs
     Test.Consensus.Leios.Cert
     Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Committee
