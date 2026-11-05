@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (guard)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -61,6 +62,7 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
+import Ouroboros.Network.Block (Serialised (..))
 
 -- | In-memory database state, as the SQLite backend's: a row per point in
 -- each partition, and the promoted slot.
@@ -223,10 +225,10 @@ isPromoted :: InMemoryLeiosDb -> LeiosPoint -> Bool
 isPromoted s point = pointSlotNo point < imPromotedSlot s
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe ByteString)
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe (Serialised EndorserBlock))
 imLookupEbBody stateVar point = atomically $ do
   state <- readTVar stateVar
-  pure $ rowBody <$> rowAt state point
+  pure $ Serialised . BSL.fromStrict . rowBody <$> rowAt state point
 
 -- | Mirrors the SQLite backend: the row of the point, unless an earlier
 -- delivery wrote it, then the fills, returning the offsets the point holds.
@@ -268,7 +270,7 @@ imInsertEbBody stateVar point eb fills = do
   refs = Map.fromList (zip [0 ..] (endorserBlockReferences eb))
   newRow =
     EbRow
-      { rowBody = serialiseEndorserBlock eb
+      { rowBody = BSL.toStrict (unSerialised (serialiseEndorserBlock eb))
       , rowTxSizes = fmap snd refs
       , rowTxs = Map.empty
       }

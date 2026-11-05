@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
+import Ouroboros.Network.Block (Serialised)
 
 -- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
@@ -92,10 +93,11 @@ data LeiosDbHandle m = LeiosDbHandle
 -- a promotion overtook the read.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)
+  , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe (Serialised EndorserBlock))
   -- ^ The EB "body" at this point, in the bytes it arrived in
   -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), or 'Nothing'
-  -- if the LeiosDB does not hold it there.
+  -- if the LeiosDB does not hold it there. Decoding them is for the caller,
+  -- who knows the era ('Ouroboros.Consensus.Leios.Types.deserialiseEndorserBlock').
   , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [ByteString])
   -- ^ The EB "closure" at this point: the bytes of its txs in body order, or
   -- 'Nothing' unless each of them is written. The body lists their hashes.

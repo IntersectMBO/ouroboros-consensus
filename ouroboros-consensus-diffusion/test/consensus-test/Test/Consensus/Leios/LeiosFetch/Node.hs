@@ -29,8 +29,10 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised
   , TxHash
   , mkEndorserBlock
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -43,7 +45,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import Ouroboros.Network.Channel (Channel)
-import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
+import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -62,7 +64,7 @@ tests =
         runSimFinishing (nodeServerAgainst doneClient) >>= (@?= ServerEnded)
     , testCase "the node serves an endorser block it holds" $
         runSimFinishing (nodeAnswers (requestBlock heldPoint))
-          >>= (@?= (Just (ReplyBlock heldEb), ServerEnded))
+          >>= (@?= (Just (ReplyBlock (serialiseEndorserBlock heldEb)), ServerEnded))
     , testCase "the node serves the transactions it holds" $
         runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 63, 64])))
           >>= (@?= (Just (ReplyTxs (map heldTx [0, 63, 64])), ServerEnded))
@@ -95,7 +97,13 @@ data ServerOutcome = ServerEnded | ServerFailed String
   deriving (Eq, Show)
 
 type EnvClient s =
-  Peer (LeiosFetch LeiosPoint EndorserBlock LeiosTx) AsClient NonPipelined StIdle (IOSim s) ()
+  Peer
+    (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)
+    AsClient
+    NonPipelined
+    StIdle
+    (IOSim s)
+    ()
 
 -- | Run the node's server, with 'heldEb' in its LeiosDB, against a peer that
 -- runs this client.
@@ -116,12 +124,12 @@ nodeServerAgainst client = withNode $ \node -> do
       Left e -> pure $ ServerFailed (show e)
 
 runEnvClient :: NodeUnderTest (IOSim s) -> EnvClient s -> Channel (IOSim s) ByteString -> IOSim s ()
-runEnvClient node client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan client
+runEnvClient node client chan = fst <$> runPeer nullTracer (envLeiosFetchCodec node) chan client
 
 doneClient :: EnvClient s
 doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
 
-data Reply = ReplyBlock EndorserBlock | ReplyTxs [LeiosTx]
+data Reply = ReplyBlock (Serialised EndorserBlock) | ReplyTxs [LeiosTx]
   deriving (Eq, Show)
 
 -- | The node's reply to the client's one request, if it replied, and how its

@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
@@ -52,9 +53,12 @@ module Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , endorserBlockReferences
   , encodeEndorserBlock
-  , decodeEndorserBlock
+  , Serialised (..)
   , serialiseEndorserBlock
   , deserialiseEndorserBlock
+  , hashSerialisedEndorserBlock
+  , encodeSerialisedEndorserBlock
+  , decodeSerialisedEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
   , referencesCapacity
@@ -81,16 +85,15 @@ import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Binary
-  ( Annotator (..)
-  , DecCBOR (..)
+  ( DecCBOR (..)
+  , DecoderError (..)
   , EncCBOR (..)
-  , FullByteString (..)
   , Version
-  , toPlainDecoder
+  , decodeFullAnnotator
   , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
-import Cardano.Ledger.Core (eraProtVerLow)
+import Cardano.Ledger.Core (Era, eraProtVerLow)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Cardano.Ledger.Dijkstra.Block.Endorser as Ledger
 import Cardano.Ledger.Hashes
@@ -110,7 +113,6 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.CBOR.Read (deserialiseFromBytes)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -130,6 +132,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (toShortRawHash), HeaderHash)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Network.Block (Serialised (..))
 
 -- * Hashes
 
@@ -373,56 +376,70 @@ encodeEndorserBlock :: EndorserBlock -> Encoding
 encodeEndorserBlock (MkEndorserBlock references) =
   toPlainEncoding endorserBlockVersion $ encCBOR references
 
--- | The inverse of 'encodeEndorserBlock', given the whole input it decoded
--- from, not just the endorser block's bytes: the ledger's annotator slices
--- them by the byte offsets of this decoder's run. Like the ledger, it rejects
--- an empty map of transaction references and one naming a transaction twice.
--- It also rejects one whose bytes exceed 'maxEndorserBlockBytesSize'. It can
--- tell only after decoding them (if endorser blocks were wrapped as
--- CBOR-in-CBOR, it would know their length before decoding them, even from an
--- indefinite-length byte string), since a CBOR map gives its number of entries
--- rather than of bytes. So the byte limit of the message carrying it must keep
--- small the work it does before then, eg
--- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'.
+-- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
+-- received in, or the ledger's encoding of one this node built. They are what
+-- LeiosFetch sends, CBOR-in-CBOR, and what the LeiosDB stores, so neither a
+-- server nor the codec decodes an endorser block.
+serialiseEndorserBlock :: EndorserBlock -> Serialised EndorserBlock
+serialiseEndorserBlock (MkEndorserBlock references) =
+  Serialised (BSL.fromStrict (originalBytes references))
+
+-- | The inverse of 'serialiseEndorserBlock', decoding at the ledger version
+-- of the given era. The bytes carry no version: whoever decodes them knows the
+-- era, from the slot of the announcement and the ledger state at it, as the
+-- fetch logic does for a received endorser block, and voting and block
+-- application for a stored one.
 --
--- The endorser block keeps its slice of those bytes, so its hash and encoding
--- are of the bytes received.
-decodeEndorserBlock :: Decoder s (BSL.ByteString -> EndorserBlock)
-decodeEndorserBlock = do
-  start <- CBOR.peekByteOffset
-  eb <-
-    toPlainDecoder Nothing endorserBlockVersion $
-      (. Full)
-        -- The annotator only slices the bytes, which cannot fail.
-        . (either (\e -> error ("Impossible, endorser block decoder failed: " <> show e)) MkEndorserBlock .)
-        . runAnnotator
-        <$> decCBOR
-  end <- CBOR.peekByteOffset
-  -- Nothing currently bounds the number of references more tightly than this
-  -- bound on the bytes does, ie by 'maxTxsPerEndorserBlock'.
-  when (end - start > fromIntegral maxEndorserBlockBytesSize) $
+-- Like the ledger, it rejects an empty map of transaction references and one
+-- naming a transaction twice. It also rejects bytes exceeding
+-- 'maxEndorserBlockBytesSize' without decoding them.
+--
+-- The endorser block keeps these bytes, so its hash and encoding are of the
+-- bytes received.
+deserialiseEndorserBlock ::
+  forall era proxy.
+  Era era =>
+  proxy era ->
+  Serialised EndorserBlock ->
+  Either DecoderError EndorserBlock
+deserialiseEndorserBlock _ (Serialised bytes)
+  | BSL.length bytes > fromIntegral maxEndorserBlockBytesSize =
+      Left $
+        DecoderErrorCustom ebLabel $
+          T.pack $
+            "endorser block of "
+              <> show (BSL.length bytes)
+              <> " bytes exceeds "
+              <> show maxEndorserBlockBytesSize
+  | otherwise =
+      MkEndorserBlock <$> decodeFullAnnotator (eraProtVerLow @era) ebLabel decCBOR bytes
+ where
+  ebLabel = T.pack "EndorserBlock"
+
+-- | The hash 'endorserBlockHash' gives the endorser block of these bytes,
+-- without decoding them: a client checks it against the point it requested
+-- before it decodes anything.
+hashSerialisedEndorserBlock :: Serialised EndorserBlock -> EndorserBlockHash
+hashSerialisedEndorserBlock (Serialised bytes) = castHash $ hashWith @HASH id (BSL.toStrict bytes)
+
+-- | An endorser block's bytes as LeiosFetch sends them:
+-- @#6.24(bytes .cbor eb_references)@.
+encodeSerialisedEndorserBlock :: Serialised EndorserBlock -> Encoding
+encodeSerialisedEndorserBlock (Serialised bytes) = encodeNestedCborBytes bytes
+
+-- | The inverse of 'encodeSerialisedEndorserBlock'. It rejects bytes exceeding
+-- 'maxEndorserBlockBytesSize', which the byte string's header tells before
+-- they are read, and decodes nothing within them.
+decodeSerialisedEndorserBlock :: Decoder s (Serialised EndorserBlock)
+decodeSerialisedEndorserBlock = do
+  bytes <- decodeNestedCborBytes
+  when (BS.length bytes > fromIntegral maxEndorserBlockBytesSize) $
     fail $
       "endorser block of "
-        <> show (end - start)
+        <> show (BS.length bytes)
         <> " bytes exceeds "
         <> show maxEndorserBlockBytesSize
-  pure eb
-
--- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
--- received in, or the ledger's encoding of one this node built.
-serialiseEndorserBlock :: EndorserBlock -> ByteString
-serialiseEndorserBlock (MkEndorserBlock references) = originalBytes references
-
--- | The inverse of 'serialiseEndorserBlock', with 'decodeEndorserBlock'.
-deserialiseEndorserBlock :: ByteString -> Either String EndorserBlock
-deserialiseEndorserBlock bytes =
-  case deserialiseFromBytes decodeEndorserBlock lazyBytes of
-    Left err -> Left (show err)
-    Right (rest, eb)
-      | BSL.null rest -> Right (eb lazyBytes)
-      | otherwise -> Left (show (BSL.length rest) <> " bytes after the endorser block")
- where
-  lazyBytes = BSL.fromStrict bytes
+  pure $ Serialised (BSL.fromStrict bytes)
 
 -- | The most bytes 'encodeEndorserBlock' writes besides the references, for an
 -- endorser block that 'mkEndorserBlock' built: its map header. Each
@@ -445,7 +462,7 @@ referencesCapacity paramLimit = paramLimit - min paramLimit maxFramingSize
 --
 -- TODO Nothing yet keeps the @maxEndorserBlockReferencesSize@ protocol
 -- parameter within it, so a larger value would let an honest peer send an
--- endorser block that 'decodeEndorserBlock' rejects. Make it the
+-- endorser block that 'deserialiseEndorserBlock' rejects. Make it the
 -- constitution's guardrail on that parameter, and refuse to run with a
 -- parameter above it.
 maxEndorserBlockBytesSize :: BytesSize

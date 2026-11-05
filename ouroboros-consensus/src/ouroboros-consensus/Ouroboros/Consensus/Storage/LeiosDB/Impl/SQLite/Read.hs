@@ -53,6 +53,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
+import Ouroboros.Network.Block (Serialised (..))
 
 -- | Each point at or after the slot whose closure is complete in the partition
 -- its reads go to ('readPartition'): in the volatile partition, if each of its
@@ -136,8 +137,9 @@ readPartition conn point readRow = do
 
   fromImmutable = dbWithTransaction immDb (readRow immDb)
 
-sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe ByteString)
-sqlLookupEbBody conn point = readPartition conn point (`lookupBlob` point)
+sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
+sqlLookupEbBody conn point =
+  fmap (Serialised . BSL.fromStrict) <$> readPartition conn point (`lookupBlob` point)
 
 -- | Retrieve tx bytes for a batch of offsets into the EB at one point: the
 -- offsets the body declares, with their bytes, or 'Nothing' where no tx was
