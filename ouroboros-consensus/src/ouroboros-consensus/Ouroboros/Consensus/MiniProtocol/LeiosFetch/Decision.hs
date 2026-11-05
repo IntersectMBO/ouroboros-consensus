@@ -39,6 +39,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , refundEbRequest
   , refundTxRequest
   , completeTxRequest
+  , abandonClosure
 
     -- * Deciding
   , LeiosFetchStaticEnv (..)
@@ -348,7 +349,8 @@ data EbFetchState
     --
     -- A body too big for the point's bounds is held with an empty pool too. It
     -- is never written, and nothing more is fetched or emitted for it at this
-    -- point.
+    -- point. So is a body whose closure no peer can complete
+    -- ('abandonClosure'), though it is written and emitted.
     --
     -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
     -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its
@@ -716,6 +718,18 @@ completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
     NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
   nonEmptyMap m = if Map.null m then Nothing else Just m
 
+-- | Fetch no more of the closure of the endorser block at this point, though
+-- jobs of it remain: it references a tx with a size other than the tx's own,
+-- so no peer can complete it.
+abandonClosure :: LeiosPoint -> LeiosOutstanding peer -> LeiosOutstanding peer
+abandonClosure point o =
+  o{ebState = Map.adjust abandon point (ebState o)}
+ where
+  abandon (MkEbState onset fetchState) =
+    MkEbState onset $ case fetchState of
+      NoBody -> NoBody
+      BodyAcquired _jobPool -> BodyAcquired Jobs.emptyLeiosJobPool
+
 {-------------------------------------------------------------------------------
   Deciding
 -------------------------------------------------------------------------------}
@@ -950,8 +964,8 @@ assignPeer env forecastEbBounds mbHorizon isBig peer offers acc =
     requestClosure jobPool
       | Jobs.nullLeiosJobPool jobPool =
           -- Nothing left to fetch --- the whole datum is in hand, or we
-          -- rejected the endorser block on arrival --- so the closure offer
-          -- is useless now too.
+          -- rejected the endorser block on arrival or abandoned its closure ---
+          -- so the closure offer is useless now too.
           pruneThisOffer
       | otherwise =
           -- Still need the txs, and the peer offered the closure. If we just
