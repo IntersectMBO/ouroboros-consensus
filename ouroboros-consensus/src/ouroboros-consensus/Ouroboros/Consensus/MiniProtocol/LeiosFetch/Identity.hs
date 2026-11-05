@@ -1,4 +1,8 @@
 -- | Identities shared by the fetch kernel and the atomic request ledger.
+--
+-- Rationale (repository-root path):
+-- @docs/fetch-policy/cancellation-contract.md#3-request-identity@.
+-- That section maps these identities to the cancellation contract.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
   ( LeiosPeerLifetimeId (..)
   , FetchSessionToken (..)

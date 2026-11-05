@@ -3,6 +3,12 @@
 -- | Pure connection-wide admission and lifetime accounting, shared across EBs.
 -- This module neither sends messages nor activates a fetching policy. Every
 -- successful transition is intended to run in one admission-state STM update.
+--
+-- Rationale (repository-root paths), with links to the cancellation contract:
+--
+-- * @docs/fetch-policy/cancellation-contract.md#6-preserve-fifo-response-order@
+-- * @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@
+-- * @docs/fetch-policy/cancellation-contract.md#7-define-too-old-by-a-bounded-request-window@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission
   ( AdmissionLimits
   , mkAdmissionLimits
@@ -307,8 +313,9 @@ releaseHandoff ticket@(HandoffKey key _) s = do
   pure s{statePending = Map.delete ticket (statePending s)}
 
 -- | Release wire and unreceived storage capacity; keep accepted handoffs charged.
--- E09's node-owned arena will own these tickets across reconnects. This closed
--- ledger must not be thrown away while its pending receipts remain outstanding.
+-- The planned node-owned handoff arena will own these tickets across reconnects.
+-- This closed ledger must not be thrown away while its pending receipts remain
+-- outstanding.
 retireSession :: AdmissionState peer -> AdmissionState peer
 retireSession s = s{stateClosed = True, stateRecords = Map.empty, stateQueue = Seq.empty}
 

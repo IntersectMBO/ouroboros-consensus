@@ -1,7 +1,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | Immutable work prepared before irreversible request admission. Preparation
--- allocates no wire identity or capacity. E13 will build these from wanted TXs.
+-- allocates no wire identity or capacity. The planned checkpoint builder will
+-- assemble these descriptors from wanted transactions.
+--
+-- Rationale (repository-root path):
+-- @docs/fetch-policy/cancellation-contract.md#validation-descriptors-and-progress-events@.
+-- That section links descriptor and size-accounting choices to the contract.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
   ( PayloadBytes (..)
   , EncodedBytes (..)

@@ -226,7 +226,9 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -1539,6 +1541,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosFetch.Replies
+    Test.Consensus.Leios.LeiosFetch.Timing
     Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Leios.LeiosNotify.Codec
     Test.Consensus.Leios.LeiosNotify.Node
