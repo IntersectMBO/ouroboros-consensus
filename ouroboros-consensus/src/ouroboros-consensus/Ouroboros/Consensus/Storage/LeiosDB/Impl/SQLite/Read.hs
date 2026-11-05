@@ -6,8 +6,7 @@
 --
 -- Each lookup reads one partition, chosen by the point's slot ('readPartition').
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
-  ( sqlScanEbPoints
-  , sqlScanCompleteEbPointsSince
+  ( sqlScanCompleteEbPointsSince
   , sqlLookupEbBody
   , sqlBatchRetrieveTxs
   , sqlLookupEbClosure
@@ -43,7 +42,6 @@ import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
-  , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
   , deserialiseEndorserBlock
@@ -52,21 +50,6 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-
-sqlScanEbPoints :: Conn -> IO [(SlotNo, EndorserBlockHash)]
-sqlScanEbPoints conn =
-  dbWithTransaction db $
-    withStmt db "SELECT ebSlot, ebHashBytes FROM ebs ORDER BY ebSlot ASC" $ \stmt ->
-      loop stmt []
- where
-  Conn{conVolDb = db} = conn
-  loop stmt acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        hash <- dbColumnHash stmt 1
-        loop stmt ((slot, hash) : acc)
 
 -- | Each point at or after the slot whose closure is complete in the partition
 -- its reads go to ('readPartition'). In the volatile partition, a closure is

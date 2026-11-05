@@ -170,7 +170,6 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
     pure
       LeiosDbReader
         { closeReader = closeConn conn
-        , testScanEbPoints = sqlScanEbPoints conn
         , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
