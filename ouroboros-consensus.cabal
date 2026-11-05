@@ -1343,6 +1343,8 @@ library diffusion
   visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Codec
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
     Ouroboros.Consensus.Network.LeiosFetch
     Ouroboros.Consensus.Network.LeiosNotify
     Ouroboros.Consensus.Network.NodeToClient
@@ -1394,7 +1396,7 @@ library diffusion
     text,
     time,
     transformers,
-    typed-protocols:{stateful, typed-protocols} ^>=1.2.2,
+    typed-protocols:{cborg, stateful, typed-protocols} ^>=1.2.2,
     vector,
 
 library unstable-diffusion-testlib
@@ -1543,6 +1545,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Admission
     Test.Consensus.Leios.LeiosFetch.AtomicCodec
+    Test.Consensus.Leios.LeiosFetch.AtomicReceive
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Handoff

@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , StorageSession
   , StorageRequest
   , storageRequestKey
+  , storageRequestPrepared
   , StorageError (..)
   , StorageException (..)
   , Acceptance (..)
@@ -124,6 +125,12 @@ data StorageRequest peer = StorageRequest
   -- ^ Original expected positions, hashes/sizes and EB generation.
   }
   deriving (Eq, Show)
+
+-- | Read the immutable descriptor and bounds reserved at admission. Receive
+-- scopes pin this value before decoding; reassignment cannot replace it.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#validation-descriptors-and-progress-events@.
+storageRequestPrepared :: StorageRequest peer -> PreparedRequest
+storageRequestPrepared = requestPrepared
 
 data Session owner peer = Session
   { sessionOwner :: !owner
