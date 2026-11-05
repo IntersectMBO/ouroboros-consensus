@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 
     -- * Stats
   , initialStats
+  , initialGcSlot
   , startVolatileStatsSampler
   , bumpVolatileStats
   , bumpVolatileStatsVar
@@ -190,6 +191,15 @@ deleteEbsBefore db limit gcSlot =
       DB.changes db
 
 -- * Stats
+
+-- | The slot of the latest garbage collection, at startup: the one after the
+-- newest point the immutable partition holds. The slot is not on disk, but
+-- every point promoted before is older than the ImmutableDB tip, which is what
+-- the ChainDB collects up to.
+initialGcSlot :: HasCallStack => FilePath -> IO SlotNo
+initialGcSlot immPath =
+  withReadOnlyConn immPath $ \db ->
+    SlotNo . fromIntegral <$> queryInt64 db "SELECT COALESCE(MAX(ebSlot) + 1, 0) FROM ebs"
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.
