@@ -8,10 +8,11 @@ import qualified Test.Consensus.Leios.LeiosFetch.Decision as Decision
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
 import qualified Test.Consensus.Leios.LeiosFetch.Timing as Timing
+import qualified Test.Consensus.Leios.LeiosFetch.Wait as Wait
 import Test.Tasty
 
 tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [Admission.tests, Timing.tests, Codec.tests, Decision.tests, Replies.tests, Node.tests]
+    [Admission.tests, Timing.tests, Wait.tests, Codec.tests, Decision.tests, Replies.tests, Node.tests]

@@ -3,17 +3,16 @@ module Test.Consensus.Leios.LeiosFetch.Timing (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM)
+import Control.Monad.Class.MonadTime.SI (Time (Time), addTime)
 import qualified Data.ByteString.Short as SBS
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Ratio ((%))
-import Data.Time.Clock (DiffTime, picosecondsToDiffTime)
 import Data.Word (Word32, Word64)
 import Ouroboros.Consensus.Leios.Types (LeiosEbBounds (..), LeiosPoint (..), mkEndorserBlock)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
-import Ouroboros.Consensus.Util.IOLike (Time (Time), addTime)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
 import Test.Tasty.QuickCheck
@@ -70,9 +69,6 @@ right = either (error . show) id
 
 at :: Rational -> Time
 at = Time . fromRational
-
-up :: Rational -> DiffTime
-up x = picosecondsToDiffTime (ceiling (x * 1000000000000))
 
 config :: Rational -> TimingConfig
 config rate = right (mkTimingConfig rate 14600 0.5 2 60 (PayloadBytes 1048576))
@@ -150,7 +146,7 @@ testRtt :: Assertion
 testRtt = do
   let r raw completed = getRttAllowance (conservativeRtt (at 40) (Just (RttObservation raw (at completed))))
   r 0.1 10 @?= 0.15
-  r 0.1 (10 - 1 % 1000000000000) @?= 0.5
+  r 0.1 (10 - 0.000000000001) @?= 0.5
   r 0.1 41 @?= 0.5
   r 0 40 @?= 0.5
   r (-0.1) 40 @?= 0.5
@@ -180,19 +176,19 @@ testService = do
       high = snapshot 1500000 1 (batch [20000])
       fresh s = dataDeadline s (at 0) Nothing Nothing
       warm s = dataDeadline s (at (1 % 20)) (Just (at (1 % 5))) (Just (at (1 % 5)))
-  transferAllowance low @?= up (8 % 15)
+  transferAllowance low @?= fromRational (8 % 15)
   coldAllowance low @?= 0.3
-  deadlineExpiresAt (fresh low) @?= addTime (up (8 % 15)) (at (3 % 20))
+  deadlineExpiresAt (fresh low) @?= addTime (fromRational (8 % 15)) (at (3 % 20))
   deadlineAllowance (fresh high) @?= 0.45
   deadlineExpiresAt (warm high) @?= at (7 % 20)
   deadlinePipeline (warm high) @?= Continuous
 
 testAnchors :: Assertion
 testAnchors = do
-  let near100ms = Just (RttObservation (picosecondsToDiffTime 66666666667) (at 0))
+  let near100ms = Just (RttObservation 0.066666666667 (at 0))
       s = right (snapshotTiming (config 1500000) (at 0) near100ms 1 (batch [75000]))
       d sentAt = dataDeadline s (at sentAt) (Just (at (1 % 5))) (Just (at (1 % 5)))
-  deadlineExpiresAt (d (18 % 100)) @?= addTime (picosecondsToDiffTime 1) (at (68 % 100))
+  deadlineExpiresAt (d (18 % 100)) @?= at (68 % 100)
   deadlineExpiresAt (d (5 % 100)) @?= at (6 % 10)
 
 testClassification :: Assertion
@@ -222,6 +218,7 @@ testOverhang = do
 
 testHedge :: Assertion
 testHedge = do
+  hedgeAllowance 0.7 (3 % 2) 2 @?= 1.05
   hedgeAllowance 0.7 4 2 @?= 2
   hedgeAllowance 3 4 2 @?= 3
   hedgeAllowance 0.7 (10 ^ (100 :: Int)) 2 @?= 2
@@ -415,8 +412,11 @@ propArithmetic = forAll
         fresh = dataDeadline s (at 0) Nothing Nothing
         warm = dataDeadline s (at 0) (Just (at 1)) (Just (at 1))
         small = snapshot rate 1 (batch [fromIntegral (max 1 (bytes - 1))])
+        transfer = toRational (transferAllowance s)
+        exactTransfer = 8 * fromIntegral bytes / rate
      in counterexample (show (s, fresh, warm)) $
-          property (toRational (transferAllowance s) >= 8 * fromIntegral bytes / rate)
+          -- DiffTime truncates fractional seconds at its ordinary resolution.
+          property (transfer <= exactTransfer && exactTransfer - transfer < 0.000000000001)
             .&&. property (deadlineAllowance fresh >= deadlineBase fresh)
             .&&. property (deadlineAllowance fresh <= max 2 (deadlineBase fresh))
             .&&. property (coldAllowance s >= getRttAllowance (snapshotRtt s))

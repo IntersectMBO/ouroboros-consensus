@@ -1,7 +1,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
--- | Pure request patience calculations. All durations are SI seconds; rational
--- calculations are rounded upwards to picoseconds only at the timer boundary.
+-- | Pure request patience calculations in SI seconds using 'DiffTime'.
 --
 -- Rationale (repository-root path):
 -- @docs/fetch-policy/cancellation-contract.md#service-benchmark-and-general-startup-allowance@.
@@ -30,12 +29,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
   ) where
 
 import Control.Monad (when)
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime, diffTime)
 import qualified Data.List.NonEmpty as NE
-import Data.Ratio ((%))
-import Data.Time.Clock (DiffTime, picosecondsToDiffTime)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
-import Ouroboros.Consensus.Util.IOLike (Time, addTime, diffTime)
 
 -- | Validated receiver-policy parameters for per-attempt timing snapshots.
 -- Construct with 'mkTimingConfig', which checks parameter bounds and worst-case
@@ -92,7 +89,7 @@ mkTimingConfig rate window coldCap hedgeCap fatalGuard (PayloadBytes maximumPayl
   when (maximumPayload == 0) (Left InvalidMaximumPayload)
   rounds <- initialRounds window maximumPayload
   let config = TimingConfig rate window coldCap hedgeCap maximumPayload
-      transfer = secondsUp (8 * fromIntegral maximumPayload / rate)
+      transfer = fromRational (8 * fromIntegral maximumPayload / rate)
       cold = min coldCap (fromIntegral rounds * rttCap)
       worstBase = rttCap + maximum [transfer, cold, rttCap]
   when (max hedgeCap worstBase >= fatalGuard) (Left IncompatibleFatalGuard)
@@ -132,7 +129,7 @@ conservativeRtt now sample = RttAllowance $ case sample of
     | rawRoundTripTime > 0
     , let age = diffTime now measurementCompletedAt
     , age >= 0 && age <= 30 ->
-        min rttCap (secondsUp (3 % 2 * toRational rawRoundTripTime))
+        min rttCap (1.5 * rawRoundTripTime)
   _ -> rttCap
 
 -- | Immutable timing inputs for one data-request attempt, constructed by
@@ -150,8 +147,8 @@ data TimingSnapshot = TimingSnapshot
   -- ^ Conservative RTT allowance frozen for this attempt after applying
   -- observation freshness, headroom and the cap or fallback policy.
   , transferAllowance :: !DiffTime
-  -- ^ Payload-transfer allowance in seconds: @8 * bytes / rate@, rounded
-  -- upwards to picoseconds using the configured service benchmark.
+  -- ^ Payload-transfer allowance in seconds: @8 * bytes / rate@ using the
+  -- configured service benchmark and ordinary 'DiffTime' precision.
   , coldAllowance :: !DiffTime
   -- ^ Startup allowance in seconds for a fresh or drained pipeline:
   -- @min(coldCap, K * R)@. Competes with 'transferAllowance'; a continuous
@@ -183,7 +180,7 @@ snapshotTiming config now sample factor request = do
     TimingSnapshot
       { snapshotPayload = PayloadBytes bytes
       , snapshotRtt = rtt
-      , transferAllowance = secondsUp (8 * fromIntegral bytes / configRate config)
+      , transferAllowance = fromRational (8 * fromIntegral bytes / configRate config)
       , coldAllowance = min (configColdCap config) (fromIntegral rounds * getRttAllowance rtt)
       , snapshotFactor = factor
       , snapshotCeiling = configHedgeCeiling config
@@ -259,9 +256,6 @@ hedgeAllowance :: DiffTime -> Rational -> DiffTime -> DiffTime
 hedgeAllowance base factor hedgeCap
   | base <= 0 = 0
   | factor >= toRational effectiveCeiling / toRational base = effectiveCeiling
-  | otherwise = secondsUp (toRational base * max 1 factor)
+  | otherwise = fromRational (toRational base * max 1 factor)
  where
   effectiveCeiling = max base hedgeCap
-
-secondsUp :: Rational -> DiffTime
-secondsUp seconds = picosecondsToDiffTime (ceiling (seconds * 1000000000000))
