@@ -15,6 +15,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , StorageSession
   , StorageRequest
   , storageRequestKey
+  , storageSessionIdentity
+  , readStorageSessionUsage
   , storageRequestPrepared
   , StorageError (..)
   , StorageException (..)
@@ -117,6 +119,20 @@ data StorageHandoff m owner peer = StorageHandoff
 -- | Unforgeable local handle for one registered fetch session.
 data StorageSession peer = StorageSession !(LeiosPeerLifetimeId peer) !FetchSessionToken
   deriving (Eq, Ord, Show)
+
+-- | Immutable registration/session identity, for a matching timing ledger and
+-- exact-session cleanup. Reading it grants no admission or mutation capability.
+storageSessionIdentity :: StorageSession peer -> (LeiosPeerLifetimeId peer, FetchSessionToken)
+storageSessionIdentity (StorageSession lifetime session) = (lifetime, session)
+
+-- | Current wire and handoff usage of this exact live/draining session. An old
+-- session handle never follows a replacement registration or mini-protocol.
+readStorageSessionUsage ::
+  (MonadSTM m, Ord peer) =>
+  StorageHandoff m owner peer -> StorageSession peer -> STM m (Either StorageError A.Usage)
+readStorageSessionUsage h session = do
+  state <- readTVar (handoffState h)
+  pure (A.admissionUsage . sessionLedger <$> lookupSession session state)
 
 -- | Pinned immutable context returned only after reserving handoff capacity.
 data StorageRequest peer = StorageRequest

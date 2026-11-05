@@ -19,6 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
   , readAssignedOffsets
   , releaseCheckpoint
   , releasePeerAssignments
+  , releaseSessionAssignments
   , releaseAcquisitionAssignments
   ) where
 
@@ -271,6 +272,19 @@ releasePeerAssignments ::
   (MonadSTM m, Ord peer) => OrdinaryAssignments m peer -> LeiosPeerLifetimeId peer -> STM m ()
 releasePeerAssignments (OrdinaryAssignments state) lifetime =
   modifyTVar state (Map.filterWithKey (\(RequestKey original _ _) _ -> original /= lifetime))
+
+-- | Remove only one mini-protocol invocation's claims. Cleanup from an older
+-- session in the same peer registration must not release its replacement's work.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+releaseSessionAssignments ::
+  (MonadSTM m, Eq peer) =>
+  OrdinaryAssignments m peer -> LeiosPeerLifetimeId peer -> FetchSessionToken -> STM m ()
+releaseSessionAssignments (OrdinaryAssignments state) lifetime session =
+  modifyTVar
+    state
+    ( Map.filterWithKey
+        (\(RequestKey original originalSession _) _ -> original /= lifetime || originalSession /= session)
+    )
 
 -- | Retire one relevance generation's scheduling claims. Acquisition retirement
 -- and wire drainage have their own owners and must also be performed by callers.

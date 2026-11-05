@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
   ( TimingConfig
   , mkTimingConfig
+  , validateTimingConfig
   , chainFollowingRate
   , TimingError (..)
   , RttObservation (..)
@@ -94,6 +95,22 @@ mkTimingConfig rate window coldCap hedgeCap fatalGuard (PayloadBytes maximumPayl
       worstBase = rttCap + maximum [transfer, cold, rttCap]
   when (max hedgeCap worstBase >= fatalGuard) (Left IncompatibleFatalGuard)
   pure config
+
+-- | Recheck a supplied policy configuration against the runner's actual fatal
+-- guard. A configuration validated against a more generous caller-supplied guard
+-- must not silently run behind a shorter protocol guard.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#receiver-observable-deadline-activation@.
+validateTimingConfig :: DiffTime -> TimingConfig -> Either TimingError ()
+validateTimingConfig fatalGuard config = do
+  _ <-
+    mkTimingConfig
+      (configRate config)
+      (configWindow config)
+      (configColdCap config)
+      (configHedgeCeiling config)
+      fatalGuard
+      (PayloadBytes (configMaximumPayload config))
+  pure ()
 
 -- | Exact benchmark from trusted deployment sizing. The initial safety factor
 -- is 2; callers may calibrate it or override the resulting service rate. Peer

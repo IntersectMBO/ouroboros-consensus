@@ -1346,6 +1346,7 @@ library diffusion
   visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Codec
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
     Ouroboros.Consensus.Network.LeiosFetch
@@ -1548,6 +1549,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Admission
     Test.Consensus.Leios.LeiosFetch.Acquisition
+    Test.Consensus.Leios.LeiosFetch.AtomicClient
     Test.Consensus.Leios.LeiosFetch.AtomicCodec
     Test.Consensus.Leios.LeiosFetch.AtomicReceive
     Test.Consensus.Leios.LeiosFetch.AtomicServer

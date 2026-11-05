@@ -4,6 +4,7 @@ module Test.Consensus.Leios.LeiosFetch (tests) where
 
 import qualified Test.Consensus.Leios.LeiosFetch.Acquisition as Acquisition
 import qualified Test.Consensus.Leios.LeiosFetch.Admission as Admission
+import qualified Test.Consensus.Leios.LeiosFetch.AtomicClient as AtomicClient
 import qualified Test.Consensus.Leios.LeiosFetch.AtomicCodec as AtomicCodec
 import qualified Test.Consensus.Leios.LeiosFetch.AtomicReceive as AtomicReceive
 import qualified Test.Consensus.Leios.LeiosFetch.AtomicServer as AtomicServer
@@ -20,7 +21,8 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ Acquisition.tests
+    [ AtomicClient.tests
+    , Acquisition.tests
     , AtomicServer.tests
     , AtomicReceive.tests
     , AtomicCodec.tests
