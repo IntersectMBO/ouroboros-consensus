@@ -107,6 +107,15 @@ tests =
                  withTempLeiosDbPaths test_truncateImmutablePartition
              ]
          , testGroup
+             "garbage collection (SQLite)"
+             [ testCase "collects more points than one job deletes" $
+                 withFreshSQLiteFile test_gcCollectsManyPoints
+             , testCase "keeps only the newest point of an EB announced again in each round" $
+                 withFreshSQLiteFile test_gcBoundsPointsOfReannouncedEb
+             , testCase "drops the writes of a point older than the latest collection" $
+                 withFreshSQLiteFile test_gcDropsWritesOfCollectedPoint
+             ]
+         , testGroup
              "reads (SQLite)"
              [ testCase "a read a collection overtook reads the immutable partition" $
                  withFreshSQLiteFile test_readOvertakenByCollection
@@ -158,9 +167,6 @@ rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
 -- | Also the offsets dropped for their size.
 rwInsertTxsDropped :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
 rwInsertTxsDropped rw point txs = await =<< writeTxs (rwWriter rw) point txs
-
-rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
-rwScanEbPoints = testScanEbPoints . rwReader
 
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
@@ -217,8 +223,8 @@ mkTestGroups :: DbImpl -> [TestTree]
 mkTestGroups impl =
   [ testGroup
       "points"
-      [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
-      , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
+      [ testProperty "bodies written at several points are each read back" $
+          prop_pointsAccumulate impl
       , testCase "a body write records its point" $
           withFreshDb impl test_ebBodyWritesPoint
       , testCase "a body written again reports no txs, but keeps them" $
@@ -270,17 +276,11 @@ mkTestGroups impl =
           withFreshDb impl test_gcEvictsOldEb
       , testCase "keeps an EB with a point at the slot" $
           withFreshDb impl test_gcKeepsEbWithPointAtSlot
-      , testCase "collects more points than one job deletes" $
-          withFreshDb impl test_gcCollectsManyPoints
       ]
   , testGroup
       "garbage collection of an EB a newer point keeps"
       [ testCase "drops its older points and still finds it complete" $
           withFreshDb impl test_gcDropsOlderPoints
-      , testCase "keeps only the newest point of an EB announced again in each round" $
-          withFreshDb impl test_gcBoundsPointsOfReannouncedEb
-      , testCase "drops the writes of a point older than the latest collection" $
-          withFreshDb impl test_gcDropsWritesOfCollectedPoint
       ]
   , testGroup
       "promotion"
@@ -421,19 +421,7 @@ magnitudeBucket size
 
 -- * Property tests for points
 
--- | Property: inserting a point and then scanning should return it.
-prop_pointsInsertThenScan :: DbImpl -> Property
-prop_pointsInsertThenScan impl =
-  forAll genPoint $ \point ->
-    ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-      (_, insertTime) <- timed $ rwInsertEbBody con point (mkTestEb 1)
-      (points, scanTime) <- timed $ rwScanEbPoints con
-      pure $
-        (pointSlotNo point, pointEbHash point) `elem` points
-          & tabulate "insertEbPoint" [timeBucket insertTime]
-          & tabulate "scanEbPoints" [timeBucket scanTime]
-
--- | Property: multiple inserted points all appear in scan results.
+-- | Property: bodies written at several points are each read back at theirs.
 prop_pointsAccumulate :: DbImpl -> Property
 prop_pointsAccumulate impl =
   forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
@@ -441,12 +429,11 @@ prop_pointsAccumulate impl =
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
         insertTimes <- forM points $ \p ->
           snd <$> timed (rwInsertEbBody con p (mkTestEb 1))
-        (scanned, scanTime) <- timed $ rwScanEbPoints con
-        let expected = [(pointSlotNo p, pointEbHash p) | p <- points]
+        (bodies, lookupTime) <- timed $ mapM (rwLookupEbBody con) points
         pure $
-          all (`elem` scanned) expected
-            & tabulate "insertEbPoint" [timeBucket $ maximum insertTimes]
-            & tabulate "scanEbPoints" [timeBucket scanTime]
+          bodies === map (const (Just (bodyBytes (mkTestEb 1)))) points
+            & tabulate "insertEbBody" [timeBucket $ maximum insertTimes]
+            & tabulate "lookupEbBody" [timeBucket lookupTime]
 
 -- * Property tests for EBs
 
@@ -603,7 +590,6 @@ test_ebBodyWritesPoint :: LeiosDbHandle IO -> IO ()
 test_ebBodyWritesPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
   rwInsertEbBody con (mkTestPoint 1 1) eb
-  rwScanEbPoints con >>= (@?= [(1, mkTestEbHash 1)])
   rwLookupEbBody con (mkTestPoint 1 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
 -- | A body written again at its point reports only what its fills filled, none
@@ -828,8 +814,7 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   garbageCollect db 6
   rwLookupEbBody con (mkTestPoint 5 1) >>= (@?= Nothing)
   holdsClosure con (mkTestPoint 5 1) >>= (@?= False)
-  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
-  holdsClosure con (mkTestPoint 10 2) >>= (@?= True)
+  rwScanComplete con 0 >>= (@?= [mkTestPoint 10 2])
   -- The old EB's transactions went with it, so a new EB referencing them
   -- lacks them.
   rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
@@ -842,34 +827,33 @@ test_gcDropsOlderPoints db = withRW db $ \con -> do
       again = mkTestPoint 10 1
   writeWholeEb con [mkTestPoint 5 1, again] eb
   garbageCollect db 6
-  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
-  holdsClosure con again >>= (@?= True)
-  rwScanComplete con 6 >>= (@?= [again])
+  rwScanComplete con 0 >>= (@?= [again])
 
 -- | After a collection at slot 6, a point at slot 5 and a body for another
 -- point at slot 5 are written, and one at slot 4 that an earlier collection at
 -- slot 3 would not collect.
-test_gcDropsWritesOfCollectedPoint :: LeiosDbHandle IO -> IO ()
-test_gcDropsWritesOfCollectedPoint db = withRW db $ \con -> do
+test_gcDropsWritesOfCollectedPoint :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcDropsWritesOfCollectedPoint volDbPath _immDbPath db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
   garbageCollect db 6
   garbageCollect db 3
   rwInsertEbBody con (mkTestPoint 5 2) (mkTestEb 2)
   rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
   rwInsertEbBody con (mkTestPoint 4 1) (mkTestEb 2)
-  rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
-  rwLookupEbBody con (mkTestPoint 5 3) >>= (@?= Nothing)
+  ebRows volDbPath >>= (@?= 1)
+  rwScanComplete con 0 >>= (@?= [mkTestPoint 10 1])
 
 -- | An EB written whole at slot 10 is announced again in each of nine more
 -- rounds, each followed by a collection at its slot.
-test_gcBoundsPointsOfReannouncedEb :: LeiosDbHandle IO -> IO ()
-test_gcBoundsPointsOfReannouncedEb db = withRW db $ \con -> do
+test_gcBoundsPointsOfReannouncedEb :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcBoundsPointsOfReannouncedEb volDbPath _immDbPath db = withRW db $ \con -> do
   let eb = mkTestEb 2
   writeWholeEb con [mkTestPoint 10 1] eb
   forM_ [2 .. 10] $ \n -> do
     rwInsertEbBody con (mkTestPoint (10 * n) 1) eb
     garbageCollect db (10 * n)
-  rwScanEbPoints con >>= (@?= [(100, mkTestEbHash 1)])
+  ebRows volDbPath >>= (@?= 1)
+  rwLookupEbBody con (mkTestPoint 100 1) >>= (@?= Just (bodyBytes eb))
 
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
@@ -879,14 +863,15 @@ test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
 
 -- | More points before the slot than the SQLite implementation deletes in one
 -- job, and one at the slot.
-test_gcCollectsManyPoints :: LeiosDbHandle IO -> IO ()
-test_gcCollectsManyPoints db = withRW db $ \con -> do
+test_gcCollectsManyPoints :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcCollectsManyPoints volDbPath _immDbPath db = withRW db $ \con -> do
   let eb = mkTestEb 2
       n = 2 * gcBatchSize + 1
   forM_ [1 .. n] $ \slot ->
     rwInsertEbBody con (mkTestPoint (fromIntegral slot) 1) eb
   garbageCollect db (fromIntegral n)
-  rwScanEbPoints con >>= (@?= [(fromIntegral n, mkTestEbHash 1)])
+  ebRows volDbPath >>= (@?= 1)
+  rwLookupEbBody con (mkTestPoint (fromIntegral n) 1) >>= (@?= Just (bodyBytes eb))
 
 test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
 test_gcKeepsPromotedEb db = withRW db $ \con -> do
@@ -991,8 +976,8 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
   ebBodyRows volDbPath droppedHash >>= (@?= 0)
 
   withRW db $ \con -> do
-    points <- rwScanEbPoints con
-    points @?= [(5, keptHash)]
+    rwScanComplete con 0 >>= (@?= [MkLeiosPoint 5 keptHash])
+    rwLookupEbBody con (MkLeiosPoint 15 keptHash) >>= (@?= Nothing)
     keptBody <- rwLookupEbBody con (MkLeiosPoint 5 keptHash)
     keptBody @?= Just (bodyBytes eb)
     droppedBody <- rwLookupEbBody con (MkLeiosPoint 15 droppedHash)
@@ -1054,9 +1039,8 @@ test_reopenKeepsData volDbPath immDbPath = do
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
     withRW db $ \con -> rwInsertEbBody con (MkLeiosPoint 5 ebHash) eb
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
-    withRW db $ \con -> do
-      points <- rwScanEbPoints con
-      points @?= [(5, ebHash)]
+    withRW db $ \con ->
+      rwLookupEbBody con (MkLeiosPoint 5 ebHash) >>= (@?= Just (bodyBytes eb))
 
 -- | Open a database file on a connection of its own.
 withSqlFile :: FilePath -> (SQL.Database -> IO a) -> IO a
@@ -1070,6 +1054,10 @@ sqlBlob :: EndorserBlockHash -> String
 sqlBlob ebHash = "x'" <> hashToStringAsHex ebHash <> "'"
 
 -- | How many rows of the file hold the EB.
+-- | The file's rows, of any EB.
+ebRows :: FilePath -> IO Int
+ebRows path = queryCount path "SELECT COUNT(*) FROM ebs"
+
 ebBodyRows :: FilePath -> EndorserBlockHash -> IO Int
 ebBodyRows path ebHash =
   queryCount
@@ -1117,11 +1105,13 @@ prop_storeForgedEbThenLookup impl =
         withWriter db $ \writer -> storeForgedEb writer slot forged
         (points, closure) <-
           withReader db $ \reader ->
-            (,) <$> testScanEbPoints reader <*> lookupEbClosure reader (MkLeiosPoint slot ebHash)
+            (,)
+              <$> scanCompleteEbClosuresNotOlderThanSlot reader 0
+              <*> lookupEbClosure reader (MkLeiosPoint slot ebHash)
         pure $
           conjoin
             [ counterexample "the point is not the slot and the hash of the body" $
-                points === [(slot, ebHash)]
+                points === [MkLeiosPoint slot ebHash]
             , counterexample "the stored txs are not the forged ones" $
                 closure === Just (toList txs)
             ]
