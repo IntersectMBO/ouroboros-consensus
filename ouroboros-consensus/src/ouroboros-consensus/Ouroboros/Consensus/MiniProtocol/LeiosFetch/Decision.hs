@@ -446,6 +446,10 @@ markReceivingFromForge point =
       NoBody -> Just $ MkEbState onset (ReceivingFromForge EmittedNothing)
       ReceivingFromForge{} -> Nothing
       BodyAcquired jobPool
+        -- An empty pool means the body and closure were emitted, except for a
+        -- body too big for its bounds or a closure no peer can complete
+        -- ('abandonClosure'). Our forge produces neither such endorser block:
+        -- it fits each one to its slot's bounds, and states each tx's own size.
         | Jobs.nullLeiosJobPool jobPool -> Just $ MkEbState onset (ReceivingFromForge EmittedBodyAndClosure)
         | otherwise -> Just $ MkEbState onset (ReceivingFromForge EmittedBody)
 
