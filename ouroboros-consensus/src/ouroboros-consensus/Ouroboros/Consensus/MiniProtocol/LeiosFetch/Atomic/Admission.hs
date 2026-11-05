@@ -23,6 +23,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission
   , admitCancel
   , dispatchNext
   , observeElement
+  , observedElements
   , finishHead
   , releaseHandoff
   , retireSession
@@ -259,6 +260,16 @@ observeElement key bytes@(PayloadBytes actual) useful s = do
                 , statePending = if useful then Map.insert ticket bytes (statePending s) else statePending s
                 }
             )
+
+-- | Number of complete elements already observed for this original request.
+-- The pinned receive handler uses this to reject a skipped/repeated position
+-- before transferring ownership. It does not advance the FIFO or release bytes.
+observedElements ::
+  Ord peer => RequestKey peer -> AdmissionState peer -> Either AdmissionError EntryCount
+observedElements key s = do
+  checkSession key s
+  record <- maybe (Left UnknownRequest) Right (Map.lookup key (stateRecords s))
+  pure (EntryCount (recordObserved record))
 
 -- | FIFO terminals release unreceived reservations exactly once. An original
 -- record with an admitted cancel survives until that cancel's own ACK slot.
