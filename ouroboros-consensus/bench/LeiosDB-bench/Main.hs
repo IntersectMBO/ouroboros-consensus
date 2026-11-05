@@ -77,6 +77,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , Serialised (..)
   , TxHash
   , TxOffset
   , encodeEndorserBlockSize
@@ -373,7 +374,7 @@ closureRead r point BenchEb{beMeasured} metric record missing = do
 servePeer :: Int -> LeiosDbReader IO -> LeiosPoint -> BenchEb -> Time -> Record -> IO () -> IO ()
 servePeer seed r point BenchEb{beIdx, beMeasured} completed record missing = do
   t <- getMonotonicTime
-  body <- evaluate . force =<< lookupEbBody r point
+  body <- evaluate . force . fmap unSerialised =<< lookupEbBody r point
   t' <- getMonotonicTime
   if isNothing body
     then missing

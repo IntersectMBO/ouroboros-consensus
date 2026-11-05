@@ -70,7 +70,7 @@ tests =
 -- announces B, which nothing certifies. Once the immutable tip has passed both
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
-bodiesAfterGc :: IOSim s (Maybe BS.ByteString, Maybe BS.ByteString)
+bodiesAfterGc :: IOSim s (Maybe (Serialised EndorserBlock), Maybe (Serialised EndorserBlock))
 bodiesAfterGc = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer ->

@@ -2,9 +2,10 @@
 -- them.
 module Test.Consensus.Leios.LeiosFetch (tests) where
 
+import qualified Test.Consensus.Leios.LeiosFetch.Client as Client
 import qualified Test.Consensus.Leios.LeiosFetch.Codec as Codec
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import Test.Tasty
 
 tests :: TestTree
-tests = testGroup "LeiosFetch" [Codec.tests, Node.tests]
+tests = testGroup "LeiosFetch" [Codec.tests, Node.tests, Client.tests]
