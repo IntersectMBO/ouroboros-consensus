@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
@@ -12,10 +14,10 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makeTestPerasCertPoolWriterFromCertDB
   ) where
 
-import Data.Foldable (traverse_)
-import Data.Map (Map)
+import Data.Map (Map, findWithDefault)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import qualified Data.Tuple as Tuple
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasCert (..)
@@ -37,13 +39,17 @@ import Ouroboros.Consensus.Peras.Context
   , perasEpochContextResolverBounds
   , verifyPerasCertWithHandle
   )
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( AddPerasCertChainSelOutcome (PerasCertNotProcessedClosing, PerasCertProcessed)
+  , AddPerasCertResult (AddedPerasCertToDB, PerasCertAlreadyInDB)
+  , ChainDB
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
-import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (..), throwIO)
+import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (..))
 
 -- | TODO: replace by `Data.Map.take` as soon as we move to GHC 9.8
 takeAscMap :: Int -> Map k v -> Map k v
@@ -118,7 +124,7 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     { opwObjectId = getPerasCertRound
     , opwAddObjects = \certs -> do
         now <- systemTimeCurrent systemTime
-        atomically $ do
+        addCertResults <- atomically $ do
           alreadyInDb <- PerasCertDB.getCertIds perasCertDB
           objectIdRequestability <- perasCertRequestability resolverHandle
           -- The context may have advanced since these certificates were
@@ -134,7 +140,20 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
           -- NOTE: we could combine the two 'traverse' operations into one in
           -- which case any validated cert would be immediately added no matter
           -- what is the validity of the other certs in the batch.
-          traverse_ (PerasCertDB.addCert perasCertDB . WithArrivalTime now) validatedCerts
+          traverse
+            (\c -> (,) (getPerasCertRound c) <$> PerasCertDB.addCert perasCertDB (WithArrivalTime now c))
+            validatedCerts
+        fmap (,Set.empty)
+          -- m (Set PerasRoundNo)
+          . fmap Set.fromList
+          -- m [PerasRoundNo]
+          . (fmap . fmap) fst
+          -- m [(PerasRoundNo, AddPerasCertResult)]
+          . fmap (filter $ \case (_, AddedPerasCertToDB) -> True; (_, PerasCertAlreadyInDB) -> False)
+          -- m [(PerasRoundNo, AddPerasCertResult)]
+          . (traverse . traverse) id
+          -- [(PerasRoundNo, m AddPerasCertResult)]
+          $ addCertResults
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
@@ -166,25 +185,35 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
               let needsProcessing cert =
                     let roundNo = getPerasCertRound cert
                      in Set.notMember roundNo alreadyInDb && objectIdRequestability roundNo /= ObjectIdTooOld
+              -- Some certs are invalid => reject the whole batch
+              --
+              -- NOTE: we could combine the two 'traverse' operations into one in
+              -- which case any validated cert would be immediately added no
+              -- matter what is the validity of the other certs in the batch.
               traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
-            -- Some certs are invalid => reject the whole batch
-            --
-            -- NOTE: we could combine the two 'traverse' operations into one in
-            -- which case any validated cert would be immediately added no
-            -- matter what is the validity of the other certs in the batch.
-            -- Publication of the next outstanding round must not get ahead
-            -- of the certificates' effects in ChainDB. Enqueue the whole batch
-            -- before waiting, preserving batching in the chain-selection queue.
-            promises <- traverse (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
-            traverse_
-              ( \promise -> do
-                  outcome <- ChainDB.waitPerasCertProcessed promise
-                  case outcome of
-                    ChainDB.PerasCertNotProcessedClosing ->
-                      throwIO (userError "ChainDB closed before certificate diffusion finished processing its batch")
-                    _ -> pure ()
+            fmap
+              ( \m ->
+                  ( findWithDefault Set.empty (PerasCertProcessed AddedPerasCertToDB) m
+                  , findWithDefault Set.empty PerasCertNotProcessedClosing m
+                  )
               )
-              promises
+              -- m (Map AddPerasCertChainSelOutcome (Set PerasRoundNo))
+              . fmap (Map.fromListWith (<>))
+              -- m [(AddPerasCertChainSelOutcome, Set PerasRoundNo)]
+              . (fmap . fmap . fmap) Set.singleton
+              -- m [(AddPerasCertChainSelOutcome, PerasRoundNo)]
+              . (fmap . fmap) Tuple.swap
+              -- m [(PerasRoundNo, AddPerasCertChainSelOutcome)]
+              --
+              -- Publication of the next outstanding round must not get ahead
+              -- of the certificates' effects in ChainDB. Enqueue the whole batch
+              -- before waiting, preserving batching in the chain-selection queue.
+              . ((=<<) . traverse . traverse) ChainDB.waitPerasCertProcessed
+              -- m [(PerasRoundNo, AddPerasCertPromise m)]
+              . traverse
+                (\c -> (,) (getPerasCertRound c) <$> ChainDB.addPerasCertAsync chainDB (WithArrivalTime now c))
+              -- m [ValidatedPerasCert blk]
+              $ validatedCerts
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds

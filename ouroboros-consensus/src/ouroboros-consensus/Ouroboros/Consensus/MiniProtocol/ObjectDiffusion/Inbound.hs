@@ -502,17 +502,6 @@ objectDiffusionInbound
             (objectIdsToAck, outstandingFifo') =
               Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
 
-            -- And also remove these entries from 'pendingObjects'.
-            --
-            -- Note that unlike in TX-Submission, we made sure the outstanding FIFO
-            -- couldn't have duplicate IDs, so we don't have to worry about re-adding
-            -- the duplicate IDs to 'pendingObjects' for future acknowledgment.
-            pendingObjects'' =
-              Foldable.foldl'
-                (flip Map.delete)
-                pendingObjects'
-                objectIdsToAck
-
             -- These are the objects we need to submit to the object pool
             --
             -- Note that objects are submitted in the same order as the order of
@@ -525,7 +514,22 @@ objectDiffusionInbound
               catMaybes $
                 (((Map.!) pendingObjects') <$> toList objectIdsToAck)
 
-        opwAddObjects objectsToAck
+        (_successfullyAdded, needRetrying) <- opwAddObjects objectsToAck
+
+        -- We also remove from 'pendingObjects' the longest prefix of
+        -- 'outstandingFifo' for which we have all the corresponding IDs in
+        -- 'pendingObjects'.
+        --
+        -- Note that unlike in TX-Submission, we made sure the outstanding
+        -- FIFO couldn't have duplicate IDs, so we don't have to worry about
+        -- re-adding the duplicate IDs to 'pendingObjects' for future
+        -- acknowledgment.
+        let pendingObjects'' =
+              Foldable.foldl'
+                (flip Map.delete)
+                pendingObjects'
+                (Seq.filter (`Set.notMember` needRetrying) objectIdsToAck)
+
         traceWith tracer $
           TraceObjectDiffusionInboundAddedObjects
             (NumObjectsProcessed (fromIntegral $ length objectsToAck))

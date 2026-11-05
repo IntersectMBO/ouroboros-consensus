@@ -37,6 +37,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM (..), STM)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import Data.Word (Word64)
 
 -- | Whether an advertised object ID can be requested at the client's current
@@ -75,8 +76,9 @@ data ObjectPoolWriter objectId object m
   = ObjectPoolWriter
   { opwObjectId :: object -> objectId
   -- ^ Return the id of the specified object
-  , opwAddObjects :: [object] -> m ()
-  -- ^ Add a batch of objects to the objectPool.
+  , opwAddObjects :: [object] -> m (Set objectId, Set objectId)
+  -- ^ Add a batch of objects to the objectPool. Returns the set of IDs of
+  -- successfully added objects and the set of IDs of objects that need retrying.
   , opwHasObject :: STM m (objectId -> Bool)
   -- ^ Check if the object pool contains an object with the given id
   , opwObjectIdRequestability :: STM m (objectId -> ObjectIdRequestability)

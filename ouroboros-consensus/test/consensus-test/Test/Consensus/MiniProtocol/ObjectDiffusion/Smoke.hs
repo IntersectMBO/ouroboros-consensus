@@ -22,6 +22,7 @@ import Data.Data (Typeable)
 import Data.Functor.Contravariant (contramap)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
@@ -162,7 +163,7 @@ makeObjectPoolWriter (SmokeObjectPool poolContentTvar) =
     { opwObjectId = getSmokeObjectId
     , opwAddObjects = \objects -> do
         atomically $ modifyTVar poolContentTvar (++ objects)
-        return ()
+        return (Set.fromList (map getSmokeObjectId objects), Set.empty)
     , opwHasObject = do
         poolContent <- readTVar poolContentTvar
         pure $ \objectId -> any (\obj -> getSmokeObjectId obj == objectId) poolContent
@@ -380,6 +381,7 @@ prop_await_after_commit =
                 atomically $ writeTVar commitStarted True
                 atomically $ readTVar allowCommit >>= check
                 atomically $ modifyTVar inboundObjectsVar (++ objects)
+                pure (Set.fromList (map getSmokeObjectId objects), Set.empty)
             , opwHasObject = do
                 inboundObjects <- readTVar inboundObjectsVar
                 pure $ \objectId ->

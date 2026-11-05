@@ -13,6 +13,7 @@ import Control.Tracer (contramap, nullTracer)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -88,7 +89,9 @@ prop_writer_waits_for_processing =
           $ \(outcome, skipOldest) ->
             let lowerBound = if skipOldest then minimum (map getPerasCertRound certs) + 1 else minBound
                 expectedRounds = filter (>= lowerBound) (map getPerasCertRound certs)
-                simulation :: forall s. IOSim s (Maybe (), Maybe (), Maybe (Either IOError ()))
+                simulation ::
+                  forall s.
+                  IOSim s (Maybe (), Maybe (), Maybe (Either IOError (Set.Set PerasRoundNo, Set.Set PerasRoundNo)))
                 simulation = withRegistry $ \reg -> do
                   nodeDBs <- emptyNodeDBs
                   let cfg = singleNodeTestConfig
@@ -146,8 +149,15 @@ prop_writer_waits_for_processing =
                       .&&. counterexample
                         "incorrect handling of ChainDB completion"
                         ( case returned of
-                            Just (Left _) -> outcome == ChainDB.PerasCertNotProcessedClosing
-                            Just (Right ()) -> outcome /= ChainDB.PerasCertNotProcessedClosing
+                            Just (Left _) -> False
+                            Just (Right (added, notProcessed)) ->
+                              let expected = Set.fromList expectedRounds
+                               in case outcome of
+                                    ChainDB.PerasCertProcessed AddedPerasCertToDB ->
+                                      added == expected && Set.null notProcessed
+                                    ChainDB.PerasCertNotProcessedClosing ->
+                                      Set.null added && notProcessed == expected
+                                    _ -> Set.null added && Set.null notProcessed
                             Nothing -> False
                         )
                   Left err -> counterexample (show err) $ property False
