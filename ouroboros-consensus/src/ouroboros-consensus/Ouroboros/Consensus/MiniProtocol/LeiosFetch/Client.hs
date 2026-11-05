@@ -18,19 +18,8 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Functor ((<&>))
 import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
-import Network.TypedProtocol.Codec (PeerRole (..), StateTokenI)
-import Network.TypedProtocol.Core
-  ( IsPipelined (..)
-  , N (..)
-  , Nat (..)
-  , ReflRelativeAgency (..)
-  , natToInt
-  )
-import Network.TypedProtocol.Peer
-  ( Peer (..)
-  , PeerPipelined (..)
-  , Receiver (..)
-  )
+import Network.TypedProtocol.Core (StateTokenI, natToInt)
+import Network.TypedProtocol.Peer.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch (..)
   , Message (..)
@@ -46,15 +35,15 @@ data SomeLeiosFetchJob point eb tx m
 
 -- | Merely an abbreviation local to this module
 type X point eb tx m a n =
-  Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
+  Client (LeiosFetch point eb tx) (Pipelined n C) StIdle m a
 
 type LeiosFetchClientPeerPipelined point eb tx m a =
-  PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
+  ClientPipelined (LeiosFetch point eb tx) StIdle m a
 
 toLeiosFetchClientPeerPipelined ::
-  Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a ->
+  Client (LeiosFetch point eb tx) (Pipelined Z C) StIdle m a ->
   LeiosFetchClientPeerPipelined point eb tx m a
-toLeiosFetchClientPeerPipelined = PeerPipelined
+toLeiosFetchClientPeerPipelined = ClientPipelined
 
 data C = MkC
 
@@ -74,7 +63,7 @@ leiosFetchClientPeerPipelined ::
         (m (Either a (SomeLeiosFetchJob point eb tx m)))
         (Either a (SomeLeiosFetchJob point eb tx m))
     ) ->
-  Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
+  Client (LeiosFetch point eb tx) (Pipelined Z C) StIdle m a
 leiosFetchClientPeerPipelined depth tryNext =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
@@ -125,7 +114,6 @@ leiosFetchClientPeerPipelined depth tryNext =
     X point eb tx m a n
   send stop !n (MkSomeLeiosFetchJob req k) =
     YieldPipelined
-      ReflClientAgency
       req
       (receiver stop k)
       (go1 stop $ Succ n)
@@ -134,9 +122,9 @@ leiosFetchClientPeerPipelined depth tryNext =
     StateTokenI (StBusy st') =>
     MutVar (PrimState m) WhetherDraining ->
     m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()) ->
-    Receiver (LeiosFetch point eb tx) AsClient (StBusy st') StIdle m C
+    Receiver (LeiosFetch point eb tx) (StBusy st') StIdle m C
   receiver stop k =
-    ReceiverAwait ReflServerAgency $ \msg -> case msg of
+    ReceiverAwait $ \msg -> case msg of
       MsgLeiosBlock{} -> handler stop k msg
       MsgLeiosBlockTxs{} -> handler stop k msg
 
@@ -144,7 +132,7 @@ leiosFetchClientPeerPipelined depth tryNext =
     MutVar (PrimState m) WhetherDraining ->
     m (msg -> m ()) ->
     msg ->
-    Receiver (LeiosFetch point eb tx) AsClient StIdle StIdle m C
+    Receiver (LeiosFetch point eb tx) StIdle StIdle m C
   handler stop k x = ReceiverEffect $ do
     Prim.readMutVar stop >>= \case
       AlreadyDraining -> pure ()
@@ -154,8 +142,8 @@ leiosFetchClientPeerPipelined depth tryNext =
   drainThePipe :: a -> Nat n -> X point eb tx m a n
   drainThePipe x = \case
     Zero ->
-      Yield ReflClientAgency MsgDone $
-        Done ReflNobodyAgency x
+      Yield MsgDone $
+        Done x
     Succ m ->
       Collect
         Nothing
