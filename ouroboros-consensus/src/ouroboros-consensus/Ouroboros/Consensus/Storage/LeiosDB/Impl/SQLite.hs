@@ -14,8 +14,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
     -- * SQL strings (re-exported for leios-schedule-gen)
   , sql_schema_vol
   , sql_schema_imm
-  , sql_insert_eb
-  , sql_insert_eb_body
   ) where
 
 import Cardano.Prelude (when)
@@ -68,7 +66,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
@@ -166,7 +163,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
   implOpenReader statsVar = do
     volDb <- openRawConnection volLeiosDbPath
     immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
-    conn <- mkConn tracer statsVar volDb immDb
+    let conn = mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
         { closeReader = closeConn conn
@@ -200,16 +197,15 @@ withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
       k
 
 -- | What the writer's worker owns while it serves: its connections to both
--- partitions and the statements prepared on them.
+-- partitions.
 data WriterConns = WriterConns
   { wcVolDb :: !DB.Database
   , wcConn :: !Conn
   }
 
--- | Open the writer's connections, prepare its statements, and run the
--- action with them. Each resource has its own bracket, so whatever was
--- acquired is released on every way out, statements before connections: an
--- open statement holds the close off.
+-- | Open the writer's connections and run the action with them. Each
+-- connection has its own bracket, so whatever was opened is closed on every
+-- way out.
 withWriterConns ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
@@ -220,12 +216,11 @@ withWriterConns ::
 withWriterConns tracer statsVar volPath immPath k =
   bracket (openRawConnection volPath) closeChecked $ \volDb ->
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
-      bracket (mkConn tracer statsVar volDb immDb) finalizeConnStmts $ \conn ->
-        k
-          WriterConns
-            { wcVolDb = volDb
-            , wcConn = conn
-            }
+      k
+        WriterConns
+          { wcVolDb = volDb
+          , wcConn = mkConn tracer statsVar volDb immDb
+          }
 
 -- | Start the worker draining the write queue. The worker opens the write
 -- connections itself, on its own thread ('withWriterConns'), and closes them

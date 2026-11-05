@@ -340,10 +340,8 @@ library
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-    Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
-    Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
     Ouroboros.Consensus.Storage.LeiosDB.Trace

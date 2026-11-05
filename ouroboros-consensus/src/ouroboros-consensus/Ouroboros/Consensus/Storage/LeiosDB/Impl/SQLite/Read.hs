@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Read operations of LeiosDB's SQLite backend.
 --
@@ -39,7 +40,6 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
@@ -52,20 +52,21 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 
 sqlScanEbPoints :: Conn -> IO [(SlotNo, EndorserBlockHash)]
 sqlScanEbPoints conn =
-  dbWithTransaction db $ useStmt stmt $ loop []
+  dbWithTransaction db $
+    withStmt db "SELECT ebSlot, ebHashBytes FROM ebs ORDER BY ebSlot ASC" $ \stmt ->
+      loop stmt []
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stScanEbPoints = stmt}} = conn
-  loop acc =
+  Conn{conVolDb = db} = conn
+  loop stmt acc =
     dbStep stmt >>= \case
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
         hash <- dbColumnHash stmt 1
-        loop ((slot, hash) : acc)
+        loop stmt ((slot, hash) : acc)
 
 -- | Each EB whose closure is complete, at its youngest point at or after the
 -- slot. A closure is complete if each of its txs hashes to what the body lists.
@@ -77,34 +78,30 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
   youngest <-
     fmap (Map.fromListWith max) $
       dbWithTransaction volDb $
-        useStmt stmt $ do
+        withStmt volDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
           dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-          loop []
+          loop stmt []
   complete <- filterM (isComplete . fst) (Map.toList youngest)
   pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- complete]
  where
-  Conn
-    { conVolDb = volDb
-    , connVolStmts = VolStmts{stScanEbsSince = stmt, stReads = volReads}
-    , connImmStmts = ImmStmts{immReads}
-    } = conn
+  Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
-  loop acc =
+  loop stmt acc =
     dbStep stmt >>= \case
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
         hash <- dbColumnHash stmt 1
-        loop ((hash, slot) : acc)
+        loop stmt ((hash, slot) : acc)
 
   -- The immutable partition first: that is an index lookup, not a hash of
   -- every tx.
   isComplete ebHash =
-    lookupEbIndex (rsLookupEbIndex immReads) ebHash >>= \case
+    lookupEbIndex immDb ebHash >>= \case
       Just _ -> pure True
       Nothing -> dbWithTransaction volDb $ do
-        mbBody <- lookupBlob (rsLookupEbBody volReads) ebHash
-        mbTxs <- closureFrom volReads ebHash
+        mbBody <- lookupBlob volDb ebHash
+        mbTxs <- closureFrom volDb ebHash
         pure $ case (mbBody, mbTxs) of
           (Just body, Just txs) -> maybe False (closureMatches body) (sequence txs)
           _ -> False
@@ -130,16 +127,12 @@ splitClosure bounds txs =
 
 sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO (Maybe ByteString)
 sqlLookupEbBody conn ebHash = do
-  vol <- dbWithTransaction volDb $ lookupBlob (rsLookupEbBody volReads) ebHash
+  vol <- dbWithTransaction volDb $ lookupBlob volDb ebHash
   -- No body means the EB may have been copied to the immutable partition and
   -- evicted.
-  maybe (lookupBlob (rsLookupEbBody immReads) ebHash) (pure . Just) vol
+  maybe (lookupBlob immDb ebHash) (pure . Just) vol
  where
-  Conn
-    { conVolDb = volDb
-    , connVolStmts = VolStmts{stReads = volReads}
-    , connImmStmts = ImmStmts{immReads}
-    } = conn
+  Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
 -- | Retrieve tx bytes for a batch of offsets into one EB: the offsets the body
 -- declares, with their bytes, or 'Nothing' where no tx was written. Reads where
@@ -155,25 +148,20 @@ sqlBatchRetrieveTxs ::
   [Int] ->
   IO [(Int, Maybe ByteString)]
 sqlBatchRetrieveTxs conn ebHash offsets = (evaluate . force =<<) $ do
-  vol <- dbWithTransaction volDb $ retrieveFrom volDb volReads offsets
+  vol <- dbWithTransaction volDb $ retrieveFrom volDb offsets
   case vol of
-    Nothing -> fromMaybe [] <$> retrieveFrom immDb immReads offsets
+    Nothing -> fromMaybe [] <$> retrieveFrom immDb offsets
     Just txs -> case [o | (o, Nothing) <- txs] of
       [] -> pure txs
       missing -> do
-        imm <- IntMap.fromList . fromMaybe [] <$> retrieveFrom immDb immReads missing
+        imm <- IntMap.fromList . fromMaybe [] <$> retrieveFrom immDb missing
         pure [(o, maybe (IntMap.findWithDefault Nothing o imm) Just mbBytes) | (o, mbBytes) <- txs]
  where
-  Conn
-    { conVolDb = volDb
-    , conImmDb = immDb
-    , connVolStmts = VolStmts{stReads = volReads}
-    , connImmStmts = ImmStmts{immReads}
-    } = conn
+  Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
   -- 'Nothing' if the body is not stored here.
-  retrieveFrom db ReadStmts{rsLookupEbIndex} wantedOffsets =
-    lookupEbIndex rsLookupEbIndex ebHash >>= \case
+  retrieveFrom db wantedOffsets =
+    lookupEbIndex db ebHash >>= \case
       Nothing -> pure Nothing
       Just ix@EbIndex{eiTxCount} ->
         Just
@@ -187,22 +175,18 @@ sqlBatchRetrieveTxs conn ebHash offsets = (evaluate . force =<<) $ do
 -- closure if the volatile one lacks a tx.
 sqlLookupEbClosure :: Conn -> EndorserBlockHash -> IO (Maybe [ByteString])
 sqlLookupEbClosure conn ebHash = (evaluate . force =<<) $ do
-  vol <- dbWithTransaction volDb $ closureFrom volReads ebHash
+  vol <- dbWithTransaction volDb $ closureFrom volDb ebHash
   case sequence =<< vol of
     Just txs -> pure (Just txs)
-    Nothing -> (sequence =<<) <$> closureFrom immReads ebHash
+    Nothing -> (sequence =<<) <$> closureFrom immDb ebHash
  where
-  Conn
-    { conVolDb = volDb
-    , connVolStmts = VolStmts{stReads = volReads}
-    , connImmStmts = ImmStmts{immReads}
-    } = conn
+  Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
--- * Statements
+-- * Lookups
 
-closureFrom :: ReadStmts -> EndorserBlockHash -> IO (Maybe [Maybe ByteString])
-closureFrom ReadStmts{rsLookupEbClosure = stmt} ebHash =
-  useStmt stmt $ do
+closureFrom :: DB.Database -> EndorserBlockHash -> IO (Maybe [Maybe ByteString])
+closureFrom db ebHash =
+  withStmt db "SELECT txBounds, txs FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
     dbBindHash stmt 1 ebHash
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
@@ -211,9 +195,10 @@ closureFrom ReadStmts{rsLookupEbClosure = stmt} ebHash =
         txs <- DB.columnBlob stmt 1
         pure $ Just (splitClosure bounds txs)
 
-lookupBlob :: DB.Statement -> EndorserBlockHash -> IO (Maybe ByteString)
-lookupBlob stmt ebHash =
-  useStmt stmt $ do
+-- | An EB's body.
+lookupBlob :: DB.Database -> EndorserBlockHash -> IO (Maybe ByteString)
+lookupBlob db ebHash =
+  withStmt db "SELECT body FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
     dbBindHash stmt 1 ebHash
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
@@ -226,9 +211,9 @@ data EbIndex = EbIndex
   }
 
 -- | Where the EB's blobs are, or 'Nothing' if its body is not stored.
-lookupEbIndex :: DB.Statement -> EndorserBlockHash -> IO (Maybe EbIndex)
-lookupEbIndex stmt ebHash =
-  useStmt stmt $ do
+lookupEbIndex :: DB.Database -> EndorserBlockHash -> IO (Maybe EbIndex)
+lookupEbIndex db ebHash =
+  withStmt db "SELECT rowid, txCount FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
     dbBindHash stmt 1 ebHash
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
@@ -267,12 +252,12 @@ written bytes
   | otherwise = Just bytes
 
 -- | Open a blob of the main database, for the duration of the action.
-withBlob :: DB.Database -> String -> String -> Int64 -> Bool -> (DB.Blob -> IO a) -> IO a
+withBlob :: DB.Database -> DB.Utf8 -> DB.Utf8 -> Int64 -> Bool -> (DB.Blob -> IO a) -> IO a
 withBlob db table column rowid writable =
   bracket
     ( withDie
         db
-        (DB.blobOpen db (fromString "main") (fromString table) (fromString column) rowid writable)
+        (DB.blobOpen db "main" table column rowid writable)
     )
     (withDie db . DB.blobClose)
 
