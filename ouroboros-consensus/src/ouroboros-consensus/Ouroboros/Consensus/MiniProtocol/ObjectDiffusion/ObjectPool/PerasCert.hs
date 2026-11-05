@@ -120,8 +120,15 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
         now <- systemTimeCurrent systemTime
         atomically $ do
           alreadyInDb <- PerasCertDB.getCertIds perasCertDB
-          let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
-          validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
+          objectIdRequestability <- perasCertRequestability resolverHandle
+          -- The context may have advanced since these certificates were
+          -- requested. Certificates that became too old need no validation
+          -- or insertion, and receiving them must not penalize the peer.
+          -- We also ignore certs that have been already added to the DB.
+          let needsProcessing cert =
+                let roundNo = getPerasCertRound cert
+                 in Set.notMember roundNo alreadyInDb && objectIdRequestability roundNo /= ObjectIdTooOld
+          validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
           -- Some certs are invalid => reject the whole batch
           --
           -- NOTE: we could combine the two 'traverse' operations into one in
