@@ -11,6 +11,7 @@ module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent.Class.MonadSTM.Strict (atomically, newTVarIO, writeTVar)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, try)
 import Control.Monad (forM, forM_, replicateM, void)
@@ -59,7 +60,13 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withWriter
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (gcBatchSize)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
+  ( closeChecked
+  , mkConn
+  , openRawConnection
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (gcBatchSize, initialStats)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (lookupBlob, readPartition)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
@@ -98,6 +105,11 @@ tests =
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
              , testCase "runs on the immutable partition" $
                  withTempLeiosDbPaths test_truncateImmutablePartition
+             ]
+         , testGroup
+             "reads (SQLite)"
+             [ testCase "a read a collection overtook reads the immutable partition" $
+                 withFreshSQLiteFile test_readOvertakenByCollection
              ]
          , testGroup
              "promotion (SQLite)"
@@ -225,8 +237,8 @@ mkTestGroups impl =
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
       , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
-      , testCase "a tx missing from a volatile copy fetched again is read from the immutable copy" $
-          test_retrieveFallsBackPerTx impl
+      , testCase "reads a point older than the latest collection from the immutable partition only" $
+          test_readsDispatchBySlot impl
       ]
   , testGroup
       "local fills"
@@ -735,21 +747,25 @@ writeWholeEb con points eb = do
   forM_ points $ \point -> rwInsertEbBody con point eb
   forM_ points $ \point -> rwInsertTxs con point (allTxsFor eb)
 
--- | An EB copied to the immutable partition, evicted from the volatile one, and
--- then fetched again at a new point: a tx the new volatile copy lacks is still
--- read from the immutable copy.
-test_retrieveFallsBackPerTx :: DbImpl -> IO ()
-test_retrieveFallsBackPerTx impl = withFreshDb impl $ \db -> withRW db $ \con -> do
+-- | An EB promoted at slot 5, collected at slot 6, and fetched again at slot
+-- 10, so far one of its txs. The reads of slot 5 go to the immutable
+-- partition, those of slot 10 to the volatile one, and neither falls back to
+-- the other.
+test_readsDispatchBySlot :: DbImpl -> IO ()
+test_readsDispatchBySlot impl = withFreshDb impl $ \db -> withRW db $ \con -> do
   let eb = mkTestEb 2
+      promoted = mkTestPoint 5 1
       again = mkTestPoint 10 1
-  writeWholeEb con [mkTestPoint 5 1] eb
-  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
+  writeWholeEb con [promoted] eb
+  leiosDbPromoteToImmutable db [promoted]
   garbageCollect db 6
   rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
-  rwBatchRetrieveTxs con again [0, 1]
-    >>= (@?= [(off, Just (txBytesFor eb off)) | off <- [0, 1]])
-  rwLookupEbClosure con again >>= (@?= Just (map snd (allTxsFor eb)))
+  rwBatchRetrieveTxs con again [0, 1] >>= (@?= [(0, Just (txBytesFor eb 0)), (1, Nothing)])
+  rwLookupEbClosure con again >>= (@?= Nothing)
+  rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
+  rwLookupEbBody con promoted >>= (@?= Just (bodyBytes eb))
+  rwScanComplete con 0 >>= (@?= [promoted])
 
 -- | A crash can lose the volatile writes that completed a promoted EB, but not
 -- its immutable copy. Promoting it again, as when the crash lost the block
@@ -776,6 +792,29 @@ test_promoteAtCertifiedSlot _volDbPath immDbPath db = do
   withRW db $ \con -> writeWholeEb con [certified, mkTestPoint 20 1] (mkTestEb 2)
   leiosDbPromoteToImmutable db [certified]
   ebSlotIn immDbPath (mkTestEbHash 1) >>= (@?= 10)
+
+-- | An EB promoted at slot 5 and collected at slot 6, read by a reader that
+-- chose the volatile partition before that collection: as of its choice, the
+-- latest collection was at slot 0. It finds no row there, and reads the
+-- immutable partition only if the collection has overtaken it.
+test_readOvertakenByCollection :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_readOvertakenByCollection volDbPath immDbPath db = do
+  let eb = mkTestEb 2
+      point = mkTestPoint 5 1
+  withRW db $ \con -> writeWholeEb con [point] eb
+  leiosDbPromoteToImmutable db [point]
+  garbageCollect db 6
+  statsVar <- newTVarIO =<< initialStats volDbPath immDbPath
+  gcSlotVar <- newTVarIO 0
+  bracket (openRawConnection volDbPath) closeChecked $ \volDb ->
+    bracket (openRawConnection immDbPath) closeChecked $ \immDb -> do
+      let conn = mkConn nullTracer statsVar gcSlotVar volDb immDb
+      readPartition conn point (`lookupBlob` point) >>= (@?= Nothing)
+      -- The collection completes while the read runs.
+      let overtaken readDb = do
+            atomically $ writeTVar gcSlotVar 6
+            lookupBlob readDb point
+      readPartition conn point overtaken >>= (@?= Just (bodyBytes eb))
 
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> LeiosPoint -> IO Bool

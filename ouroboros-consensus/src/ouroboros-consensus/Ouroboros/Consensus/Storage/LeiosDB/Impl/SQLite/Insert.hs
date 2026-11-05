@@ -40,7 +40,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (bumpVolatile
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   ( EbIndex (..)
-  , EbRow (..)
   , boundAt
   , consecutiveRuns
   , encodeTxBounds
@@ -176,7 +175,7 @@ sqlInsertTxs conn point txBytesWithOffsets =
 -- * or its size is not the declared one.
 writeTxBytes :: Conn -> LeiosPoint -> [(TxOffset, ByteString)] -> IO [TxOffset]
 writeTxBytes conn point txBytesWithOffsets =
-  lookupEbIndex db (AtPoint point) >>= \case
+  lookupEbIndex db point >>= \case
     Nothing -> pure []
     Just ix@EbIndex{eiRowid, eiTxCount = n} -> do
       bounds <- readTxBounds db ix 0 (n - 1)
