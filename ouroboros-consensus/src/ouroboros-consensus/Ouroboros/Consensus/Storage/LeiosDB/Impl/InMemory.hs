@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
 
 import Cardano.Prelude (Generic, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Applicative ((<|>))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , modifyTVar
@@ -28,7 +27,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
 import Ouroboros.Consensus.Leios.Types
@@ -79,15 +78,16 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   , imEbBodies :: !(Map EndorserBlockHash StoredBody)
   -- ^ EB bodies, keyed by EB hash. Shared across every point that references
   -- the same EB.
-  , imImmutableEbBodies :: !(Map EndorserBlockHash StoredBody)
-  -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
-  -- collection evicts such an EB from the other fields like any other, and the
-  -- reads fall back to this and 'imImmutableEbTxBytes'.
-  , imImmutableEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
+  , imImmutableEbBodies :: !(Map LeiosPoint StoredBody)
+  -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted, at the
+  -- points they were promoted at. The garbage collection evicts such an EB from
+  -- the other fields like any other.
+  , imImmutableEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
   , imGcSlot :: !SlotNo
   -- ^ The slot of the latest garbage collection. The writes of a point before
-  -- it are dropped, as the SQLite backend's are.
+  -- it are dropped, and its reads go to 'imImmutableEbBodies' and
+  -- 'imImmutableEbTxBytes'.
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -142,18 +142,20 @@ imPromoteToImmutable :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint]
 imPromoteToImmutable stateVar points = do
   incomplete <- atomically $ do
     s <- readTVar stateVar
-    let closures =
+    let promoted = Set.fromList (map pointEbHash (Map.keys (imImmutableEbBodies s)))
+        -- The first point given of each EB not promoted yet.
+        closures =
           Map.fromList
-            [ (pointEbHash point, closureAt point)
+            [ (pointEbHash point, (point, closureAt point))
             | point <- reverse points
-            , Map.notMember (pointEbHash point) (imImmutableEbBodies s)
+            , Set.notMember (pointEbHash point) promoted
             ]
         closureAt point = do
           body <- Map.lookup (pointEbHash point) (imEbBodies s)
           let txBytes = volatileTxBytes s point
           if hashesMatch txBytes body then Just (body, txBytes) else Nothing
-        copied = Map.mapMaybe id closures
-        incomplete = Map.keys (Map.filter isNothing closures)
+        copied = Map.fromList [(point, closure) | (point, Just closure) <- Map.elems closures]
+        incomplete = [point | (point, Nothing) <- Map.elems closures]
     when (null incomplete) $
       writeTVar
         stateVar
@@ -341,26 +343,27 @@ imInsertTxs stateVar point offBytes = atomically $ do
   pure [off | tx@(off, _, _) <- inBody, not (sized tx)]
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
--- than the given slot whose closure is complete, as in the SQLite backend. Like there, a closure is complete if each of its txs hashes
--- to what the body lists. A promoted EB is complete too, since only complete
--- EBs are promoted.
+-- than the given slot whose closure is complete where its reads go
+-- ('readsImmutable'). A volatile closure is complete if each of its txs hashes
+-- to what the body lists, and a promoted one is, since only complete EBs are
+-- promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
-  let isComplete p =
-        maybe False (hashesMatch (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
-          || Map.member (pointEbHash p) (imImmutableEbBodies s)
+  let isComplete p
+        | pointSlotNo p < imGcSlot s = Map.member p (imImmutableEbBodies s)
+        | otherwise =
+            maybe False (hashesMatch (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
   pure
     [ p
-    | p <- Map.keys (imEbPoints s)
+    | p <- Set.toAscList (Map.keysSet (imEbPoints s) <> Map.keysSet (imImmutableEbBodies s))
     , pointSlotNo p >= sinceSlot
     , isComplete p
     ]
 
 -- | Each requested offset the body declares, with its bytes, or 'Nothing' if
--- not written. A tx the volatile copy lacks is read from the immutable copy, if
--- any.
+-- not written.
 imBatchRetrieveTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb -> LeiosPoint -> [Int] -> m [(Int, Maybe ByteString)]
@@ -381,23 +384,25 @@ imLookupEbClosure stateVar point = atomically $ do
     body <- bodyAt state point
     traverse (writtenTx state point) (IntMap.keys (sbTxs body))
 
--- | The body at the point, or else of the immutable copy of its EB, which is
--- at the point it was certified at.
-bodyAt :: InMemoryLeiosDb -> LeiosPoint -> Maybe StoredBody
-bodyAt state point =
-  (guard (Map.member point (imEbPoints state)) *> Map.lookup ebHash (imEbBodies state))
-    <|> Map.lookup ebHash (imImmutableEbBodies state)
- where
-  ebHash = pointEbHash point
+-- | Whether reads of the point go to the immutable copies: it is older than
+-- the latest garbage collection.
+readsImmutable :: InMemoryLeiosDb -> LeiosPoint -> Bool
+readsImmutable state point = pointSlotNo point < imGcSlot state
 
--- | A tx's bytes at the point, or else from the immutable copy, if written.
+-- | The body at the point.
+bodyAt :: InMemoryLeiosDb -> LeiosPoint -> Maybe StoredBody
+bodyAt state point
+  | readsImmutable state point = Map.lookup point (imImmutableEbBodies state)
+  | otherwise =
+      guard (Map.member point (imEbPoints state)) *> Map.lookup (pointEbHash point) (imEbBodies state)
+
+-- | A tx's bytes at the point, if written.
 writtenTx :: InMemoryLeiosDb -> LeiosPoint -> Int -> Maybe ByteString
-writtenTx state point offset =
-  written (volatileTxBytes state point)
-    <|> written (Map.findWithDefault IntMap.empty ebHash (imImmutableEbTxBytes state))
+writtenTx state point offset = IntMap.lookup offset txs >>= nonZero
  where
-  ebHash = pointEbHash point
-  written txs = IntMap.lookup offset txs >>= nonZero
+  txs
+    | readsImmutable state point = Map.findWithDefault IntMap.empty point (imImmutableEbTxBytes state)
+    | otherwise = volatileTxBytes state point
 
 -- | A tx's bytes, unless they are zeroes, which the SQLite backend reads as not
 -- written: a valid tx is never all zeroes.

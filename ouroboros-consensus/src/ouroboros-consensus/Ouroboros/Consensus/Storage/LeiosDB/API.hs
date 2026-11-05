@@ -70,6 +70,11 @@ data LeiosDbHandle m = LeiosDbHandle
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbHandle" (LeiosDbHandle m)
 
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
+--
+-- The reads of a point older than the latest 'garbageCollect' go to the
+-- immutable partition, which holds an EB at the point it was certified at,
+-- and those of any other point to the volatile one. Neither falls back to the
+-- other.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
   , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)
@@ -85,9 +90,6 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
   -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
   -- not written.
-  --
-  -- The reads fall back to the immutable partition, which holds an EB at the
-  -- point it was certified at, for an EB it holds at another point.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every point a body was written at.
   --

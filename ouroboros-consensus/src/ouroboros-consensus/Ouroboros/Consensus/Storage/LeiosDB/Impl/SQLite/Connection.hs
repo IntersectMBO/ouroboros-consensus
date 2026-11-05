@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , dbWithWriteTransaction
   ) where
 
+import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import Control.Exception (throwIO)
 import Control.Monad (void)
@@ -137,21 +138,27 @@ data Conn = Conn
   -- ^ Usage stats for this connection.
   , conImmDb :: !DB.Database
   -- ^ The connection to the immutable partition.
+  , connGcSlot :: !(StrictTVar IO SlotNo)
+  -- ^ The slot of the latest garbage collection, which the writer sets. A
+  -- point older than it is read from the immutable partition, any other from
+  -- the volatile one.
   }
 
 -- | A 'Conn' over two open partition connections; 'closeConn' closes them.
 mkConn ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
+  StrictTVar IO SlotNo ->
   DB.Database ->
   DB.Database ->
   Conn
-mkConn tracer statsVar volDb immDb =
+mkConn tracer statsVar gcSlotVar volDb immDb =
   Conn
     { conVolDb = volDb
     , connTracer = tracer
     , connStats = statsVar
     , conImmDb = immDb
+    , connGcSlot = gcSlotVar
     }
 
 -- | Close both connections of a 'Conn'.
