@@ -3,8 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Opening, configuring and closing connections to the LeiosDB partition
--- files, and 'Conn': a reader's (or the writer's) pair of connections with
--- their prepared statements.
+-- files, and 'Conn': a reader's (or the writer's) pair of connections.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( -- * Partition files
     initialiseLeiosDbFiles
@@ -12,10 +11,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   , closeChecked
 
-    -- * Connections with prepared statements
+    -- * Pairs of connections
   , Conn (..)
   , mkConn
-  , finalizeConnStmts
   , closeConn
   , dbWithWriteTransaction
   ) where
@@ -23,7 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import Control.Exception (throwIO)
 import Control.Monad (void)
-import Control.Monad.Class.MonadThrow (bracket, onException)
+import Control.Monad.Class.MonadThrow (bracket)
 import Control.Tracer (Tracer)
 import Data.Foldable (traverse_)
 import Data.String (fromString)
@@ -41,7 +39,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Exception
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 
 -- | Open a strictly read-only connection, for seeding DB statistics.
@@ -134,51 +131,32 @@ creationPragmas =
 data Conn = Conn
   { conVolDb :: !DB.Database
   -- ^ The connection to the volatile partition.
-  , connVolStmts :: !VolStmts
-  -- ^ Precompiled statements used with the volatile partition.
   , connTracer :: !(Tracer IO TraceLeiosDb)
   -- ^ So the write path can report exhausting SQLite's own busy timeout.
   , connStats :: !(StrictTVar IO LeiosDbStats)
   -- ^ Usage stats for this connection.
   , conImmDb :: !DB.Database
   -- ^ The connection to the immutable partition.
-  , connImmStmts :: !ImmStmts
-  -- ^ Precompiled statements used with the immutable partition.
   }
 
--- | Build a 'Conn' over two open partition connections, preparing every
--- statement; 'closeConn' undoes it. If preparing the immutable statements
--- throws, the volatile ones are finalized first.
+-- | A 'Conn' over two open partition connections; 'closeConn' closes them.
 mkConn ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   DB.Database ->
   DB.Database ->
-  IO Conn
-mkConn tracer statsVar volDb immDb = do
-  stmts <- prepareVolStmts volDb
-  immStmts <- prepareImmStmts immDb `onException` finalizeVolStmts stmts
-  pure
-    Conn
-      { conVolDb = volDb
-      , connVolStmts = stmts
-      , connTracer = tracer
-      , connStats = statsVar
-      , conImmDb = immDb
-      , connImmStmts = immStmts
-      }
+  Conn
+mkConn tracer statsVar volDb immDb =
+  Conn
+    { conVolDb = volDb
+    , connTracer = tracer
+    , connStats = statsVar
+    , conImmDb = immDb
+    }
 
--- | Finalize the statements of a 'Conn', leaving its connections open, for a
--- caller that closes those itself.
-finalizeConnStmts :: Conn -> IO ()
-finalizeConnStmts conn = do
-  finalizeImmStmts (connImmStmts conn)
-  finalizeVolStmts (connVolStmts conn)
-
--- | Finalize the statements of a 'Conn', then close both its connections.
+-- | Close both connections of a 'Conn'.
 closeConn :: Conn -> IO ()
 closeConn conn = do
-  finalizeConnStmts conn
   closeChecked (conImmDb conn)
   closeChecked (conVolDb conn)
 
