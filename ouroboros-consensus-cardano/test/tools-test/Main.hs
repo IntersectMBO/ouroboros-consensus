@@ -1,7 +1,6 @@
 module Main (main) where
 
 import qualified Cardano.Configuration.CliArgs as CLI
-import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.BaseTypes (StrictMaybe (SJust))
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
@@ -13,12 +12,17 @@ import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import qualified Data.ByteString.Char8 as BS8
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.String (fromString)
+import Data.Maybe (isJust)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), endorserBlockFromTxBytes)
+import Ouroboros.Consensus.Leios.Types
+  ( EndorserBlock
+  , LeiosPoint (..)
+  , endorserBlockFromTxBytes
+  , endorserBlockHash
+  )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbReader (testScanEbPoints)
+  ( LeiosDbReader (lookupEbBody)
   , LeiosDbWriter (writeEbBody)
   , Promise (await)
   , withLeiosDBSQLite
@@ -171,21 +175,20 @@ blockCountTest logStep = do
   -- the truncater runs: it opens the files itself and VACUUMs them.
   let volLeiosDb = chainDB <> "/leios.vol.db"
       immLeiosDb = chainDB <> "/leios.imm.db"
-      keptEb = MkLeiosPoint 0 (mkEbHash '1')
-      droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
+      keptEb = MkLeiosPoint 0 (endorserBlockHash eb)
+      droppedEb = MkLeiosPoint 500000 (endorserBlockHash eb)
   withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
     withWriter leiosDb $ \con ->
-      mapM_
-        (\point -> await =<< writeEbBody con point (endorserBlockFromTxBytes (BS8.pack "tx" :| [])) [])
-        [keptEb, droppedEb]
+      mapM_ (\point -> await =<< writeEbBody con point eb []) [keptEb, droppedEb]
 
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-  ebPoints <- withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
-    withReader leiosDb testScanEbPoints
-  ebPoints == [(0, pointEbHash keptEb)]
-    @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
+  held <- withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
+    withReader leiosDb $ \reader ->
+      mapM (fmap isJust . lookupEbBody reader) [keptEb, droppedEb]
+  held == [True, False]
+    @? "the LeiosDb does not hold the kept EB alone: " ++ show held
 
   logStep "running analysis after truncation"
   resultTruncated <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
@@ -209,7 +212,8 @@ blockCountTest logStep = do
       expected
       (resultForged result)
 
-  mkEbHash c = UnsafeHash (fromString (replicate 32 c))
+  eb :: EndorserBlock
+  eb = endorserBlockFromTxBytes (BS8.pack "tx" :| [])
 
 tests :: TestTree
 tests =

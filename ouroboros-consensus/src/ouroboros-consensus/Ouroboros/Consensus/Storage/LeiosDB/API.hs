@@ -33,7 +33,6 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
-  , EndorserBlockHash
   , ForgedEndorserBlock
   , LeiosPoint (..)
   , TxLocation
@@ -90,11 +89,6 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
   -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
   -- not written.
-  , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
-  -- ^ Every point a body was written at.
-  --
-  -- Not used in production, only used in tests to observe point
-  -- writes and truncation.
   , scanCompleteEbClosuresNotOlderThanSlot ::
       HasCallStack =>
       SlotNo -> m [LeiosPoint]

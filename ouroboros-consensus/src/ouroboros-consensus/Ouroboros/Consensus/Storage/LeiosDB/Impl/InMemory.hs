@@ -192,7 +192,6 @@ openInMemoryReader stateVar =
       , lookupEbBody = imLookupEbBody stateVar
       , lookupEbClosure = imLookupEbClosure stateVar
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
-      , testScanEbPoints = imScanEbPoints stateVar
       , -- ThreadNet persists 'stateVar' across simulated restarts, so on
         -- restart this seeds the restored acquired-EB-closures set.
         scanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
@@ -234,14 +233,6 @@ openInMemoryWriter stateVar =
               }
 
 -- * Top-level implementations
-
-imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EndorserBlockHash)]
-imScanEbPoints stateVar = atomically $ do
-  state <- readTVar stateVar
-  pure
-    [ (pointSlotNo p, pointEbHash p)
-    | p <- Map.keys (imEbPoints state)
-    ]
 
 -- | Insert a point, unless the latest garbage collection collects it.
 -- Idempotent: a second insert at the same point keeps the first-seen size.
