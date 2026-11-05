@@ -724,6 +724,19 @@ prop_leios_hard_fork_from_conway seed =
   triggers =
     (hardForkInto Conway){triggerHardForkDijkstra = CardanoTriggerHardForkAtEpoch 1}
 
+  -- The committee of the first Dijkstra epoch comes from a snapshot taken in
+  -- Conway, which seats nobody, so producers would announce nothing until the
+  -- next one and no announcing header would cross the boundary. With no quorum
+  -- to reach, an empty committee reaches it. The guard rails forbid a zero
+  -- threshold on chain; it only stands in for a seated committee here.
+  dijkstraGenesis =
+    DijkstraGenesis
+      { dgUpgradePParams =
+          (dgUpgradePParams (Shelley.leTranslationContext Dijkstra.ledgerExamples))
+            { udppLeiosQuorumStakeThreshold = minBound
+            }
+      }
+
   epochLength = unEpochSize $ mkEpochSize securityParam activeSlotCoeff
 
   numSlots = epochLength + 200
@@ -733,6 +746,7 @@ prop_leios_hard_fork_from_conway seed =
   (testOutput, _) =
     runThreadNetWith
       triggers
+      dijkstraGenesis
       seed
       (NumSlots numSlots)
       numCoreNodes
@@ -1115,11 +1129,15 @@ runThreadNet' ::
     TestNodeInitialization m (CardanoBlock StandardCrypto)
   ) ->
   (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
-runThreadNet' = runThreadNetWith (hardForkInto Dijkstra)
+runThreadNet' =
+  runThreadNetWith
+    (hardForkInto Dijkstra)
+    (Shelley.leTranslationContext Dijkstra.ledgerExamples)
 
--- | 'runThreadNet'' with the given hard fork triggers
+-- | 'runThreadNet'' with the given hard fork triggers and Dijkstra genesis
 runThreadNetWith ::
   CardanoHardForkTriggers ->
+  DijkstraGenesis ->
   Seed ->
   NumSlots ->
   NumCoreNodes ->
@@ -1131,7 +1149,7 @@ runThreadNetWith ::
     TestNodeInitialization m (CardanoBlock StandardCrypto)
   ) ->
   (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
-runThreadNetWith triggers initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
+runThreadNetWith triggers dijkstraGenesis initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
   ( runTestNetwork
       testConfig
       testConfigB
@@ -1180,7 +1198,7 @@ runThreadNetWith triggers initSeed numSlots numCoreNodes joinPlan tweakNodeInit 
             shelleyGenesis
             (Shelley.leTranslationContext Alonzo.ledgerExamples)
             (Shelley.leTranslationContext Conway.ledgerExamples)
-            (Shelley.leTranslationContext Dijkstra.ledgerExamples)
+            dijkstraGenesis
       , cardanoCheckpoints = mempty
       , cardanoProtocolVersion = dijkstraProtVer
       }

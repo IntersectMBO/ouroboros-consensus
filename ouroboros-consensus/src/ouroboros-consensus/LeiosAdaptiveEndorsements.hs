@@ -3,28 +3,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Adaptive endorsements: endorse less while recent announcements lose
--- their quorum margin, and more again as it recovers.
+-- | Adaptive endorsements: endorse less after announcements miss their
+-- quorum, and creep back to the full capacity while they make it.
 --
 -- The vote weight an announcement collected by the time the next block
 -- arrives is its participation, a share of total stake like the quorum
--- threshold. The stake that voted on any recent sample is alive, and the
--- error is the share of the alive stake's quorum margin the announcement
--- lost. Only announcements whose next block came late enough to certify them
--- count. A proportional controller turns the filtered error into a scale on
--- the endorser-block capacity, which the forge applies before it cuts the
--- mempool snapshot.
+-- threshold. Each announcement that reached the quorum adds a step back to the
+-- endorser-block capacity, which the forge applies before it cuts the mempool
+-- snapshot. Only one whose next block came late enough to certify it can miss
+-- the quorum, and each that did cuts the capacity by a factor: an earlier
+-- block cut its votes short.
 --
--- The error never rises above zero, so there is no setpoint and no I term: a
--- persistent loss holds the capacity at a fixed cut. Stake that withholds
--- votes, or EBs that collect none, cut it by at most @exp (-gainP)@ until the
--- withheld stake reaches the margin, where it fails every certificate anyway.
+-- The controller does not anticipate: a quorum made with any margin never
+-- cuts. The cut is deep and the recovery gradual, because a missed quorum loses
+-- a whole endorser block while too small a one loses a share of it, and a
+-- backlog keeps endorser blocks full until the cut gets them under the cliff.
 module LeiosAdaptiveEndorsements
   ( LeiosAdaptiveEbConfig (..)
   , defaultLeiosAdaptiveEbConfig
-  , AdaptiveEbState (..)
-  , initialAdaptiveEbState
-  , lostMarginShare
   , stepAdaptiveEb
   , forkAdaptiveEndorsements
   ) where
@@ -32,10 +28,7 @@ module LeiosAdaptiveEndorsements
 import Control.Monad (guard, void)
 import Control.ResourceRegistry (ResourceRegistry, forkLinkedThread)
 import Control.Tracer (Tracer, traceWith)
-import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.Sequence (Seq, (|>))
-import qualified Data.Sequence as Seq
 import Data.Void (Void)
 import LeiosDemoTypes
   ( AnnouncementFields
@@ -86,70 +79,32 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
--- | How the endorser-block capacity follows the quorum margin.
+-- | How the endorser-block capacity follows missed quorums.
 data LeiosAdaptiveEbConfig = MkLeiosAdaptiveEbConfig
-  { aebGainP :: !Double
-  -- ^ How hard a lost margin cuts: losing a share @e@ of it, sustained,
-  -- scales the capacity by @exp (-gainP * e)@.
-  , aebAttack :: !Double
-  -- ^ Filter gain while the margin shrinks, in @(0, 1]@.
-  , aebRelease :: !Double
-  -- ^ Filter gain while the margin recovers, in @(0, 1]@.
+  { aebDecrease :: !Double
+  -- ^ The factor a missed quorum scales the capacity by, in @(0, 1)@.
+  , aebIncrease :: !Double
+  -- ^ The share of the protocol's capacity a quorum made adds back.
   , aebMinScale :: !Double
   -- ^ The capacity never shrinks below this share of what the protocol allows.
-  , aebAliveWindow :: !Int
-  -- ^ Stake that voted on any of this many recent samples counts as alive.
   }
   deriving (Eq, Show)
 
 defaultLeiosAdaptiveEbConfig :: LeiosAdaptiveEbConfig
 defaultLeiosAdaptiveEbConfig =
   MkLeiosAdaptiveEbConfig
-    { aebGainP = 2
-    , aebAttack = 0.1
-    , aebRelease = 0.03
+    { aebDecrease = 0.8
+    , aebIncrease = 0.02
     , aebMinScale = 0.1
-    , aebAliveWindow = 20
     }
 
-data AdaptiveEbState = MkAdaptiveEbState
-  { aebFilteredError :: !Double
-  -- ^ The margin share, filtered.
-  , aebScale :: !Double
-  -- ^ The share of the protocol's endorser-block capacity to forge with.
-  }
-  deriving (Eq, Show)
-
-initialAdaptiveEbState :: AdaptiveEbState
-initialAdaptiveEbState = MkAdaptiveEbState{aebFilteredError = 0, aebScale = 1}
-
--- | The share of the alive stake's quorum margin an announcement lost, in
--- @[-1, 0]@ when the participation is at most the alive stake. With no margin
--- left nobody can certify, which reads as the whole margin lost.
-lostMarginShare ::
-  -- | The quorum threshold.
-  Double ->
-  -- | The alive stake.
-  Double ->
-  -- | The participation.
-  Double ->
-  Double
-lostMarginShare threshold alive participation
-  | alive > threshold = max (-1) ((participation - alive) / (alive - threshold))
-  | otherwise = -1
-
--- | Take the margin share of one announcement whose certification was
--- possible.
-stepAdaptiveEb :: LeiosAdaptiveEbConfig -> Double -> AdaptiveEbState -> AdaptiveEbState
-stepAdaptiveEb cfg err st =
-  MkAdaptiveEbState{aebFilteredError = filtered, aebScale = scale}
- where
-  prev = aebFilteredError st
-  gain
-    | err < prev = aebAttack cfg
-    | otherwise = aebRelease cfg
-  filtered = prev + gain * (err - prev)
-  scale = max (aebMinScale cfg) . min 1 . exp $ aebGainP cfg * min 0 filtered
+-- | Take whether an announcement whose certification was possible missed its
+-- quorum, and move the share of the protocol's endorser-block capacity to
+-- forge with.
+stepAdaptiveEb :: LeiosAdaptiveEbConfig -> Bool -> Double -> Double
+stepAdaptiveEb cfg missed scale
+  | missed = max (aebMinScale cfg) (scale * aebDecrease cfg)
+  | otherwise = min 1 (scale + aebIncrease cfg)
 
 -- | The block at the tip of the selection, and whether it announced an
 -- endorser block.
@@ -185,8 +140,8 @@ forkAdaptiveEndorsements registry tracer cfg lcfg chainDB voteState caughtUp = d
   pure (readTVar scaleVar)
 
 -- | Follow the selection, and on each block that extends one which announced
--- an endorser block, take the weight that announcement collected against the
--- alive stake and move the capacity scale in the given variable.
+-- an endorser block, take whether that announcement collected its quorum and
+-- move the capacity scale in the given variable.
 --
 -- Samples only while the node is caught up: a node syncing past old
 -- announcements has none of their votes.
@@ -208,11 +163,10 @@ runAdaptiveEndorsements ::
   StrictTVar m Rational ->
   m Void
 runAdaptiveEndorsements tracer cfg lcfg chainDB voteState caughtUp scaleVar =
-  go Nothing Seq.empty initialAdaptiveEbState
+  go Nothing 1
  where
-  -- The window holds the most recent samples, whose voters are alive.
-  go :: Maybe (LastTip blk) -> Seq RbHash -> AdaptiveEbState -> m Void
-  go lastTip window st = do
+  go :: Maybe (LastTip blk) -> Double -> m Void
+  go lastTip scale = do
     (tip, prevHash, ext, isCaughtUp) <- atomically $ do
       chain <- ChainDB.getCurrentChain chainDB
       ext <- ChainDB.getCurrentLedger chainDB
@@ -230,7 +184,7 @@ runAdaptiveEndorsements tracer cfg lcfg chainDB voteState caughtUp scaleVar =
           -- The announcement the header state carries may be an older block's.
           guard (pointSlotNo (announcementLeiosPoint ann) == slot)
           pure ann
-    (window', st') <- case lastTip of
+    scale' <- case lastTip of
       Just LastTip{ltHash, ltSlot, ltAnnounced = Just ann}
         | prevHash == BlockHash ltHash
         , isCaughtUp ->
@@ -241,40 +195,33 @@ runAdaptiveEndorsements tracer cfg lcfg chainDB voteState caughtUp scaleVar =
               slot
               (getMinCertificationGap lcfg (ledgerState ext))
               (snd <$> leiosCommitteeOfTip lcfg (ledgerState ext))
-              window
-              st
-      _ -> pure (window, st)
-    go (Just LastTip{ltHash = annTipHash tip, ltSlot = slot, ltAnnounced = announced}) window' st'
+              scale
+      _ -> pure scale
+    go (Just LastTip{ltHash = annTipHash tip, ltSlot = slot, ltAnnounced = announced}) scale'
 
   newHead :: AnchoredFragment (Header blk) -> Maybe (Header blk)
   newHead = either (const Nothing) Just . AF.head
 
-  sample announcer announcerSlot ann slot minGap mThreshold window st = do
+  sample announcer announcerSlot ann slot minGap mThreshold scale = do
     let rbHash = MkRbHash (toRawHash (Proxy @blk) announcer)
         certifiable = case (minGap, mThreshold) of
           (Just gap, Just _) -> unSlotNo slot - unSlotNo announcerSlot >= unSlotNo gap
           _ -> False
-        window'
-          | certifiable = Seq.drop (Seq.length window + 1 - aebAliveWindow cfg) (window |> rbHash)
-          | otherwise = window
     voters <- queryVoters voteState rbHash
-    -- Read now rather than kept from each sample, so late votes count too.
-    alive <- Map.unions <$> traverse (queryVoters voteState) window'
     let participation = fromRational (sum voters)
-        aliveStake = fromRational (sum alive)
-        threshold = maybe 1 fromRational mThreshold
-        err = lostMarginShare threshold aliveStake participation
-        st'
-          | certifiable = stepAdaptiveEb cfg err st
-          | otherwise = st
-    atomically $ writeTVar scaleVar (toRational (aebScale st'))
+        missedQuorum = any (sum voters <) mThreshold
+        reachedQuorum = any (sum voters >=) mThreshold
+        scale'
+          | reachedQuorum = stepAdaptiveEb cfg False scale
+          | certifiable = stepAdaptiveEb cfg missedQuorum scale
+          | otherwise = scale
+    atomically $ writeTVar scaleVar (toRational scale')
     traceWith tracer $
       TraceLeiosAdaptiveEb
         { ebPoint = announcementLeiosPoint ann
         , participation
-        , aliveStake
-        , marginShare = err
+        , missedQuorum
         , certifiable
-        , ebCapacityScale = aebScale st'
+        , ebCapacityScale = scale'
         }
-    pure (window', st')
+    pure scale'

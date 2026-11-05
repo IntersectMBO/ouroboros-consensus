@@ -2,11 +2,8 @@
 module Test.LeiosAdaptiveEndorsements (tests) where
 
 import LeiosAdaptiveEndorsements
-  ( AdaptiveEbState (..)
-  , LeiosAdaptiveEbConfig (..)
+  ( LeiosAdaptiveEbConfig (..)
   , defaultLeiosAdaptiveEbConfig
-  , initialAdaptiveEbState
-  , lostMarginShare
   , stepAdaptiveEb
   )
 import Test.QuickCheck
@@ -18,51 +15,40 @@ tests =
   testGroup
     "LeiosAdaptiveEndorsements"
     [ testProperty "scale stays within its bounds" prop_scaleBounded
-    , testProperty "no lost margin keeps the full capacity" prop_noLoss
-    , testProperty "a persistent loss holds a fixed cut" prop_persistentLoss
-    , testProperty "the lost margin share is within [-1, 0]" prop_lostMarginShareBounded
-    , testProperty "no margin left reads as all of it lost" prop_noMargin
+    , testProperty "quorums made keep the full capacity" prop_noMiss
+    , testProperty "persistent misses sink to the minimum" prop_persistentMiss
+    , testProperty "a miss cuts and quorums made recover" prop_missRecovers
     ]
 
-newtype Stake = Stake Double
-  deriving Show
-
-instance Arbitrary Stake where
-  arbitrary = Stake <$> choose (0, 1)
-
-prop_scaleBounded :: [Stake] -> Property
-prop_scaleBounded es =
+prop_scaleBounded :: [Bool] -> Property
+prop_scaleBounded misses =
   conjoin
-    [ counterexample (show st) $
-        aebScale st >= aebMinScale cfg && aebScale st <= 1
-    | st <- scanl (flip (stepAdaptiveEb cfg)) initialAdaptiveEbState [negate e | Stake e <- es]
+    [ counterexample (show s) $ s >= aebMinScale cfg && s <= 1
+    | s <- scanl (flip (stepAdaptiveEb cfg)) 1 misses
     ]
  where
   cfg = defaultLeiosAdaptiveEbConfig
 
-prop_noLoss :: Positive Int -> Property
-prop_noLoss (Positive n) =
-  aebScale (iterate (stepAdaptiveEb cfg 0) initialAdaptiveEbState !! n) === 1
+prop_noMiss :: Positive Int -> Property
+prop_noMiss (Positive n) =
+  iterate (stepAdaptiveEb cfg False) 1 !! n === 1
  where
   cfg = defaultLeiosAdaptiveEbConfig
 
--- | Without an I term, the capacity settles at @exp (-gainP * loss)@ rather
--- than sinking to its minimum.
-prop_persistentLoss :: Stake -> Property
-prop_persistentLoss (Stake loss) =
-  counterexample (show (settled, expected)) $ abs (settled - expected) < 1e-6
+prop_persistentMiss :: Property
+prop_persistentMiss =
+  iterate (stepAdaptiveEb cfg True) 1 !! 100 === aebMinScale cfg
  where
   cfg = defaultLeiosAdaptiveEbConfig
-  settled = aebScale (iterate (stepAdaptiveEb cfg (negate loss)) initialAdaptiveEbState !! 1000)
-  expected = max (aebMinScale cfg) (exp (negate (aebGainP cfg) * loss))
 
-prop_lostMarginShareBounded :: Stake -> Stake -> Stake -> Property
-prop_lostMarginShareBounded (Stake threshold) (Stake alive) (Stake participation) =
-  participation <= alive ==>
-    let e = lostMarginShare threshold alive participation
-     in counterexample (show e) $ e >= -1 && e <= 0
-
-prop_noMargin :: Stake -> Stake -> Property
-prop_noMargin (Stake alive) (Stake participation) =
-  forAll (choose (alive, 1)) $ \threshold ->
-    lostMarginShare threshold alive participation === -1
+-- | One miss takes @(1 - decrease) / increase@ quorums made to undo, and one
+-- more for rounding.
+prop_missRecovers :: Property
+prop_missRecovers =
+  counterexample (show (cut, recovered)) $
+    cut < 1 .&&. recovered === 1
+ where
+  cfg = defaultLeiosAdaptiveEbConfig
+  cut = stepAdaptiveEb cfg True 1
+  steps = ceiling ((1 - aebDecrease cfg) / aebIncrease cfg) :: Int
+  recovered = iterate (stepAdaptiveEb cfg False) cut !! (steps + 1)
