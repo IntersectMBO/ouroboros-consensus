@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
 
     -- * Writing
   , LeiosDbWriter (..)
+  , TxWriteReceipt (..)
   , Promise (..)
   , awaitAll
   , withWriter
@@ -24,9 +25,12 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
+import Control.Monad (when)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (toList, traverse_)
+import Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
@@ -123,7 +127,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- done: those written since an earlier delivery of the same body.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m TxWriteReceipt)
   -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
@@ -138,11 +142,29 @@ data LeiosDbWriter m = LeiosDbWriter
   -- - or it is already stored,
   -- - or its size is not the declared one.
   --
-  -- Returns the offsets of the transactions dropped because the EB referenced
-  -- them with the wrong size: no such closure can be stored, and an honest
-  -- peer never serves one.
+  -- Returns a receipt after successful commit, including already-held copies
+  -- and immutable-partition fallback. A successful write can leave submitted
+  -- offsets unconfirmed; callers must not infer presence from promise success.
+  -- Wrong-size diagnostics retain the existing write path's meaning.
+  -- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
+
+-- | Point-in-time durable confirmation for one transaction write. Presence sets
+-- partition its distinct submitted offsets. The API's verified-input assumption
+-- still applies; storage does not re-hash transactions. Later GC may remove data.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+data TxWriteReceipt = TxWriteReceipt
+  { txWriteConfirmed :: !IntSet
+  -- ^ Submitted offsets holding bytes after commit, including existing copies.
+  , txWriteUnconfirmed :: !IntSet
+  -- ^ Submitted offsets whose presence cannot be confirmed. Relevant work must
+  -- remain fetchable; a missing body/row is not a successful acquisition.
+  , txWriteWrongSize :: ![TxOffset]
+  -- ^ Existing ordered diagnostics for submitted bytes of the wrong declared
+  -- size. Separate from presence: a valid copy may already occupy that offset.
+  }
+  deriving (Eq, Show)
 
 -- | The result of a submitted write.
 --
@@ -190,10 +212,18 @@ storeForgedEb ::
 storeForgedEb emit writer slot forgedEb = do
   bodyWritten <- writeEbBody writer point body
   txsWritten <- writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
-  link =<< async (await bodyWritten >> await txsWritten >> atomically emitBoth)
+  link
+    =<< async
+      ( do
+          _ <- await bodyWritten
+          receipt <- await txsWritten
+          atomically $ emitBoth receipt
+      )
  where
   body = forgedEbBody forgedEb
   point = MkLeiosPoint slot (endorserBlockHash body)
-  emitBoth = do
+  emitBoth receipt = do
     emit $ AcquiredEb point (encodeEndorserBlockSize body)
-    emit $ AcquiredEbTxs point
+    when (IntSet.null (txWriteUnconfirmed receipt) && null (txWriteWrongSize receipt)) $
+      emit $
+        AcquiredEbTxs point

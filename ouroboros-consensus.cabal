@@ -1051,7 +1051,7 @@ test-suite leios-storage-test
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:si-timers,
+    io-classes:{si-timers, strict-stm},
     ouroboros-consensus,
     QuickCheck,
     tasty,

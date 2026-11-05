@@ -30,6 +30,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import qualified Data.Set as Set
+import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
 import Ouroboros.Consensus.Leios.Types
@@ -48,6 +49,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (LeiosDbWriteException)
@@ -277,7 +279,7 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m [TxOffset]
+  m TxWriteReceipt
 imInsertTxs stateVar point offBytes = atomically $
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
   -- pre-allocated row, i.e. an offset the body declared, once, at the declared
@@ -286,24 +288,40 @@ imInsertTxs stateVar point offBytes = atomically $
     let declared = Map.findWithDefault IntMap.empty point (imEbBodies s)
         held = volatileTxBytes s point
         accepted =
-          IntMap.fromList
+          IntMap.fromListWith
+            (\_new old -> old)
             [ (off, bytes)
             | (off, bytes) <- offBytes
             , Just e <- [IntMap.lookup off declared]
-            , fromIntegral (BS.length bytes) == eteTxBytesSize e
+            , matchesSize e bytes
             , not (IntMap.member off held)
             ]
         wrongSize =
           [ off
           | (off, bytes) <- offBytes
           , Just e <- [IntMap.lookup off declared]
-          , fromIntegral (BS.length bytes) /= eteTxBytesSize e
+          , not (matchesSize e bytes)
           ]
-     in ( wrongSize
-        , if IntMap.null accepted
+        next =
+          if IntMap.null accepted
             then s
             else s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
-        )
+        submitted = IntSet.fromList (map fst offBytes)
+        present bodies txs off = case (Map.lookup point bodies >>= IntMap.lookup off, Map.lookup point txs >>= IntMap.lookup off) of
+          (Just entry, Just bytes) -> matchesSize entry bytes
+          _ -> False
+        confirmed =
+          IntSet.filter
+            ( \off ->
+                present (imEbBodies next) (imEbTxBytes next) off
+                  || present (imImmutableEbBodies next) (imImmutableEbTxBytes next) off
+            )
+            submitted
+     in (TxWriteReceipt confirmed (IntSet.difference submitted confirmed) wrongSize, next)
+ where
+  -- Widen the declared Word32 size instead of narrowing a host-sized length.
+  matchesSize entry bytes =
+    (fromIntegral (BS.length bytes) :: Word64) == fromIntegral (eteTxBytesSize entry)
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete, as in the SQLite backend.

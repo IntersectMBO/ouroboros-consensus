@@ -13,19 +13,23 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent (threadDelay)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
-import Control.Exception (bracket, try)
+import Control.Exception (bracket, bracket_, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
+import qualified Data.IntSet as IntSet
 import Data.List (mapAccumL, sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Database.SQLite3 as SQL
@@ -43,9 +47,11 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
+  , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , Promise (..)
   , TraceLeiosDb (..)
+  , TxWriteReceipt (..)
   , newLeiosDBInMemory
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
@@ -53,6 +59,16 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withWriter
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
+  ( closeChecked
+  , finalizeConnStmts
+  , initialiseLeiosDbFiles
+  , mkConn
+  , openRawConnection
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert (sqlInsertEbBody, sqlInsertTxs)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives (dbExec)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (sqlBatchRetrieveTxs)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import qualified System.Timeout as Timeout
@@ -109,6 +125,11 @@ tests =
              [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
              ]
          , testGroup
+             "transaction receipt commit boundary (SQLite)"
+             [ testCase "a write promise cannot settle while its commit is blocked" test_receiptCommitBarrier
+             , testCase "a deferred commit failure returns no positive receipt" test_receiptCommitFailure
+             ]
+         , testGroup
              "file initialisation (SQLite)"
              [ testCase "handle creation applies both schemas" $
                  withTempLeiosDbPaths test_schemaAtHandleCreation
@@ -148,7 +169,10 @@ rwInsertTxs rw point txs = void $ rwInsertTxsDropping rw point txs
 -- | 'rwInsertTxs', returning the offsets of the txs dropped because the EB
 -- referenced them with the wrong size.
 rwInsertTxsDropping :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
-rwInsertTxsDropping rw point txs = await =<< writeTxs (rwWriter rw) point txs
+rwInsertTxsDropping rw point txs = txWriteWrongSize <$> rwInsertTxsReceipt rw point txs
+
+rwInsertTxsReceipt :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO TxWriteReceipt
+rwInsertTxsReceipt rw point txs = await =<< writeTxs (rwWriter rw) point txs
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
@@ -231,6 +255,12 @@ mkTestGroups impl =
           withFreshDb impl test_malformedTxWritesDropped
       , testCase "a point copied to the immutable partition and evicted is read from the immutable copy" $
           test_readsFallBackToImmutable impl
+      , testCase "receipts distinguish present, absent, malformed and duplicate submissions" $
+          withFreshDb impl test_txReceipts
+      , testCase "receipts confirm immutable copies after volatile eviction" $
+          test_receiptImmutable impl
+      , testCase "receipts do not confirm writes after the body was pruned" $
+          test_receiptPruned impl
       ]
   , testGroup
       "closures"
@@ -577,6 +607,92 @@ test_secondBodyWriteReportsHeld db = do
     rwInsertTxs con point [(0, txBytesFor eb 0)]
     rwInsertEbBodyHeld con point eb >>= (@?= [0])
 
+-- | Receipts partition the submitted offsets while preserving independent
+-- wrong-size diagnostics. Presence includes valid copies already stored.
+test_txReceipts :: LeiosDbHandle IO -> IO ()
+test_txReceipts db = withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+      receipt yes no wrong = TxWriteReceipt (IntSet.fromList yes) (IntSet.fromList no) wrong
+      tx off = txBytesFor eb off
+  rwInsertTxsReceipt rw point [(0, tx 0)] >>= (@?= receipt [] [0] [])
+  rwInsertEbBody rw point eb
+  rwInsertTxsReceipt rw point [(0, tx 0), (1, BS.snoc (tx 1) 0), (2, tx 0), (-1, tx 0)]
+    >>= (@?= receipt [0] [-1, 1, 2] [1])
+  -- The first valid duplicate wins, matching the SQLite guarded fill.
+  rwInsertTxsReceipt rw point [(1, tx 1), (1, BS.map (+ 1) (tx 1)), (0, tx 0)]
+    >>= (@?= receipt [0, 1] [] [])
+  rwBatchRetrieveTxs rw point [1] >>= (@?= [(1, mkTestTxHash 1, Just (tx 1))])
+  -- A wrong-sized duplicate does not erase the valid copy already held.
+  rwInsertTxsReceipt rw point [(0, BS.snoc (tx 0) 0)] >>= (@?= receipt [0] [] [0])
+  rwInsertTxsReceipt rw point [] >>= (@?= receipt [] [] [])
+  rwInsertTxsReceipt rw (mkTestPoint 6 1) [(0, tx 0)] >>= (@?= receipt [] [0] [])
+
+test_receiptImmutable :: DbImpl -> IO ()
+test_receiptImmutable impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+  writeWholeEb rw [point] eb
+  leiosDbPromoteToImmutable db [point]
+  settle 0
+  garbageCollect db 6
+  settle 6
+  rwScanEbPoints rw >>= (@?= [])
+  rwInsertTxsReceipt rw point [(0, txBytesFor eb 0), (1, txBytesFor eb 1), (2, txBytesFor eb 0)]
+    >>= (@?= TxWriteReceipt (IntSet.fromList [0, 1]) (IntSet.singleton 2) [])
+
+test_receiptPruned :: DbImpl -> IO ()
+test_receiptPruned impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+  rwInsertEbBody rw point eb
+  garbageCollect db 6
+  settle 6
+  rwInsertTxsReceipt rw point [(0, txBytesFor eb 0)]
+    >>= (@?= TxWriteReceipt IntSet.empty (IntSet.singleton 0) [])
+
+test_receiptCommitBarrier :: IO ()
+test_receiptCommitBarrier = withFreshSQLiteFile $ \volPath _ db -> withWriter db $ \writer -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 1
+  _ <- await =<< writeEbBody writer point eb
+  promise <- bracket (openRawConnection volPath) closeChecked $ \blocker ->
+    bracket_ (dbExec blocker (fromString "BEGIN IMMEDIATE")) (dbExec blocker (fromString "ROLLBACK")) $ do
+      pending <- writeTxs writer point [(0, txBytesFor eb 0)]
+      before <- SI.timeout 0.02 (await pending)
+      before @?= Nothing
+      pure pending
+  await promise >>= (@?= TxWriteReceipt (IntSet.singleton 0) IntSet.empty [])
+
+-- Exercise a real deferred COMMIT failure after the guarded fill and metadata
+-- confirmation have succeeded. The provisional receipt must not escape.
+test_receiptCommitFailure :: IO ()
+test_receiptCommitFailure = withTempLeiosDbPaths $ \volPath immPath -> do
+  initialiseLeiosDbFiles volPath immPath
+  stats <- Strict.newTVarIO (LeiosDbStats 0 0 0)
+  bracket (openRawConnection volPath) closeChecked $ \vol ->
+    bracket (openRawConnection immPath) closeChecked $ \imm ->
+      bracket (mkConn nullTracer stats vol imm) finalizeConnStmts $ \conn -> do
+        let point = mkTestPoint 5 1
+            eb = mkTestEb 1
+            exec = dbExec vol . fromString
+        _ <- sqlInsertEbBody nullTracer conn point eb
+        exec "PRAGMA foreign_keys = ON"
+        exec "CREATE TABLE receipt_parent (id INTEGER PRIMARY KEY)"
+        exec
+          "CREATE TABLE receipt_child (id INTEGER REFERENCES receipt_parent(id) DEFERRABLE INITIALLY DEFERRED)"
+        exec
+          "CREATE TRIGGER fail_receipt_commit AFTER UPDATE OF filled ON ebTxBytes BEGIN INSERT INTO receipt_child VALUES (1); END"
+        result <- try (sqlInsertTxs nullTracer conn point [(0, txBytesFor eb 0)])
+        case result :: Either LeiosDbException TxWriteReceipt of
+          Left _ -> pure ()
+          Right receipt -> assertFailure ("commit failure returned a receipt: " <> show receipt)
+        -- SQLite leaves a rejected deferred commit open. The production worker
+        -- terminates and closes it; this direct test rolls it back before reuse.
+        exec "ROLLBACK"
+        rows <- sqlBatchRetrieveTxs conn point [0]
+        [bytes | (_, _, bytes) <- rows] @?= [Nothing]
+
 -- * Garbage collection
 
 -- | Write the EB at these points, with its body and all its transactions.
@@ -873,6 +989,11 @@ data Op
   | OpGc SlotNo
   deriving Show
 
+data WriteObservation
+  = ObservedBodyWrite [TxOffset]
+  | ObservedTxWrite TxWriteReceipt
+  deriving (Eq, Show)
+
 -- | What each endorser block's body is, by its hash, with the index in the
 -- pool of each transaction it references: the same hash always names the same
 -- body, as it would on the wire.
@@ -980,7 +1101,7 @@ observe ::
   [Op] ->
   IO
     ( (Int, Int)
-    , ( [([TxOffset], [LeiosPoint])]
+    , ( [(WriteObservation, [LeiosPoint])]
       , [ ( Maybe BS.ByteString
           , Maybe [(TxHash, BS.ByteString)]
           , [(Int, TxHash, Maybe BS.ByteString)]
@@ -1007,13 +1128,13 @@ observe db settle bodies ops = withRW db $ \rw -> do
           filled <- rwInsertEbBodyHeld rw point (fst (bodies Map.! pointEbHash point))
           settle 0
           complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
-          fmap ((sort filled, complete) :)
+          fmap ((ObservedBodyWrite (sort filled), complete) :)
             <$> go rw frontier (point : bodied) pinned nEvicted rest
       | otherwise -> go rw frontier bodied pinned nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
       dropped <-
-        rwInsertTxsDropping
+        rwInsertTxsReceipt
           rw
           point
           [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
@@ -1021,7 +1142,7 @@ observe db settle bodies ops = withRW db $ \rw -> do
           ]
       settle 0
       complete <- scanCompleteEbClosuresNotOlderThanSlot (rwReader rw) 0
-      fmap ((sort dropped, complete) :) <$> go rw frontier bodied pinned nEvicted rest
+      fmap ((ObservedTxWrite dropped, complete) :) <$> go rw frontier bodied pinned nEvicted rest
     OpPromote point
       | point `elem` bodied && point `notElem` pinned -> do
           complete <- isJust <$> rwLookupEbClosure rw point

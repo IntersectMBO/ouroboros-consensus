@@ -113,6 +113,8 @@ data VolStmts = VolStmts
   , stFillEbTxBytes :: !DB.Statement
   , stHeldOffsets :: !DB.Statement
   , stDeclaredTxSize :: !DB.Statement
+  , stConfirmedTxOffsets :: !DB.Statement
+  -- ^ 'sql_confirmed_tx_offsets_json' for volatile presence receipts.
   , stDecrMissingCount :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
@@ -128,6 +130,8 @@ data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
   , immStLookupEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
+  , immStConfirmedTxOffsets :: !DB.Statement
+  -- ^ 'sql_confirmed_tx_offsets_json' for immutable presence receipts.
   }
 
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
@@ -135,6 +139,7 @@ prepareImmStmts db = preparingStmts db $ \prep -> do
   immStLookupEbBody <- prep sql_lookup_ebBodies
   immStLookupEbClosure <- prep sql_lookup_eb_closure
   immStBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
+  immStConfirmedTxOffsets <- prep sql_confirmed_tx_offsets_json
   pure ImmStmts{..}
 
 -- | Same use-after-free discipline as 'finalizeVolStmts'.
@@ -143,6 +148,7 @@ finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
   dbFinalize immStLookupEbClosure
   dbFinalize immStBatchRetrieveTxs
+  dbFinalize immStConfirmedTxOffsets
 
 -- | Prepare every statement 'VolStmts' names. Order is not observable.
 prepareVolStmts :: DB.Database -> IO VolStmts
@@ -156,6 +162,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
   stHeldOffsets <- prep sql_held_offsets
   stDeclaredTxSize <- prep sql_declared_tx_size
+  stConfirmedTxOffsets <- prep sql_confirmed_tx_offsets_json
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
@@ -175,6 +182,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stFillEbTxBytes
   dbFinalize stHeldOffsets
   dbFinalize stDeclaredTxSize
+  dbFinalize stConfirmedTxOffsets
   dbFinalize stDecrMissingCount
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure

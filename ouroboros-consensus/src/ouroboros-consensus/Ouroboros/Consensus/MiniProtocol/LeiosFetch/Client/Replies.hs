@@ -66,11 +66,11 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , abandonClosure
   , acquireEbBody
-  , completeTxRequest
   , newLeiosJobPool
   , offsetsToBitmap
   , refundEbRequest
   , refundTxRequest
+  , settleTxRequest
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
@@ -84,6 +84,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -447,13 +448,13 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       TraceLeiosFetchClientTxsArrived point (fetchArrivalInvalid (fromIntegral batchBytes))
     throwIO exn
 
--- | Retire the jobs of the request, now that the write of their txs is durable,
--- and emit 'AcquiredEbTxs' if no job of the point remains.
+-- | Retire only fully confirmed jobs after the write commits, and release
+-- unconfirmed jobs for retry. Emit 'AcquiredEbTxs' if no job of the point remains.
 --
--- If the LeiosDB dropped some of the txs, the endorser block references them
--- with sizes other than their own, so no peer can complete its closure: no more
--- of it is fetched at this point ('abandonClosure'), nothing is emitted, and
--- the peer is disconnected.
+-- If the receipt reports wrong sizes, the endorser block references txs with
+-- sizes other than their own, so no peer can complete its closure: no more of
+-- it is fetched at this point ('abandonClosure'), nothing is emitted, and the
+-- peer is disconnected. Other unconfirmed offsets remain fetchable.
 settleTxs ::
   (Ord peer, IOLike m) =>
   LeiosFetchClientContext m peer ->
@@ -461,13 +462,14 @@ settleTxs ::
   LeiosBlockTxsRequest ->
   -- | when the txs arrived
   RelativeTime ->
-  -- | the offsets of the txs the LeiosDB dropped
-  Promise m [TxOffset] ->
+  -- | durable confirmation and existing size diagnostics
+  Promise m TxWriteReceipt ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now txsWritten = do
-  wrongSize <- IntSet.fromList <$> await txsWritten
+  receipt <- await txsWritten
+  let wrongSize = IntSet.fromList (txWriteWrongSize receipt)
   completed <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let outstanding' = completeTxRequest peer req outstanding
+    let outstanding' = settleTxRequest peer req (txWriteConfirmed receipt) outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
       _
         | not (IntSet.null wrongSize) ->

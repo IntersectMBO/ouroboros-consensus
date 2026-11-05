@@ -39,6 +39,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , refundEbRequest
   , refundTxRequest
   , completeTxRequest
+  , settleTxRequest
   , abandonClosure
 
     -- * Deciding
@@ -699,23 +700,50 @@ completeTxRequest ::
   LeiosBlockTxsRequest ->
   LeiosOutstanding peer ->
   LeiosOutstanding peer
-completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
+completeTxRequest peer req@(MkLeiosBlockTxsRequest _ jobs) =
+  settleTxRequest peer req (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
+
+-- | Settle a durable receipt without assuming every submitted transaction landed.
+-- Complete jobs whose entire offset set is confirmed. Unpick unconfirmed jobs
+-- only if this peer still owns them, avoiding a second decrement after removal.
+-- The reply's peer byte refund remains at its existing arrival boundary.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+settleTxRequest ::
+  Ord peer =>
+  peer ->
+  LeiosBlockTxsRequest ->
+  IntSet.IntSet ->
+  LeiosOutstanding peer ->
+  LeiosOutstanding peer
+settleTxRequest peer (MkLeiosBlockTxsRequest point jobs) confirmed o =
   o
     { ebState = Map.adjust completeInJobPool point (ebState o)
     , requestedJobsPerPeer =
         Map.update (nonEmptyMap . Map.update dropJobs point) peer (requestedJobsPerPeer o)
     }
  where
-  jobIds = NEIntMap.keysSet jobs
+  requested = NEIntMap.toMap jobs
+  jobIds = IntMap.keysSet requested
+  confirmedIds =
+    IntMap.keysSet $
+      IntMap.filter
+        (\(Jobs.MkLeiosJob offsets _ _) -> offsets `IntSet.isSubsetOf` confirmed)
+        requested
+  owned =
+    maybe IntSet.empty NEIntSet.toSet $
+      Map.lookup peer (requestedJobsPerPeer o) >>= Map.lookup point
+  retryIds = IntSet.intersection owned (IntSet.difference jobIds confirmedIds)
   completeInJobPool (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
       NoBody -> NoBody
-      BodyAcquired jobPool -> BodyAcquired $! complete jobPool
-   where
-    complete jobPool =
-      NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
+      BodyAcquired jobPool ->
+        BodyAcquired $!
+          IntSet.foldl'
+            (\pool jid -> Jobs.unpickJob (Jobs.MkLeiosJobId jid) pool)
+            (IntSet.foldl' (\pool jid -> Jobs.completeJob (Jobs.MkLeiosJobId jid) pool) jobPool confirmedIds)
+            retryIds
   dropJobs held =
-    NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
+    NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) jobIds)
   nonEmptyMap m = if Map.null m then Nothing else Just m
 
 -- | Fetch no more of the closure of the endorser block at this point, though

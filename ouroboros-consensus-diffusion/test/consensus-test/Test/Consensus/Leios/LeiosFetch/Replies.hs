@@ -22,11 +22,13 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (SomeException, try)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
+import qualified Data.IntSet as IntSet
 import Data.List (isInfixOf)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
@@ -69,8 +71,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , leiosFetchLogicIteration
   , pruneOutstandingToImmTip
   , recordReferencedPoint
+  , removePeerFromOutstanding
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullLeiosJobPool)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (LeiosJob (..), nullLeiosJobPool)
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , newLeiosDBInMemory
@@ -78,6 +81,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar, takeMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, uncheckedNewMVar)
@@ -103,6 +107,10 @@ tests =
     , testCase
         "the client acquires no closure whose transactions are not the sizes its endorser block declares, fetches no more of it, and disconnects the peer that served them"
         test_wrongSizedTxs
+    , testCase "an unconfirmed write stays fetchable and emits no closure acquisition" $
+        test_unconfirmedTxs
+    , testCase "a durable write can settle after the serving peer was removed" $
+        test_txsAfterPeerRemoval
     ]
 
 -- | What a notification says, comparably.
@@ -195,6 +203,64 @@ test_acquisitions = do
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+test_unconfirmedTxs :: Assertion
+test_unconfirmedTxs = do
+  let (point, eb, txs) = fixture
+  (ctx0, notes) <- newContext
+  let writer =
+        (lfcWriter ctx0)
+          { writeTxs = \_ submitted ->
+              pure $
+                Promise $
+                  pure (TxWriteReceipt IntSet.empty (IntSet.fromList (map fst submitted)) [])
+          }
+      ctx = ctx0{lfcWriter = writer}
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  _ <- awaitNotes notes 1
+  req@(MkLeiosBlockTxsRequest _ jobs) <- closureRequest ctx point
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  -- Poll the ownership transition rather than readiness, which can coalesce
+  -- with the earlier arrival notification.
+  settled <-
+    SI.timeout 5 $
+      let
+        wait = do
+          outstanding <- readMVar (lfcOutstanding ctx)
+          if maybe False (Map.member point) (Map.lookup peer (requestedJobsPerPeer outstanding))
+            then SI.threadDelay 0.001 >> wait
+            else pure ()
+       in
+        wait
+  settled @?= Just ()
+  readTVarIO notes >>= (@?= [AcquiredBody point])
+  MkLeiosBlockTxsRequest _ retry <- closureRequest ctx point
+  let offsets = foldMap (\(MkLeiosJob offs _ _) -> offs)
+  offsets retry @?= offsets jobs
+
+test_txsAfterPeerRemoval :: Assertion
+test_txsAfterPeerRemoval = do
+  let (point, eb, txs) = fixture
+  (ctx0, notes) <- newContext
+  gate <- newEmptyTMVarIO
+  let original = lfcWriter ctx0
+      writer =
+        original
+          { writeTxs = \p submitted -> do
+              written <- writeTxs original p submitted
+              pure $ Promise $ atomically (readTMVar gate) >> await written
+          }
+      ctx = ctx0{lfcWriter = writer}
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  _ <- awaitNotes notes 1
+  req <- closureRequest ctx point
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  modifyMVar_ (lfcOutstanding ctx) (pure . removePeerFromOutstanding peer)
+  atomically $ putTMVar gate ()
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  outstanding <- readMVar (lfcOutstanding ctx)
+  Map.member peer (requestedJobsPerPeer outstanding) @?= False
+  assertNoJobLeft point outstanding
 
 -- | The one request the decision logic makes of a peer that offers the closure
 -- of the endorser block at this point, whose body the client holds.

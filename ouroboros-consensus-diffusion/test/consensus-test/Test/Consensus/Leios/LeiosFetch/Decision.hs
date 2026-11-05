@@ -10,10 +10,13 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
+import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
@@ -28,7 +31,9 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosBlockRequest (..)
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosEbBounds (..)
   , LeiosFetchRequest (..)
@@ -46,6 +51,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , pruneOffers
   , recordReferencedPoint
   , refundEbRequest
+  , removePeerFromOutstanding
+  , settleTxRequest
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
@@ -86,6 +93,14 @@ tests =
         , testCase
             "job assignment draws within the least-requested bucket, at random, respecting exclusions"
             test_pickJobs
+        , testCase "durable settlement completes confirmed jobs and releases missing jobs" $
+            test_settlePartialReceipt
+        , testCase "a partly confirmed job remains requestable in full" $
+            test_settlePartialJob
+        , testCase "late missing receipts do not release another peer's pick" $
+            test_settleRemovedPeer
+        , testCase "late durable receipts complete globally without restoring a removed peer" $
+            test_settleRemovedPeerConfirmed
         ]
     , testGroup
         "focus"
@@ -328,6 +343,86 @@ test_pickJobs = do
     case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
       Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
       Nothing -> Nothing
+
+-- | Build one request per peer for the same two offsets. A count limit of one
+-- gives two independent jobs; two gives one job containing both offsets.
+settlementFixture :: Int -> [Peer] -> (LeiosPoint, LeiosBlockTxsRequest, LeiosOutstanding Peer)
+settlementFixture maxCount peers = (p, MkLeiosBlockTxsRequest p requestJobs, outstanding)
+ where
+  p = point 5 'r'
+  initial = settlementBase maxCount
+  jobIds = [0 .. if maxCount == 1 then 1 else 0]
+  jobMap =
+    IntMap.fromList
+      [ (jid, fromMaybe (error "missing fixture job") (Jobs.lookupJob (Jobs.MkLeiosJobId jid) initial))
+      | jid <- jobIds
+      ]
+  requestJobs =
+    fromMaybe (error "empty settlement fixture") $
+      NEIntMap.nonEmptyMap $
+        jobMap
+  ids =
+    fromMaybe (error "empty settlement fixture ids") $
+      NEIntSet.nonEmptySet $
+        IntMap.keysSet jobMap
+  pick pool jid =
+    case Jobs.pickLeastRequestedJobExcept (mkStdGen 0) (IntSet.delete jid (NEIntSet.toSet ids)) pool of
+      Just (_, _, next, _) -> next
+      Nothing -> error "could not pick fixture job"
+  picked = foldl (\pool _ -> foldl pick pool jobIds) initial peers
+  outstanding =
+    (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+      { ebState = Map.singleton p (MkEbState SNothing (BodyAcquired picked))
+      , requestedJobsPerPeer = Map.fromList [(ppeer, Map.singleton p ids) | ppeer <- peers]
+      }
+
+settlementBase :: Int -> Jobs.LeiosJobPool
+settlementBase maxCount =
+  Jobs.mkLeiosJobPool 1000000 maxCount $
+    IntMap.fromList [(off, (txHashOf off, 100)) | off <- [0, 1]]
+
+settledPool :: LeiosPoint -> LeiosOutstanding Peer -> Jobs.LeiosJobPool
+settledPool p o = case Map.lookup p o.ebState of
+  Just (MkEbState _ (BodyAcquired pool)) -> pool
+  _ -> error "settlement lost its body"
+
+test_settlePartialReceipt :: IO ()
+test_settlePartialReceipt = do
+  let (p, req, initial) = settlementFixture 1 [peerA]
+      settled = settleTxRequest peerA req (IntSet.singleton 0) initial
+      pool = settledPool p settled
+  Jobs.lookupJob (Jobs.MkLeiosJobId 0) pool @?= Nothing
+  pool @?= Jobs.completeJob (Jobs.MkLeiosJobId 0) (settlementBase 1)
+  Map.null settled.requestedJobsPerPeer @?= True
+  -- Settling again must not release a pick belonging to another request.
+  settledPool p (settleTxRequest peerA req IntSet.empty settled) @?= pool
+
+test_settlePartialJob :: IO ()
+test_settlePartialJob = do
+  let (p, req, initial) = settlementFixture 2 [peerA]
+      settled = settleTxRequest peerA req (IntSet.singleton 0) initial
+      pool = settledPool p settled
+  pool @?= settlementBase 2
+  Map.null settled.requestedJobsPerPeer @?= True
+
+test_settleRemovedPeer :: IO ()
+test_settleRemovedPeer = do
+  let (p, req, initial) = settlementFixture 1 [peerA, peerB]
+      removed = removePeerFromOutstanding peerA initial
+      settled = settleTxRequest peerA req IntSet.empty removed
+  settledPool p settled @?= settledPool p removed
+  let (_, _, onePeer) = settlementFixture 1 [peerB]
+  settledPool p settled @?= settledPool p onePeer
+  settled.requestedJobsPerPeer @?= removed.requestedJobsPerPeer
+
+test_settleRemovedPeerConfirmed :: IO ()
+test_settleRemovedPeerConfirmed = do
+  let (p, req, initial) = settlementFixture 1 [peerA, peerB]
+      removed = removePeerFromOutstanding peerA initial
+      settled = settleTxRequest peerA req (IntSet.fromList [0, 1]) removed
+  Jobs.nullLeiosJobPool (settledPool p settled) @?= True
+  Map.member peerA settled.requestedJobsPerPeer @?= False
+  Map.member peerB settled.requestedJobsPerPeer @?= True
 
 {-------------------------------------------------------------------------------
   Scenario DSL
