@@ -6,7 +6,7 @@
 -- 'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.startWriter'.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
-  , WriteResult
+  , ResolveWriteJob
   , WriteQueue (..)
   , submitJob
   , describeJob
@@ -16,11 +16,11 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTBQueue
-  , StrictTMVar
   , StrictTVar
   , isFullTBQueue
   , newEmptyTMVarIO
   , orElse
+  , putTMVar
   , readTMVar
   , readTVar
   , retry
@@ -51,7 +51,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 
 -- * The single writer
 
--- | One queued write, carrying the variable its result lands in.
+-- | One queued write, carrying how to resolve its 'Promise'.
 --
 -- The insert jobs come from 'LeiosDbWriter', the rest from the handle's
 -- GC entry point. One worker running them all is what makes the
@@ -64,35 +64,36 @@ data WriteJob
       -- | its announced size
       !BytesSize
       -- | where the worker puts the result
-      !(WriteResult ())
+      !(ResolveWriteJob ())
   | WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
       !EndorserBlock
       -- | where the worker puts the result
-      !(WriteResult ())
+      !(ResolveWriteJob ())
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
       -- | where the worker puts the result
-      !(WriteResult ())
+      !(ResolveWriteJob ())
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
-    Flush !(WriteResult ())
+    Flush !(ResolveWriteJob ())
   | -- | Garbage collection; see 'sqlGarbageCollect'.
     GarbageCollect
       -- | the GC slot
       !SlotNo
       -- | where the worker puts whether rows before the slot are left
-      !(WriteResult Bool)
+      !(ResolveWriteJob Bool)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
-    Shutdown !(WriteResult ())
+    Shutdown !(ResolveWriteJob ())
 
-type WriteResult a = StrictTMVar IO a
+-- | Resolve a job's 'Promise' with its result. Called once, by the worker.
+type ResolveWriteJob a = a -> IO ()
 
 -- | The writer's submission side: the job queue, and -- once the worker has
 -- stopped -- the exception every submission throws instead of queueing.
@@ -112,10 +113,10 @@ data WriteQueue = WriteQueue
 -- seals the queue no job can slip in unserved: submission throws the
 -- worker's parting exception instead -- also waking any submitter that was
 -- blocked on a full queue.
-submitJob :: HasCallStack => WriteQueue -> (WriteResult a -> WriteJob) -> IO (Promise IO a)
+submitJob :: HasCallStack => WriteQueue -> (ResolveWriteJob a -> WriteJob) -> IO (Promise IO a)
 submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
   resultVar <- newEmptyTMVarIO
-  let job = mkJob resultVar
+  let job = mkJob (atomically . putTMVar resultVar)
       -- Failures surface far from their submitter -- on the worker, or on
       -- whichever thread awaits -- so name the write and its submission site.
       wrap cause =

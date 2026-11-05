@@ -22,7 +22,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , newTBQueueIO
   , newTVarIO
-  , putTMVar
   , readTBQueue
   , readTVarIO
   , writeTVar
@@ -226,7 +225,7 @@ withWriterConns tracer statsVar volPath immPath k =
 -- connections itself, on its own thread ('withWriterConns'), and closes them
 -- on every way out.
 --
--- The worker puts each job's result into its 'WriteResult'. A failed write is
+-- The worker resolves each job with its result. A failed write is
 -- not survivable: the worker stops and seals the queue with the exception, so
 -- awaiting a job it did not serve, or submitting another, throws it.
 startWriter ::
@@ -265,28 +264,33 @@ startWriter registry tracer statsVar volPath immPath = do
 
           runJob :: WriteJob -> IO WhetherContinueServing
           runJob = \case
-            Shutdown resultVar -> do
+            Shutdown resolve -> do
               -- Only stop serving: the brackets in 'withWriterConns' close the
-              -- connections once 'serve' returns, and the worker hands the
-              -- outcome of that close to this job's awaiter.
-              writeIORef shutdownVar (Just resultVar)
+              -- connections once 'serve' returns, and the worker resolves this
+              -- job with the outcome of that close.
+              writeIORef shutdownVar (Just resolve)
               pure Stop
-            WriteEbPoint point size resultVar -> do
+            WriteEbPoint point size resolve -> do
               collected <- isCollected point
-              publish resultVar (unless collected $ sqlInsertEbPoint conn point size)
-                >> pure Continue
-            WriteEbBody point eb resultVar -> do
+              unless collected $ sqlInsertEbPoint conn point size
+              resolve ()
+              pure Continue
+            WriteEbBody point eb resolve -> do
               collected <- isCollected point
-              publish resultVar (unless collected $ sqlInsertEbBody conn point eb)
-                >> pure Continue
-            WriteTxs point txs resultVar ->
-              publish resultVar (sqlInsertTxs conn point txs) >> pure Continue
-            Flush resultVar ->
-              publish resultVar (pure ()) >> pure Continue
-            GarbageCollect slot resultVar ->
-              publish resultVar (collect slot) >> pure Continue
+              unless collected $ sqlInsertEbBody conn point eb
+              resolve ()
+              pure Continue
+            WriteTxs point txs resolve -> do
+              resolve =<< sqlInsertTxs conn point txs
+              pure Continue
+            Flush resolve -> do
+              resolve ()
+              pure Continue
+            GarbageCollect slot resolve -> do
+              resolve =<< collect slot
+              pure Continue
 
-          -- Whether GC collected the point, so its writes are dropped.
+          -- Whether GC collected already past this point.
           isCollected :: LeiosPoint -> IO Bool
           isCollected point = (pointSlotNo point <) <$> readIORef gcSlotVar
 
@@ -313,8 +317,8 @@ startWriter registry tracer statsVar volPath immPath = do
       -- Stopped on request: the close outcome, failed or not, is the
       -- awaiter's to report (a failed close through the seal), and the worker
       -- ends quietly.
-      Just resultVar -> do
-        either (const (pure ())) (atomically . putTMVar resultVar) outcome
+      Just resolve -> do
+        either (const (pure ())) resolve outcome
         seal (either id (const closedException) outcome)
       -- Anything else stopped the worker. Then out, so the link takes the
       -- node down where the write failed rather than at whatever submits
@@ -331,12 +335,6 @@ startWriter registry tracer statsVar volPath immPath = do
           { ldfErrorMessage = "the LeiosDB writer is closed"
           , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
           }
-  -- The action rolls back its own transaction on failure.
-  publish :: WriteResult a -> IO a -> IO a
-  publish resultVar action = do
-    x <- action
-    atomically $ putTMVar resultVar x
-    pure x
 
 -- | What the writer does after serving a job.
 data WhetherContinueServing
