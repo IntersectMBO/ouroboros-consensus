@@ -5,6 +5,7 @@ module Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
   , SupportedNetworkProtocolVersion (..)
   , latestReleasedNodeVersionDefault
+  , withExperimentalAtomicFetchVersion
 
     -- * Re-exports
   , NodeToClientVersion (..)
@@ -77,3 +78,11 @@ latestReleasedNodeVersionDefault prx =
   ( fmap fst $ Map.lookupMax $ supportedNodeToNodeVersions prx
   , fmap fst $ Map.lookupMax $ supportedNodeToClientVersions prx
   )
+
+-- | Explicit development/fixture opt-in to version 17, using the same block
+-- serialization as version 16. Ordinary supported/released maps remain unchanged.
+-- The atomic fetch client/server must exist before enabling a live application.
+withExperimentalAtomicFetchVersion :: Map NodeToNodeVersion a -> Map NodeToNodeVersion a
+withExperimentalAtomicFetchVersion versions = case Map.lookup NodeToNodeV_16 versions of
+  Nothing -> versions
+  Just blockVersion -> Map.insert NodeToNodeV_17 blockVersion versions

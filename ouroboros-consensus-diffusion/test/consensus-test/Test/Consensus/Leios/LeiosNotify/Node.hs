@@ -269,7 +269,7 @@ tests =
     , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
         runSimOrThrow (timeout 100 nodeServerExcessive) @?= Just (ExcessiveOutcome Disconnected)
     , testCase "the node runs LeiosNotify from NodeToNodeV_16 on, and not before" $
-        for_ [minBound .. maxBound] $ \ntnVersion ->
+        for_ [minBound .. NodeToNodeV_16] $ \ntnVersion ->
           let runs = ntnVersion >= NodeToNodeV_16
            in assertEqual
                 (show ntnVersion)

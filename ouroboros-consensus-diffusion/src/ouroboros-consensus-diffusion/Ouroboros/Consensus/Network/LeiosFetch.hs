@@ -3,9 +3,54 @@ module Ouroboros.Consensus.Network.LeiosFetch
   ( leiosFetchMiniProtocolNum
   , leiosFetchPipelineDepth
   , maxLeiosFetchIngressBytes
+  , LeiosFetchProtocol (..)
+  , LeiosFetchProtocolError (..)
+  , negotiatedLeiosFetchProtocol
+  , requireLegacyLeiosFetch
   ) where
 
+import Cardano.Network.NodeToNode.Version
+  ( LeiosFetchRequestLimit
+  , NodeToNodeVersion (..)
+  )
+import Control.Monad.Class.MonadThrow (Exception, MonadThrow, throwIO)
 import qualified Network.Mux.Types as Mux
+
+-- | Immutable fetch capability selected once from negotiated connection data.
+data LeiosFetchProtocol
+  = -- | Version 16 and older use their unchanged legacy path where available.
+    LegacyLeiosFetch
+  | -- | The positive minimum agreed by both sides, shared by client and server.
+    AtomicLeiosFetch !LeiosFetchRequestLimit
+  deriving (Eq, Show)
+
+-- | Invalid version/capability pairs never silently select another wire format.
+data LeiosFetchProtocolError = InvalidLeiosFetchCapability | AtomicLeiosFetchNotActivated
+  deriving (Eq, Show)
+
+instance Exception LeiosFetchProtocolError
+
+-- | Freeze the negotiated count for this session. The experimental selection
+-- is available to fixtures before normal capability advertisement is enabled.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+negotiatedLeiosFetchProtocol ::
+  NodeToNodeVersion ->
+  Maybe LeiosFetchRequestLimit ->
+  Either LeiosFetchProtocolError LeiosFetchProtocol
+negotiatedLeiosFetchProtocol version count = case (version, count) of
+  (NodeToNodeV_17, Just d) -> Right (AtomicLeiosFetch d)
+  (NodeToNodeV_17, Nothing) -> Left InvalidLeiosFetchCapability
+  (_, Nothing) -> Right LegacyLeiosFetch
+  (_, Just _) -> Left InvalidLeiosFetchCapability
+
+-- | Temporary activation guard for the existing client/server. Their atomic
+-- implementations are later execution stages; explicit version 17 fixtures
+-- must not accidentally run the legacy codec on an atomic connection.
+requireLegacyLeiosFetch :: MonadThrow m => NodeToNodeVersion -> Maybe LeiosFetchRequestLimit -> m ()
+requireLegacyLeiosFetch version count = case negotiatedLeiosFetchProtocol version count of
+  Left err -> throwIO err
+  Right LegacyLeiosFetch -> pure ()
+  Right AtomicLeiosFetch{} -> throwIO AtomicLeiosFetchNotActivated
 
 leiosFetchMiniProtocolNum :: Mux.MiniProtocolNum
 leiosFetchMiniProtocolNum = Mux.MiniProtocolNum 19

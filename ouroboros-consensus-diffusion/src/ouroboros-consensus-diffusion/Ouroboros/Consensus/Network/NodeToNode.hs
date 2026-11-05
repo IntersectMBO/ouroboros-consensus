@@ -42,6 +42,7 @@ module Ouroboros.Consensus.Network.NodeToNode
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.NodeToNode
+import Cardano.Network.NodeToNode.Version (LeiosFetchRequestLimit)
 import Cardano.Network.PeerSelection (PeerTrustable (..))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -130,6 +131,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
+import Ouroboros.Consensus.Network.LeiosFetch (requireLegacyLeiosFetch)
 import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
   ( catchAndRethrow
@@ -841,10 +843,10 @@ data Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN bLF a b = Apps
   -- ^ Start a LeiosNotify client.
   , aLeiosNotifyServer :: ServerApp m addr bLN b
   -- ^ Start a LeiosNotify server.
-  , aLeiosFetchClient :: ClientApp m addr bLF a
-  -- ^ Start a LeiosFetch client.
-  , aLeiosFetchServer :: ServerApp m addr bLF b
-  -- ^ Start a LeiosFetch server.
+  , aLeiosFetchClient :: Maybe LeiosFetchRequestLimit -> ClientApp m addr bLF a
+  -- ^ Start a LeiosFetch client with the frozen negotiated request count.
+  , aLeiosFetchServer :: Maybe LeiosFetchRequestLimit -> ServerApp m addr bLF b
+  -- ^ Start a LeiosFetch server with the same frozen negotiated count.
   }
 
 -- | Per mini-protocol byte limits;  For each mini-protocol they provide
@@ -1403,11 +1405,13 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         =<< hLeiosNotifyServer version them
 
   aLeiosFetchClient ::
+    Maybe LeiosFetchRequestLimit ->
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bLF ->
     m (NodeToNodeInitiatorResult, Maybe bLF)
   aLeiosFetchClient
+    fetchLimit
     version
     ExpandedInitiatorContext
       { eicConnectionId = them
@@ -1415,6 +1419,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
+      requireLegacyLeiosFetch version fetchLimit
       labelThisThread "LeiosFetchClient"
       ((), trailing) <-
         withLeiosFetchPeer (getLeiosFetchKernel kernel) them isBigLedgerPeer $ \lifetimeId peerVars ->
@@ -1428,14 +1433,17 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       return (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
+    Maybe LeiosFetchRequestLimit ->
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bLF ->
     m ((), Maybe bLF)
   aLeiosFetchServer
+    fetchLimit
     version
     ResponderContext{rcConnectionId = them}
     channel = do
+      requireLegacyLeiosFetch version fetchLimit
       labelThisThread "LeiosFetchServer"
       -- A reader of its own, since one must not be shared across threads.
       bracket
@@ -1501,7 +1509,9 @@ initiator featureFlags miniProtocolParameters version versionData Apps{..} =
     <> leiosProtocols
       version
       (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosNotifyClient version ctx)))
-      (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosFetchClient version ctx)))
+      ( InitiatorProtocolOnly
+          (MiniProtocolCb (\ctx -> aLeiosFetchClient (leiosFetchRequestLimit versionData) version ctx))
+      )
 
 -- | A bi-directional network application.
 --
@@ -1566,8 +1576,12 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
           (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
       )
       ( InitiatorAndResponderProtocol
-          (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
-          (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
+          ( MiniProtocolCb
+              (\initiatorCtx -> aLeiosFetchClient (leiosFetchRequestLimit versionData) version initiatorCtx)
+          )
+          ( MiniProtocolCb
+              (\responderCtx -> aLeiosFetchServer (leiosFetchRequestLimit versionData) version responderCtx)
+          )
       )
 
 -- | The Leios mini-protocols, to add to a node-to-node bundle, if the version

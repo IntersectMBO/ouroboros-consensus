@@ -229,6 +229,8 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Inbound
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
@@ -1540,6 +1542,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Forge
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Admission
+    Test.Consensus.Leios.LeiosFetch.AtomicCodec
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Handoff
@@ -2129,7 +2132,7 @@ library unstable-cardano-tools
     cardano-config >=2.1 && <2.3,
     cardano-crypto-class,
     cardano-crypto-wrapper,
-    cardano-diffusion:cardano-diffusion,
+    cardano-diffusion:{api, cardano-diffusion},
     cardano-git-rev ^>=0.2.1,
     cardano-keys ^>=11,
     cardano-ledger-allegra,

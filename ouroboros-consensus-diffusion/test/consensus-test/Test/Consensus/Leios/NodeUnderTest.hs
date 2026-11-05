@@ -49,7 +49,8 @@ import Cardano.Network.Diffusion.Configuration
 import Cardano.Network.NodeToNode.Version
   ( DiffusionMode (..)
   , NodeToNodeVersion
-  , NodeToNodeVersionData
+  , NodeToNodeVersionData (..)
+  , getLocalLeiosFetchRequestLimit
   , getLocalPerasSupport
   )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
@@ -449,11 +450,14 @@ maxEbBodySize = 5000
 -- peers.
 nodeVersionData :: NodeToNodeVersion -> NodeToNodeVersionData
 nodeVersionData version =
-  stdVersionDataNTN
-    (getNetworkMagic LeiosTestBlockConfig)
-    InitiatorAndResponderDiffusionMode
-    PeerSharingEnabled
-    (getLocalPerasSupport mempty version)
+  ( stdVersionDataNTN
+      (getNetworkMagic LeiosTestBlockConfig)
+      InitiatorAndResponderDiffusionMode
+      PeerSharingEnabled
+      (getLocalPerasSupport mempty version)
+  )
+    { leiosFetchRequestLimit = getLocalLeiosFetchRequestLimit version
+    }
 
 encodePeerAddr :: PeerAddr -> CBOR.Encoding
 encodePeerAddr (PeerAddr n) = encode n

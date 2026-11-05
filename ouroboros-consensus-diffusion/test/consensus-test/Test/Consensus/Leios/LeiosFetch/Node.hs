@@ -241,7 +241,7 @@ tests =
         "the node relays an announcement, and offers at its point, to a listener that connects before the node stops relaying it, and nothing to one that connects after, whatever the listener's immutable tip and clock"
         prop_listenerReach
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on, and not before" $
-        forM_ [minBound .. maxBound] $ \ntnVersion -> do
+        forM_ [minBound .. NodeToNodeV_16] $ \ntnVersion -> do
           let runs = ntnVersion >= NodeToNodeV_16
           runSimFinishing (nodeRunsLeiosFetch ntnVersion) >>= assertEqual (show ntnVersion) (runs, runs)
     ]

@@ -84,7 +84,11 @@ import Cardano.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
-import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
+import Cardano.Network.NodeToNode.Version
+  ( getLocalLeiosFetchRequestLimit
+  , getLocalPerasSupport
+  , noLeiosChunkSizes
+  )
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
 import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -1166,6 +1170,8 @@ stdVersionDataNTN networkMagic diffusionMode peerSharing perasSupport =
     , peerSharing
     , query = False
     , perasSupport
+    , leiosFetchRequestLimit = Nothing
+    , leiosChunkSizes = noLeiosChunkSizes
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
@@ -1241,11 +1247,14 @@ stdLowLevelRunNodeArgsIO
         , llrnVersionDataNTC =
             stdVersionDataNTC networkMagic
         , llrnVersionDataNTN = \version ->
-            stdVersionDataNTN
-              networkMagic
-              (Diffusion.dcMode srnDiffusionConfiguration)
-              rnPeerSharing
-              (getLocalPerasSupport rnFeatureFlags version)
+            ( stdVersionDataNTN
+                networkMagic
+                (Diffusion.dcMode srnDiffusionConfiguration)
+                rnPeerSharing
+                (getLocalPerasSupport rnFeatureFlags version)
+            )
+              { leiosFetchRequestLimit = getLocalLeiosFetchRequestLimit version
+              }
         , llrnNodeToNodeVersions =
             limitToLatestReleasedVersion
               fst

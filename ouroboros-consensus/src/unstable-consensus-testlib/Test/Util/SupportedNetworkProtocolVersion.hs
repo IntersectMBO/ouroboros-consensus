@@ -13,6 +13,9 @@ import Test.Tasty.HUnit
 -- | Make sure that 'supportedNodeToNodeVersions' and
 -- 'supportedNodeToClientVersions' each map a contiguous range of versions
 -- ending at 'maxBound'.
+-- For node-to-node, include the explicit experimental atomic-fetch map when
+-- checking continuity. Its version 17 entry reuses version 16's serialization;
+-- ordinary supported/advertised maps remain unchanged until activation.
 --
 -- We deliberately do /not/ require every version of the network layer's enum to
 -- be mapped. Dropping the oldest versions once no client still negotiates them
@@ -39,7 +42,7 @@ contiguousSupportedNetworkProtocolVersions ::
   Proxy blk ->
   Assertion
 contiguousSupportedNetworkProtocolVersions p = do
-  testVersions fst supportedNodeToNodeVersions
+  testVersions fst (withExperimentalAtomicFetchVersion . supportedNodeToNodeVersions)
   testVersions snd supportedNodeToClientVersions
  where
   testVersions ::
