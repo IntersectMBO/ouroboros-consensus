@@ -23,7 +23,8 @@
 -- deliberately gives up that throughput rather than endanger safety.
 --
 -- So the node aggregates the votes for an announcement into its certificate as
--- soon as they reach quorum, which is by their deadline or never. It keeps the
+-- soon as they reach quorum, which is before 'pruneVotes' passes their
+-- deadline, or never. It keeps the
 -- certificate until the announcing block is immutable, long after it forgot
 -- the votes, for whichever block comes to certify it.
 module Ouroboros.Consensus.Leios.VoteState
@@ -142,9 +143,9 @@ data TraceLeiosVoteState
     -- they reached quorum.
     TraceLeiosAggregationFailed !RankingBlockHash !AggregationError
   | -- | The deadline of the votes for this announcement passed with only this
-    -- much weight voting for it, short of quorum. Many of these, for
-    -- announcements of valid endorser blocks, mean the diffusion period is too
-    -- short for the network.
+    -- much weight voting for it, short of quorum. Not traced for an announcement
+    -- without any vote. Many of these, for announcements of valid endorser
+    -- blocks, mean the diffusion period is too short for the network.
     TraceLeiosQuorumMissed !RankingBlockHash !Weight
   deriving Show
 
@@ -210,13 +211,18 @@ addVote st systemTime accepted = do
                   Right quorum -> do
                     relayVote
                     pure (Added, quorum)
-  -- Aggregated outside the transaction, which reaches quorum only once.
+  -- Aggregated outside the transaction, so a vote that comes before the
+  -- certificate is in aggregates again, should this thread die first.
   for_ quorum $ \signatures ->
     case aggregateLeiosCert voteCommittee signatures of
       Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
       Right cert -> do
-        atomically $ modifyTVar (certificates st) (Map.insert rbHash (voteElectionSlot, cert))
-        traceWith (tracer st) (TraceLeiosCertified rbHash cert)
+        inserted <- atomically $ do
+          certified <- readTVar (certificates st)
+          let new = Map.notMember rbHash certified
+          when new $ writeTVar (certificates st) (Map.insert rbHash (voteElectionSlot, cert) certified)
+          pure new
+        when inserted $ traceWith (tracer st) (TraceLeiosCertified rbHash cert)
   pure result
  where
   relayVote =
@@ -290,9 +296,10 @@ data Votes = MkVotes
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
--- | The votes of one election slot, and their deadline.
+-- | The votes of one election slot, their deadline and their quorum.
 data SlotVotes = MkSlotVotes
   { slotRelayUntil :: !RelativeTime
+  , slotQuorum :: !Weight
   , slotVotes :: !(Map LeiosSeatId LeiosVote)
   , slotTallies :: !(Map RankingBlockHash Weight)
   -- ^ The weight of the votes for each announcement. A seat votes once per
@@ -326,7 +333,7 @@ currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
 
 -- | Keep a vote the node has neither seen nor forgotten, as it was pruned past
 -- the vote's deadline already. If the votes for its announcement reach quorum,
--- return their signatures.
+-- and it has no certificate yet, return their signatures.
 recordVote ::
   IOLike m =>
   VoteState m blk ->
@@ -334,6 +341,7 @@ recordVote ::
   STM m (Either AddVoteResult (Maybe (Map LeiosSeatId LeiosSignature)))
 recordVote st validatedVote = do
   vs <- readTVar (votes st)
+  certified <- Map.member rbHash <$> readTVar (certificates st)
   let before = Map.lookup validatedElectionSlot (votesBySlot vs)
       after = maybe slotVotes' (keepFirst slotVotes') before
   if
@@ -342,7 +350,7 @@ recordVote st validatedVote = do
     | otherwise -> do
         writeTVar (votes st) vs{votesBySlot = Map.insert validatedElectionSlot after (votesBySlot vs)}
         pure . Right $
-          if weightOf before < validatedQuorum && validatedQuorum <= weightOf (Just after)
+          if not certified && validatedQuorum <= weightOf (Just after)
             then
               Just $
                 Map.fromList
@@ -365,6 +373,7 @@ recordVote st validatedVote = do
   slotVotes' =
     MkSlotVotes
       voteValidUntil
+      validatedQuorum
       (Map.singleton (voteSeatId vote) vote)
       (Map.singleton rbHash validatedSeatWeight)
 
@@ -388,12 +397,11 @@ pruneVotes st now = do
     MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
     let (unexpired, expired) = Map.partition ((now <=) . slotRelayUntil) votesBySlot
     writeTVar (votes st) (MkVotes (max now votesPrunedAt) unexpired)
-    certified <- readTVar (certificates st)
     pure
       [ (rbHash, weight)
       | slotVotes' <- Map.elems expired
       , (rbHash, weight) <- Map.toList (slotTallies slotVotes')
-      , Map.notMember rbHash certified
+      , weight < slotQuorum slotVotes'
       ]
   for_ missed $ \(rbHash, weight) -> traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
 
