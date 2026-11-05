@@ -85,7 +85,6 @@ import Test.QuickCheck
   , shrink
   , shrinkList
   , sublistOf
-  , suchThat
   , tabulate
   , vector
   , (===)
@@ -157,7 +156,7 @@ withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO ()
 rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb []
 
--- | Also fill from local bytes, and return the offsets filled.
+-- | Also fill from local bytes, and return the offsets the point holds.
 rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> [LocalFill] -> IO [TxOffset]
 rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
@@ -227,8 +226,8 @@ mkTestGroups impl =
           prop_pointsAccumulate impl
       , testCase "a body write records its point" $
           withFreshDb impl test_ebBodyWritesPoint
-      , testCase "a body written again reports no txs, but keeps them" $
-          withFreshDb impl test_ebBodyAgainKeepsTxs
+      , testCase "a body write reports the txs the point holds" $
+          withFreshDb impl test_ebBodyReportsHeldTxs
       , testCase "a point holds only what is written at it" $
           withFreshDb impl test_readsAtPoint
       ]
@@ -263,7 +262,7 @@ mkTestGroups impl =
           withFreshDb impl test_completion
       , testCase "a scan does not find an EB whose txs do not hash to what it lists" $
           withFreshDb impl test_completionHashes
-      , testCase "a scan never finds an EB with a tx whose bytes are zeroes" $
+      , testCase "a tx whose bytes are zeroes counts once written" $
           withFreshDb impl test_completionZeroTx
       , testCase "a scan finds each point of an EB whose closure is complete" $
           withFreshDb impl test_multipleSlotsSameHash
@@ -327,12 +326,11 @@ genEb numTxs = ebOfSizes <$> replicateM numTxs (fromIntegral <$> chooseInt (50, 
 genPointAndEb :: Int -> Gen (LeiosPoint, EndorserBlock)
 genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
 
--- | Transaction bytes, distinct from each other, and none all zeroes, which no
--- valid tx is.
+-- | Transaction bytes, distinct from each other.
 genDistinctTxBytes :: Gen (NonEmpty BS.ByteString)
 genDistinctTxBytes = NE.nub <$> ((:|) <$> genTxBytes <*> listOf genTxBytes)
  where
-  genTxBytes = (chooseInt (1, 32) >>= fmap BS.pack . vector) `suchThat` BS.any (/= 0)
+  genTxBytes = chooseInt (1, 32) >>= fmap BS.pack . vector
 
 -- | The bytes of the test tx at this offset: of this size, and distinct per
 -- offset.
@@ -541,8 +539,8 @@ test_completionHashes db = do
     rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
     rwScanComplete con 0 >>= (@?= [])
 
--- | A tx whose bytes are zeroes, which no valid tx is, never counts as
--- written: zeroes are what the closure holds before a tx is written.
+-- | A tx whose bytes are zeroes, as the closure holds before any write, counts
+-- as written once it is: its marker, not its bytes, tells.
 test_completionZeroTx :: LeiosDbHandle IO -> IO ()
 test_completionZeroTx db = do
   let point = mkTestPoint (SlotNo 1) 1
@@ -553,8 +551,8 @@ test_completionZeroTx db = do
     rwScanComplete con 0 >>= (@?= [])
     rwLookupEbClosure con point >>= (@?= Nothing)
     rwInsertTxs con point [(0, zero)]
-    rwScanComplete con 0 >>= (@?= [])
-    rwLookupEbClosure con point >>= (@?= Nothing)
+    rwScanComplete con 0 >>= (@?= [point])
+    rwLookupEbClosure con point >>= (@?= Just [zero])
 
 -- | The same EB content can be announced at several slots; the DB keeps each
 -- 'LeiosPoint' on its own, and the scan finds each whose closure is complete.
@@ -592,18 +590,16 @@ test_ebBodyWritesPoint db = withRW db $ \con -> do
   rwInsertEbBody con (mkTestPoint 1 1) eb
   rwLookupEbBody con (mkTestPoint 1 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
--- | A body written again at its point reports only what its fills filled, none
--- here, and keeps the txs written since the first.
-test_ebBodyAgainKeepsTxs :: LeiosDbHandle IO -> IO ()
-test_ebBodyAgainKeepsTxs db = withRW db $ \con -> do
+-- | A body written again holds the txs written since, and one written at a new
+-- point of the EB holds none, whatever another point holds.
+test_ebBodyReportsHeldTxs :: LeiosDbHandle IO -> IO ()
+test_ebBodyReportsHeldTxs db = withRW db $ \con -> do
   let eb = mkTestEb 3
       point = mkTestPoint 1 1
-      written = take 2 (allTxsFor eb)
   rwInsertEbBodyFilling con point eb [] >>= (@?= [])
-  rwInsertTxs con point written
-  rwInsertEbBodyFilling con point eb [] >>= (@?= [])
-  rwBatchRetrieveTxs con point [0, 1, 2]
-    >>= (@?= [(o, Just bytes) | (o, bytes) <- written] <> [(2, Nothing)])
+  rwInsertTxs con point (take 2 (allTxsFor eb))
+  rwInsertEbBodyFilling con point eb [] >>= (@?= [0, 1])
+  rwInsertEbBodyFilling con (mkTestPoint 2 1) eb [] >>= (@?= [])
 
 -- | Each point of an EB is read on its own: a point holds only the body and
 -- txs written at it, whatever another point of the EB holds.
@@ -765,7 +761,9 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
     leiosDbPromoteToImmutable db [point]
   -- What the crash leaves of the volatile partition: the body, but no txs.
   withSqlFile volDbPath $ \sql ->
-    SQL.exec sql (T.pack "UPDATE ebs SET txs = zeroblob(length(txs))")
+    SQL.exec
+      sql
+      (T.pack "UPDATE ebs SET txWritten = zeroblob(length(txWritten)), txs = zeroblob(length(txs))")
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     leiosDbPromoteToImmutable db [point]
     rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))

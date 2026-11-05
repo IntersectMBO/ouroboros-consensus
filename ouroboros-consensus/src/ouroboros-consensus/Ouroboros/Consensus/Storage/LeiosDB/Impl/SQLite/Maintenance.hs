@@ -133,7 +133,7 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
     complete <-
       withStmt
         db
-        "SELECT body, txBounds, txs FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+        "SELECT body, txWritten, txBounds, txs FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
         $ \stmt -> do
           dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
           dbBindHash stmt 2 ebHash
@@ -141,17 +141,18 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
             DB.Done -> pure False
             DB.Row -> do
               body <- DB.columnBlob stmt 0
-              bounds <- DB.columnBlob stmt 1
-              txs <- DB.columnBlob stmt 2
-              pure $ maybe False (closureMatches body) (sequence (splitClosure bounds txs))
+              txWritten <- DB.columnBlob stmt 1
+              bounds <- DB.columnBlob stmt 2
+              txs <- DB.columnBlob stmt 3
+              pure $ maybe False (closureMatches body) (sequence (splitClosure txWritten bounds txs))
     unless complete $
       throwLeiosDbException $
         "leiosDbPromoteToImmutable: no complete closure in the volatile partition: " <> show point
     withStmt
       db
       "INSERT OR IGNORE INTO ebs\n\
-      \  (ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs)\n\
-      \SELECT ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs FROM vol.ebs\n\
+      \  (ebSlot, ebHashBytes, txWritten, txBounds, body, txs)\n\
+      \SELECT ebSlot, ebHashBytes, txWritten, txBounds, body, txs FROM vol.ebs\n\
       \WHERE ebSlot = ?1 AND ebHashBytes = ?2"
       $ \stmt -> do
         dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
