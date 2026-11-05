@@ -30,7 +30,7 @@ import Control.Exception
   ( throwIO
   , toException
   )
-import Control.Monad (unless, void)
+import Control.Monad (void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , try
@@ -178,8 +178,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           closeWriter = void . await =<< submitJob writeQueue Flush
-        , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
+        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
@@ -270,15 +269,9 @@ startWriter registry tracer statsVar volPath immPath = do
               -- job with the outcome of that close.
               writeIORef shutdownVar (Just resolve)
               pure Stop
-            WriteEbPoint point size resolve -> do
+            WriteEbBody point eb fills resolve -> do
               collected <- isCollected point
-              unless collected $ sqlInsertEbPoint conn point size
-              resolve ()
-              pure Continue
-            WriteEbBody point eb resolve -> do
-              collected <- isCollected point
-              unless collected $ sqlInsertEbBody conn point eb
-              resolve ()
+              resolve =<< if collected then pure [] else sqlInsertEbBody conn point eb fills
               pure Continue
             WriteTxs point txs resolve -> do
               resolve =<< sqlInsertTxs conn point txs

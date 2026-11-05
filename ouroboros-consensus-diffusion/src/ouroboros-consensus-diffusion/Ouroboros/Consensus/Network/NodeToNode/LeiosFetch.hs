@@ -100,7 +100,7 @@ serveEb ::
 serveEb tracer reader point = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerBlockRequested point
-  lookupEbBody reader (pointEbHash point) >>= \case
+  lookupEbBody reader point >>= \case
     Nothing -> throwIO $ ExnLeiosUnknownBlockRequested point
     Just bytes -> case deserialiseEndorserBlock bytes of
       Left err -> throwLeiosDbException ("stored endorser block body does not decode: " <> err)
@@ -120,7 +120,7 @@ serveTxs tracer reader point bitmaps = do
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
   -- One row for each requested offset that the endorser block has, with its
   -- bytes if the node holds them.
-  rows <- batchRetrieveTxs reader (pointEbHash point) offsets
+  rows <- batchRetrieveTxs reader point offsets
   case traverse (\(_offset, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
     Just txs | length txs == length offsets -> do
       let n = length txs

@@ -132,10 +132,10 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
     complete <-
       withStmt
         db
-        "SELECT body, txBounds, txs FROM vol.ebs\n\
-        \WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1"
+        "SELECT body, txBounds, txs FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
         $ \stmt -> do
-          dbBindHash stmt 1 ebHash
+          dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+          dbBindHash stmt 2 ebHash
           dbStepSafe stmt >>= \case
             DB.Done -> pure False
             DB.Row -> do
@@ -150,8 +150,8 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
       db
       "INSERT OR IGNORE INTO ebs\n\
       \  (ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs)\n\
-      \SELECT ?1, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs FROM vol.ebs\n\
-      \WHERE ebHashBytes = ?2 AND txCount IS NOT NULL LIMIT 1"
+      \SELECT ebSlot, ebHashBytes, ebBytesSize, txCount, txBounds, body, txs FROM vol.ebs\n\
+      \WHERE ebSlot = ?1 AND ebHashBytes = ?2"
       $ \stmt -> do
         dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
         dbBindHash stmt 2 ebHash

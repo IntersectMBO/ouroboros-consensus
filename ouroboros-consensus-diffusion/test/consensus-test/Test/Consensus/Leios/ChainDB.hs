@@ -75,8 +75,7 @@ bodiesAfterGc = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA, txA), (pointB, ebB, txB)] $ \(point, eb, tx) -> do
-      await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
-      void $ await =<< writeEbBody writer point eb
+      void $ await =<< writeEbBody writer point eb []
       void $ await =<< writeTxs writer point [(0, tx)]
   withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
@@ -86,8 +85,8 @@ bodiesAfterGc = do
     threadDelay 100
     withReader leiosDb $ \reader ->
       (,)
-        <$> lookupEbBody reader (pointEbHash pointA)
-        <*> lookupEbBody reader (pointEbHash pointB)
+        <$> lookupEbBody reader pointA
+        <*> lookupEbBody reader pointB
  where
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.
@@ -118,8 +117,7 @@ heldAcrossRestart whatOfA = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     case whatOfA of
       BodyOfA -> pure ()
       ClosureOfA ->
@@ -199,8 +197,7 @@ tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
 tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
-    void $ await =<< writeEbBody writer pointA ebA
+    void $ await =<< writeEbBody writer pointA ebA []
     void $
       await
         =<< writeTxs
