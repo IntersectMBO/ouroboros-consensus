@@ -664,8 +664,9 @@ leiosDeadlinePruner ::
   m Void
 leiosDeadlinePruner systemTime notifyLog voteState = forever $ do
   now <- systemTimeCurrent systemTime
-  atomically $ pruneNotifyLog notifyLog now
+  -- Votes first, so that 'recordVote' rejects every vote 'appendNotifyLog' would drop.
   pruneVotes voteState now
+  atomically $ pruneNotifyLog notifyLog now
   threadDelay (nominalDelay leiosDeadlinePrunerInterval)
 
 -- | How often 'leiosDeadlinePruner' runs, so how long after its deadline the
