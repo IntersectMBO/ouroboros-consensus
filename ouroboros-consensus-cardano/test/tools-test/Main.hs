@@ -11,13 +11,15 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
+import qualified Data.ByteString.Char8 as BS8
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.String (fromString)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), endorserBlockFromTxBytes)
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbReader (testScanEbPoints)
-  , LeiosDbWriter (writeEbPoint)
+  , LeiosDbWriter (writeEbBody)
   , Promise (await)
   , withLeiosDBSQLite
   , withReader
@@ -173,7 +175,9 @@ blockCountTest logStep = do
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
   withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
     withWriter leiosDb $ \con ->
-      mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
+      mapM_
+        (\point -> await =<< writeEbBody con point (endorserBlockFromTxBytes (BS8.pack "tx" :| [])) [])
+        [keptEb, droppedEb]
 
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs

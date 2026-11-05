@@ -35,13 +35,12 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -58,27 +57,22 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 -- single-writer property total: no two in-process connections ever contend
 -- for a write lock on the volatile partition.
 data WriteJob
-  = WriteEbPoint
-      -- | the announced EB
-      !LeiosPoint
-      -- | its announced size
-      !BytesSize
-      -- | where the worker puts the result
-      !(ResolveWriteJob ())
-  | WriteEbBody
+  = WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
       !EndorserBlock
-      -- | where the worker puts the result
-      !(ResolveWriteJob ())
+      -- | the txs to fill from local bytes
+      ![LocalFill]
+      -- | where the worker puts the offsets the fills filled
+      !(ResolveWriteJob [TxOffset])
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
-      -- | where the worker puts the result
-      !(ResolveWriteJob ())
+      -- | where the worker puts the offsets dropped for their size
+      !(ResolveWriteJob [TxOffset])
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(ResolveWriteJob ())
@@ -159,8 +153,7 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 -- never its payload.
 describeJob :: WriteJob -> String
 describeJob = \case
-  WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
+  WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   GarbageCollect slot _ -> "GarbageCollect " <> show slot

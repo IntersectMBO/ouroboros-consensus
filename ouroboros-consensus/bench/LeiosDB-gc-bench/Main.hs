@@ -358,10 +358,9 @@ populateDb opts db =
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = zip [0 ..] (ebTxsFor opts ebIdx)
-      pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
-      bodyWritten <- writeEbBody writer point eb
+      bodyWritten <- writeEbBody writer point eb []
       txsWritten <- writeTxs writer point txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      awaitAll [void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- * Deterministic data generation (as in leios-db-bench)
@@ -452,11 +451,10 @@ runPhases opts db flushEvents latRef schedule =
           snd
             <$> timed
               ( do
-                  pointWritten <- writeEbPoint w point (encodeEndorserBlockSize eb)
-                  bodyWritten <- writeEbBody w point eb
+                  bodyWritten <- writeEbBody w point eb []
                   txsWritten <- writeTxs w point txs
-                  -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  -- Awaiting both times them to durability.
+                  awaitAll [void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup
