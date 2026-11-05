@@ -24,7 +24,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Vector.Strict as V
-import Data.Word (Word32, Word64)
+import Data.Word (Word64)
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
@@ -38,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type (txResponseBytes)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
   , leiosFetchClientPeerPipelined
@@ -194,22 +195,6 @@ withLeiosFetchAtomicServer tracer limits reader action = do
   checkEncoded point encoded maximumBytes =
     when (encoded > fromIntegral maximumBytes) $
       throwIO (ExnLeiosResponseTooLarge point encoded maximumBytes)
-
--- Tight CBOR: outer array/tag, inner array header, then tag 24 and a byte-string
--- header around each TX. Widen before sums; narrow only after checking the cap.
-txResponseBytes :: [Word32] -> Word64
-txResponseBytes sizes =
-  2
-    + cborHeaderBytes (fromIntegral (length sizes))
-    + sum [fromIntegral n + 2 + cborHeaderBytes (fromIntegral n) | n <- sizes]
-
-cborHeaderBytes :: Word64 -> Word64
-cborHeaderBytes n
-  | n < 24 = 1
-  | n <= 0xff = 2
-  | n <= 0xffff = 3
-  | n <= 0xffffffff = 5
-  | otherwise = 9
 
 serveEb ::
   MonadThrow m =>

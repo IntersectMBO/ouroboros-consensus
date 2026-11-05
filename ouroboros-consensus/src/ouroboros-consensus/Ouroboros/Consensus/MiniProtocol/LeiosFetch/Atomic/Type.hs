@@ -26,6 +26,9 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type
   , codecLeiosFetchAtomic
   , codecLeiosFetchAtomicId
   , timeLimitsLeiosFetchAtomic
+  , txResponseBytes
+  , txResponseHeaderBytes
+  , txResponseElementBytes
   ) where
 
 import Cardano.Ledger.Binary.Plain (decodeRecordSum)
@@ -453,3 +456,28 @@ validBitmaps maxTxs bitmaps =
         && all ((/= 0) . snd) xs
         && and (zipWith (<) indices (drop 1 indices))
         && all (< maxTxs) (bitmapOffsets xs)
+
+-- | Exact tight CBOR response charge from verified transaction sizes. Includes
+-- the outer array/tag, list header and each tag-24/byte-string wrapper. Callers
+-- bound input counts and widen before sums, narrowing only after checking caps.
+-- Shared by checkpoint admission and storage preflight.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#1-make-each-transaction-batch-a-checkpoint@.
+txResponseBytes :: [Word32] -> Word64
+txResponseBytes sizes =
+  txResponseHeaderBytes (fromIntegral (length sizes)) + sum (map txResponseElementBytes sizes)
+
+-- | Response framing before the encoded transaction elements.
+txResponseHeaderBytes :: Word64 -> Word64
+txResponseHeaderBytes count = 2 + cborHeaderBytes count
+
+-- | One encoded whole transaction, including its tag and byte-string header.
+txResponseElementBytes :: Word32 -> Word64
+txResponseElementBytes bytes = fromIntegral bytes + 2 + cborHeaderBytes (fromIntegral bytes)
+
+cborHeaderBytes :: Word64 -> Word64
+cborHeaderBytes n
+  | n < 24 = 1
+  | n <= 0xff = 2
+  | n <= 0xffff = 3
+  | n <= 0xffffffff = 5
+  | otherwise = 9

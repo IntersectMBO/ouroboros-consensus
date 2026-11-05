@@ -32,6 +32,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , beginAcquisition
   , retireAcquisition
   , registerDurableBody
+  , registerDurableTransactions
   , admitStorageRequest
   , dispatchStorageRequest
   , cancelStorageRequest
@@ -282,6 +283,10 @@ data BodyAcceptance = BodyAcceptance
 data AcquisitionSnapshot = AcquisitionSnapshot
   { snapshotGeneration :: !AcquisitionGeneration
   -- ^ Generation to match before acting on an asynchronous observation.
+  , snapshotReferences :: !(Maybe (IntMap.IntMap (TxHash, Word32)))
+  -- ^ Verified body metadata, shared immutably with checkpoint construction.
+  -- Nothing means no body has arrived; Just an empty map is a known empty closure.
+  -- This does not imply that the body is durable yet.
   , snapshotBodyDurable :: !Bool
   -- ^ A body promise/legacy durable-body bridge has completed.
   , snapshotHeld :: !IntSet.IntSet
@@ -435,7 +440,7 @@ retireAcquisition h point gen = do
 -- | Bridge an already committed whole-body write (including the legacy path).
 -- Caller awaits storage first. No database read/wait belongs in this callback.
 registerDurableBody ::
-  IOLike m =>
+  MonadSTM m =>
   StorageHandoff m owner peer ->
   (StorageEvent -> STM m ()) ->
   LeiosPoint ->
@@ -463,6 +468,32 @@ registerDurableBody h notify point gen body held
             | not (IntSet.null newlyHeld) = [TransactionsDurable point gen newlyHeld]
             | otherwise = []
       pure ((), putAcquisition point done s, bodyEvents ++ events)
+
+-- | Bridge a durable legacy TX receipt after its original whole-vector
+-- validation and write. This only reconciles global acquisition: it allocates
+-- no new-version request, refunds no wire bytes and applies no new wire quota.
+-- Old/pruned generations are rejected without recreating them. Pending copies
+-- remain charged until their own worker reconciles or discards them.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+registerDurableTransactions ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  (StorageEvent -> STM m ()) ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  IntSet.IntSet ->
+  STM m (Either StorageError ())
+registerDurableTransactions h notify point gen confirmed = transitionNotify h notify $ \s -> do
+  a <- current point gen s
+  unless (acquisitionBodyDurable a) (Left BodyUnknown)
+  unless
+    (confirmed `IntSet.isSubsetOf` IntMap.keysSet (acquisitionReferences a))
+    (Left InvalidDescriptor)
+  let newlyHeld = IntSet.difference confirmed (acquisitionHeld a)
+      next = a{acquisitionHeld = IntSet.union confirmed (acquisitionHeld a)}
+      (done, closure) = completeClosure point next
+      events = [TransactionsDurable point gen newlyHeld | not (IntSet.null newlyHeld)] ++ closure
+  pure ((), putAcquisition point done s, events)
 
 -- | Reserve the complete expected handoff before wire admission. A rejected
 -- allocation consumes neither capacity nor a request ordinal.
@@ -673,6 +704,7 @@ readAcquisition h point = do
     pure
       ( AcquisitionSnapshot
           (acquisitionGeneration a)
+          (acquisitionReferences a <$ acquisitionBody a)
           (acquisitionBodyDurable a)
           held
           pending

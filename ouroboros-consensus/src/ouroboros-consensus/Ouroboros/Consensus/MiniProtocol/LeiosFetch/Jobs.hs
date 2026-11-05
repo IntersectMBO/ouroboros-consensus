@@ -26,6 +26,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
   , nullLeiosJobPool
   , lookupJob
   , restrictToPending
+  , reconcileJobPool
   , pickLeastRequestedJobExcept
   , unpickJob
   , completeJob
@@ -89,14 +90,18 @@ data LeiosJobState = MkLeiosJobState !LeiosJob !LeiosJobMultiplicity
 -- | The not-yet-requested jobs for one acquired EB, plus a reverse index by
 -- multiplicity so a least-requested job is one 'IntMap.minView' away.
 --
--- INVARIANT: 'jobsByMultiplicity' is the exact inverse of the multiplicities in
--- 'jobs' -- every job id in 'jobs' sits in exactly the bucket named by its
--- 'LeiosJobState' multiplicity.
+-- INVARIANT: 'jobsByMultiplicity' is the exact inverse for eligible unfinished
+-- jobs. A job with no currently missing offset remains unfinished while its
+-- storage is pending, but is absent from the scheduling index.
 data LeiosJobPool = MkLeiosJobPool
   { jobs :: !(IntMap LeiosJobState)
   -- ^ keyed by 'LeiosJobId'
   , jobsByMultiplicity :: !(IntMap NEIntSet)
   -- ^ keyed by 'LeiosJobMultiplicity'
+  , availableOffsets :: !(Maybe IntSet)
+  -- ^ Nothing preserves legacy-only scheduling. Just the shared missing set
+  -- suppresses fully pending jobs without completing them or changing their
+  -- immutable membership/validation commitments.
   }
   deriving (Eq, Show)
 
@@ -121,6 +126,7 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
     , jobsByMultiplicity =
         maybe IntMap.empty (IntMap.singleton 0) $
           NEIntSet.nonEmptySet (IntSet.fromList (map fst ijbs))
+    , availableOffsets = Nothing
     }
  where
   ijbs = zip [0 ..] $ case IntMap.toAscList misses of
@@ -153,7 +159,7 @@ restrictToPending m pool = m `IntMap.intersection` jobs pool
 
 -- | The pool with no jobs -- nothing left to fetch.
 emptyLeiosJobPool :: LeiosJobPool
-emptyLeiosJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
+emptyLeiosJobPool = MkLeiosJobPool IntMap.empty IntMap.empty Nothing
 
 -- | Select a least-requested unfinished job (fewest in-flight requests; ties
 -- broken uniformly at random via the supplied PRNG) whose id is /not/ in
@@ -185,6 +191,7 @@ pickLeastRequestedJobExcept prng excluded pool =
                     { jobs = jobs'
                     , jobsByMultiplicity =
                         bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
+                    , availableOffsets = availableOffsets pool
                     }
                 , prng'
                 )
@@ -226,7 +233,9 @@ unpickJob (MkLeiosJobId jid) pool =
           -- re-inserts into the same bucket -- a net no-op, not special-cased
           -- because the floor is reached only on a surplus disconnect.
           jobsByMultiplicity =
-            bucketInsert m' jid (bucketDelete m jid (jobsByMultiplicity pool))
+            (if eligible pool jid then bucketInsert m' jid else id)
+              (bucketDelete m jid (jobsByMultiplicity pool))
+        , availableOffsets = availableOffsets pool
         }
  where
   -- One traversal of 'jobs': the pair functor carries the prior and new
@@ -248,12 +257,38 @@ completeJob (MkLeiosJobId jid) pool =
       MkLeiosJobPool
         { jobs = jobs'
         , jobsByMultiplicity = bucketDelete m jid (jobsByMultiplicity pool)
+        , availableOffsets = availableOffsets pool
         }
  where
   -- One traversal of 'jobs': carry out the removed job's multiplicity (for the
   -- reverse-index delete) while deleting the entry.
   delete1 Nothing = (Nothing, Nothing)
   delete1 (Just (MkLeiosJobState _job (MkLeiosJobMultiplicity m))) = (Just m, Nothing)
+
+-- | Project shared acquisition without rebuilding or renumbering legacy jobs.
+-- Remove only fully durable jobs. Keep pending ones unfinished and retain each
+-- request's original commitment, even when only part of its job remains missing.
+-- Recomputing availability also re-enables jobs after an unconfirmed write.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+reconcileJobPool :: IntSet -> IntSet -> LeiosJobPool -> LeiosJobPool
+reconcileJobPool held missing pool = projected{jobsByMultiplicity = index}
+ where
+  remaining =
+    IntMap.filter
+      (\(MkLeiosJobState (MkLeiosJob offsets _ _) _) -> not (offsets `IntSet.isSubsetOf` held))
+      (jobs pool)
+  projected = pool{jobs = remaining, availableOffsets = Just missing}
+  index = IntMap.foldlWithKey' insertEligible IntMap.empty remaining
+  insertEligible acc jid (MkLeiosJobState _ (MkLeiosJobMultiplicity m))
+    | eligible projected jid = bucketInsert m jid acc
+    | otherwise = acc
+
+eligible :: LeiosJobPool -> Int -> Bool
+eligible pool jid = case availableOffsets pool of
+  Nothing -> True
+  Just missing -> case IntMap.lookup jid (jobs pool) of
+    Nothing -> False
+    Just (MkLeiosJobState (MkLeiosJob offsets _ _) _) -> not (IntSet.disjoint offsets missing)
 
 bucketDelete :: Int -> Int -> IntMap NEIntSet -> IntMap NEIntSet
 bucketDelete m jid = IntMap.update (NEIntSet.nonEmptySet . NEIntSet.delete jid) m

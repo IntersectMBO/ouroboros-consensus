@@ -2,6 +2,7 @@
 -- as the node runs them.
 module Test.Consensus.Leios.LeiosFetch (tests) where
 
+import qualified Test.Consensus.Leios.LeiosFetch.Acquisition as Acquisition
 import qualified Test.Consensus.Leios.LeiosFetch.Admission as Admission
 import qualified Test.Consensus.Leios.LeiosFetch.AtomicCodec as AtomicCodec
 import qualified Test.Consensus.Leios.LeiosFetch.AtomicReceive as AtomicReceive
@@ -19,7 +20,8 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ AtomicServer.tests
+    [ Acquisition.tests
+    , AtomicServer.tests
     , AtomicReceive.tests
     , AtomicCodec.tests
     , Admission.tests

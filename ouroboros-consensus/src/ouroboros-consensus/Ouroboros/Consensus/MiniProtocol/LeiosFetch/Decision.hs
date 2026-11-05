@@ -25,6 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , emptyLeiosOutstanding
   , initializeLeiosOutstanding
   , newLeiosJobPool
+  , projectAcquisition
   , acquireEbBody
   , recordReferencedPoint
   , focusElectionIfUnfocused
@@ -87,6 +88,8 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , TxHash
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff (AcquisitionSnapshot (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity (AcquisitionGeneration)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( TxBitmaps
@@ -377,6 +380,35 @@ newLeiosJobPool ::
   IntMap.IntMap (TxHash, BytesSize) ->
   Jobs.LeiosJobPool
 newLeiosJobPool env = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env)
+
+-- | Project the current shared generation into legacy scheduling. Body-before-TX
+-- eligibility and immutable job identities stay intact. Pending-only jobs remain
+-- incomplete; partial jobs remain requestable whole by the legacy policy.
+-- This never changes focus, pruned points or any peer's wire accounting. The
+-- caller captures the expected generation when binding the relevant point.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+projectAcquisition ::
+  LeiosFetchStaticEnv ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  AcquisitionSnapshot ->
+  LeiosOutstanding peer ->
+  LeiosOutstanding peer
+projectAcquisition env point generation snapshot outstanding
+  | snapshotGeneration snapshot /= generation = outstanding
+  | not (snapshotBodyDurable snapshot) = outstanding
+  | Just refs <- snapshotReferences snapshot = alterEbState point (project refs) outstanding
+  | otherwise = outstanding
+ where
+  project _ Nothing = Nothing
+  project refs (Just (MkEbState onset fetchState)) =
+    let pool = case fetchState of
+          NoBody -> newLeiosJobPool env (refs `IntMap.withoutKeys` snapshotHeld snapshot)
+          BodyAcquired existing -> existing
+     in Just $
+          MkEbState
+            onset
+            (BodyAcquired (Jobs.reconcileJobPool (snapshotHeld snapshot) (snapshotMissing snapshot) pool))
 
 -- | The body's LeiosDb write is durable, so record 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.

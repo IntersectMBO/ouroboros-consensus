@@ -1,8 +1,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | Immutable work prepared before irreversible request admission. Preparation
--- allocates no wire identity or capacity. The planned checkpoint builder will
--- assemble these descriptors from wanted transactions.
+-- allocates no wire identity or capacity. The acquisition checkpoint builder
+-- assembles these descriptors from currently wanted transactions.
 --
 -- Rationale (repository-root path):
 -- @docs/fetch-policy/cancellation-contract.md#validation-descriptors-and-progress-events@.
@@ -19,6 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
   , PreparationError (..)
   , prepareBody
   , prepareBatch
+  , prepareBatchFromReferences
   , preparedDescriptor
   , preparedResponseBytes
   , preparedElements
@@ -96,7 +97,22 @@ prepareBatch ::
   NonEmpty TxOffset ->
   EncodedBytes ->
   Either PreparationError PreparedRequest
-prepareBatch point generation body offsets encoded
+prepareBatch point generation body =
+  prepareBatchFromReferences point generation $
+    IntMap.fromDistinctAscList (zip [0 ..] (endorserBlockReferences body))
+
+-- | Prepare from the handoff's verified reference map without retaining another
+-- body in the planner. The map must come from the verified body for this point
+-- and generation; handoff admission rechecks that identity and every reference.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#1-make-each-transaction-batch-a-checkpoint@.
+prepareBatchFromReferences ::
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  IntMap.IntMap (TxHash, Word32) ->
+  NonEmpty TxOffset ->
+  EncodedBytes ->
+  Either PreparationError PreparedRequest
+prepareBatchFromReferences point generation refs offsets encoded
   | not (and (zipWith (<) os (drop 1 os))) = Left InvalidOffsets
   | otherwise = do
       expected <- traverse lookupTx offsets
@@ -106,7 +122,6 @@ prepareBatch point generation body offsets encoded
         (fmap (PayloadBytes . fromIntegral . expectedSize) expected)
  where
   os = NE.toList offsets
-  refs = IntMap.fromDistinctAscList (zip [0 ..] (endorserBlockReferences body))
   lookupTx offset = case IntMap.lookup offset refs of
     Nothing -> Left OffsetOutsideBody
     Just (hash, size) -> Right (ExpectedTx offset hash size)
