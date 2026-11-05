@@ -126,7 +126,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
-import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePruneCadence)
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePrunerInterval)
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
@@ -466,7 +466,7 @@ deadlineOf = snd . windowOf
 -- | The latest the node may relay a vote of an election slot: until the log is
 -- pruned past its deadline.
 relayedUntilOf :: SlotNo -> DiffTime
-relayedUntilOf slot = deadlineOf slot + realToFrac leiosDeadlinePruneCadence
+relayedUntilOf slot = deadlineOf slot + realToFrac leiosDeadlinePrunerInterval
 
 -- | When the window of the votes of an election slot opens, and their
 -- deadline.

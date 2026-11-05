@@ -6,7 +6,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State (voteLateGrace)
-import Ouroboros.Consensus.NodeKernel (leiosDeadlinePruneCadence)
+import Ouroboros.Consensus.NodeKernel (leiosDeadlinePrunerInterval)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (Property, conjoin, counterexample, once, testProperty)
 
@@ -15,21 +15,23 @@ tests =
   testGroup
     "NodeKernel"
     [ testProperty
-        "the deadline pruner runs far more often than a downstream peer's grace"
-        prop_leiosDeadlinePruneCadence
+        "the deadline pruner runs far more often than a downstream peer's grace period"
+        prop_leiosDeadlinePrunerInterval
     ]
 
--- | The node relays a notification at most 'leiosDeadlinePruneCadence' after it
--- is no longer worth relaying, which must leave a downstream peer's grace for
--- transmission and queueing: 'voteLateGrace' for a vote, and the margin between
--- 'maxAnnouncementAgeSend' and 'maxAnnouncementAgeRecv' for an announcement.
-prop_leiosDeadlinePruneCadence :: Property
-prop_leiosDeadlinePruneCadence =
+-- | The node relays a notification at most 'leiosDeadlinePrunerInterval' after it
+-- is no longer worth relaying, which must leave most of a downstream peer's
+-- grace period for transmission and queueing: 'voteLateGrace' for a vote, and
+-- the margin between 'maxAnnouncementAgeSend' and 'maxAnnouncementAgeRecv' for
+-- an announcement.
+prop_leiosDeadlinePrunerInterval :: Property
+prop_leiosDeadlinePrunerInterval =
   once . conjoin $
-    [ counterexample "the vote grace" $
-        leiosDeadlinePruneCadence `farBelow` voteLateGrace
-    , counterexample "the announcement grace" $
-        leiosDeadlinePruneCadence `farBelow` (maxAnnouncementAgeRecv - maxAnnouncementAgeSend)
+    [ counterexample "the vote grace period" $
+        leiosDeadlinePrunerInterval `farBelow` voteLateGrace
+    , counterexample "the announcement grace period" $
+        leiosDeadlinePrunerInterval `farBelow` (maxAnnouncementAgeRecv - maxAnnouncementAgeSend)
     ]
  where
+  -- Leaving at least 90% of the grace period to transmission and queueing.
   farBelow a b = 10 * a <= b

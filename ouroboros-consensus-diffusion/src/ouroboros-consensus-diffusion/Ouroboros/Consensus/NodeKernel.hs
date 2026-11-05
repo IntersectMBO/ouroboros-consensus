@@ -18,7 +18,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
-  , leiosDeadlinePruneCadence
+  , leiosDeadlinePrunerInterval
   , toConsensusMode
   ) where
 
@@ -655,7 +655,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 -------------------------------------------------------------------------------}
 
 -- | Prune what the node relays only until a deadline, the notify log and the
--- votes, every 'leiosDeadlinePruneCadence'.
+-- votes, every 'leiosDeadlinePrunerInterval'.
 leiosDeadlinePruner ::
   IOLike m =>
   SystemTime m ->
@@ -666,13 +666,13 @@ leiosDeadlinePruner systemTime notifyLog voteState = forever $ do
   now <- systemTimeCurrent systemTime
   atomically $ pruneNotifyLog notifyLog now
   pruneVotes voteState now
-  threadDelay (nominalDelay leiosDeadlinePruneCadence)
+  threadDelay (nominalDelay leiosDeadlinePrunerInterval)
 
 -- | How often 'leiosDeadlinePruner' runs, so how long after its deadline the
--- node may still relay a notification. It must stay far below the grace a
--- downstream peer gives before it rejects one.
-leiosDeadlinePruneCadence :: NominalDiffTime
-leiosDeadlinePruneCadence = 1
+-- node may still relay a notification. It must stay far below the grace
+-- period a downstream peer gives before it rejects one.
+leiosDeadlinePrunerInterval :: NominalDiffTime
+leiosDeadlinePrunerInterval = 1
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
