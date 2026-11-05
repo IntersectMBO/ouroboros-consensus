@@ -1066,7 +1066,8 @@ mkNodeKernelArgs
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, lfRng) = splitGen rng'
+          (psRng, rng'') = splitGen rng'
+          (lfRng, txRng) = splitGen rng''
       return
         NodeKernelArgs
           { tracers
@@ -1097,6 +1098,7 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , leiosAcquisitions
           , leiosFetchRng = lfRng
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits

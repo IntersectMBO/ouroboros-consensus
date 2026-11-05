@@ -28,7 +28,7 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Void (Void)
-import Data.Word (Word64)
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , Proxy (..)
@@ -69,6 +69,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , recordReferencedPoint
   , removePeerFromOutstanding
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity (LeiosPeerLifetimeId (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
   , ValidAnnouncement (..)
@@ -111,7 +112,7 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   , lfkPeers :: !(StrictTVar m (Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk)))
   -- ^ The upstream peers the decision loop assigns requests to, each
   -- registered at most once at a time; see 'withLeiosFetchPeer'.
-  , lfkNextLifetimeId :: !(StrictTVar m Word64)
+  , lfkNextLifetimeId :: !(StrictTVar m Natural)
   -- ^ What tells the next registration's 'LeiosPeerLifetimeId' apart from
   -- every earlier one.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
@@ -119,22 +120,6 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   -- to. Nothing older is recorded afterwards, so that an offer that arrives
   -- after the pruning cannot undo it.
   }
-
--- | Identifies one registration of an upstream peer with the decision loop,
--- from when the first of its mini-protocols registers it until it is
--- unregistered; see 'withLeiosFetchPeer'. The decision loop's state is keyed
--- by it rather than by the peer, which the peer's later registrations share.
---
--- The peer alone would not do, even though connections whose mini-protocols
--- run at the same time have different @ConnectionId@s: that covers only the
--- mini-protocols' own threads. The LeiosDB writes asynchronously, so for each
--- reply a LeiosFetch client forks a thread that waits for the write and then
--- updates the decision loop's state for the peer, and that thread may outlive
--- the client. By then the peer may have registered again, after the mux
--- restarted its mini-protocols or after it reconnected with the same
--- @ConnectionId@, and the update would act on that registration instead.
-data LeiosPeerLifetimeId peer = MkLeiosPeerLifetimeId !peer !Word64
-  deriving (Eq, Ord, Show)
 
 -- | What the node's LeiosFetch state holds about one upstream peer.
 data LeiosFetchPeer m blk = MkLeiosFetchPeer
