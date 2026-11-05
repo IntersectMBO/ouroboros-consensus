@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Read operations of LeiosDB's SQLite backend.
 --
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , closureMatches
   ) where
 
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (readTVarIO)
 import Control.DeepSeq (force)
@@ -41,6 +43,7 @@ import qualified Data.IntSet as IntSet
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
+import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
@@ -53,6 +56,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
+import Ouroboros.Network.Block (Serialised (..))
 
 -- | Each point at or after the slot whose closure is complete in the partition
 -- its reads go to ('readPartition'). In the volatile partition, a closure is
@@ -105,9 +109,10 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
       _ -> False
 
 -- | Whether these txs are the closure of the EB with these body bytes: each
--- hashes to what the body lists at its offset.
+-- hashes to what the body lists at its offset. The LeiosDB holds only EBs of
+-- the Leios era, Dijkstra, whose ledger version the body decodes at.
 closureMatches :: ByteString -> [ByteString] -> Bool
-closureMatches body txs = case deserialiseEndorserBlock body of
+closureMatches body txs = case deserialiseEndorserBlock (Proxy @DijkstraEra) (Serialised (BSL.fromStrict body)) of
   Left _ -> False
   Right eb ->
     length refs == length txs
@@ -155,8 +160,9 @@ readPartition conn point readRow = do
 
   fromImmutable = dbWithTransaction immDb (readRow immDb)
 
-sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe ByteString)
-sqlLookupEbBody conn point = readPartition conn point (`lookupBlob` point)
+sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
+sqlLookupEbBody conn point =
+  fmap (Serialised . BSL.fromStrict) <$> readPartition conn point (`lookupBlob` point)
 
 -- | Retrieve tx bytes for a batch of offsets into the EB at one point: the
 -- offsets the body declares, with their bytes, or 'Nothing' where no tx was

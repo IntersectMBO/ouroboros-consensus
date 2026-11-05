@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (guard)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -65,6 +66,7 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
+import Ouroboros.Network.Block (Serialised (..))
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
@@ -241,10 +243,10 @@ insertPoint point s
   | otherwise = s{imEbPoints = Set.insert point (imEbPoints s)}
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe ByteString)
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe (Serialised EndorserBlock))
 imLookupEbBody stateVar point = atomically $ do
   state <- readTVar stateVar
-  pure $ sbBytes <$> bodyAt state point
+  pure $ Serialised . BSL.fromStrict . sbBytes <$> bodyAt state point
 
 -- | Mirrors the SQLite backend: the point if not written yet, then the body,
 -- returning the offsets the point holds. Nothing, if the latest garbage
@@ -305,7 +307,7 @@ imInsertEbBody stateVar point eb fills = do
       [ (offset, EbTxEntry{eteTxHash = txHash, eteTxBytesSize = size})
       | (offset, (txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
       ]
-  body = StoredBody{sbBytes = serialiseEndorserBlock eb, sbTxs = refs}
+  body = StoredBody{sbBytes = BSL.toStrict (unSerialised (serialiseEndorserBlock eb)), sbTxs = refs}
 
 imInsertTxs ::
   IOLike m =>
