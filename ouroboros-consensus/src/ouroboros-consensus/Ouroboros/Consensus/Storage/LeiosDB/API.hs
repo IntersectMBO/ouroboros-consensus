@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , storeForgedEb
+  , LocalFill
   , TxOffset
   ) where
 
@@ -31,13 +32,12 @@ import Data.Foldable (toList, traverse_)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , EndorserBlockHash
   , ForgedEndorserBlock
   , LeiosPoint (..)
+  , TxLocation
   , TxOffset
-  , encodeEndorserBlockSize
   , endorserBlockHash
   , forgedEbBody
   , forgedEbTxs
@@ -72,29 +72,32 @@ data LeiosDbHandle m = LeiosDbHandle
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
-  , lookupEbBody :: HasCallStack => EndorserBlockHash -> m (Maybe ByteString)
-  -- ^ The EB "body", in the bytes it arrived in
+  , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)
+  -- ^ The EB "body" at this point, in the bytes it arrived in
   -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), or 'Nothing'
-  -- if the LeiosDB does not hold it.
-  , lookupEbClosure :: HasCallStack => EndorserBlockHash -> m (Maybe [ByteString])
-  -- ^ The EB "closure": the bytes of its txs in body order, or 'Nothing' unless
-  -- each of them is written.
+  -- if the LeiosDB does not hold it there.
+  , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [ByteString])
+  -- ^ The EB "closure" at this point: the bytes of its txs in body order, or
+  -- 'Nothing' unless each of them is written. The body lists their hashes.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EndorserBlockHash -> [Int] -> m [(Int, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB, in ascending order: the
-  -- offsets the body declares, each with its bytes, or 'Nothing' if not
-  -- written.
+      LeiosPoint -> [Int] -> m [(Int, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
+  -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
+  -- not written.
+  --
+  -- The reads fall back to the immutable partition, which holds an EB at the
+  -- point it was certified at, for an EB it holds at another point.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
-  -- ^ Every announced EB point.
+  -- ^ Every point a body was written at.
   --
   -- Not used in production, only used in tests to observe point
   -- writes and truncation.
   , scanCompleteEbClosuresNotOlderThanSlot ::
       HasCallStack =>
       SlotNo -> m [LeiosPoint]
-  -- ^ EBs whose closure is complete and whose announcer is no older than the
-  -- given slot. Seeds the ChainDB's acquired-closures set at startup.
+  -- ^ The points no older than the given slot whose closure is complete. Seeds
+  -- the ChainDB's acquired-closures set at startup.
   --
   -- The LeiosDB does not track completeness, so this hashes the txs of every
   -- such EB against its body. Startup only.
@@ -109,21 +112,27 @@ data LeiosDbReader m = LeiosDbReader
 data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
-  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size. If another point of
-  -- the EB holds its body, the new point holds a copy of the body and closure.
-  , writeEbBody :: HasCallStack => LeiosPoint -> EndorserBlock -> m (Promise m ())
-  -- ^ Persist an EB body into each point of the EB.
+  , writeEbBody ::
+      HasCallStack =>
+      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
+  -- ^ Persist an EB body at this point, recording the point. Every point holds
+  -- its own body and txs, even when another point names the same EB.
   --
-  -- Writes its point too, if 'writeEbPoint' has not.
+  -- Then fill what it can from the bytes the LeiosDB holds: each 'LocalFill'
+  -- pairs an offset in this body with the 'TxLocation' of the same tx in
+  -- another EB, at any point of it, copied in the same transaction. A fill
+  -- lands only if the source's bytes hash to the tx this body lists at its
+  -- offset, so a stale or wrong location fills nothing, and that tx stays
+  -- fetchable.
+  --
+  -- Returns the offsets the fills filled. It does not report the txs an
+  -- earlier delivery of the body to the point left there: the caller wrote
+  -- those, unless it restarted since, and then it fetches them again.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m ())
-  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'. Whether that
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
+  -- ^ Persist tx bodies for the EB at this point, and only there. Whether that
   -- completes the EB is for the caller to know: the LeiosDB does not track it.
-  --
-  -- No backend uses the point's slot: the tx bytes belong to the EB body,
-  -- which every point with the same EB hash shares.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
   --
@@ -137,6 +146,10 @@ data LeiosDbWriter m = LeiosDbWriter
   -- - or its size is not the declared one.
   --
   -- A transaction written again overwrites itself, with the same bytes.
+  --
+  -- Returns the offsets of the transactions dropped because the EB referenced
+  -- them with another size: no such closure can be stored, and an honest peer
+  -- never serves one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -152,6 +165,10 @@ newtype Promise m a = Promise {await :: m a}
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
+
+-- | A fill from local bytes: fill the EB's tx at 'TxOffset' from the tx's
+-- 'TxLocation' in another EB. See 'writeEbBody'.
+type LocalFill = (TxOffset, TxLocation)
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader
@@ -176,8 +193,7 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 -- header before the endorser block is stored.
 storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
 storeForgedEb writer slot forgedEb = do
-  _ <- writeEbPoint writer point (encodeEndorserBlockSize body)
-  _ <- writeEbBody writer point body
+  _ <- writeEbBody writer point body []
   void $ writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
  where
   body = forgedEbBody forgedEb

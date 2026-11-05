@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , sqlBatchRetrieveTxs
   , sqlLookupEbClosure
   , EbIndex (..)
+  , EbRow (..)
   , lookupEbIndex
   , readTxBounds
   , readTxBytes
@@ -38,7 +39,6 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
@@ -68,21 +68,19 @@ sqlScanEbPoints conn =
         hash <- dbColumnHash stmt 1
         loop stmt ((slot, hash) : acc)
 
--- | Each EB whose closure is complete, at its youngest point at or after the
--- slot. A closure is complete if each of its txs hashes to what the body lists.
--- An EB the immutable partition holds is complete, since only complete closures
--- are copied there. It may have been evicted from the volatile partition, and
+-- | Each point at or after the slot whose closure is complete. A closure is
+-- complete if each of its txs hashes to what the body lists. An EB the
+-- immutable partition holds is complete, since only complete closures are
+-- copied there. It may have been evicted from the volatile partition, and
 -- fetched again only in part.
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbPointsSince conn sinceSlot = do
-  youngest <-
-    fmap (Map.fromListWith max) $
-      dbWithTransaction volDb $
-        withStmt volDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
-          dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-          loop stmt []
-  complete <- filterM (isComplete . fst) (Map.toList youngest)
-  pure [MkLeiosPoint slot ebHash | (ebHash, slot) <- complete]
+  points <-
+    dbWithTransaction volDb $
+      withStmt volDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1 ORDER BY ebSlot" $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
+        loop stmt []
+  filterM isComplete points
  where
   Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
@@ -92,16 +90,16 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
         hash <- dbColumnHash stmt 1
-        loop stmt ((hash, slot) : acc)
+        loop stmt (MkLeiosPoint slot hash : acc)
 
   -- The immutable partition first: that is an index lookup, not a hash of
   -- every tx.
-  isComplete ebHash =
-    lookupEbIndex immDb ebHash >>= \case
+  isComplete point =
+    lookupEbIndex immDb (AnyOf (pointEbHash point)) >>= \case
       Just _ -> pure True
       Nothing -> dbWithTransaction volDb $ do
-        mbBody <- lookupBlob volDb ebHash
-        mbTxs <- closureFrom volDb ebHash
+        mbBody <- lookupBlob volDb (AtPoint point)
+        mbTxs <- closureFrom volDb (AtPoint point)
         pure $ case (mbBody, mbTxs) of
           (Just body, Just txs) -> maybe False (closureMatches body) (sequence txs)
           _ -> False
@@ -125,43 +123,45 @@ splitClosure bounds txs =
   | i <- [0 .. BS.length bounds `div` 4 - 2]
   ]
 
-sqlLookupEbBody :: Conn -> EndorserBlockHash -> IO (Maybe ByteString)
-sqlLookupEbBody conn ebHash = do
-  vol <- dbWithTransaction volDb $ lookupBlob volDb ebHash
+sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe ByteString)
+sqlLookupEbBody conn point = do
+  vol <- dbWithTransaction volDb $ lookupBlob volDb (AtPoint point)
   -- No body means the EB may have been copied to the immutable partition and
   -- evicted.
-  maybe (lookupBlob immDb ebHash) (pure . Just) vol
+  maybe (lookupBlob immDb (AnyOf (pointEbHash point))) (pure . Just) vol
  where
   Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
--- | Retrieve tx bytes for a batch of offsets into one EB: the offsets the body
--- declares, with their bytes, or 'Nothing' where no tx was written. Reads where
--- the requested txs are from 'txBounds', then only their bytes through one
--- blob handle, one read per run of consecutive offsets. Never reads the body.
+-- | Retrieve tx bytes for a batch of offsets into the EB at one point: the
+-- offsets the body declares, with their bytes, or 'Nothing' where no tx was
+-- written. Reads where the requested txs are from 'txBounds', then only their
+-- bytes through one blob handle, one read per run of consecutive offsets.
+-- Never reads the body.
 --
 -- A tx the volatile partition has not written yet is read from the immutable
 -- one, which holds it if the EB was copied, evicted, and is being fetched
 -- again.
 sqlBatchRetrieveTxs ::
   Conn ->
-  EndorserBlockHash ->
+  LeiosPoint ->
   [Int] ->
   IO [(Int, Maybe ByteString)]
-sqlBatchRetrieveTxs conn ebHash offsets = (evaluate . force =<<) $ do
-  vol <- dbWithTransaction volDb $ retrieveFrom volDb offsets
+sqlBatchRetrieveTxs conn point offsets = (evaluate . force =<<) $ do
+  vol <- dbWithTransaction volDb $ retrieveFrom volDb (AtPoint point) offsets
   case vol of
-    Nothing -> fromMaybe [] <$> retrieveFrom immDb offsets
+    Nothing -> fromMaybe [] <$> retrieveFrom immDb immRow offsets
     Just txs -> case [o | (o, Nothing) <- txs] of
       [] -> pure txs
       missing -> do
-        imm <- IntMap.fromList . fromMaybe [] <$> retrieveFrom immDb missing
+        imm <- IntMap.fromList . fromMaybe [] <$> retrieveFrom immDb immRow missing
         pure [(o, maybe (IntMap.findWithDefault Nothing o imm) Just mbBytes) | (o, mbBytes) <- txs]
  where
   Conn{conVolDb = volDb, conImmDb = immDb} = conn
+  immRow = AnyOf (pointEbHash point)
 
   -- 'Nothing' if the body is not stored here.
-  retrieveFrom db wantedOffsets =
-    lookupEbIndex db ebHash >>= \case
+  retrieveFrom db row wantedOffsets =
+    lookupEbIndex db row >>= \case
       Nothing -> pure Nothing
       Just ix@EbIndex{eiTxCount} ->
         Just
@@ -170,39 +170,65 @@ sqlBatchRetrieveTxs conn ebHash offsets = (evaluate . force =<<) $ do
             ix
             [o | o <- IntSet.toAscList (IntSet.fromList wantedOffsets), o >= 0, o < eiTxCount]
 
--- | The bytes of the EB's txs in body order, or 'Nothing' unless each of them
--- is written. Like 'sqlBatchRetrieveTxs', it reads the immutable partition's
--- closure if the volatile one lacks a tx.
-sqlLookupEbClosure :: Conn -> EndorserBlockHash -> IO (Maybe [ByteString])
-sqlLookupEbClosure conn ebHash = (evaluate . force =<<) $ do
-  vol <- dbWithTransaction volDb $ closureFrom volDb ebHash
+-- | The bytes of the txs of the EB at the point in body order, or 'Nothing'
+-- unless each of them is written. Like 'sqlBatchRetrieveTxs', it reads the
+-- immutable partition's closure if the volatile one lacks a tx.
+sqlLookupEbClosure :: Conn -> LeiosPoint -> IO (Maybe [ByteString])
+sqlLookupEbClosure conn point = (evaluate . force =<<) $ do
+  vol <- dbWithTransaction volDb $ closureFrom volDb (AtPoint point)
   case sequence =<< vol of
     Just txs -> pure (Just txs)
-    Nothing -> (sequence =<<) <$> closureFrom immDb ebHash
+    Nothing -> (sequence =<<) <$> closureFrom immDb (AnyOf (pointEbHash point))
  where
   Conn{conVolDb = volDb, conImmDb = immDb} = conn
 
 -- * Lookups
 
-closureFrom :: DB.Database -> EndorserBlockHash -> IO (Maybe [Maybe ByteString])
-closureFrom db ebHash =
-  withStmt db "SELECT txBounds, txs FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
-    dbBindHash stmt 1 ebHash
-    dbStep stmt >>= \case
-      DB.Done -> pure Nothing
-      DB.Row -> do
-        bounds <- DB.columnBlob stmt 0
-        txs <- DB.columnBlob stmt 1
-        pure $ Just (splitClosure bounds txs)
+-- | Which row holding an EB a lookup takes: the one at a point, or any. The
+-- immutable partition holds an EB at the point it was certified at, which a
+-- read of it at another point does not name.
+data EbRow = AtPoint !LeiosPoint | AnyOf !EndorserBlockHash
+
+-- | Run a query of the row, with @?1@ its slot and @?2@ its hash.
+withRowStmt :: DB.Database -> EbRow -> (DB.Utf8, DB.Utf8) -> (DB.Statement -> IO a) -> IO a
+withRowStmt db row (atPoint, anyOf) k = case row of
+  AtPoint point -> withStmt db atPoint $ \stmt -> do
+    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+    dbBindHash stmt 2 (pointEbHash point)
+    k stmt
+  AnyOf ebHash -> withStmt db anyOf $ \stmt -> do
+    dbBindHash stmt 2 ebHash
+    k stmt
+
+closureFrom :: DB.Database -> EbRow -> IO (Maybe [Maybe ByteString])
+closureFrom db row =
+  withRowStmt
+    db
+    row
+    ( "SELECT txBounds, txs FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+    , "SELECT txBounds, txs FROM ebs WHERE ebHashBytes = ?2 LIMIT 1"
+    )
+    $ \stmt ->
+      dbStep stmt >>= \case
+        DB.Done -> pure Nothing
+        DB.Row -> do
+          bounds <- DB.columnBlob stmt 0
+          txs <- DB.columnBlob stmt 1
+          pure $ Just (splitClosure bounds txs)
 
 -- | An EB's body.
-lookupBlob :: DB.Database -> EndorserBlockHash -> IO (Maybe ByteString)
-lookupBlob db ebHash =
-  withStmt db "SELECT body FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
-    dbBindHash stmt 1 ebHash
-    dbStep stmt >>= \case
-      DB.Done -> pure Nothing
-      DB.Row -> Just <$> DB.columnBlob stmt 0
+lookupBlob :: DB.Database -> EbRow -> IO (Maybe ByteString)
+lookupBlob db row =
+  withRowStmt
+    db
+    row
+    ( "SELECT body FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+    , "SELECT body FROM ebs WHERE ebHashBytes = ?2 LIMIT 1"
+    )
+    $ \stmt ->
+      dbStep stmt >>= \case
+        DB.Done -> pure Nothing
+        DB.Row -> Just <$> DB.columnBlob stmt 0
 
 -- | A row holding the EB.
 data EbIndex = EbIndex
@@ -210,17 +236,22 @@ data EbIndex = EbIndex
   , eiTxCount :: !Int
   }
 
--- | Where the EB's blobs are, or 'Nothing' if its body is not stored.
-lookupEbIndex :: DB.Database -> EndorserBlockHash -> IO (Maybe EbIndex)
-lookupEbIndex db ebHash =
-  withStmt db "SELECT rowid, txCount FROM ebs WHERE ebHashBytes = ?1 AND txCount IS NOT NULL LIMIT 1" $ \stmt -> do
-    dbBindHash stmt 1 ebHash
-    dbStep stmt >>= \case
-      DB.Done -> pure Nothing
-      DB.Row -> do
-        eiRowid <- DB.columnInt64 stmt 0
-        eiTxCount <- fromIntegral <$> DB.columnInt64 stmt 1
-        pure (Just EbIndex{eiRowid, eiTxCount})
+-- | Where the EB's blobs are, or 'Nothing' if no row holds it.
+lookupEbIndex :: DB.Database -> EbRow -> IO (Maybe EbIndex)
+lookupEbIndex db row =
+  withRowStmt
+    db
+    row
+    ( "SELECT rowid, txCount FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+    , "SELECT rowid, txCount FROM ebs WHERE ebHashBytes = ?2 LIMIT 1"
+    )
+    $ \stmt ->
+      dbStep stmt >>= \case
+        DB.Done -> pure Nothing
+        DB.Row -> do
+          eiRowid <- DB.columnInt64 stmt 0
+          eiTxCount <- fromIntegral <$> DB.columnInt64 stmt 1
+          pure (Just EbIndex{eiRowid, eiTxCount})
 
 -- | The bounds of the txs at offsets @[lo, hi]@: where each starts in the
 -- closure, and where the last one ends.

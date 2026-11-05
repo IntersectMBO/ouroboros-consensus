@@ -14,7 +14,7 @@ Both partitions have one table, `ebs`, with one row for each pair of slot and EB
 Announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written.
 Each row holds the whole EB:
 
-- `txCount` is how many transactions the body lists, NULL until the body arrives.
+- `txCount` is how many transactions the body lists.
 - `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size.
 - `body` is the body in the bytes it was received in.
 - `txs` is the closure: the bytes of the EB's transactions, concatenated.
@@ -42,10 +42,10 @@ erDiagram
     }
 ```
 
-- When a point is announced, its row is inserted. If another row holds the EB, the new row copies its body and closure in the same transaction.
-- When an EB body arrives, it is written into every row of the EB, with a closure of zeroes, and its point's row is inserted if the announcement did not.
-- Each transaction write fills its transactions in place, in every row of the EB, through SQLite's incremental blob API. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A transaction whose bytes are still zeroes reads as not written: a valid transaction never is.
+- When an EB body arrives at a point, the point's row is inserted, with a closure of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
+- Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A transaction whose bytes are still zeroes reads as not written: a valid transaction never is.
 - Only at startup, to seed what the node holds, does LeiosDB judge completeness: an EB is complete if each of its transactions hashes to what its body lists, or if the immutable partition holds it.
+- Reads take the row at the requested point, and fall back to the immutable partition's row of the EB, at whichever point it was certified.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
 

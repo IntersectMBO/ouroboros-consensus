@@ -35,8 +35,8 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
-  , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , forgeLeiosEb
@@ -49,6 +49,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
+  , LocalFill
   , Promise (..)
   , newLeiosDBInMemory
   , storeForgedEb
@@ -132,14 +133,19 @@ withRW :: LeiosDbHandle IO -> (RW -> IO a) -> IO a
 withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 
 -- Writes are awaited, so a read that follows one sees it.
-rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
-rwInsertEbPoint rw point sz = void $ await =<< writeEbPoint (rwWriter rw) point sz
-
 rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO ()
-rwInsertEbBody rw point eb = await =<< writeEbBody (rwWriter rw) point eb
+rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb []
+
+-- | Also fill from local bytes, and return the offsets filled.
+rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> [LocalFill] -> IO [TxOffset]
+rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
-rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point txs
+rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
+
+-- | Also the offsets dropped for their size.
+rwInsertTxsDropped :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
+rwInsertTxsDropped rw point txs = await =<< writeTxs (rwWriter rw) point txs
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
@@ -147,13 +153,13 @@ rwScanEbPoints = testScanEbPoints . rwReader
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
-rwLookupEbBody :: RW -> EndorserBlockHash -> IO (Maybe BS.ByteString)
+rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe BS.ByteString)
 rwLookupEbBody = lookupEbBody . rwReader
 
-rwLookupEbClosure :: RW -> EndorserBlockHash -> IO (Maybe [BS.ByteString])
+rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
 rwLookupEbClosure = lookupEbClosure . rwReader
 
-rwBatchRetrieveTxs :: RW -> EndorserBlockHash -> [Int] -> IO [(Int, Maybe BS.ByteString)]
+rwBatchRetrieveTxs :: RW -> LeiosPoint -> [Int] -> IO [(Int, Maybe BS.ByteString)]
 rwBatchRetrieveTxs = batchRetrieveTxs . rwReader
 
 -- | Create a fresh database and run an action with it.
@@ -201,8 +207,12 @@ mkTestGroups impl =
       "points"
       [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
       , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
-      , testCase "a body for an unwritten point writes the point" $
+      , testCase "a body write records its point" $
           withFreshDb impl test_ebBodyWritesPoint
+      , testCase "a body written again reports no txs, but keeps them" $
+          withFreshDb impl test_ebBodyAgainKeepsTxs
+      , testCase "a point holds only what is written at it" $
+          withFreshDb impl test_readsAtPoint
       ]
   , testGroup
       "ebs"
@@ -219,6 +229,17 @@ mkTestGroups impl =
           test_retrieveFallsBackPerTx impl
       ]
   , testGroup
+      "local fills"
+      [ testCase "a body fills a tx from another endorser block's bytes" $
+          withFreshDb impl test_fillFromAnotherEb
+      , testCase "a fill from a source without the bytes fills nothing" $
+          withFreshDb impl test_fillWithoutSourceBytes
+      , testCase "a body whose fills complete its closure completes it" $
+          withFreshDb impl test_fillCompletesClosure
+      , testCase "a body fills its txs from another point of the same endorser block" $
+          withFreshDb impl test_fillFromAnotherPoint
+      ]
+  , testGroup
       "completion"
       [ testCase "a scan finds an EB once each of its txs is written" $
           withFreshDb impl test_completion
@@ -226,9 +247,9 @@ mkTestGroups impl =
           withFreshDb impl test_completionHashes
       , testCase "a scan never finds an EB with a tx whose bytes are zeroes" $
           withFreshDb impl test_completionZeroTx
-      , testCase "a scan finds an EB at its youngest point" $
+      , testCase "a scan finds each point of an EB whose closure is complete" $
           withFreshDb impl test_multipleSlotsSameHash
-      , testCase "a scan finds a complete EB at a point written after the closure completed" $
+      , testCase "a scan finds a point written after another completed, once complete itself" $
           withFreshDb impl test_scanFindsLaterPoint
       ]
   , testGroup
@@ -244,8 +265,6 @@ mkTestGroups impl =
       "garbage collection of an EB a newer point keeps"
       [ testCase "drops its older points and still finds it complete" $
           withFreshDb impl test_gcDropsOlderPoints
-      , testCase "finds its closure complete after dropping the point its body was written at" $
-          withFreshDb impl test_gcKeepsMissingTxCount
       , testCase "keeps only the newest point of an EB announced again in each round" $
           withFreshDb impl test_gcBoundsPointsOfReannouncedEb
       , testCase "drops the writes of a point older than the latest collection" $
@@ -395,7 +414,7 @@ prop_pointsInsertThenScan :: DbImpl -> Property
 prop_pointsInsertThenScan impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-      (_, insertTime) <- timed $ rwInsertEbPoint con point 1000
+      (_, insertTime) <- timed $ rwInsertEbBody con point (mkTestEb 1)
       (points, scanTime) <- timed $ rwScanEbPoints con
       pure $
         (pointSlotNo point, pointEbHash point) `elem` points
@@ -409,7 +428,7 @@ prop_pointsAccumulate impl =
     forAll (replicateM count genPoint) $ \points ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
         insertTimes <- forM points $ \p ->
-          snd <$> timed (rwInsertEbPoint con p 1000)
+          snd <$> timed (rwInsertEbBody con p (mkTestEb 1))
         (scanned, scanTime) <- timed $ rwScanEbPoints con
         let expected = [(pointSlotNo p, pointEbHash p) | p <- points]
         pure $
@@ -426,9 +445,8 @@ prop_ebsInsertThenLookup impl =
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
         let expected = Just (bodyBytes eb)
-        rwInsertEbPoint con point (encodeEndorserBlockSize eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
-        (result, lookupTime) <- timed $ rwLookupEbBody con (pointEbHash point)
+        (result, lookupTime) <- timed $ rwLookupEbBody con point
         pure $
           result == expected
             & counterexample ("Expected: " ++ show expected ++ "\nGot: " ++ show result)
@@ -438,9 +456,9 @@ prop_ebsInsertThenLookup impl =
 -- | Property: looking up a non-existent EB returns 'Nothing'.
 prop_ebsLookupMissing :: DbImpl -> Property
 prop_ebsLookupMissing impl =
-  forAll genEbHash $ \missingHash ->
+  forAll genPoint $ \missingPoint ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-      (result, lookupTime) <- timed $ rwLookupEbBody con missingHash
+      (result, lookupTime) <- timed $ rwLookupEbBody con missingPoint
       pure $
         result === Nothing
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
@@ -455,8 +473,7 @@ prop_txsInsertThenRetrieve impl =
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
         ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
           -- Insert the EB first (point then body)
-          rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-          void $ rwInsertEbBody con point eb
+          rwInsertEbBody con point eb
           -- Forced, so that the tabulated insert time excludes building the
           -- bytes.
           let !txsToInsert =
@@ -464,7 +481,7 @@ prop_txsInsertThenRetrieve impl =
           insertTime <- snd <$> timed (rwInsertTxs con point txsToInsert)
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
-          (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con (pointEbHash point) allOffsets
+          (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con point allOffsets
           -- Check that inserted txs have their bytes, others are missing
           let checkResult (off, mbBytes) =
                 if off `elem` offsetsToInsert
@@ -489,9 +506,9 @@ prop_txsInsertThenRetrieve impl =
 -- | Property: retrieving from non-existent EB returns empty list.
 prop_txsRetrieveMissing :: DbImpl -> Property
 prop_txsRetrieveMissing impl =
-  forAll genEbHash $ \missingHash ->
+  forAll genPoint $ \missingPoint ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-      (result, retrieveTime) <- timed $ rwBatchRetrieveTxs con missingHash [0, 1, 2]
+      (result, retrieveTime) <- timed $ rwBatchRetrieveTxs con missingPoint [0, 1, 2]
       pure $
         result === []
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
@@ -507,10 +524,8 @@ test_completion db = do
       otherPoint = mkTestPoint (SlotNo 2) 2
       otherEb = mkTestEb 2
   withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    rwInsertEbPoint con otherPoint (encodeEndorserBlockSize otherEb)
-    void $ rwInsertEbBody con point eb
-    void $ rwInsertEbBody con otherPoint otherEb
+    rwInsertEbBody con point eb
+    rwInsertEbBody con otherPoint otherEb
     rwInsertTxs con point (take 2 (allTxsFor eb))
     rwScanComplete con 0 >>= (@?= [])
     rwInsertTxs con point (drop 2 (allTxsFor eb))
@@ -523,8 +538,7 @@ test_completionHashes db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 2
   withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
+    rwInsertEbBody con point eb
     rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
     rwScanComplete con 0 >>= (@?= [])
 
@@ -536,16 +550,15 @@ test_completionZeroTx db = do
       zero = BS.singleton 0
       eb = mkEndorserBlock [(hashLeiosTx (MkLeiosTx zero), 1)]
   withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
+    rwInsertEbBody con point eb
     rwScanComplete con 0 >>= (@?= [])
-    rwLookupEbClosure con (pointEbHash point) >>= (@?= Nothing)
+    rwLookupEbClosure con point >>= (@?= Nothing)
     rwInsertTxs con point [(0, zero)]
     rwScanComplete con 0 >>= (@?= [])
-    rwLookupEbClosure con (pointEbHash point) >>= (@?= Nothing)
+    rwLookupEbClosure con point >>= (@?= Nothing)
 
 -- | The same EB content can be announced at several slots; the DB keeps each
--- 'LeiosPoint', and the scan finds the EB at its youngest.
+-- 'LeiosPoint' on its own, and the scan finds each whose closure is complete.
 test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
 test_multipleSlotsSameHash db = do
   let hashSeed = 1
@@ -553,36 +566,60 @@ test_multipleSlotsSameHash db = do
       point2 = mkTestPoint (SlotNo 2) hashSeed
       eb = mkTestEb 2 -- same content at both points (deterministic from numTxs)
   withRW db $ \con -> do
-    rwInsertEbPoint con point1 (encodeEndorserBlockSize eb)
-    rwInsertEbPoint con point2 (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point1 eb
-    void $ rwInsertEbBody con point2 eb
+    rwInsertEbBody con point1 eb
+    rwInsertEbBody con point2 eb
     rwInsertTxs con point1 (allTxsFor eb)
-    rwScanComplete con 0 >>= (@?= [point2])
+    rwScanComplete con 0 >>= (@?= [point1])
 
--- | An EB announced again after its closure completed gets only the new point
--- written. Once the scan's slot is past the point it completed at, the scan
--- still finds it, at the new point.
+-- | An EB announced again after its closure completed at an older point: the
+-- new point is complete only once its own txs are written.
 test_scanFindsLaterPoint :: LeiosDbHandle IO -> IO ()
 test_scanFindsLaterPoint db = do
   let older = mkTestPoint (SlotNo 10) 1
       younger = mkTestPoint (SlotNo 30) 1
       eb = mkTestEb 2
   withRW db $ \con -> do
-    rwInsertEbPoint con older (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con older eb
+    rwInsertEbBody con older eb
     rwInsertTxs con older (allTxsFor eb)
-    rwInsertEbPoint con younger (encodeEndorserBlockSize eb)
+    rwInsertEbBody con younger eb
+    rwScanComplete con 20 >>= (@?= [])
+    rwInsertTxs con younger (allTxsFor eb)
     rwScanComplete con 20 >>= (@?= [younger])
 
--- | A body can only be written for a point already written, by 'writeEbPoint'
--- on the announcement path.
+-- | A body write records its point.
 test_ebBodyWritesPoint :: LeiosDbHandle IO -> IO ()
 test_ebBodyWritesPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
-  void $ rwInsertEbBody con (mkTestPoint 1 1) eb
+  rwInsertEbBody con (mkTestPoint 1 1) eb
   rwScanEbPoints con >>= (@?= [(1, mkTestEbHash 1)])
-  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= Just (serialiseEndorserBlock eb))
+  rwLookupEbBody con (mkTestPoint 1 1) >>= (@?= Just (serialiseEndorserBlock eb))
+
+-- | A body written again at its point reports only what its fills filled, none
+-- here, and keeps the txs written since the first.
+test_ebBodyAgainKeepsTxs :: LeiosDbHandle IO -> IO ()
+test_ebBodyAgainKeepsTxs db = withRW db $ \con -> do
+  let eb = mkTestEb 3
+      point = mkTestPoint 1 1
+      written = take 2 (allTxsFor eb)
+  rwInsertEbBodyFilling con point eb [] >>= (@?= [])
+  rwInsertTxs con point written
+  rwInsertEbBodyFilling con point eb [] >>= (@?= [])
+  rwBatchRetrieveTxs con point [0, 1, 2]
+    >>= (@?= [(o, Just bytes) | (o, bytes) <- written] <> [(2, Nothing)])
+
+-- | Each point of an EB is read on its own: a point holds only the body and
+-- txs written at it, whatever another point of the EB holds.
+test_readsAtPoint :: LeiosDbHandle IO -> IO ()
+test_readsAtPoint db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+  writeWholeEb con [mkTestPoint 1 1] eb
+  rwLookupEbBody con (mkTestPoint 2 1) >>= (@?= Nothing)
+  rwLookupEbClosure con (mkTestPoint 2 1) >>= (@?= Nothing)
+  rwBatchRetrieveTxs con (mkTestPoint 2 1) [0, 1] >>= (@?= [])
+  rwInsertEbBody con (mkTestPoint 2 1) eb
+  rwLookupEbClosure con (mkTestPoint 2 1) >>= (@?= Nothing)
+  rwInsertTxs con (mkTestPoint 2 1) (allTxsFor eb)
+  rwLookupEbClosure con (mkTestPoint 2 1) >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | A tx write only fills a tx the body declares, at its declared size, the
 -- first of a write winning. Anything else changes nothing.
@@ -595,34 +632,108 @@ test_malformedTxWritesDropped db = do
       eb = mkTestEb 2
       offsets = [0, 1]
   withRW db $ \con -> do
-    rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con point eb
-    -- An offset the body does not declare, and wrong-sized bytes.
-    rwInsertTxs
-      con
-      point
-      [ (2, txBytesFor eb 0)
-      , (0, BS.snoc (txBytesFor eb 0) 0)
-      , (1, BS.take 1 (txBytesFor eb 1))
-      ]
-    retrieved <- rwBatchRetrieveTxs con (pointEbHash point) offsets
+    rwInsertEbBody con point eb
+    -- An offset the body does not declare, and wrong-sized bytes. Only the
+    -- latter are reported.
+    dropped <-
+      rwInsertTxsDropped
+        con
+        point
+        [ (2, txBytesFor eb 0)
+        , (0, BS.snoc (txBytesFor eb 0) 0)
+        , (1, BS.take 1 (txBytesFor eb 1))
+        ]
+    dropped @?= [0, 1]
+    retrieved <- rwBatchRetrieveTxs con point offsets
     retrieved @?= [(off, Nothing) | off <- offsets]
     -- Within one write, the first delivery wins.
     rwInsertTxs con point [(0, txBytesFor eb 0), (0, BS.map (+ 1) (txBytesFor eb 0))]
-    retrieved' <- rwBatchRetrieveTxs con (pointEbHash point) [0]
+    retrieved' <- rwBatchRetrieveTxs con point [0]
     retrieved' @?= [(0, Just (txBytesFor eb 0))]
     rwInsertTxs con point [(1, txBytesFor eb 1)]
-    closure <- rwLookupEbClosure con (pointEbHash point)
+    closure <- rwLookupEbClosure con point
     closure @?= Just (map snd (allTxsFor eb))
+
+-- * Local fills
+
+-- | Two endorser blocks that both reference the tx at offset 1 of 'mkTestEb'
+-- 2: that one, and one that references it at offset 0, then a tx of its own.
+fillFixtures :: (LeiosPoint, EndorserBlock, LeiosPoint, EndorserBlock)
+fillFixtures =
+  ( mkTestPoint (SlotNo 1) 1
+  , mkTestEb 2
+  , mkTestPoint (SlotNo 2) 2
+  , mkEndorserBlock [(testTxHash 1 101, 101), (testTxHash 1 107, 107)]
+  )
+
+test_fillFromAnotherEb :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherEb db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    -- The second fill's source lists another tx at its offset.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation (pointEbHash pointA) 1)
+        , (1, MkTxLocation (pointEbHash pointA) 0)
+        ]
+    result @?= [0]
+    retrieved <- rwBatchRetrieveTxs con pointB [0, 1]
+    retrieved @?= [(0, Just (txBytesFor ebA 1)), (1, Nothing)]
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    rwScanComplete con 0 >>= (@?= [pointA, pointB])
+
+test_fillWithoutSourceBytes :: LeiosDbHandle IO -> IO ()
+test_fillWithoutSourceBytes db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    rwInsertEbBody con pointA ebA
+    -- The first source holds the body but not its txs; the second is unknown.
+    -- So the first source's tx is not written.
+    result <-
+      rwInsertEbBodyFilling
+        con
+        pointB
+        ebB
+        [ (0, MkTxLocation (pointEbHash pointA) 1)
+        , (0, MkTxLocation (mkTestEbHash 9) 0)
+        ]
+    result @?= []
+
+test_fillCompletesClosure :: LeiosDbHandle IO -> IO ()
+test_fillCompletesClosure db = do
+  let (pointA, ebA, _, _) = fillFixtures
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkEndorserBlock [(testTxHash 1 101, 101)]
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation (pointEbHash pointA) 1)]
+    result @?= [0]
+    rwScanComplete con 0 >>= (@?= [pointA, pointB])
+
+-- | An EB announced again: the new point fills its txs from the older one's,
+-- which a point does not share otherwise.
+test_fillFromAnotherPoint :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherPoint db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      older = mkTestPoint 1 1
+      younger = mkTestPoint 2 1
+  writeWholeEb con [older] eb
+  result <-
+    rwInsertEbBodyFilling con younger eb [(off, MkTxLocation (mkTestEbHash 1) off) | off <- [0, 1]]
+  result @?= [0, 1]
+  rwLookupEbClosure con younger >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- * Garbage collection
 
 -- | Write the EB at these points, with its body and all its transactions.
 writeWholeEb :: RW -> [LeiosPoint] -> EndorserBlock -> IO ()
 writeWholeEb con points eb = do
-  forM_ points $ \point -> rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-  forM_ points $ \point -> void $ rwInsertEbBody con point eb
-  forM_ (take 1 points) $ \point -> rwInsertTxs con point (allTxsFor eb)
+  forM_ points $ \point -> rwInsertEbBody con point eb
+  forM_ points $ \point -> rwInsertTxs con point (allTxsFor eb)
 
 -- | An EB copied to the immutable partition, evicted from the volatile one, and
 -- then fetched again at a new point: a tx the new volatile copy lacks is still
@@ -634,12 +745,11 @@ test_retrieveFallsBackPerTx impl = withFreshDb impl $ \db -> withRW db $ \con ->
   writeWholeEb con [mkTestPoint 5 1] eb
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
   garbageCollect db 6
-  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
-  void $ rwInsertEbBody con again eb
+  rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
-  rwBatchRetrieveTxs con (mkTestEbHash 1) [0, 1]
+  rwBatchRetrieveTxs con again [0, 1]
     >>= (@?= [(off, Just (txBytesFor eb off)) | off <- [0, 1]])
-  rwLookupEbClosure con (mkTestEbHash 1) >>= (@?= Just (map snd (allTxsFor eb)))
+  rwLookupEbClosure con again >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | A crash can lose the volatile writes that completed a promoted EB, but not
 -- its immutable copy. Promoting it again, as when the crash lost the block
@@ -656,7 +766,7 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
     SQL.exec sql (T.pack "UPDATE ebs SET txs = zeroblob(length(txs))")
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     leiosDbPromoteToImmutable db [point]
-    rwLookupEbClosure con (mkTestEbHash 1) >>= (@?= Just (map snd (allTxsFor eb)))
+    rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | An EB announced again after the announcement that gets certified: the
 -- immutable copy is at the certified slot.
@@ -668,8 +778,8 @@ test_promoteAtCertifiedSlot _volDbPath immDbPath db = do
   ebSlotIn immDbPath (mkTestEbHash 1) >>= (@?= 10)
 
 -- | Whether the reader sees the EB's whole closure.
-holdsClosure :: RW -> EndorserBlockHash -> IO Bool
-holdsClosure con ebHash = isJust <$> rwLookupEbClosure con ebHash
+holdsClosure :: RW -> LeiosPoint -> IO Bool
+holdsClosure con point = isJust <$> rwLookupEbClosure con point
 
 test_gcEvictsOldEb :: LeiosDbHandle IO -> IO ()
 test_gcEvictsOldEb db = withRW db $ \con -> do
@@ -677,43 +787,24 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
   writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
   garbageCollect db 6
-  rwLookupEbBody con (mkTestEbHash 1) >>= (@?= Nothing)
-  holdsClosure con (mkTestEbHash 1) >>= (@?= False)
+  rwLookupEbBody con (mkTestPoint 5 1) >>= (@?= Nothing)
+  holdsClosure con (mkTestPoint 5 1) >>= (@?= False)
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 2)])
-  holdsClosure con (mkTestEbHash 2) >>= (@?= True)
+  holdsClosure con (mkTestPoint 10 2) >>= (@?= True)
   -- The old EB's transactions went with it, so a new EB referencing them
   -- lacks them.
-  rwInsertEbPoint con (mkTestPoint 20 3) (encodeEndorserBlockSize (mkTestEb 3))
-  void $ rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
-  holdsClosure con (mkTestEbHash 3) >>= (@?= False)
+  rwInsertEbBody con (mkTestPoint 20 3) (mkTestEb 3)
+  holdsClosure con (mkTestPoint 20 3) >>= (@?= False)
 
--- | An EB written whole at slot 5 and announced again at slot 10, collected at
--- slot 6.
+-- | An EB written whole at slot 5 and again at slot 10, collected at slot 6.
 test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO ()
 test_gcDropsOlderPoints db = withRW db $ \con -> do
   let eb = mkTestEb 2
       again = mkTestPoint 10 1
-  writeWholeEb con [mkTestPoint 5 1] eb
-  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
+  writeWholeEb con [mkTestPoint 5 1, again] eb
   garbageCollect db 6
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
-  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
-  rwScanComplete con 6 >>= (@?= [again])
-
--- | An EB whose body was written at slot 5, and one of whose two transactions
--- arrived, is announced again at slot 10 and collected at slot 6. Then its
--- other transaction arrives.
-test_gcKeepsMissingTxCount :: LeiosDbHandle IO -> IO ()
-test_gcKeepsMissingTxCount db = withRW db $ \con -> do
-  let eb = mkTestEb 2
-      older = mkTestPoint 5 1
-      again = mkTestPoint 10 1
-  rwInsertEbPoint con older (encodeEndorserBlockSize eb)
-  void $ rwInsertEbBody con older eb
-  rwInsertTxs con older (take 1 (allTxsFor eb))
-  rwInsertEbPoint con again (encodeEndorserBlockSize eb)
-  garbageCollect db 6
-  rwInsertTxs con again (drop 1 (allTxsFor eb))
+  holdsClosure con again >>= (@?= True)
   rwScanComplete con 6 >>= (@?= [again])
 
 -- | After a collection at slot 6, a point at slot 5 and a body for another
@@ -724,11 +815,11 @@ test_gcDropsWritesOfCollectedPoint db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
   garbageCollect db 6
   garbageCollect db 3
-  rwInsertEbPoint con (mkTestPoint 5 2) (encodeEndorserBlockSize (mkTestEb 2))
+  rwInsertEbBody con (mkTestPoint 5 2) (mkTestEb 2)
   rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
-  rwInsertEbPoint con (mkTestPoint 4 1) (encodeEndorserBlockSize (mkTestEb 2))
+  rwInsertEbBody con (mkTestPoint 4 1) (mkTestEb 2)
   rwScanEbPoints con >>= (@?= [(10, mkTestEbHash 1)])
-  rwLookupEbBody con (mkTestEbHash 3) >>= (@?= Nothing)
+  rwLookupEbBody con (mkTestPoint 5 3) >>= (@?= Nothing)
 
 -- | An EB written whole at slot 10 is announced again in each of nine more
 -- rounds, each followed by a collection at its slot.
@@ -737,16 +828,15 @@ test_gcBoundsPointsOfReannouncedEb db = withRW db $ \con -> do
   let eb = mkTestEb 2
   writeWholeEb con [mkTestPoint 10 1] eb
   forM_ [2 .. 10] $ \n -> do
-    rwInsertEbPoint con (mkTestPoint (10 * n) 1) (encodeEndorserBlockSize eb)
+    rwInsertEbBody con (mkTestPoint (10 * n) 1) eb
     garbageCollect db (10 * n)
   rwScanEbPoints con >>= (@?= [(100, mkTestEbHash 1)])
-  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
 
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
   garbageCollect db 6
-  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+  holdsClosure con (mkTestPoint 6 1) >>= (@?= True)
 
 -- | More points before the slot than the SQLite implementation deletes in one
 -- job, and one at the slot.
@@ -755,7 +845,7 @@ test_gcCollectsManyPoints db = withRW db $ \con -> do
   let eb = mkTestEb 2
       n = 2 * gcBatchSize + 1
   forM_ [1 .. n] $ \slot ->
-    rwInsertEbPoint con (mkTestPoint (fromIntegral slot) 1) (encodeEndorserBlockSize eb)
+    rwInsertEbBody con (mkTestPoint (fromIntegral slot) 1) eb
   garbageCollect db (fromIntegral n)
   rwScanEbPoints con >>= (@?= [(fromIntegral n, mkTestEbHash 1)])
 
@@ -764,18 +854,17 @@ test_gcKeepsPromotedEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
   garbageCollect db 6
-  holdsClosure con (mkTestEbHash 1) >>= (@?= True)
+  holdsClosure con (mkTestPoint 5 1) >>= (@?= True)
 
 -- | A complete EB promoted along with one whose closure lacks a tx.
 test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
 test_promoteIncompleteFails db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 4 2] (mkTestEb 3)
-  rwInsertEbPoint con (mkTestPoint 5 1) (encodeEndorserBlockSize (mkTestEb 2))
-  void $ rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
+  rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
   rwInsertTxs con (mkTestPoint 5 1) (take 1 (allTxsFor (mkTestEb 2)))
   assertPromoteFails db [mkTestPoint 4 2, mkTestPoint 5 1]
   garbageCollect db 6
-  holdsClosure con (mkTestEbHash 2) >>= (@?= False)
+  holdsClosure con (mkTestPoint 4 2) >>= (@?= False)
 
 -- | An EB whose txs are written but do not hash to its body, which the scan
 -- would take as complete in the immutable partition.
@@ -783,8 +872,7 @@ test_promoteChecksHashes :: LeiosDbHandle IO -> IO ()
 test_promoteChecksHashes db = withRW db $ \con -> do
   let point = mkTestPoint 5 1
       eb = mkTestEb 2
-  rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-  void $ rwInsertEbBody con point eb
+  rwInsertEbBody con point eb
   rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
   assertPromoteFails db [point]
   rwScanComplete con 0 >>= (@?= [])
@@ -806,10 +894,9 @@ prop_completedEbComplete impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-        rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-        void $ rwInsertEbBody con point eb
+        rwInsertEbBody con point eb
         rwInsertTxs con point (allTxsFor eb)
-        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        (result, queryTime) <- timed $ rwLookupEbClosure con point
         pure $
           result === Just (map snd (allTxsFor eb))
             & tabulate "lookupEbClosure (complete)" [timeBucket queryTime]
@@ -823,10 +910,9 @@ prop_completedEbPartialTxs impl =
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
         ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-          rwInsertEbPoint con point (encodeEndorserBlockSize eb)
-          void $ rwInsertEbBody con point eb
+          rwInsertEbBody con point eb
           rwInsertTxs con point [(off, txBytesFor eb off) | off <- offsetsToInsert]
-          (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+          (result, queryTime) <- timed $ rwLookupEbClosure con point
           let expected
                 | length offsetsToInsert == numTxs = Just (map snd (allTxsFor eb))
                 | otherwise = Nothing
@@ -836,13 +922,12 @@ prop_completedEbPartialTxs impl =
               & tabulate "lookupEbClosure (partial txs)" [timeBucket queryTime]
               & tabulate "numTxs" [magnitudeBucket numTxs]
 
--- | Property: EB with only a point announced (no body) returns Nothing.
+-- | Property: a point with no body written returns Nothing.
 prop_completedEbNoBody :: DbImpl -> Property
 prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-      rwInsertEbPoint con point 1000
-      (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+      (result, queryTime) <- timed $ rwLookupEbClosure con point
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"
@@ -856,12 +941,10 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
       keptHash = mkTestEbHash 1
       droppedHash = mkTestEbHash 2
   withRW db $ \con -> do
-    rwInsertEbPoint con (MkLeiosPoint 5 keptHash) (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con (MkLeiosPoint 5 keptHash) eb
+    rwInsertEbBody con (MkLeiosPoint 5 keptHash) eb
     -- The kept EB is announced again at a slot the truncation drops.
-    rwInsertEbPoint con (MkLeiosPoint 15 keptHash) (encodeEndorserBlockSize eb)
-    rwInsertEbPoint con (MkLeiosPoint 15 droppedHash) (encodeEndorserBlockSize eb)
-    void $ rwInsertEbBody con (MkLeiosPoint 15 droppedHash) eb
+    rwInsertEbBody con (MkLeiosPoint 15 keptHash) eb
+    rwInsertEbBody con (MkLeiosPoint 15 droppedHash) eb
     rwInsertTxs con (MkLeiosPoint 5 keptHash) (allTxsFor eb)
     rwInsertTxs con (MkLeiosPoint 15 droppedHash) (allTxsFor eb)
 
@@ -871,11 +954,11 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
   withRW db $ \con -> do
     points <- rwScanEbPoints con
     points @?= [(5, keptHash)]
-    keptBody <- rwLookupEbBody con keptHash
+    keptBody <- rwLookupEbBody con (MkLeiosPoint 5 keptHash)
     keptBody @?= Just (bodyBytes eb)
-    droppedBody <- rwLookupEbBody con droppedHash
+    droppedBody <- rwLookupEbBody con (MkLeiosPoint 15 droppedHash)
     droppedBody @?= Nothing
-    keptClosure <- rwLookupEbClosure con keptHash
+    keptClosure <- rwLookupEbClosure con (MkLeiosPoint 5 keptHash)
     keptClosure @?= Just (map snd (allTxsFor eb))
 
 -- | The immutable schema lacks the volatile-only columns and indexes; the
@@ -930,7 +1013,7 @@ test_reopenKeepsData volDbPath immDbPath = do
   let eb = mkTestEb 2
       ebHash = mkTestEbHash 1
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
-    withRW db $ \con -> rwInsertEbPoint con (MkLeiosPoint 5 ebHash) (encodeEndorserBlockSize eb)
+    withRW db $ \con -> rwInsertEbBody con (MkLeiosPoint 5 ebHash) eb
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
     withRW db $ \con -> do
       points <- rwScanEbPoints con
@@ -947,12 +1030,12 @@ withSqlFile path k =
 sqlBlob :: EndorserBlockHash -> String
 sqlBlob ebHash = "x'" <> hashToStringAsHex ebHash <> "'"
 
--- | How many rows of the file hold the EB's body.
+-- | How many rows of the file hold the EB.
 ebBodyRows :: FilePath -> EndorserBlockHash -> IO Int
 ebBodyRows path ebHash =
   queryCount
     path
-    ("SELECT COUNT(*) FROM ebs WHERE ebHashBytes = " <> sqlBlob ebHash <> " AND txCount IS NOT NULL")
+    ("SELECT COUNT(*) FROM ebs WHERE ebHashBytes = " <> sqlBlob ebHash)
 
 -- | The slot of the file's row of the EB.
 ebSlotIn :: FilePath -> EndorserBlockHash -> IO Int
@@ -970,8 +1053,7 @@ queryCount path query =
 -- | An operation on the database: a write, or what the ChainDB has it do as
 -- blocks become immutable.
 data Op
-  = OpPoint LeiosPoint
-  | OpBody LeiosPoint
+  = OpBody LeiosPoint [LocalFill]
   | OpTxs LeiosPoint [TxOffset]
   | OpPromote EndorserBlockHash
   | OpGc SlotNo
@@ -996,7 +1078,7 @@ prop_storeForgedEbThenLookup impl =
         withWriter db $ \writer -> storeForgedEb writer slot forged
         (points, closure) <-
           withReader db $ \reader ->
-            (,) <$> testScanEbPoints reader <*> lookupEbClosure reader ebHash
+            (,) <$> testScanEbPoints reader <*> lookupEbClosure reader (MkLeiosPoint slot ebHash)
         pure $
           conjoin
             [ counterexample "the point is not the slot and the hash of the body" $
@@ -1006,8 +1088,8 @@ prop_storeForgedEbThenLookup impl =
             ]
 
 -- | Property: running the same operations against both implementations, a
--- reader sees the same in each, and the scan finds the same endorser blocks
--- complete.
+-- reader sees the same in each, each body write holds the same offsets, and
+-- the scan finds the same endorser blocks complete.
 --
 -- The node runs on SQLite and its tests run on the in-memory implementation, so
 -- those tests say something about the node only as far as the two agree.
@@ -1022,7 +1104,8 @@ prop_implementationsAgree =
         pure $
           tabulate "endorser blocks promoted" [bucket nPromoted] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
-              inMemory === sqlite
+              tabulate "local fills landed" [bucket (sum (map length (fst inMemory)))] $
+                inMemory === sqlite
  where
   bucket n = if n >= 3 then "3+" else show n
 
@@ -1046,10 +1129,26 @@ genOps bodies = listOf genOp
  where
   genSlot = SlotNo . fromIntegral <$> chooseInt (1, 4)
   genPointOf = MkLeiosPoint <$> genSlot <*> elements (Map.keys bodies)
+  -- Mostly from a source that lists the same tx, which is the only kind that
+  -- can land, another point of the same endorser block included; otherwise
+  -- from anywhere.
+  genFill point =
+    frequency $
+      (1, (,) <$> chooseInt (0, 4) <*> (MkTxLocation <$> elements (Map.keys bodies) <*> chooseInt (0, 4)))
+        : [ (3, elements matching)
+          | let indices = snd (bodies Map.! pointEbHash point)
+                matching =
+                  [ (dstOff, MkTxLocation src srcOff)
+                  | (dstOff, i) <- zip [0 ..] indices
+                  , (src, (_, srcIndices)) <- Map.toList bodies
+                  , (srcOff, j) <- zip [0 ..] srcIndices
+                  , i == j
+                  ]
+          , not (null matching)
+          ]
   genOp =
     frequency
-      [ (2, OpPoint <$> genPointOf)
-      , (2, OpBody <$> genPointOf)
+      [ (3, genPointOf >>= \point -> OpBody point <$> listOf (genFill point))
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> elements (Map.keys bodies))
       , (1, OpGc . (+ 1) <$> genSlot)
@@ -1059,14 +1158,12 @@ genOps bodies = listOf genOp
 poolTxBytes :: Int -> BS.ByteString
 poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 
--- | Run the operations, then read back everything a reader can see of each
--- endorser block. Also how many endorser blocks the operations promoted and
+-- | Run the operations, then read back everything a reader can see at each
+-- point they name. Also how many endorser blocks the operations promoted and
 -- evicted.
 --
 -- The operations run only as far as they meet the node's own preconditions: a
--- body is written once per point, where a point the garbage collection carried
--- an older point's body write over to counts as written, since the node then
--- holds the endorser block; and an
+-- body is written once per point; and an
 -- endorser block is promoted only with a complete closure, as the node promotes
 -- only what an immutable block certifies, and its ChainSel adopts a block
 -- certifying an endorser block only once it holds that endorser block's
@@ -1085,34 +1182,36 @@ observe ::
   [Op] ->
   IO
     ( (Int, Int)
-    , ( [ ( Maybe BS.ByteString
-          , Maybe [BS.ByteString]
-          , [(Int, Maybe BS.ByteString)]
-          )
-        ]
-      , [LeiosPoint]
+    , ( [[TxOffset]]
+      , ( [ ( Maybe BS.ByteString
+            , Maybe [BS.ByteString]
+            , [(Int, Maybe BS.ByteString)]
+            )
+          ]
+        , [LeiosPoint]
+        )
       )
     )
 observe db bodies ops = withRW db $ \rw -> do
-  counts <- go rw 0 [] [] [] 0 ops
-  seen <- forM (Map.toList bodies) $ \(ebHash, (eb, _)) ->
+  (counts, held) <- go rw 0 [] [] [] 0 ops
+  seen <- forM (nub [p | op <- ops, Just p <- [opPoint op]]) $ \point ->
     (,,)
-      <$> rwLookupEbBody rw ebHash
-      <*> rwLookupEbClosure rw ebHash
-      <*> rwBatchRetrieveTxs rw ebHash [0 .. length (endorserBlockReferences eb)]
+      <$> rwLookupEbBody rw point
+      <*> rwLookupEbClosure rw point
+      <*> rwBatchRetrieveTxs
+        rw
+        point
+        [0 .. length (endorserBlockReferences (fst (bodies Map.! pointEbHash point)))]
   complete <- rwScanComplete rw 0
-  pure (counts, (seen, complete))
+  pure (counts, (held, (seen, complete)))
  where
-  go _rw _gcSlot _points _bodied promoted nEvicted [] = pure (length promoted, nEvicted)
+  go _rw _gcSlot _points _bodied promoted nEvicted [] = pure ((length promoted, nEvicted), [])
   go rw gcSlot points bodied promoted nEvicted (op : rest) = case op of
-    OpPoint point -> do
-      rwInsertEbPoint rw point (encodeEndorserBlockSize (fst (bodies Map.! pointEbHash point)))
-      go rw gcSlot (written point points) bodied promoted nEvicted rest
-    OpBody point
+    OpBody point fills
       | point `notElem` bodied -> do
-          rwInsertEbBody rw point (fst (bodies Map.! pointEbHash point))
+          held <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
           let bodied' = if collected point then bodied else point : bodied
-          go rw gcSlot (written point points) bodied' promoted nEvicted rest
+          fmap (held :) <$> go rw gcSlot (written point points) bodied' promoted nEvicted rest
       | otherwise -> go rw gcSlot points bodied promoted nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
@@ -1125,7 +1224,7 @@ observe db bodies ops = withRW db $ \rw -> do
       go rw gcSlot points bodied promoted nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
-        complete <- holdsClosure rw ebHash
+        complete <- holdsClosure rw point
         if complete
           then do
             leiosDbPromoteToImmutable db [point]
@@ -1138,19 +1237,11 @@ observe db bodies ops = withRW db $ \rw -> do
           evicted =
             nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
           kept p = pointSlotNo p >= slot
-          carried =
-            [ q
-            | p <- bodied
-            , not (kept p)
-            , q <- points
-            , pointEbHash q == pointEbHash p
-            , kept q
-            ]
       go
         rw
         (max slot gcSlot)
         (filter kept points)
-        (nub (filter kept bodied <> carried))
+        (filter kept bodied)
         promoted
         (nEvicted + length evicted)
         rest
@@ -1159,3 +1250,7 @@ observe db bodies ops = withRW db $ \rw -> do
     written point ps
       | collected point || point `elem` ps = ps
       | otherwise = point : ps
+  opPoint = \case
+    OpBody point _ -> Just point
+    OpTxs point _ -> Just point
+    _ -> Nothing
