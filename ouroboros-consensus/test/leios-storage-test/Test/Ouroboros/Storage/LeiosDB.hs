@@ -102,6 +102,8 @@ tests =
              "promotion (SQLite)"
              [ testCase "promotes an EB again after a crash lost the volatile txs that completed it" $
                  withTempLeiosDbPaths test_promoteAgainAfterLosingVolatileTxs
+             , testCase "promotes an EB at the certified point, not at another point of it" $
+                 withFreshSQLiteFile test_promoteAtCertifiedSlot
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -656,6 +658,15 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
     leiosDbPromoteToImmutable db [point]
     rwLookupEbClosure con (mkTestEbHash 1) >>= (@?= Just (map snd (allTxsFor eb)))
 
+-- | An EB announced again after the announcement that gets certified: the
+-- immutable copy is at the certified slot.
+test_promoteAtCertifiedSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_promoteAtCertifiedSlot _volDbPath immDbPath db = do
+  let certified = mkTestPoint 10 1
+  withRW db $ \con -> writeWholeEb con [certified, mkTestPoint 20 1] (mkTestEb 2)
+  leiosDbPromoteToImmutable db [certified]
+  ebSlotIn immDbPath (mkTestEbHash 1) >>= (@?= 10)
+
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> EndorserBlockHash -> IO Bool
 holdsClosure con ebHash = isJust <$> rwLookupEbClosure con ebHash
@@ -942,6 +953,11 @@ ebBodyRows path ebHash =
   queryCount
     path
     ("SELECT COUNT(*) FROM ebs WHERE ebHashBytes = " <> sqlBlob ebHash <> " AND txCount IS NOT NULL")
+
+-- | The slot of the file's row of the EB.
+ebSlotIn :: FilePath -> EndorserBlockHash -> IO Int
+ebSlotIn path ebHash =
+  queryCount path ("SELECT ebSlot FROM ebs WHERE ebHashBytes = " <> sqlBlob ebHash)
 
 queryCount :: FilePath -> String -> IO Int
 queryCount path query =
