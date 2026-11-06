@@ -121,7 +121,8 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
         LeiosTxCache
           { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
           , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
-          , insertBody = \_ebh _body _nil _snoc -> pure Nothing
+          , insertBody = \_ebh _body -> pure Nothing
+          , lookupTxLocations = \_b -> pure []
           , lookupBody = \_ebh -> pure Nothing
           , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
           , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
@@ -162,11 +163,12 @@ newSQLiteLeiosTxCacheWith pragmas path = do
     LeiosTxCache
       { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
       , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
-      , insertBody = \_ebh body _nil _snoc -> do
+      , insertBody = \_ebh body -> do
           DB.exec db "BEGIN;"
           mapM_ insertOne (foldTxReferences (\acc txh _sz -> txh : acc) [] body)
           DB.exec db "COMMIT;"
           pure Nothing
+      , lookupTxLocations = \_b -> pure []
       , lookupBody = \_ebh -> pure Nothing
       , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
       , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()

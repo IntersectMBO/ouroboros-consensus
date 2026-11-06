@@ -109,38 +109,45 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.modifyMVar stateVar $ \st ->
             let st' = st{hsPrunedSlot = max (hsPrunedSlot st) boundary}
              in evictWhile ht (oldestIsStale (hsPrunedSlot st')) st' Set.empty Set.empty
-      , insertBody = \ebh b nil snoc ->
+      , insertBody = \ebh b ->
           MVar.modifyMVar stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
               Nothing -> pure (st, Nothing)
               Just BodyAlreadyInserted{} -> pure (st, Nothing)
               Just (BodyNotYetInserted rc) -> do
                 -- bump each tx's refcount and classify its prior state in one
-                -- pass; snoc every referenced tx onto the caller's accumulator at
-                -- its body offset (@nn@), with its durable location if some held
-                -- EB owns its bytes -- the prior word 'bumpTx' returns already
-                -- carries it, so the fill lookup rides this pass.
-                (n, tracked, acquired, validated, w) <-
+                -- pass
+                (n, tracked, acquired, validated) <-
                   foldTxReferences
-                    ( \acc txh sz -> do
-                        (!nn, !tt, !aa, !vv, !w) <- acc
+                    ( \acc txh _sz -> do
+                        (!nn, !tt, !aa, !vv) <- acc
                         mv <- bumpTx ht txh
                         let (dt, da, dv) = priorClass mv
-                            mbLoc = do
-                              (ringIdx, off) <- valLoc =<< mv
-                              srcEb <- Map.lookup ringIdx (hsLocRing st)
-                              Just (MkTxLocation srcEb off)
-                            w' = snoc w nn txh sz mbLoc
-                        pure (nn + 1, tt + dt, aa + da, vv + dv, w')
+                        pure (nn + 1, tt + dt, aa + da, vv + dv)
                     )
-                    (pure (0, 0, 0, 0, nil))
+                    (pure (0, 0, 0, 0))
                     b
                 cacheTxCount <- HT.size ht
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
                 pure
                   ( st'
-                  , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount, w)
+                  , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount)
                   )
+      , lookupTxLocations = \b ->
+          MVar.withMVar stateVar $ \st ->
+            fmap (reverse . snd) $
+              foldTxReferences
+                ( \acc txh _sz -> do
+                    (!off, !locs) <- acc
+                    mv <- HT.lookup ht (toKey txh)
+                    let mbLoc = do
+                          (ringIdx, srcOff) <- valLoc =<< mv
+                          srcEb <- Map.lookup ringIdx (hsLocRing st)
+                          Just (MkTxLocation srcEb srcOff)
+                    pure (off + 1, maybe locs (\loc -> (off, loc) : locs) mbLoc)
+                )
+                (pure (0, []))
+                b
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of

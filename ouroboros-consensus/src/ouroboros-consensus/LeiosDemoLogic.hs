@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -151,7 +152,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , lookupEbBody
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
-import Ouroboros.Consensus.Util.IOLike (IOLike, async, link)
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -201,11 +202,7 @@ recordForgedEbAndClosureInTxCache ::
   m ()
 recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
   _ <- txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
-  -- The forge path does not fetch, so it discards the miss set: a unit
-  -- accumulator and a no-op snoc.
-  mbSummary <-
-    fmap (fmap @Maybe (\(x, ()) -> x)) $
-      insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ _ -> ())
+  mbSummary <- insertBody txCache point.pointEbHash (Leios.serializeEbBody eb)
   -- A forged body holds its whole closure locally: every tx not already in the
   -- cache came from our own mempool (that is where the forge selected them). There
   -- is no actual mempool-pull stage, so attribute those txs -- @txsInEb - acquired@
@@ -489,11 +486,6 @@ assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peerId offers acc =
         -- prune it now.
         pruneThisOffer
       Just (Leios.MkEbState slot _onset fetchState) -> case (fetchState, Leios.poClosure offerKind) of
-        (Leios.BodyImminent, _) ->
-          -- Our forge is producing this EB, so we hold the whole datum (even
-          -- though it might not be inserted yet): never request it, and the
-          -- peer's offer is dead.
-          pruneThisOffer
         (Leios.NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
@@ -598,7 +590,6 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState _slot _onset Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState _slot _onset Leios.BodyImminent) -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState slot onset (Leios.BodyAcquired jobPool)) ->
       assignInto slot onset jobPool Leios.BodyAcquired
  where
@@ -936,140 +927,69 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
                 Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
       when (not (null duplicateTxHashes)) $ do
         invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
-  -- ingest it. The lock decides 'shouldPersist' (a genuinely novel, still-relevant
-  -- body) under exclusion and hands it to 'persistAndIngest' below. That is the
-  -- only novelty check we need: keyed off the lock, two peers delivering the same
-  -- body cannot both write it (the second sees 'novel = False'), so we neither
-  -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
-  (shouldPersist, bodyClass, mbMempoolTxs, missedBoth, fills) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  -- Decide whether to write it. A body is received only once it is written, so
+  -- this records nothing about it yet: two deliveries arriving together both
+  -- write it, which is idempotent, and only the first claims it below.
+  --
+  -- A received body already held, too old to matter (its slot is below the pruned
+  -- watermark, so its state can't be trusted), or over its closure bound is
+  -- not written. The latter is recorded as held-with-nothing-to-fetch, so that
+  -- neither its closure nor a re-send of the same bytes costs us anything more.
+  -- The peer answers for that one at the end, once the lock is released ---
+  -- throwing here would roll the record back.
+  --
+  -- TODO the LeiosDb has no way to record that we are done with an endorser
+  -- block whose closure we never fetched. Writing the body would say the wrong
+  -- thing --- 'writeEbBody' notifies 'AcquiredEb', and we must never offer this
+  -- one onward --- so the verdict lives only in 'ebState' and a restart within
+  -- the pruning window forfeits it, costing one more body fetch from the next
+  -- peer to serve it.
+  mbRejected <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.outstandingPrunedSlot outstanding
-        novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
-        -- Always: this request is no longer in flight and we now have the body,
-        -- so drop the body-fetch bookkeeping ('refundEbRequest' reverses the
-        -- per-request accounting -- skipped if a disconnect already cancelled it
-        -- in bulk); and unless the EB is too old to matter, remember we have it
-        -- so we neither re-fetch nor re-offer it.
+        held = maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
+        -- Always: this request is no longer in flight, so drop the body-fetch
+        -- bookkeeping ('refundEbRequest' reverses the per-request accounting --
+        -- skipped if a disconnect already cancelled it in bulk).
         !outstandingCleaned =
           ( case mbPeer of
               Just peerId -> refundEbRequest peerId ebHash ebBytesSize
               Nothing -> id
           )
             outstanding
-    -- Persist and classify only a genuinely novel, still-relevant body. A
-    -- duplicate (already held) or a too-old arrival (its slot is below pruned
-    -- watermark, so 'novel' can't be trusted) is left at the bookkeeping above
-    -- -- in particular no second 'writeEbBody', hence no duplicate
-    -- 'AcquiredEb'/re-offer. So is one over its closure bound, which is
-    -- additionally recorded as held-with-nothing-to-fetch, so that neither its
-    -- closure nor a re-send of the same bytes costs us anything more. The peer
-    -- answers for that one below, once the lock is released --- throwing here
-    -- would roll the record back.
-    --
-    -- TODO the LeiosDb has no way to record that we are done with an endorser
-    -- block whose closure we never fetched. Writing the body would say the
-    -- wrong thing --- 'writeEbBody' notifies 'AcquiredEb', and we must never
-    -- offer this one onward --- so the verdict lives only in 'ebState' and a
-    -- restart within the pruning window forfeits it, costing one more body
-    -- fetch from the next peer to serve it.
-    if tooOld || not novel || isJust mbTooBig
-      then
-        pure
-          ( if isJust mbTooBig
-              then Leios.acquireEbBody ebHash Jobs.emptyLeiosJobPool outstandingCleaned
-              else outstandingCleaned
-          ,
-            ( False
-            , case (tooOld, mbTooBig) of
-                (True, _) -> fetchArrivalEvicted ebBytesSize'
-                (_, Just{}) -> fetchArrivalInvalid ebBytesSize'
-                _ -> fetchArrivalExtra ebBytesSize'
-            , Nothing
-            , IntMap.empty
-            , []
+    pure $ case () of
+      _
+        | tooOld -> (outstandingCleaned, Just (fetchArrivalEvicted ebBytesSize'))
+        | isJust mbTooBig ->
+            ( Leios.acquireEbBody ebHash Jobs.emptyLeiosJobPool outstandingCleaned
+            , Just (fetchArrivalInvalid ebBytesSize')
             )
-          )
-      else do
-        -- Register the body's entries in the in-memory tx cache and classify the
-        -- fetch set -- all in-memory, no disk IO under the lock. Persistence and
-        -- the mempool-tx copy happen after this lock (forked for received bodies;
-        -- see 'persistAndIngest' below).
-        -- The body-insert pass also hands back, per referenced tx, where its
-        -- bytes durably live if some recent EB holds them ('locatedTxs') -- the
-        -- cross-EB fill sources, read in the same locked pass that bumps the
-        -- refcounts rather than in a second consultation.
-        mbInsertBody <-
-          insertBody
-            txCache
-            ebHash
-            (Leios.serializeEbBody eb)
-            []
-            ( \acc off _txh _sz -> \case
-                Just loc -> (off, loc) : acc
-                Nothing -> acc
-            )
-        let locatedTxs = maybe [] snd mbInsertBody
-        (bodyClass, mbBodyTxCacheSummary) <- case source of
-          -- A forge holds its whole closure, so nothing is missing. Its txs are
-          -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
-          -- 'insertBody' above only served to register the cache entries.
-          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', Nothing)
-          ReceivedBlockFrom{} -> case mbInsertBody of
-            -- 'BodyNotYetInserted': the announcement was present and we filled it.
-            Just (txCacheSummary, _located) -> pure (fetchArrivalGood ebBytesSize', Just txCacheSummary)
-            -- Announcement absent (assumed present once, since evicted): the
-            -- cache insert was a no-op, and there is no cache summary, so no
-            -- 'TraceLeiosBodyHits'.
-            Nothing -> pure (fetchArrivalEvicted ebBytesSize', Nothing)
-        -- Look the /full/ tx set up in our local mempool (not just the cache
-        -- misses), so txs in BOTH the mempool and the cache surface here: we prefer
-        -- to (re-)apply those from the mempool, since that is what sets their
-        -- Applied flag in the cache. All mempool hits are ingested below (the last
-        -- thing this function does); none of them become fetch jobs.
-        let MkLeiosEb ebTxs = eb
-            fullTxSet = IntMap.fromList (zip [0 ..] (V.toList ebTxs))
-        (notInMempool, mempoolHits, parity) <- pullFromMempool fullTxSet
-        -- The fetch set is everything the mempool cannot supply. The cache is
-        -- NOT consulted for it: it records tx hashes we have seen, but bytes
-        -- are owned per (ebHash, txOffset) now, so a hash seen in another EB
-        -- says nothing about whether THIS EB's row is filled. Letting it
-        -- suppress a fetch is how a closure never completes.
-        let mempoolIngest =
-              IntMap.mapMaybeWithKey
-                (\_ (txh, _sz) -> (txh,) <$> Map.lookup txh mempoolHits)
-                (IntMap.difference fullTxSet notInMempool)
-            missedBoth = notInMempool
-            mbMempoolTxs = MempoolTxs point mempoolIngest parity <$ guard (not (IntMap.null mempoolIngest))
-        -- Report the body's cache+mempool hit picture: the cache summary, the full
-        -- mempool-resident count, and how many txs were in neither (so the combined
-        -- hit rate is @(txsInEb - missedBoth) / txsInEb@, avoiding double counting).
-        forM_ mbBodyTxCacheSummary $ \txCacheSummary ->
-          traceWith ktracer $
-            TraceLeiosBodyHits point txCacheSummary (Map.size mempoolHits) (IntMap.size missedBoth)
-        -- Misses whose bytes some recent EB durably holds: the body write
-        -- copies them locally ('cross-EB fill') instead of fetching them again.
-        -- 'locatedTxs' came from the body-insert pass above; keep only the ones
-        -- the mempool cannot supply. Optimistic -- a source swept in the meantime
-        -- fills nothing -- so the fetch set is decided at settle time from what
-        -- actually filled, not promised here. A forge writes its whole closure
-        -- right after, so it fills nothing.
-        let fills = case source of
-              ForgedBlock{} -> []
-              ReceivedBlockFrom{} -> [ol | ol@(off, _loc) <- locatedTxs, off `IntMap.member` missedBoth]
-        -- The body is not marked held here: the state is claimed 'BodyAcquired'
-        -- only once the write is durable (see 'settle' below), after the write
-        -- has been enqueued. Until then the body reads as not-held, so a
-        -- concurrent offer may redundantly re-fetch it -- accepted, and simpler
-        -- than an in-flight state that a lost/cancelled write would have to undo.
-        pure (outstandingCleaned, (True, bodyClass, mbMempoolTxs, missedBoth, fills))
-  void $ MVar.tryPutMVar readyVar ()
-  case source of
-    ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
-    ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
-  traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
-  -- Last: ingest the txs we found in our own mempool (they were removed from the
-  -- fetch job set above)
-  when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
+        | held, ReceivedBlockFrom{} <- source -> (outstandingCleaned, Just (fetchArrivalExtra ebBytesSize'))
+        | otherwise -> (outstandingCleaned, Nothing)
+  mbMempoolTxs <- case mbRejected of
+    Just bodyClass -> do
+      traceArrival bodyClass
+      pure Nothing
+    Nothing -> traceException tracer TraceLeiosPeerDbException $ do
+      -- Look the /full/ tx set up in our local mempool, so txs we already hold
+      -- there are neither fetched nor filled: they are ingested from the mempool
+      -- at the end, which is also what marks them Applied in the cache.
+      let MkLeiosEb ebv = eb
+          fullTxSet = IntMap.fromList (zip [0 ..] (V.toList ebv))
+      (missedBoth, mempoolHits, parity) <- pullFromMempool fullTxSet
+      let mempoolIngest =
+            IntMap.mapMaybeWithKey
+              (\_ (txh, _sz) -> (txh,) <$> Map.lookup txh mempoolHits)
+              (IntMap.difference fullTxSet missedBoth)
+      -- Misses whose bytes some recent EB durably holds: the body write copies
+      -- them locally ('cross-EB fill') instead of fetching them again.
+      -- Optimistic -- a source swept in the meantime fills nothing -- so the
+      -- fetch set is decided after the write from what actually filled. A forge
+      -- writes its whole closure right after, so it fills nothing.
+      fills <- case source of
+        ForgedBlock{} -> pure []
+        ReceivedBlockFrom{} ->
+          filter ((`IntMap.member` missedBoth) . fst)
+            <$> lookupTxLocations txCache (Leios.serializeEbBody eb)
       -- TODO remove the 'writeEbPoint' call below once no important node's
       -- VolatileDB still holds an announcing RB that it fetched without this
       -- patch. 'processAnnouncementCentrally' records the point now, and that
@@ -1081,73 +1001,72 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
       -- nothing. Conditioning it on the point being absent would make it
       -- report exactly the endorser blocks described above.
       traceWith ktracer $ TraceLeiosBlockPointMissing point
-      -- Enqueue the write first, then claim the body. 'writeEbBody' only parks
-      -- on a free writer-queue slot (bounded backpressure), so a cancellation
-      -- there -- e.g. the peer going away while the queue is full -- happens
-      -- before any state is touched: nothing to strand, no abandon path. Once the
-      -- write is durable, 'settle' claims 'BodyAcquired' with the pool the write
-      -- still leaves to fetch. During the write window the body reads as not-held,
-      -- so a concurrent offer may redundantly re-fetch it -- accepted.
-      --
-      -- A failed write is fatal: the single writer rethrows and is 'link'ed to the
-      -- node, so there is no lost-write case to recover from here.
-      --
       -- The size written is the actual size of the received body, regardless of
       -- announcements' or offers' claims.
-      pointWritten <- writeEbPoint writer point ebBytesSize'
-      bodyWritten <- writeEbBody writer point eb fills
-      let settle = do
-            completedByPoint <- await pointWritten
-            (completedByBody, filledOffs) <- await bodyWritten
-            -- The fetch set is what the settled write still misses: the fills
-            -- that landed are durable rows, everything else -- fills whose source
-            -- vanished included -- stays fetchable. Each job commits to its
-            -- covered tx hashes, so a response validates without the body.
-            let !jobPool =
-                  Jobs.mkLeiosJobPool
-                    -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
-                    (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
-                    (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
-                    (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
+      completedByPoint <- await =<< writeEbPoint writer point ebBytesSize'
+      (completedByBody, filledOffs) <- await =<< writeEbBody writer point eb fills
+      -- The body is received: index it in the tx cache and claim it, with the
+      -- jobs for what the write still misses. The fills that landed are
+      -- durable rows, everything else -- fills whose source vanished included
+      -- -- stays fetchable. Each job commits to its covered tx hashes, so a
+      -- response validates without the body.
+      let !jobPool =
+            Jobs.mkLeiosJobPool
+              -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
+              (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
+              (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
+              (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
+          closureBytes = V.foldl' (\acc (_, sz) -> acc + fromIntegral sz) 0 ebv
+      (claimed, mbBodyTxCacheSummary, credited) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+        mbInsertBody <- insertBody txCache ebHash (Leios.serializeEbBody eb)
+        let outstanding' = case source of
+              -- The forge holds the whole closure: nothing to fetch, whatever
+              -- a peer's copy left pending.
+              ForgedBlock{} -> Leios.acquireForgedEbBody ebHash point.pointSlotNo outstanding
+              ReceivedBlockFrom{} -> Leios.acquireEbBody ebHash jobPool outstanding
+            held = maybe False Leios.ebStateHasBody . Map.lookup ebHash . Leios.ebState
+            claimed = held outstanding' && not (held outstanding)
             -- The claim is where the closure's bytes refill the egress credit,
-            -- once per EB (see 'LeiosFreshBytes'): a second delivery that read
-            -- as novel during this write window settles after this one and
-            -- finds the body held. Fresh by the announcement's onset at
-            -- arrival; a forged body is.
-            let MkLeiosEb ebv = eb
-            credited <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-              let outstanding' = Leios.acquireEbBody ebHash jobPool outstanding
-                  held = maybe False Leios.ebStateHasBody . Map.lookup ebHash . Leios.ebState
-                  fresh = case source of
-                    ForgedBlock{} -> True
-                    ReceivedBlockFrom{} ->
-                      maybe False (isFreshAge freshBytes) (ebPointAge now (Leios.ebState outstanding) point)
-                  closureBytes = V.foldl' (\acc (_, sz) -> acc + fromIntegral sz) 0 ebv
-              credited <-
-                if held outstanding' && not (held outstanding) && fresh && closureBytes > 0
-                  then Just . (,) closureBytes <$> StrictSTM.atomically (addFresh freshBytes closureBytes)
-                  else pure Nothing
-              pure (outstanding', credited)
-            forM_ credited $ \(added, total) ->
-              traceWith ktracer $ TraceLeiosFreshBytes Leios.FreshClosure added total
-            -- Point the cache at THIS EB as the durable holder of the txs it just
-            -- filled locally, so a re-endorsement fills from the youngest holder
-            -- (evicted last) rather than the older source that goes first. Fetched
-            -- txs are recorded by 'ingestAcquiredTxs'; together every durable
-            -- holder points the cache at itself.
-            setTxLocations txCache ebHash [(off, fst (ebv V.! off)) | off <- filledOffs]
-            void $ MVar.tryPutMVar readyVar ()
-            st <- Leios.ebState <$> MVar.readMVar outstandingVar
-            traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
-            forM_ (completedByPoint <> completedByBody) $ \p ->
-              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
-      case source of
-        -- The forge must not advertise what it has not stored, so it waits.
-        ForgedBlock{} -> settle
-        ReceivedBlockFrom{} ->
-          -- Off this thread, but 'link'ed to it, so a failed write still brings
-          -- the node down rather than being silently dropped.
-          link =<< async (traceException tracer TraceLeiosPeerDbException settle)
+            -- once per EB (see 'LeiosFreshBytes'). Fresh by the announcement's
+            -- onset at arrival; a forged body is.
+            fresh = case source of
+              ForgedBlock{} -> True
+              ReceivedBlockFrom{} ->
+                maybe False (isFreshAge freshBytes) (ebPointAge now (Leios.ebState outstanding) point)
+        credited <-
+          if claimed && fresh && closureBytes > 0
+            then Just . (,) closureBytes <$> StrictSTM.atomically (addFresh freshBytes closureBytes)
+            else pure Nothing
+        pure (outstanding', (claimed, mbInsertBody, credited))
+      traceArrival $
+        if
+          | not claimed -> fetchArrivalExtra ebBytesSize'
+          -- Announcement absent from the cache (assumed present once, since
+          -- evicted): the cache insert was a no-op.
+          | ReceivedBlockFrom{} <- source, Nothing <- mbBodyTxCacheSummary -> fetchArrivalEvicted ebBytesSize'
+          | otherwise -> fetchArrivalGood ebBytesSize'
+      -- Report the body's cache+mempool hit picture: the cache summary, the full
+      -- mempool-resident count, and how many txs were in neither (so the combined
+      -- hit rate is @(txsInEb - missedBoth) / txsInEb@, avoiding double counting).
+      forM_ mbBodyTxCacheSummary $ \txCacheSummary ->
+        traceWith ktracer $
+          TraceLeiosBodyHits point txCacheSummary (Map.size mempoolHits) (IntMap.size missedBoth)
+      forM_ credited $ \(added, total) ->
+        traceWith ktracer $ TraceLeiosFreshBytes Leios.FreshClosure added total
+      -- Point the cache at THIS EB as the durable holder of the txs it just
+      -- filled locally, so a re-endorsement fills from the youngest holder
+      -- (evicted last) rather than the older source that goes first. Fetched
+      -- txs are recorded by 'ingestAcquiredTxs'; together every durable holder
+      -- points the cache at itself.
+      setTxLocations txCache ebHash [(off, fst (ebv V.! off)) | off <- filledOffs]
+      void $ MVar.tryPutMVar readyVar ()
+      st <- Leios.ebState <$> MVar.readMVar outstandingVar
+      traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
+      forM_ (completedByPoint <> completedByBody) $ \p ->
+        traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
+      -- Only the delivery that claimed the body ingests its mempool hits.
+      pure $ MempoolTxs point mempoolIngest parity <$ guard (claimed && not (IntMap.null mempoolIngest))
+  traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- Every mempool hit is ingested for THIS EB: bytes are per (ebHash, offset),
   -- so "the tx is already persisted" (for some other EB) no longer excuses
   -- skipping the write. Also what marks them Applied in the cache.
@@ -1167,6 +1086,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache freshBytes w
       ExnLeiosBlockWrongSize point ebBytesSize ebBytesSize'
   forM_ mbTooBig $ \maxEbTxsSize ->
     throwIO $ ExnLeiosClosureTooBig point closureBytesSize maxEbTxsSize
+ where
+  traceArrival bodyClass = do
+    void $ MVar.tryPutMVar readyVar ()
+    case source of
+      ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
+      ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1236,7 +1161,6 @@ removePeerFromOutstanding peerId o =
   releaseJobs jobIds (Leios.MkEbState slot onset fetchState) =
     Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool -> Leios.BodyAcquired $! release jobPool
    where
     release jobPool =
@@ -1323,7 +1247,6 @@ adjustOutstandingTxRequest onJob peerId ebHash jobIds o =
   completeInJobPool (Leios.MkEbState slot onset fetchState) =
     Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool -> Leios.BodyAcquired $! complete jobPool
    where
     complete jobPool =
@@ -1472,8 +1395,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
             IntMap.empty
           Just (Leios.MkEbState _slot _onset Leios.NoBody) ->
             IntMap.empty
-          Just (Leios.MkEbState _slot _onset Leios.BodyImminent) ->
-            IntMap.empty
           Just (Leios.MkEbState _slot _onset (Leios.BodyAcquired jobPool)) ->
             Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         -- The covered jobs we won't ingest -- an earlier delivery already
@@ -1529,35 +1450,21 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     [(Int, TxHash, BS.ByteString)] ->
     m Leios.FetchArrivalBytes
   ingestAcquiredTxs now toIngest = do
-    txsWritten <- writeTxs writer ingestPoint [(off, bs) | (off, _txh, bs) <- toIngest]
-    let traceCompleted = do
-          completed <- traceException tracer TraceLeiosPeerDbException $ await txsWritten
-          onDurable
-          -- These bytes are durable now: advertise them as fill sources for
-          -- later EBs referencing the same txs.
-          setTxLocations
-            txCache
-            ingestPoint.pointEbHash
-            [(off, txh) | (off, txh, _bs) <- toIngest]
-          ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
-          forM_ completed $ \p ->
-            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
-    case source of
-      ForgedTxs{} -> traceCompleted -- synchronous
-      -- Off the collector thread so the fetch pipeline keeps flowing; 'link'
-      -- brings a failed write back to the node rather than letting it be taken as
-      -- durable. We trust the write to land (or kill the node), so there is no
-      -- loss to recover from here.
-      --
-      -- TODO: the worker's lifetime is unbounded -- 'link' propagates its
-      -- exceptions but does not tie it to the peer, so on teardown it is
-      -- orphaned and keeps touching shared state. Fork it in the peer's
-      -- ResourceRegistry (or move to a writer-run completion callback) so it
-      -- dies with the peer. Separate PR.
-      _ -> link =<< async traceCompleted
+    completed <-
+      traceException tracer TraceLeiosPeerDbException $
+        await =<< writeTxs writer ingestPoint [(off, bs) | (off, _txh, bs) <- toIngest]
+    onDurable
+    -- These bytes are durable now: advertise them as fill sources for later
+    -- EBs referencing the same txs.
+    setTxLocations
+      txCache
+      ingestPoint.pointEbHash
+      [(off, txh) | (off, txh, _bs) <- toIngest]
+    ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
+    forM_ completed $ \p ->
+      traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
     -- The cache update: the fetch logic consults it to decide what is still
-    -- missing, so it cannot lag behind the caller.
-    -- TODO: do this before the DB write (like in processLeiosBlock)
+    -- missing.
     case source of
       ReceivedTxsFrom{} ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
@@ -1818,13 +1725,11 @@ processAnnouncementCentrally
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
         ( \_elSt -> do
-            -- A received announcement lists the EB for fetching; one we forged is
-            -- instead marked 'BodyImminent' in 'ebState' so the fetch logic never
-            -- requests it -- even after a peer relays our own announcement back to
-            -- us. Marking it here, at announcement time, closes the window before
-            -- the body is persisted and before any such relay can arrive.
+            -- A received announcement lists the EB for fetching. One we forged
+            -- is claimed by its body's write right after: no peer can offer it
+            -- before that, as they can only get it from us.
             case provenance of
-              ForgedLocally -> markForged
+              ForgedLocally -> pure ()
               ReceivedViaChainSync -> recordAnnounced
               ReceivedViaLeiosNotify -> recordAnnounced
             recordAnnouncementInTxCache txCache announcerRbHash point
@@ -1847,9 +1752,6 @@ processAnnouncementCentrally
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
     announcerRbHash = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
     recordAnnounced = recordAnnouncedEb kernelVars onset fields
-    markForged =
-      MVar.modifyMVar_ (fst kernelVars) $
-        pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the

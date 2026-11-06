@@ -918,7 +918,6 @@ test-suite consensus-test
     containers,
     contra-tracer,
     deepseq,
-    diff-containers,
     directory,
     file-embed,
     filepath,

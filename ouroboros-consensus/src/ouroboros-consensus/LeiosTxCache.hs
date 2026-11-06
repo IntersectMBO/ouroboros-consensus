@@ -99,8 +99,18 @@ newPureLeiosTxCache nshift = do
           MVar.modifyMVar var $ \idx ->
             let (idx', evEbs, evTxs) = Pure.evictOlderThan boundary idx
              in pure (idx', (evEbs, evTxs))
-      , insertBody = \ebh b nil snoc ->
-          MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) ebh b nil snoc idx)
+      , insertBody = \ebh b ->
+          MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) ebh b idx)
+      , lookupTxLocations = \b -> do
+          idx <- MVar.readMVar var
+          pure $!
+            reverse . snd $
+              foldTxReferences
+                ( \(!off, !acc) txh _sz ->
+                    (off + 1, maybe acc (\loc -> (off, loc) : acc) (Pure.lookupTxLocation txh idx))
+                )
+                (0, [])
+                b
       , lookupBody = \ebh -> do
           idx <- MVar.readMVar var
           pure $! Pure.lookupBody ebh idx
@@ -132,7 +142,8 @@ nullLeiosTxCache =
   LeiosTxCache
     { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
     , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
-    , insertBody = \_ebh _b _nil _snoc -> pure Nothing
+    , insertBody = \_ebh _b -> pure Nothing
+    , lookupTxLocations = \_b -> pure []
     , lookupBody = \_ebh -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k mempty (\fab _txh sz _a -> pure (fab <> bucketTxArrival TxWasUntracked sz))
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)

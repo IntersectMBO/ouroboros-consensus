@@ -54,13 +54,13 @@ import LeiosDemoTypes
   , PeerId (..)
   , PeerOffer (MkPeerOffer)
   , WhetherTxsClosureOffered (..)
+  , acquireForgedEbBody
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , encodeLeiosEbSize
   , focusElectionIfUnfocused
   , hashLeiosEb
   , hashLeiosTx
-  , markBodyImminent
   , maxTxsPerEb
   , recordMaxAnnouncementSlot
   )
@@ -190,9 +190,9 @@ test_perPeerByteBudget =
 
 -- | Regression for the devnet crash where a node re-fetched an EB it had just
 -- forged: the redundant closure acquisition emitted a second 'AcquiredEbTxs',
--- which 'runLeiosVoting' rejected ('AlreadyKnown') and died on. The forge marks
--- the EB in 'ebState' (as 'BodyImminent'), so the fetch logic must drop any peer
--- offer of it -- even a full body+closure offer -- rather than request it.
+-- which 'runLeiosVoting' rejected ('AlreadyKnown') and died on. The forge claims
+-- the EB with nothing left to fetch, so the fetch logic must drop any peer offer
+-- of it -- even a full body+closure offer -- rather than request it.
 test_forgedEbOfferIgnored :: IO ()
 test_forgedEbOfferIgnored =
   empty
@@ -256,11 +256,10 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
 fixtureIssuer :: ShortByteString
 fixtureIssuer = SBS.pack [0]
 
--- | Mark an EB as one our own forge produced -- the 'BodyImminent' 'ebState'
--- entry that 'onForgedLeiosEb' installs at announcement time.
+-- | Mark an EB as one our own forge produced, as 'onForgedLeiosEb' claims it.
 withForgedEb :: LeiosPoint -> Scenario pid -> Scenario pid
 withForgedEb (MkLeiosPoint slot ebHash) =
-  onOutstanding $ markBodyImminent ebHash slot
+  onOutstanding $ acquireForgedEbBody ebHash slot
 
 alreadyRequestedEbFrom :: Ord pid => EbHash -> [pid] -> Scenario pid -> Scenario pid
 alreadyRequestedEbFrom ebHash pids =
