@@ -108,14 +108,16 @@ data ClientHooks m peer = ClientHooks
   -- ^ Authenticated whole TX under its original descriptor; only Useful earns credit.
   , clientReply :: RequestKey peer -> ReplyCompletion -> STM m ()
   -- ^ Original typed terminal and input receipt, independent of storage durability.
-  , clientExpired :: T.Expiry peer -> STM m ()
-  -- ^ One reconciled soft expiry. The coordinator chooses persistence/rescue.
+  , clientExpired :: Time -> T.Expiry peer -> STM m ()
+  -- ^ Monotone handling time and one soft expiry, whose original deadline is
+  -- separate. Cooldowns start at handling time even after delayed reconciliation.
+  -- See @docs/fetch-policy/cancellation-contract.md#agreed-coordinator-wakeups@.
   , clientAborted :: SomeException -> STM m ()
   -- ^ At most once on interpreter/receive failure, after exact-session cleanup.
   }
 
 nullClientHooks :: MonadSTM m => ClientHooks m peer
-nullClientHooks = ClientHooks (pure ()) (\_ _ _ -> pure ()) (\_ _ -> pure ()) (const (pure ())) (const (pure ()))
+nullClientHooks = ClientHooks (pure ()) (\_ _ _ -> pure ()) (\_ _ -> pure ()) (\_ _ -> pure ()) (const (pure ()))
 
 -- | Local integration/configuration errors; protocol/codec/storage exceptions
 -- retain their existing types when raised by the receive or driver layers.
@@ -392,7 +394,7 @@ pollAtomicClient client now = do
     let clock = max now (latestClock state)
     (expired, timing) <- timingResult (T.reconcileTiming clock (timingState state))
     writeTVar (clientState client) state{timingState = timing, latestClock = clock}
-    mapM_ (clientExpired (clientHooks client)) expired
+    mapM_ (clientExpired (clientHooks client) clock) expired
     unless (null expired) (clientWakeup (clientHooks client))
 
 readClientSnapshot :: MonadSTM m => AtomicClient m owner peer -> STM m (ClientSnapshot peer)

@@ -1,13 +1,18 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | Logical closure rescue, separate from immutable wire requests and their
--- reservations. Rationale: @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@.
+-- reservations. Rationale: @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ and
+-- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (adaptive retry and cooldown).
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure
   ( ClosureState
   , ClosureRole (..)
   , ClosureChange (..)
   , ClosureError (..)
   , ClosureSnapshot (..)
+  , newClosureState
+  , advanceClosureRetries
+  , nextClosureRetryDeadline
+  , closureRescueFactor
   , emptyClosureState
   , ensureClosureAcquisition
   , refreshClosure
@@ -45,6 +50,7 @@ import qualified Data.Sequence as Seq
 import Data.Word (Word32, Word64)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
 
 -- | An ordinary owner, or the single additional batch rescuing that owner.
@@ -56,7 +62,13 @@ data ClosureChange = NoClosureChange | ClosurePrimaryStalled | ClosureRescueFail
   deriving (Eq, Show)
 
 -- | Local policy transition failure, before publishing an admitted request.
-data ClosureError = UnknownClosure | StaleClosure | InvalidClosureAttempt | RescueSlotOccupied
+data ClosureError
+  = UnknownClosure
+  | StaleClosure
+  | InvalidClosureAttempt
+  | RescueSlotOccupied
+  | ClosureCooling
+  | InvalidClosureTarget
   deriving (Eq, Show)
 
 -- | Per-EB eligibility and the FIFO of stalled ordinary obligations.
@@ -69,6 +81,8 @@ data Entry peer = Entry
   -- ^ Distinct stalled primaries, rotated after each rescue opportunity.
   , rescue :: !(Maybe (RequestKey peer))
   -- ^ At most one wanted additional batch, independently of draining copies.
+  , retryState :: !R.RetryState
+  -- ^ Per-EB pressure, grouped rescue-failure history and fixed cooldown expiry.
   }
   deriving (Eq, Show)
 
@@ -106,7 +120,11 @@ data Attempt peer request = Attempt
 -- | Node-owned logical policy. Heavy attempt metadata is retained only for
 -- wire debt, an active rescue, or a still-actionable productive tail handoff.
 data ClosureState peer request = ClosureState
-  { entries :: !(Map.Map LeiosPoint (Entry peer))
+  { retryPolicy :: !R.RetryConfig
+  -- ^ Validated local retry configuration, shared without sharing EB history.
+  , nominalBytes :: !Word32
+  -- ^ Fixed service-recovery denominator, independent of actual batch overhang.
+  , entries :: !(Map.Map LeiosPoint (Entry peer))
   -- ^ Live acquisitions, bounded by shared acquisition admission.
   , attempts :: !(Map.Map (RequestKey peer) (Attempt peer request))
   -- ^ Original descriptors pinned independently of current ordinary ownership.
@@ -127,13 +145,37 @@ data ClosureSnapshot peer = ClosureSnapshot
   -- ^ FIFO order of still-needed stalled ordinary obligations.
   , closureCopies :: !(IntMap.IntMap Int)
   -- ^ Wanted new-policy copies per TX, never more than two.
+  , closureRetry :: !R.RetrySnapshot
+  -- ^ Per-EB multiplier and cooldown history, independent of peer failures.
   , closureDraining :: !Int
   -- ^ Unwanted originals whose original or issued ACK has not retired.
   }
   deriving (Eq, Show)
 
 emptyClosureState :: ClosureState peer request
-emptyClosureState = ClosureState Map.empty Map.empty Map.empty Map.empty
+emptyClosureState = ClosureState R.defaultRetryConfig 20000 Map.empty Map.empty Map.empty Map.empty
+
+-- | Freeze the nominal service target and local retry settings at node setup.
+-- The default empty arena uses the initial 20,000 B target; node assembly passes
+-- its actual configured checkpoint target, never an overhanging batch size.
+newClosureState :: R.RetryConfig -> Word32 -> Either ClosureError (ClosureState peer request)
+newClosureState config nominal
+  | nominal == 0 = Left InvalidClosureTarget
+  | otherwise = Right (ClosureState config nominal Map.empty Map.empty Map.empty Map.empty)
+
+-- | Reconcile absolute cooldown expiry without changing pressure or history.
+advanceClosureRetries :: Time -> ClosureState peer request -> ClosureState peer request
+advanceClosureRetries now s = s{entries = Map.map (\e -> e{retryState = R.advanceRetry now (retryState e)}) (entries s)}
+
+-- | Earliest future cooldown, combined by the node with active wire deadlines.
+nextClosureRetryDeadline :: Time -> ClosureState peer request -> Maybe Time
+nextClosureRetryDeadline now s = case [at | e <- Map.elems (entries s), Just at <- [R.nextRetryDeadline now (retryState e)]] of
+  [] -> Nothing
+  deadlines -> Just (minimum deadlines)
+
+-- | Snapshot only for a new rescue. Ordinary requests retain factor one.
+closureRescueFactor :: LeiosPoint -> ClosureState peer request -> Rational
+closureRescueFactor point s = maybe 1 (R.retryFactor (retryPolicy s) . retryState) (Map.lookup point (entries s))
 
 -- | Install a generation once, without replacing a live generation's state.
 ensureClosureAcquisition ::
@@ -141,7 +183,11 @@ ensureClosureAcquisition ::
 ensureClosureAcquisition point gen s =
   s
     { entries =
-        Map.insertWith (\_ old -> old) point (Entry gen IntSet.empty Seq.empty Nothing) (entries s)
+        Map.insertWith
+          (\_ old -> old)
+          point
+          (Entry gen IntSet.empty Seq.empty Nothing (R.newRetryState (retryPolicy s)))
+          (entries s)
     }
 
 members :: Attempt peer request -> IntSet.IntSet
@@ -180,13 +226,14 @@ refreshClosure point gen remaining s = case Map.lookup point (entries s) of
 -- needed subset of its primary and cannot create a third wanted TX copy.
 admitClosureAttempt ::
   Ord peer =>
+  Time ->
   ClosureRole peer ->
   RequestKey peer ->
   request ->
   BatchDescriptor ->
   ClosureState peer request ->
   Either ClosureError (ClosureState peer request)
-admitClosureAttempt kind key request batch s = do
+admitClosureAttempt now kind key request batch s = do
   e <- maybe (Left UnknownClosure) Right (Map.lookup (batchPoint batch) (entries s))
   unless (generation e == batchGeneration batch) (Left StaleClosure)
   let offsets = IntSet.fromList (map expectedOffset (NE.toList (batchExpected batch)))
@@ -201,6 +248,7 @@ admitClosureAttempt kind key request batch s = do
     ClosurePrimary -> pure e
     ClosureRescue parent -> do
       unless (isNothing (rescue e)) (Left RescueSlotOccupied)
+      unless (R.retryEligible now (retryState e)) (Left ClosureCooling)
       a <- maybe (Left InvalidClosureAttempt) Right (Map.lookup parent (attempts s))
       unless
         ( role a == ClosurePrimary
@@ -240,8 +288,12 @@ admitClosureAttempt kind key request batch s = do
 -- data-head expiry charges service failure, once per immutable request.
 expireClosureAttempt ::
   Ord peer =>
-  RequestKey peer -> Bool -> ClosureState peer request -> (ClosureChange, ClosureState peer request)
-expireClosureAttempt key charge s = case Map.lookup key (attempts s) of
+  Time ->
+  RequestKey peer ->
+  Bool ->
+  ClosureState peer request ->
+  (ClosureChange, ClosureState peer request)
+expireClosureAttempt now key charge s = case Map.lookup key (attempts s) of
   Just a
     | wanted a
     , charge
@@ -254,7 +306,16 @@ expireClosureAttempt key charge s = case Map.lookup key (attempts s) of
                 }
          in case role a of
               ClosurePrimary -> (ClosurePrimaryStalled, markStalled key failed)
-              ClosureRescue _ -> (ClosureRescueFailed, abandonClosureAttempt key failed)
+              ClosureRescue _ ->
+                let penalized =
+                      failed
+                        { entries =
+                            Map.adjust
+                              (\e -> e{retryState = R.recordRetryFailure (retryPolicy s) now (retryState e)})
+                              (batchPoint (descriptor a))
+                              (entries failed)
+                        }
+                 in (ClosureRescueFailed, abandonClosureAttempt key penalized)
   _ -> (NoClosureChange, s)
 
 -- | A blocked data/ACK head makes queued work rescuable without starting its
@@ -285,11 +346,14 @@ markStalled key s = case Map.lookup key (attempts s) of
 -- most one admission from each EB's list can succeed before its slot is full.
 closureRescuePlans ::
   Ord peer =>
-  ClosureState peer request -> [(RequestKey peer, LeiosPoint, AcquisitionGeneration, IntSet.IntSet)]
-closureRescuePlans s =
+  Time ->
+  ClosureState peer request ->
+  [(RequestKey peer, LeiosPoint, AcquisitionGeneration, IntSet.IntSet)]
+closureRescuePlans now s =
   [ (key, point, generation e, eligible a)
   | (point, e) <- Map.toAscList (entries s)
   , isNothing (rescue e)
+  , R.retryEligible now (retryState e)
   , key <- toList (queue e)
   , Just a <- [Map.lookup key (attempts s)]
   , wanted a
@@ -375,24 +439,37 @@ noteClosureService ::
   RequestKey peer -> Word32 -> Time -> ClosureState peer request -> ClosureState peer request
 noteClosureService key index at s = case Map.lookup key (attempts s) of
   Just a
-    | ClosureRescue parent <- role a
-    , Just tx <- IntMap.lookup (fromIntegral index) (expected a) ->
-        s
-          { attempts =
-              Map.adjust
-                ( \original ->
-                    original
-                      { service =
-                          Map.insertWith
-                            (\(bytes, t) (old, first) -> (old + bytes, min t first))
-                            (lifetime key)
-                            (fromIntegral (expectedSize tx), at)
-                            (service original)
-                      }
-                )
-                parent
-                (attempts s)
-          }
+    | Just tx <- IntMap.lookup (fromIntegral index) (expected a)
+    , Just e <- currentEntry a s ->
+        let recovered =
+              s
+                { entries =
+                    Map.insert
+                      (batchPoint (descriptor a))
+                      e
+                        { retryState = R.recoverRetryService (retryPolicy s) (nominalBytes s) (expectedSize tx) (retryState e)
+                        }
+                      (entries s)
+                }
+         in case role a of
+              ClosurePrimary -> recovered
+              ClosureRescue parent ->
+                recovered
+                  { attempts =
+                      Map.adjust
+                        ( \original ->
+                            original
+                              { service =
+                                  Map.insertWith
+                                    (\(bytes, t) (old, first) -> (old + bytes, min t first))
+                                    (lifetime key)
+                                    (fromIntegral (expectedSize tx), at)
+                                    (service original)
+                              }
+                        )
+                        parent
+                        (attempts recovered)
+                  }
   _ -> s
 
 -- | Original and cancel terminal observations retire independently.
@@ -497,6 +574,7 @@ closureSnapshots s =
           (rescue e)
           (toList (queue e))
           (copyCounts point e s)
+          (R.retrySnapshot (retryPolicy s) (retryState e))
           ( length
               [ ()
               | a <- Map.elems (attempts s)

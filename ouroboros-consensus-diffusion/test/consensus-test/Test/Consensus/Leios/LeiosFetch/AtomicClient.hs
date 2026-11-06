@@ -31,7 +31,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Exception (bracket, fromException, try)
 import Control.Monad (forM_, void, when)
 import Control.Monad.Class.MonadAsync (Async, wait, waitCatch, waitCatchSTM, withAsync)
-import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import Control.Monad.Class.MonadTime.SI (Time, diffTime, getMonotonicTime)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
@@ -68,6 +68,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as 
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as Retry
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server as S
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State as SS
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing as T
@@ -131,6 +132,7 @@ tests =
     , testCase "a client handle cannot start a second interpreter" testSingleUse
     , testCase "source removal wakes a client whose FIFO receiver is stalled" testRemoval
     , testCase "data expiry retains wire debt and blocks new assignments until retirement" testDataExpiry
+    , testCase "retry changes for future admission do not renew a live head deadline" testRetrySnapshot
     ]
 
 type Atomic = W.LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx
@@ -143,10 +145,11 @@ data Events = Events
   , abortCount :: !Int
   , replies :: ![(RequestKey Int, ReplyCompletion)]
   , expiries :: ![T.Expiry Int]
+  , expiryHandlingTimes :: ![Time]
   }
 
 emptyEvents :: Events
-emptyEvents = Events 0 0 0 0 [] []
+emptyEvents = Events 0 0 0 0 [] [] []
 
 -- Event history is capped even in fixtures; the long-session assertion uses
 -- counters, not one retained payload/event per request.
@@ -164,7 +167,11 @@ hooks events =
           { replyCount = replyCount s + 1
           , replies = take 16 (replies s ++ [(key, result)])
           }
-    , C.clientExpired = \event -> modifyTVar events $ \s -> s{expiries = take 16 (expiries s ++ [event])}
+    , C.clientExpired = \handledAt event -> modifyTVar events $ \s ->
+        s
+          { expiries = take 16 (expiries s ++ [event])
+          , expiryHandlingTimes = take 16 (expiryHandlingTimes s ++ [handledAt])
+          }
     , C.clientAborted = \_ -> modifyTVar events $ \s -> s{abortCount = abortCount s + 1}
     }
 
@@ -895,11 +902,45 @@ testDataExpiry = withFixture True $ \env -> withRtt (1 / 1000) $ \reader -> with
           [ ev | ev <- expiries stats, T.TimerToken key _ <- [T.expiryToken ev], key == H.storageRequestKey req
           ]
     map T.chargeDataFailure dataEvents @?= [True]
+    assertBool
+      "late reconciliation did not supply its monotone handling time"
+      (all (>= now) (expiryHandlingTimes stats) && not (null (expiryHandlingTimes stats)))
+    assertBool "deadline was confused with later handling time" (all ((< now) . T.expiryAt) dataEvents)
     usage <- right <$> atomically (C.readClientUsage client)
     (A.usedData usage, A.usedExchanges usage) @?= (1, 1)
     atomically (C.admitClientRequest client now 1 (prepared env (1 :| [])))
       >>= (@?= Left C.ClientUpstreamBlocked)
     _ <- right <$> atomically (C.cancelClientRequest client now req)
     atomically $ C.stopAtomicClient client
+    success running
+    wireEmpty client
+
+-- A live original retains the timing snapshot admitted before subsequent retry
+-- pressure recovery. The next request uses the newly recovered multiplier.
+testRetrySnapshot :: Assertion
+testRetrySnapshot = withFixture True $ \env -> withClient env 1 2 Nothing $ \client -> do
+  admittedAt <- getMonotonicTime
+  let grown =
+        Retry.recordRetryFailure
+          Retry.defaultRetryConfig
+          admittedAt
+          (Retry.newRetryState Retry.defaultRetryConfig)
+      oldFactor = Retry.retryFactor Retry.defaultRetryConfig grown
+  _ <-
+    right <$> atomically (C.admitClientRequest client admittedAt oldFactor (prepared env (0 :| [])))
+  entered <- newEmptyTMVarIO
+  release <- newEmptyTMVarIO
+  withConnection env client (blockedHandler env entered release) unchanged $ \running -> do
+    _ <- awaitEvent running (readTMVar entered)
+    before <- T.activeDeadline . C.snapshotClientTiming <$> atomically (C.readClientSnapshot client)
+    assertBool "first request never activated" (before /= Nothing)
+    let recovered = Retry.recoverRetryService Retry.defaultRetryConfig 20000 20000 grown
+        newFactor = Retry.retryFactor Retry.defaultRetryConfig recovered
+    assertBool "fixture did not reduce future retry pressure" (newFactor < oldFactor)
+    now <- getMonotonicTime
+    _ <- right <$> atomically (C.admitClientRequest client now newFactor (prepared env (1 :| [])))
+    after <- T.activeDeadline . C.snapshotClientTiming <$> atomically (C.readClientSnapshot client)
+    after @?= before
+    atomically $ C.stopAtomicClient client >> putTMVar release ()
     success running
     wireEmpty client

@@ -1,6 +1,6 @@
 module Test.Consensus.Leios.LeiosFetch.Closure (tests) where
 
-import Control.Monad.Class.MonadTime.SI (Time (..))
+import Control.Monad.Class.MonadTime.SI (Time (..), addTime)
 import qualified Data.ByteString as BS
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -10,14 +10,29 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure hiding
+  ( admitClosureAttempt
+  , closureRescuePlans
+  , expireClosureAttempt
+  )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure as L
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 
 type State = ClosureState Int ()
+
+-- Existing ownership cases use one fixed clock; adaptive tests below advance it.
+admitClosureAttempt ::
+  ClosureRole Int -> RequestKey Int -> () -> BatchDescriptor -> State -> Either ClosureError State
+admitClosureAttempt = L.admitClosureAttempt (Time 0)
+expireClosureAttempt :: RequestKey Int -> Bool -> State -> (ClosureChange, State)
+expireClosureAttempt = L.expireClosureAttempt (Time 0)
+closureRescuePlans :: State -> [(RequestKey Int, LeiosPoint, AcquisitionGeneration, IntSet.IntSet)]
+closureRescuePlans = L.closureRescuePlans (Time 0)
 
 point :: LeiosPoint
 point = MkLeiosPoint (SlotNo 1) (endorserBlockHash (mkEndorserBlock []))
@@ -76,6 +91,27 @@ remaining offsets = refreshClosure point gen (IntSet.fromList offsets)
 
 withTail :: State
 withTail = right (admitClosureAttempt ClosurePrimary (key 1 1) () (batch [2, 3]) hedged)
+
+-- Fully retire each failed rescue before reusing its peer in these policy cases.
+failRescueAt :: Time -> Int -> State -> State
+failRescueAt now n state =
+  let request = key (2 + n `mod` 2) (2 * n)
+      ack = key (2 + n `mod` 2) (2 * n + 1)
+      admitted = right (L.admitClosureAttempt now (ClosureRescue (key 1 0)) request () (batch [0, 1]) state)
+      expired = snd (L.expireClosureAttempt (addTime 1 now) request True admitted)
+      canceled = right (recordClosureCancel request ack expired)
+   in finishClosureCancel ack (finishClosureOriginal request canceled)
+
+failureRun :: Int -> State
+failureRun count = foldl' (\state n -> failRescueAt (Time (fromIntegral (n * 100))) n state) stalled [1 .. count]
+
+retryOf :: State -> R.RetrySnapshot
+retryOf = closureRetry . snapshot
+
+nearFactor :: State -> Double -> Assertion
+nearFactor state expected =
+  let actual = fromRational (R.snapshotRetryFactor (retryOf state)) :: Double
+   in assertBool (show (actual, expected)) (abs (actual - expected) < 1e-11)
 
 tests :: TestTree
 tests =
@@ -205,6 +241,81 @@ tests =
         refreshClosure point gen IntSet.empty owned @?= owned
         closureGeneration (snapshot owned) @?= newGen
         IntMap.elems (closureCopies (snapshot owned)) @?= [1, 1]
+    , testCase "only a still-needed rescue expiry grows retry history once" $ do
+        R.snapshotRetryFactor (retryOf stalled) @?= 1
+        R.snapshotFailuresInGroup (retryOf stalled) @?= 0
+        retryOf (rescueBlockedClosure (key 2 0) hedged) @?= retryOf hedged
+        let expired = snd (L.expireClosureAttempt (Time 2) (key 2 0) True hedged)
+        nearFactor expired 1.5
+        R.snapshotFailuresInGroup (retryOf expired) @?= 1
+        L.expireClosureAttempt (Time 3) (key 2 0) True expired @?= (NoClosureChange, expired)
+        L.expireClosureAttempt (Time 3) (key 2 0) False hedged @?= (NoClosureChange, hedged)
+        L.expireClosureAttempt (Time 3) (key 2 1) True hedged @?= (NoClosureChange, hedged)
+        L.expireClosureAttempt (Time 3) (key 2 0) True (remaining [2 .. 7] hedged)
+          @?= (NoClosureChange, remaining [2 .. 7] hedged)
+    , testCase "retry pressure follows the EB across new and recycled sources" $ do
+        let firstFailure = failRescueAt (Time 10) 1 stalled
+            twice = failRescueAt (Time 20) 2 firstFailure
+        nearFactor twice 2.25
+        R.snapshotFailuresInGroup (retryOf twice) @?= 2
+        closureFailures (peer 2) twice @?= 1
+        closureFailures (peer 3) twice @?= 1
+    , testCase "cooldown gates only new rescue, preserving ordinary work and its history" $ do
+        let cooling = failureRun 5
+        retryOf (removeClosurePeer (peer 3) cooling) @?= retryOf cooling
+        R.snapshotCooldownUntil (retryOf cooling) @?= Just (Time 502)
+        L.closureRescuePlans (Time 501.5) cooling @?= []
+        L.admitClosureAttempt (Time 501.5) (ClosureRescue (key 1 0)) (key 4 0) () (batch [0]) cooling
+          @?= Left ClosureCooling
+        let ordinary = right (L.admitClosureAttempt (Time 501.5) ClosurePrimary (key 4 0) () (batch [2]) cooling)
+        retryOf ordinary @?= retryOf cooling
+        assertBool
+          "retry becomes eligible exactly at the fixed deadline"
+          (not (null (L.closureRescuePlans (Time 502) cooling)))
+        let ready = advanceClosureRetries (Time 502) cooling
+        R.snapshotCooldownUntil (retryOf ready) @?= Nothing
+        R.snapshotNextCooldown (retryOf ready) @?= 2
+        nextClosureRetryDeadline (Time 502) ready @?= Nothing
+    , testCase "all useful service recovers pressure using the frozen nominal target" $ do
+        let pressured = failureRun 4
+            fromPrimary = noteClosureService (key 1 0) 0 (Time 450) pressured
+        nearFactor fromPrimary (1.5 ^ (4 :: Int) * 0.7 ** (1000 / 20000))
+        let custom = right (newClosureState R.defaultRetryConfig 2000)
+            ready = refreshClosure point gen (IntSet.fromList [0 .. 7]) (ensureClosureAcquisition point gen custom)
+            owned = right (admitClosureAttempt ClosurePrimary (key 1 0) () (batch [0, 1]) ready)
+            triggered = snd (expireClosureAttempt (key 1 0) True owned)
+            failedOnce = failRescueAt (Time 1) 1 triggered
+        nearFactor (noteClosureService (key 1 0) 0 (Time 3) failedOnce) (1.5 * sqrt 0.7)
+        newClosureState R.defaultRetryConfig 0 @?= (Left InvalidClosureTarget :: Either ClosureError State)
+    , testCase "useful late data from an abandoned original recovers without resetting failure history" $ do
+        let late = noteClosureService (key 2 0) 1 (Time 3) failed
+        nearFactor late (1.5 * 0.7 ** (2000 / 20000))
+        R.snapshotFailuresInGroup (retryOf late) @?= 1
+        closureFailures (peer 2) late @?= 1
+        noteClosureService (key 2 0) 99 (Time 4) late @?= late
+        let retired = retireClosureAcquisition point gen late
+        noteClosureService (key 2 0) 0 (Time 4) retired @?= retired
+    , testCase "productive whole-batch tail handoff remains available during cooldown" $ do
+        let before = failureRun 4
+            tailAssigned = right (L.admitClosureAttempt (Time 500) ClosurePrimary (key 1 1) () (batch [2, 3]) before)
+            active =
+              right
+                (L.admitClosureAttempt (Time 500) (ClosureRescue (key 1 0)) (key 4 0) () (batch [0, 1]) tailAssigned)
+            useful = noteClosureService (key 4 0) 0 (Time 500.5) active
+            fifth = snd (L.expireClosureAttempt (Time 501) (key 4 0) True useful)
+            fulfilled = remaining [2 .. 7] fifth
+        R.snapshotCooldownUntil (retryOf fulfilled) @?= Just (Time 502)
+        closureTailPlans fulfilled @?= [(key 1 1, peer 4, IntSet.fromList [2, 3])]
+    , testCase "independent EBs have independent retry pressure and cooldown" $ do
+        let cooling = failureRun 5
+            other = point{pointSlotNo = SlotNo 2}
+            otherBatch = (batch [2]){batchPoint = other}
+            ready = refreshClosure other gen (IntSet.singleton 2) (ensureClosureAcquisition other gen cooling)
+            owned = right (L.admitClosureAttempt (Time 501) ClosurePrimary (key 4 0) () otherBatch ready)
+            expired = snd (L.expireClosureAttempt (Time 501.1) (key 4 0) True owned)
+        map (\(_, p, _, _) -> p) (L.closureRescuePlans (Time 501.5) expired) @?= [other]
+        closureRescueFactor other expired @?= 1
+        nextClosureRetryDeadline (Time 501.5) expired @?= Just (Time 502)
     , testProperty "generated admission, expiry, fulfillment and drain schedules respect copy bounds" $ \events ->
         let states = scanl step (hedged, [key 1 0, key 2 0]) (zip [2 ..] (take 100 (events :: [Int])))
          in counterexample

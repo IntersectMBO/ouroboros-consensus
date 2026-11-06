@@ -8,7 +8,8 @@
 -- their wire identities and immutable reply contexts remain independent.
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@ (node assembly) and
 -- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy) and
--- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (closure rescue and shared loop).
+-- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (closure rescue and shared loop),
+-- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (backoff, recovery and cooldown).
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   ( AtomicFetchNode
   , AtomicNodeConfig (..)
@@ -46,6 +47,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as 
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as R
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as Retry
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing as T
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
@@ -71,6 +73,8 @@ data AtomicNodeConfig = AtomicNodeConfig
   -- ^ Per-connection shared response budget, across every EB and request kind.
   , nodeCheckpointLimits :: !CheckpointLimits
   -- ^ Whole-transaction checkpoint target and independent protocol hard caps.
+  , nodeClosureRetryConfig :: !Retry.RetryConfig
+  -- ^ Local closure backoff/recovery and grouped cooldown; bodies are independent.
   , nodeTimingConfig :: !D.TimingConfig
   -- ^ Receiver policy, checked against the actual protocol guard by each client.
   }
@@ -182,7 +186,15 @@ withAtomicFetchNode config kernel action = do
   legacy <- uncheckedNewTVarM Set.empty
   generations <- uncheckedNewTVarM Map.empty
   bodies <- uncheckedNewTVarM B.emptyBodyState
-  closures <- uncheckedNewTVarM L.emptyClosureState
+  initialClosure <-
+    either
+      (throwIO . InvalidClosurePolicy)
+      pure
+      ( L.newClosureState
+          (nodeClosureRetryConfig config)
+          (checkpointTargetBytes (nodeCheckpointLimits config))
+      )
+  closures <- uncheckedNewTVarM initialClosure
   policyReady <- atomically W.newReadiness
   ready <- uncheckedNewTVarM False
   observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
@@ -284,7 +296,7 @@ withNodeAtomicClient node owner lifetime d rtt action =
               (L.noteClosureService key (progressIndex event) (progressObservedAt event))
           refreshClosureRequest node key
           wake node
-      , C.clientExpired = \expiry -> do
+      , C.clientExpired = \handledAt expiry -> do
           state <- readTVar (fetchBodies node)
           let T.Expiry{T.expiryToken = T.TimerToken key _, T.chargeDataFailure} = expiry
               (change, next) = B.expireBodyAttempt key chargeDataFailure state
@@ -295,7 +307,7 @@ withNodeAtomicClient node owner lifetime d rtt action =
             B.NoBodyChange -> pure ()
           refreshClosureRequest node key
           closure <- readTVar (fetchClosures node)
-          let (closureChange, nextClosure) = L.expireClosureAttempt key chargeDataFailure closure
+          let (closureChange, nextClosure) = L.expireClosureAttempt handledAt key chargeDataFailure closure
           writeTVar (fetchClosures node) nextClosure
           case closureChange of
             L.ClosurePrimaryStalled -> observe node $ \s -> s{observedClosureStalls = inc (observedClosureStalls s)}
@@ -508,7 +520,7 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
               Right Nothing -> pure False
               Right (Just req) -> do
                 C.publishClientRequest client now 1 req
-                registerClosure node L.ClosurePrimary req
+                registerClosure node now L.ClosurePrimary req
                 observe node $ \s -> s{observedCheckpoints = inc (observedCheckpoints s)}
                 peak node client
                 pure True
@@ -639,7 +651,8 @@ readNodeClientUsage ::
   STM m (Map.Map (LeiosPeerLifetimeId peer) (Either H.StorageError A.Usage))
 readNodeClientUsage node = readTVar (fetchClients node) >>= traverse C.readClientUsage
 
--- | Body timers are independent of the throttled legacy decision loop. Reuse
+-- | Body/closure timers and cooldowns are independent of the throttled legacy
+-- decision loop. Reuse
 -- the common cancellable readiness/deadline/fallback wait, and hold the existing
 -- outstanding lock while assigning so prune/focus/removal cannot race admission.
 policyCoordinator ::
@@ -653,7 +666,11 @@ policyCoordinator node = forever $ do
     driveClosure node now peers offers outstanding
     clients <- readTVar (fetchClients node)
     snapshots <- traverse C.readClientSnapshot clients
-    pure $ case mapMaybe (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots) of
+    closure <- readTVar (fetchClosures node)
+    let cooldown = L.nextClosureRetryDeadline now closure
+    pure $ case mapMaybe
+      id
+      (cooldown : map (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots)) of
       [] -> Nothing
       due -> Just (minimum due)
   void $ W.waitForWakeup (fetchPolicyReady node) deadline
@@ -817,8 +834,8 @@ refreshClosureRequest node key = do
 
 registerClosure ::
   (IOLike m, Ord peer) =>
-  AtomicFetchNode m owner peer blk -> L.ClosureRole peer -> H.StorageRequest peer -> STM m ()
-registerClosure node role request = case preparedDescriptor (H.storageRequestPrepared request) of
+  AtomicFetchNode m owner peer blk -> Time -> L.ClosureRole peer -> H.StorageRequest peer -> STM m ()
+registerClosure node now role request = case preparedDescriptor (H.storageRequestPrepared request) of
   BodyRequest{} -> throwSTM (InvalidClosurePolicy L.InvalidClosureAttempt)
   BatchRequest batch -> do
     current <- H.readAcquisition (fetchHandoff node) (batchPoint batch)
@@ -831,7 +848,7 @@ registerClosure node role request = case preparedDescriptor (H.storageRequestPre
       either
         (throwSTM . InvalidClosurePolicy)
         pure
-        (L.admitClosureAttempt role (H.storageRequestKey request) request batch state)
+        (L.admitClosureAttempt now role (H.storageRequestKey request) request batch state)
     writeTVar (fetchClosures node) updated
     let copies =
           [ n | snapshot <- Map.elems (L.closureSnapshots updated), n <- IntMap.elems (L.closureCopies snapshot)
@@ -870,6 +887,7 @@ driveClosure ::
   LeiosOutstanding (LeiosPeerLifetimeId peer) ->
   STM m ()
 driveClosure node now peers offers outstanding = do
+  modifyTVar (fetchClosures node) (L.advanceClosureRetries now)
   clients <- readTVar (fetchClients node)
   policies <- L.closureSnapshots <$> readTVar state
   forM_ (Map.toList policies) $ \(point, policy) -> do
@@ -932,7 +950,7 @@ driveClosure node now peers offers outstanding = do
   retiredTarget _ = False
   rescueNext clients times = do
     current <- readTVar state
-    issued <- firstSuccessful (L.closureRescuePlans current) $ \(parent, point, gen, eligible) -> do
+    issued <- firstSuccessful (L.closureRescuePlans now current) $ \(parent, point, gen, eligible) -> do
       fresh <- readTVar state
       firstSuccessful (L.closureRescueCandidates parent (offered times point) fresh) $ \lifetime ->
         case Map.lookup lifetime clients of
@@ -951,12 +969,12 @@ driveClosure node now peers offers outstanding = do
                       Left e -> throwSTM (InvalidAcquisition e)
                       Right Nothing -> pure False
                       Right (Just prepared) -> do
-                        result <- C.admitClientRequest client now 1 prepared
+                        result <- C.admitClientRequest client now (L.closureRescueFactor point fresh) prepared
                         case result of
                           Left e | clientCapacity e -> pure False
                           Left e -> throwSTM e
                           Right request -> do
-                            registerClosure node (L.ClosureRescue parent) request
+                            registerClosure node now (L.ClosureRescue parent) request
                             observe node $ \s -> s{observedClosureRescues = inc (observedClosureRescues s)}
                             peak node client
                             pure True
@@ -990,7 +1008,7 @@ driveClosure node now peers offers outstanding = do
                   Right Nothing -> throwSTM HandoffUnavailable
                   Right (Just request) -> do
                     C.publishClientRequest client now 1 request
-                    registerClosure node L.ClosurePrimary request
+                    registerClosure node now L.ClosurePrimary request
                     observe node $ \s ->
                       s
                         { observedCheckpoints = inc (observedCheckpoints s)

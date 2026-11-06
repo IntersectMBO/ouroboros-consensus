@@ -15,6 +15,7 @@ import qualified Test.Consensus.Leios.LeiosFetch.Decision as Decision
 import qualified Test.Consensus.Leios.LeiosFetch.Handoff as Handoff
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
+import qualified Test.Consensus.Leios.LeiosFetch.Retry as Retry
 import qualified Test.Consensus.Leios.LeiosFetch.Timing as Timing
 import qualified Test.Consensus.Leios.LeiosFetch.Wait as Wait
 import Test.Tasty
@@ -23,7 +24,8 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ Closure.tests
+    [ Retry.tests
+    , Closure.tests
     , Body.tests
     , AtomicClient.tests
     , Acquisition.tests

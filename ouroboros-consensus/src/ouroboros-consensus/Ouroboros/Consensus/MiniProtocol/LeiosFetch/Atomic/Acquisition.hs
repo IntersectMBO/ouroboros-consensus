@@ -7,7 +7,8 @@
 -- Rationale and code-to-contract map (repository-root path):
 -- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
-  ( CheckpointLimits
+  ( checkpointTargetBytes
+  , CheckpointLimits
   , mkCheckpointLimits
   , defaultCheckpointLimits
   , AcquisitionError (..)

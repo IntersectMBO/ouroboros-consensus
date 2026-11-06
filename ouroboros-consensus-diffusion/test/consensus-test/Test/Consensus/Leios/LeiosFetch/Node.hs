@@ -100,6 +100,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor (PayloadByt
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as Handoff
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as AtomicReceive
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as Retry
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server as AtomicServer
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State as AtomicServerState
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type as Atomic
@@ -327,6 +328,11 @@ tests =
             runSimFinishing closureSoleSource >>= (@?= True)
         , testCase "a failed rescue rotates obligations FIFO before retrying the original head" $
             runSimFinishing closureRescueRotation >>= (@?= True)
+        , testCase
+            "recycled rescue attempts snapshot backoff, cool down after five failures and recover on useful TXs"
+            $ runSimFinishing closureRetryCycles >>= (@?= True)
+        , testCase "another EB's body and ordinary closure continue during retry cooldown" $
+            runSimFinishing closureCooldownIndependent >>= (@?= True)
         ]
     , testGroup
         "body hedging over connections"
@@ -1452,6 +1458,7 @@ atomicNodeConfig :: AtomicNodeConfig
 atomicNodeConfig =
   AtomicNodeConfig
     { nodeStorageLimits = Handoff.StorageLimits 2097152 2048 16 2 100
+    , nodeClosureRetryConfig = Retry.defaultRetryConfig
     , nodeResponseBytes = 1048576
     , nodeCheckpointLimits = must (AtomicAcquisition.mkCheckpointLimits 100 500000 20000 550000)
     , nodeTimingConfig = must (Deadline.mkTimingConfig 1500000 14600 0.5 2 60 (PayloadBytes 600000))
@@ -2383,5 +2390,168 @@ closureRescueRotation = do
             && observedPeakClosureCopies observation == 2
             && observedClosureHandoffs observation == 1
         )
+        (show observation)
+      pure True
+
+retrySnapshotOf :: NodeUnderTest (IOSim s) -> LeiosPoint -> IOSim s Retry.RetrySnapshot
+retrySnapshotOf node point = atomically $ case nodeAtomicFetch node of
+  Nothing -> retry
+  Just runtime -> do
+    snapshots <- readNodeClosureSnapshots runtime
+    maybe retry (pure . ClosurePolicy.closureRetry) (Map.lookup point snapshots)
+
+-- Five silent, fully retired rescues exercise the actual admission/timing path.
+-- Hold subsequent honest replies so pressure can be inspected before completion.
+closureRetryCycles :: forall s. IOSim s Bool
+closureRetryCycles = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offersA <- newTQueueIO
+    offersB <- newTQueueIO
+    primaryStarted <- newTVarIO False
+    requests <- newTVarIO ([] :: [([Int], Time)])
+    releaseSixth <- newTVarIO False
+    releaseSeventh <- newTVarIO False
+    let provider :: Bool -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider primarySource = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ _ -> pure (AtomicServer.PreparedBody (encodeEndorserBlockSize fetchedEb) fetchedEb)
+          AtomicServer.ServeTransactions _ _ bitmaps -> do
+            let offsets = bitmapOffsets (NE.toList bitmaps)
+                txs = V.fromList [fetchedTxs V.! off | off <- offsets]
+            if primarySource
+              then atomically (writeTVar primaryStarted True) >> atomically retry
+              else do
+                now <- getMonotonicTime
+                count <- atomically $ do
+                  modifyTVar requests (<> [(offsets, now)])
+                  length <$> readTVar requests
+                if count <= 5
+                  then atomically retry
+                  else
+                    when (count == 6 || count == 7) $
+                      atomically $
+                        readTVar (if count == 6 then releaseSixth else releaseSeventh) >>= check
+            pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 103 + 8) txs)
+        upstream notifications primarySource =
+          EnvPeer
+            (feedingLeiosNotifyServer node notifications)
+            Nothing
+            (bodyServing (provider primarySource) id)
+            Nothing
+        waitRequests count = atomically $ do
+          seen <- readTVar requests
+          check (length seen >= count)
+          pure seen
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream offersA True) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream offersB False) $ \_ -> do
+        atomically $ mapM_ (writeTQueue offersA) (announcingAndOffering fetchedEb announcingFetched)
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        atomically $ readTVar primaryStarted >>= check
+        atomically $ mapM_ (writeTQueue offersB) (announcingAndOffering fetchedEb announcingFetched)
+        cooling <- atomically $ case nodeAtomicFetch node of
+          Nothing -> retry
+          Just runtime -> do
+            snapshots <- readNodeClosureSnapshots runtime
+            case Map.lookup fetchedPoint snapshots of
+              Just snapshot
+                | Just cooldownAt <- Retry.snapshotCooldownUntil (ClosurePolicy.closureRetry snapshot) ->
+                    pure cooldownAt
+              _ -> retry
+        atCooldown <- getMonotonicTime
+        ensure
+          (abs (diffTime cooling atCooldown - 1) < 0.001)
+          "cooldown did not start for one second at the fifth failure"
+        seen <- take 6 <$> waitRequests 6
+        let gaps = zipWith (\(_, a) (_, b) -> diffTime b a) seen (tail seen)
+        ensure
+          (and (zipWith (\a b -> abs (a - b) < 0.001) gaps [1, 1.5, 2, 2, 3]))
+          ("unexpected retry timing: " ++ show gaps)
+        ensure
+          (map fst seen == [[0], [1], [2], [0], [1], [2]])
+          "failed rescue opportunities did not rotate FIFO"
+        before <- retrySnapshotOf node fetchedPoint
+        ensure
+          ( Retry.snapshotFailuresInGroup before == 0
+              && Retry.snapshotCooldownUntil before == Nothing
+              && Retry.snapshotNextCooldown before == 2
+          )
+          "cooldown expiry reset its grouped history"
+        let near actual expected = abs ((fromRational actual :: Double) - expected) < 1e-10
+        ensure
+          (near (Retry.snapshotRetryFactor before) (1.5 ^ (5 :: Int)))
+          "future rescue pressure lost a failure"
+        atomically $ writeTVar releaseSixth True
+        void (waitRequests 7)
+        recovered <- retrySnapshotOf node fetchedPoint
+        ensure
+          (near (Retry.snapshotRetryFactor recovered) (1.5 ^ (5 :: Int) * 0.7))
+          "useful wire TX did not recover pressure by its actual bytes"
+        ensure
+          (Retry.snapshotNextCooldown recovered == 2 && Retry.snapshotFailuresInGroup recovered == 0)
+          "useful service reset cooldown history"
+        atomically $ writeTVar releaseSeventh True
+        awaitAcquired next (AcquiredClosure fetchedPoint)
+        checkStored node fetchedPoint fetchedEb fetchedTxs
+        observation <- atomicObservation node
+        ensure
+          ( observedClosureFailures observation == 5
+              && observedClosureStalls observation == 1
+              && observedPeakClosureCopies observation == 2
+          )
+          (show observation)
+        pure True
+
+-- Local test knobs shorten the failure group and lengthen its first cooldown.
+-- The other EB uses ordinary body/TX requests and must finish inside that wait.
+closureCooldownIndependent :: forall s. IOSim s Bool
+closureCooldownIndependent = do
+  db <- newLeiosDBInMemory
+  let policy = either (error . show) id (Retry.mkRetryConfig 16 1.5 0.7 1 4 4)
+      config = atomicNodeConfig{nodeClosureRetryConfig = policy}
+  withAtomicNodeOver config db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- mapM (const newTQueueIO) [1 .. 3 :: Int]
+    started <- newTVarIO False
+    let otherPoint = MkLeiosPoint (blockSlot announcingHonest) (endorserBlockHash honestEb)
+        provider :: Int -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider _source = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ point -> do
+            let body = if point == fetchedPoint then fetchedEb else honestEb
+            pure (AtomicServer.PreparedBody (encodeEndorserBlockSize body) body)
+          AtomicServer.ServeTransactions _ point bitmaps -> do
+            if point == fetchedPoint
+              then atomically (writeTVar started True) >> atomically retry
+              else do
+                let txs = V.fromList [sharedTx | _ <- bitmapOffsets (NE.toList bitmaps)]
+                pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 53 + 8) txs)
+        connect [] action = action
+        connect ((n, notifications) : rest) action =
+          let upstream =
+                EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (bodyServing (provider n) id) Nothing
+           in withNodeVsEnvConnection node (PeerAddr n) upstream (const (connect rest action))
+    threadDelay 4
+    connect (zip [1 .. 3] offers) $ do
+      atomically $ mapM_ (writeTQueue (head offers)) (announcingAndOffering fetchedEb announcingFetched)
+      atomically $ readTVar started >>= check
+      atomically $ mapM_ (writeTQueue (offers !! 1)) (announcingAndOffering fetchedEb announcingFetched)
+      cooldownAt <- atomically $ case nodeAtomicFetch node of
+        Nothing -> retry
+        Just runtime -> do
+          snapshots <- readNodeClosureSnapshots runtime
+          case Map.lookup fetchedPoint snapshots of
+            Just snapshot | Just at <- Retry.snapshotCooldownUntil (ClosurePolicy.closureRetry snapshot) -> pure at
+            _ -> retry
+      atomically $ mapM_ (writeTQueue (offers !! 2)) (announcingAndOffering honestEb announcingHonest)
+      awaitAcquired next (AcquiredClosure otherPoint)
+      now <- getMonotonicTime
+      ensure (now < cooldownAt) "another EB's ordinary work was held behind retry cooldown"
+      stillCooling <- retrySnapshotOf node fetchedPoint
+      ensure
+        (Retry.snapshotCooldownUntil stillCooling == Just cooldownAt)
+        "unrelated EB service shortened or renewed cooldown"
+      observation <- atomicObservation node
+      ensure
+        (observedBodyRequests observation == 2 && observedClosureFailures observation == 1)
         (show observation)
       pure True
