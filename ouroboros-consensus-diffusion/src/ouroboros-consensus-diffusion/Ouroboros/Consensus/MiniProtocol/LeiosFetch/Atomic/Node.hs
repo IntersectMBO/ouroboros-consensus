@@ -7,7 +7,8 @@
 -- install this extension. Connections share durable possession and budgets;
 -- their wire identities and immutable reply contexts remain independent.
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@ (node assembly) and
--- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy and deadline loop).
+-- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy) and
+-- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (closure rescue and shared loop).
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   ( AtomicFetchNode
   , AtomicNodeConfig (..)
@@ -17,6 +18,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   , withNodeAtomicClient
   , withNodeLegacyClient
   , readNodeObservation
+  , readNodeClosureSnapshots
   , readNodeBodySnapshots
   , readNodeClientUsage
   ) where
@@ -24,6 +26,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import Control.Monad (foldM, forM_, forever, unless, void, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
@@ -38,6 +41,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body as B
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as C
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as D
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
@@ -56,6 +60,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch.ClientRegistry (KeepAliveRttReader)
+import Ouroboros.Network.Driver.Progress (ProgressEvent (..))
 
 -- | Explicit fixture/development sizing. No normal node defaults or version
 -- advertisement are changed by constructing this value.
@@ -95,6 +100,18 @@ data NodeObservation = NodeObservation
   -- ^ Largest wanted-copy count for any one EB; never exceeds two.
   , observedCheckpoints :: !Word64
   -- ^ Admitted new-version transaction batches.
+  , observedClosureStalls :: !Word64
+  -- ^ Once-only ordinary closure service expiries; retained originals stay live.
+  , observedClosureRescues :: !Word64
+  -- ^ Admitted extra rescue batches, independently of ordinary checkpoints.
+  , observedClosureFailures :: !Word64
+  -- ^ Rescue service expiries; FIFO blockage adds no failure.
+  , observedClosureCancels :: !Word64
+  -- ^ Separately admitted cancellation exchanges for closure batches.
+  , observedClosureHandoffs :: !Word64
+  -- ^ Successful whole-batch transfers to productive rescue suppliers.
+  , observedPeakClosureCopies :: !Int
+  -- ^ Maximum wanted copies of any one TX, never more than two.
   , observedPeakData :: !Int
   -- ^ Largest one-session live data-record count across concurrent EBs.
   }
@@ -106,6 +123,7 @@ data NodeIntegrationError
   | PeersAlreadyRunning
   | InvalidAcquisition !AcquisitionError
   | InvalidBodyPolicy !B.BodyError
+  | InvalidClosurePolicy !L.ClosureError
   deriving (Eq, Show)
 
 instance Exception NodeIntegrationError
@@ -129,8 +147,10 @@ data AtomicFetchNode m owner peer blk = AtomicFetchNode
   -- ^ Active generation, or completed/abandoned tombstone. Never recreated by a receipt.
   , fetchBodies :: !(StrictTVar m (B.BodyState peer (H.StorageRequest peer)))
   -- ^ Per-EB persistent primary/hedge slots and exact unresolved body originals.
-  , fetchBodyReady :: !(W.Readiness m)
-  -- ^ Body-only deadline/readiness loop; ordinary legacy planning keeps its cadence.
+  , fetchClosures :: !(StrictTVar m (L.ClosureState peer (H.StorageRequest peer)))
+  -- ^ Persistent ordinary episodes, one rescue slot per EB and whole-batch debt.
+  , fetchPolicyReady :: !(W.Readiness m)
+  -- ^ Shared body/closure policy loop; ordinary legacy planning keeps its cadence.
   , fetchReady :: !(StrictTVar m Bool)
   -- ^ Coalesced STM-to-MVar wakeup, with no retained event queue.
   , fetchLegacyReceipts :: !(StrictTVar m Word32)
@@ -162,9 +182,10 @@ withAtomicFetchNode config kernel action = do
   legacy <- uncheckedNewTVarM Set.empty
   generations <- uncheckedNewTVarM Map.empty
   bodies <- uncheckedNewTVarM B.emptyBodyState
-  bodyReady <- atomically W.newReadiness
+  closures <- uncheckedNewTVarM L.emptyClosureState
+  policyReady <- atomically W.newReadiness
   ready <- uncheckedNewTVarM False
-  observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0)
+  observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
   legacyReceipts <- uncheckedNewTVarM 0
   ownerThread <- myThreadId
   let node =
@@ -177,7 +198,8 @@ withAtomicFetchNode config kernel action = do
           legacy
           generations
           bodies
-          bodyReady
+          closures
+          policyReady
           ready
           legacyReceipts
           ownerThread
@@ -206,8 +228,8 @@ withAtomicFetchNode config kernel action = do
   bracket_ install uninstall $
     H.withStorageHandoff handoff (lfcWriter context) (storageEvent node) $ \_ ->
       withAsync wakeLoop $ \_ ->
-        withAsync (bodyCoordinator node) $ \bodyWorker -> do
-          link bodyWorker
+        withAsync (policyCoordinator node) $ \policyWorker -> do
+          link policyWorker
           action node `finally` atomically (readTVar legacyReceipts >>= check . (== 0))
 
 -- | Register one actual new-version client with its frozen D and one captured
@@ -255,6 +277,13 @@ withNodeAtomicClient node owner lifetime d rtt action =
   hooks =
     C.nullClientHooks
       { C.clientWakeup = wake node
+      , C.clientTransaction = \key event accepted -> do
+          when (accepted == H.Useful) $
+            modifyTVar
+              (fetchClosures node)
+              (L.noteClosureService key (progressIndex event) (progressObservedAt event))
+          refreshClosureRequest node key
+          wake node
       , C.clientExpired = \expiry -> do
           state <- readTVar (fetchBodies node)
           let T.Expiry{T.expiryToken = T.TimerToken key _, T.chargeDataFailure} = expiry
@@ -264,6 +293,14 @@ withNodeAtomicClient node owner lifetime d rtt action =
             B.BodyPrimaryTriggered -> observe node $ \s -> s{observedBodyTriggers = inc (observedBodyTriggers s)}
             B.BodyHedgeFailed -> observe node $ \s -> s{observedBodyFailures = inc (observedBodyFailures s)}
             B.NoBodyChange -> pure ()
+          refreshClosureRequest node key
+          closure <- readTVar (fetchClosures node)
+          let (closureChange, nextClosure) = L.expireClosureAttempt key chargeDataFailure closure
+          writeTVar (fetchClosures node) nextClosure
+          case closureChange of
+            L.ClosurePrimaryStalled -> observe node $ \s -> s{observedClosureStalls = inc (observedClosureStalls s)}
+            L.ClosureRescueFailed -> observe node $ \s -> s{observedClosureFailures = inc (observedClosureFailures s)}
+            L.NoClosureChange -> pure ()
       , C.clientReply = \key completion -> do
           state <- readTVar (fetchBodies node)
           let accepted = case R.completedOutcome completion of
@@ -282,6 +319,10 @@ withNodeAtomicClient node owner lifetime d rtt action =
                 R.CancelAcknowledged -> B.finishBodyCancel key won
                 _ -> B.finishBodyOriginal key won
           writeTVar (fetchBodies node) next
+          refreshClosureRequest node key
+          modifyTVar (fetchClosures node) $ case R.completedOutcome completion of
+            R.CancelAcknowledged -> L.finishClosureCancel key
+            _ -> L.finishClosureOriginal key
       }
 
 -- | Permit only an explicitly selected fallback connection to use legacy
@@ -298,7 +339,7 @@ withNodeLegacyClient node lifetime =
     (atomically (removePeer node lifetime))
 
 wake :: MonadSTM m => AtomicFetchNode m owner peer blk -> STM m ()
-wake node = writeTVar (fetchReady node) True >> W.notifyReadiness (fetchBodyReady node)
+wake node = writeTVar (fetchReady node) True >> W.notifyReadiness (fetchPolicyReady node)
 
 observe ::
   MonadSTM m => AtomicFetchNode m owner peer blk -> (NodeObservation -> NodeObservation) -> STM m ()
@@ -325,6 +366,7 @@ removePeer node lifetime = do
   modifyTVar (fetchClients node) (Map.delete lifetime)
   modifyTVar (fetchLegacy node) (Set.delete lifetime)
   modifyTVar (fetchBodies node) (B.removeBodyPeer lifetime)
+  modifyTVar (fetchClosures node) (L.removeClosurePeer lifetime)
   releasePeerAssignments (fetchAssignments node) lifetime
   wake node
 
@@ -350,6 +392,7 @@ retire node point gen = do
         (case winner of H.BodyFromRequest key -> Just key; H.BodyFromStorage -> Nothing)
   H.retireAcquisition (fetchHandoff node) point gen
   modifyTVar (fetchBodies node) (B.retireBodyAcquisition point gen)
+  modifyTVar (fetchClosures node) (L.retireClosureAcquisition point gen)
 
 -- | Called under the kernel's outstanding-state lock. No DB operation belongs
 -- here: storage callbacks supply all durable metadata. Legacy scheduling runs
@@ -372,14 +415,16 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
   shared <-
     foldM synchronize outstanding (Set.toAscList (Set.union (Map.keysSet active) (Set.fromList points)))
   driveBodies node now peers offers shared
+  driveClosure node now peers offers shared
   clients <- readTVar (fetchClients node)
   times <- traverse (readTVar . lfpOfferTimes) peers
   forM_ ordered $ \point -> do
     generations <- readTVar (fetchGenerations node)
     forM_ (Map.lookup point generations >>= id) $ \gen -> do
       current <- H.readAcquisition (fetchHandoff node) point
-      forM_ current $ \snapshot -> when (H.snapshotBodyDurable snapshot) $
-        forM_ (closureCandidates times clients point) $
+      forM_ current $ \snapshot -> when (H.snapshotBodyDurable snapshot) $ do
+        closure <- readTVar (fetchClosures node)
+        forM_ (closureCandidates closure times clients point) $
           \(client, offer) -> fill shared point gen client offer
   legacy <- readTVar (fetchLegacy node)
   bodyClaims <- readTVar (fetchBodies node)
@@ -415,6 +460,7 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
         case gen of
           Nothing -> pure state
           Just g -> do
+            modifyTVar (fetchClosures node) (L.ensureClosureAcquisition point g)
             previousBody <- readTVar (fetchBodies node)
             let updatedBody = B.ensureBodyAcquisition point g (bounds (pointSlotNo point)) previousBody
             when (updatedBody /= previousBody) $ writeTVar (fetchBodies node) updatedBody >> wake node
@@ -432,18 +478,17 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
                     retire node point g
                     modifyTVar (fetchGenerations node) (Map.insert point Nothing)
                 pure projected
-  candidates which times clients point =
+  closureCandidates closure times clients point =
     [ (client, offer)
-    | (_, client, offer) <-
+    | (_, _, _, client, offer) <-
         sortOn
-          (\(at, _, _) -> at)
-          [ (at, client, offer)
+          (\(fails, at, lifetime, _, _) -> (fails, at, lifetime))
+          [ (L.closureFailures lifetime closure, at, lifetime, client, offer)
           | (lifetime, client) <- Map.toAscList clients
           , Just offer <- [Map.lookup lifetime offers >>= Map.lookup point]
-          , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= which]
+          , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= closureOfferTime]
           ]
     ]
-  closureCandidates = candidates closureOfferTime
   fill shared point gen client offer = do
     state <- C.readClientSnapshot client
     unless (C.snapshotClientClosed state || C.snapshotClientStopping state) $ do
@@ -463,6 +508,7 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
               Right Nothing -> pure False
               Right (Just req) -> do
                 C.publishClientRequest client now 1 req
+                registerClosure node L.ClosurePrimary req
                 observe node $ \s -> s{observedCheckpoints = inc (observedCheckpoints s)}
                 peak node client
                 pure True
@@ -596,24 +642,25 @@ readNodeClientUsage node = readTVar (fetchClients node) >>= traverse C.readClien
 -- | Body timers are independent of the throttled legacy decision loop. Reuse
 -- the common cancellable readiness/deadline/fallback wait, and hold the existing
 -- outstanding lock while assigning so prune/focus/removal cannot race admission.
-bodyCoordinator ::
+policyCoordinator ::
   (IOLike m, MonadTimer m, Ord owner, Ord peer) => AtomicFetchNode m owner peer blk -> m ()
-bodyCoordinator node = forever $ do
+policyCoordinator node = forever $ do
   now <- getMonotonicTime
   deadline <- withMVar (lfcOutstanding (lfkContext kernel)) $ \outstanding -> atomically $ do
     peers <- readTVar (lfkPeers kernel)
     offers <- traverse (readTVar . lfpOfferings) peers
     driveBodies node now peers offers outstanding
+    driveClosure node now peers offers outstanding
     clients <- readTVar (fetchClients node)
     snapshots <- traverse C.readClientSnapshot clients
     pure $ case mapMaybe (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots) of
       [] -> Nothing
       due -> Just (minimum due)
-  void $ W.waitForWakeup (fetchBodyReady node) deadline
+  void $ W.waitForWakeup (fetchPolicyReady node) deadline
  where
   kernel = fetchKernel node
 
--- | Shared by the normal pass and the body-only deadline loop. Never change an
+-- | Shared by the normal pass and the policy deadline loop. Never change an
 -- admitted timer snapshot, and process verified winners before issuing cancels.
 driveBodies ::
   (IOLike m, Ord owner, Ord peer) =>
@@ -749,3 +796,210 @@ driveBodies node now peers offers outstanding = do
                       peak node client
                       pure True
           _ -> pure False
+
+-- | Logical closure evidence; wire reservations remain visible separately.
+readNodeClosureSnapshots ::
+  MonadSTM m =>
+  AtomicFetchNode m owner peer blk -> STM m (Map.Map LeiosPoint (L.ClosureSnapshot peer))
+readNodeClosureSnapshots node = L.closureSnapshots <$> readTVar (fetchClosures node)
+
+-- | Refresh possession before charging expiry: a verified winner on another
+-- connection can already have made this original redundant.
+refreshClosureRequest ::
+  (MonadSTM m, Ord peer) => AtomicFetchNode m owner peer blk -> RequestKey peer -> STM m ()
+refreshClosureRequest node key = do
+  state <- readTVar (fetchClosures node)
+  forM_ (L.closureRequestPoint key state) $ \(point, gen) -> do
+    current <- H.readAcquisition (fetchHandoff node) point
+    forM_ current $ \snapshot ->
+      when (H.snapshotGeneration snapshot == gen) $
+        modifyTVar (fetchClosures node) (L.refreshClosure point gen (H.snapshotMissing snapshot))
+
+registerClosure ::
+  (IOLike m, Ord peer) =>
+  AtomicFetchNode m owner peer blk -> L.ClosureRole peer -> H.StorageRequest peer -> STM m ()
+registerClosure node role request = case preparedDescriptor (H.storageRequestPrepared request) of
+  BodyRequest{} -> throwSTM (InvalidClosurePolicy L.InvalidClosureAttempt)
+  BatchRequest batch -> do
+    current <- H.readAcquisition (fetchHandoff node) (batchPoint batch)
+    forM_ current $ \snapshot ->
+      modifyTVar
+        (fetchClosures node)
+        (L.refreshClosure (batchPoint batch) (batchGeneration batch) (H.snapshotMissing snapshot))
+    state <- readTVar (fetchClosures node)
+    updated <-
+      either
+        (throwSTM . InvalidClosurePolicy)
+        pure
+        (L.admitClosureAttempt role (H.storageRequestKey request) request batch state)
+    writeTVar (fetchClosures node) updated
+    let copies =
+          [ n | snapshot <- Map.elems (L.closureSnapshots updated), n <- IntMap.elems (L.closureCopies snapshot)
+          ]
+    observe node $ \s -> s{observedPeakClosureCopies = maximum (observedPeakClosureCopies s : copies)}
+
+-- | Capacity failure during a whole-batch transfer rolls back the old logical
+-- release as well as any new admission. It is an internal STM retry result.
+data HandoffUnavailable = HandoffUnavailable deriving Show
+
+instance Exception HandoffUnavailable
+
+-- | Exact invocation lookup. An old terminal/cancel can never mutate a new
+-- invocation registered under the same connection lifetime.
+closureClientFor ::
+  Ord peer =>
+  Map.Map (LeiosPeerLifetimeId peer) (C.AtomicClient m owner peer) ->
+  RequestKey peer ->
+  Maybe (C.AtomicClient m owner peer)
+closureClientFor clients (RequestKey lifetime token _) = do
+  client <- Map.lookup lifetime clients
+  if H.storageSessionIdentity (C.clientStorageSession client) == (lifetime, token)
+    then Just client
+    else Nothing
+
+-- | One coordinator drives bodies and closure policy under the kernel lock.
+-- Rescue uses only idle eligible pipelines; productive handoff may append to a
+-- healthy pipeline, preserving the existing order. E18 adds adaptive retry.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-liveness-rule-for-an-unfinished-data-reply@.
+driveClosure ::
+  (IOLike m, Ord owner, Ord peer) =>
+  AtomicFetchNode m owner peer blk ->
+  Time ->
+  Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk) ->
+  Map.Map (LeiosPeerLifetimeId peer) (Map.Map LeiosPoint PeerOffer) ->
+  LeiosOutstanding (LeiosPeerLifetimeId peer) ->
+  STM m ()
+driveClosure node now peers offers outstanding = do
+  clients <- readTVar (fetchClients node)
+  policies <- L.closureSnapshots <$> readTVar state
+  forM_ (Map.toList policies) $ \(point, policy) -> do
+    let gen = L.closureGeneration policy
+    if not (Map.member point (ebState outstanding) && isFocusedPoint point outstanding)
+      then modifyTVar state (L.retireClosureAcquisition point gen)
+      else do
+        current <- H.readAcquisition handoff point
+        forM_ current $ \snapshot ->
+          when (H.snapshotGeneration snapshot == gen) $
+            modifyTVar state (L.refreshClosure point gen (H.snapshotMissing snapshot))
+  forM_ clients $ \client -> do
+    snapshot <- C.readClientSnapshot client
+    forM_ (T.rescuableRequests (C.snapshotClientTiming snapshot)) $ \key -> modifyTVar state (L.rescueBlockedClosure key)
+  settle clients
+  times <- traverse (readTVar . lfpOfferTimes) peers
+  transfer clients
+  rescueNext clients times
+  settle clients
+ where
+  state = fetchClosures node
+  handoff = fetchHandoff node
+  limits = nodeCheckpointLimits (fetchConfig node)
+  fullOffer lifetime point = do
+    offer <- Map.lookup lifetime offers >>= Map.lookup point
+    case poOffered offer of { OfferedBody{} -> Nothing; _ -> Just offer }
+  offered times point =
+    map snd $
+      sortOn
+        (\(at, p) -> (at, p))
+        [ (at, lifetime)
+        | lifetime <- Map.keys offers
+        , Just _ <- [fullOffer lifetime point]
+        , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= closureOfferTime]
+        ]
+  settle clients = do
+    keys <- L.unwithdrawnClosureAttempts <$> readTVar state
+    forM_ keys $ \key -> forM_ (closureClientFor clients key) $ \client -> do
+      (C.withdrawClientRequest client now key) `catch` \(e :: C.ClientError) -> case e of
+        C.ClientTimingEventError T.UnknownTimingKey -> pure ()
+        _ -> throwSTM e
+      modifyTVar state (L.recordClosureWithdrawal key)
+    pending <- L.pendingClosureCancels <$> readTVar state
+    forM_ pending $ \(key, request) -> forM_ (closureClientFor clients key) $ \client -> do
+      -- Acceptance and its element counter commit together, before the client
+      -- callback. Do not cancel an already complete payload in that callback gap.
+      complete <- H.readStorageRequestComplete handoff request
+      unless (complete == Right True) $ do
+        result <- C.cancelClientRequest client now request
+        case result of
+          Right ack -> do
+            current <- readTVar state
+            updated <- either (throwSTM . InvalidClosurePolicy) pure (L.recordClosureCancel key ack current)
+            writeTVar state updated
+            observe node $ \s -> s{observedClosureCancels = inc (observedClosureCancels s)}
+          Left e | clientCapacity e || retiredTarget e -> pure ()
+          Left e -> throwSTM e
+
+  retiredTarget (C.ClientStorageError (H.AdmissionFailure e)) = e `elem` [A.UnknownRequest, A.InvalidCancelTarget, A.AlreadyCancelled]
+  retiredTarget _ = False
+  rescueNext clients times = do
+    current <- readTVar state
+    issued <- firstSuccessful (L.closureRescuePlans current) $ \(parent, point, gen, eligible) -> do
+      fresh <- readTVar state
+      firstSuccessful (L.closureRescueCandidates parent (offered times point) fresh) $ \lifetime ->
+        case Map.lookup lifetime clients of
+          Nothing -> pure False
+          Just client -> do
+            snapshot <- C.readClientSnapshot client
+            if C.snapshotClientClosed snapshot
+              || C.snapshotClientStopping snapshot
+              || not (T.timingIdle (C.snapshotClientTiming snapshot))
+              then pure False
+              else do
+                currentAcquisition <- H.readAcquisition handoff point
+                case currentAcquisition of
+                  Just acquisition | H.snapshotGeneration acquisition == gen ->
+                    case buildCheckpoint limits point acquisition eligible of
+                      Left e -> throwSTM (InvalidAcquisition e)
+                      Right Nothing -> pure False
+                      Right (Just prepared) -> do
+                        result <- C.admitClientRequest client now 1 prepared
+                        case result of
+                          Left e | clientCapacity e -> pure False
+                          Left e -> throwSTM e
+                          Right request -> do
+                            registerClosure node (L.ClosureRescue parent) request
+                            observe node $ \s -> s{observedClosureRescues = inc (observedClosureRescues s)}
+                            peak node client
+                            pure True
+                  _ -> pure False
+    when issued (rescueNext clients times)
+  transfer clients = do
+    current <- readTVar state
+    issued <- firstSuccessful (L.closureTailPlans current) $ \(old, lifetime, eligible) ->
+      case (L.closureRequestPoint old current, Map.lookup lifetime clients) of
+        (Just (point, gen), Just client) -> case fullOffer lifetime point of
+          Nothing -> pure False
+          Just offer ->
+            ( do
+                -- A failure below must roll back this whole original's release.
+                releaseCheckpoint (fetchAssignments node) old
+                modifyTVar state (L.abandonClosureAttempt old)
+                result <-
+                  assignCheckpointWithin
+                    (fetchAssignments node)
+                    handoff
+                    limits
+                    (C.clientStorageSession client)
+                    point
+                    gen
+                    offer
+                    outstanding
+                    (Just eligible)
+                case result of
+                  Left (StorageAdmissionError e) | storageCapacity e -> throwSTM HandoffUnavailable
+                  Left e -> throwSTM (InvalidAcquisition e)
+                  Right Nothing -> throwSTM HandoffUnavailable
+                  Right (Just request) -> do
+                    C.publishClientRequest client now 1 request
+                    registerClosure node L.ClosurePrimary request
+                    observe node $ \s ->
+                      s
+                        { observedCheckpoints = inc (observedCheckpoints s)
+                        , observedClosureHandoffs = inc (observedClosureHandoffs s)
+                        }
+                    peak node client
+                    pure True
+            )
+              `catch` (\HandoffUnavailable -> pure False)
+              `catch` (\(e :: C.ClientError) -> if clientCapacity e then pure False else throwSTM e)
+        _ -> pure False
+    when issued (transfer clients)

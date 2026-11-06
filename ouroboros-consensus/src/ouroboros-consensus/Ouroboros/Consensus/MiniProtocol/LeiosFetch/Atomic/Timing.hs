@@ -29,6 +29,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
   , wakeTimer
   , nextDeadline
   , activeDeadline
+  , timingIdle
   , upstreamBlocked
   , rescuableRequests
   , retireTimingSession
@@ -366,6 +367,11 @@ nextDeadline :: TimingState peer -> Maybe (TimerToken peer, Time)
 nextDeadline s = case timingQueue s of
   Entry{entryActive = Just (Active token deadline Armed)} :<| _ -> Just (token, deadline)
   _ -> Nothing
+
+-- | No unresolved timing exchanges, including unsent data and cancel ACKs.
+-- Pending storage can still own handoff capacity after the wire is idle.
+timingIdle :: TimingState peer -> Bool
+timingIdle = Seq.null . timingQueue
 
 upstreamBlocked :: TimingState peer -> Bool
 upstreamBlocked s = case timingQueue s of

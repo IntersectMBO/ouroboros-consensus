@@ -15,10 +15,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , modifyTVar
   , newTVarIO
   , readTVarIO
+  , throwSTM
   )
-import Control.Exception (bracket)
+import Control.Exception (Exception, bracket)
 import Control.Monad.Class.MonadAsync (concurrently)
 import Control.Monad.Class.MonadTest (MonadTest (exploreRaces))
+import Control.Monad.Class.MonadThrow (catch)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim, exploreSimTrace, traceResult)
 import qualified Data.ByteString as BS
@@ -51,6 +53,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type as Wire
@@ -109,6 +112,9 @@ tests =
             Left failure -> counterexample (show failure) False
             Right result -> property result
     , testCase "failed handoff admission leaves no ordinary ownership behind" testAdmissionRollback
+    , testCase
+        "whole-batch subset handoff rolls back on capacity failure and preserves verified data"
+        testTailTransfer
     , testCase "release affects exact ownership and retains old immutable descriptors" testRelease
     , testCase "pending writes suppress new work without completing legacy jobs" testPendingProjection
     , testCase "an unconfirmed write re-enables projected legacy work" testUnconfirmed
@@ -693,3 +699,50 @@ testBodyReadiness = do
   case Map.lookup point (ebState projected) of
     Just (MkEbState _ NoBody) -> pure ()
     _ -> assertFailure "pending body must not become legacy BodyAcquired"
+
+-- A transfer is one transaction: failed replacement admission cannot leave the
+-- old batch's still-needed tail unowned. Late elements retain the old descriptor.
+data TransferCapacity = TransferCapacity deriving Show
+instance Exception TransferCapacity
+
+testTailTransfer :: Assertion
+testTailTransfer = withFixture [6, 6, 6, 6] [] $ \env -> do
+  a <- newSession env 1 1
+  b <- newSession env 2 1
+  ra <- assignedRequest env a
+  rb <- assignedRequest env b
+  let immutable = H.storageRequestPrepared ra
+      transfer = do
+        releaseCheckpoint (assignments env) (H.storageRequestKey ra)
+        result <-
+          assignCheckpointWithin
+            (assignments env)
+            (handoff env)
+            small
+            b
+            (point env)
+            (generation env)
+            closureOffer
+            (focused env)
+            (Just (IntSet.fromList [0, 1]))
+        case result of
+          Left StorageAdmissionError{} -> throwSTM TransferCapacity
+          other -> pure other
+  blocked <- atomically (transfer `catch` (\TransferCapacity -> pure (Right Nothing)))
+  blocked @?= Right Nothing
+  assigned env >>= (@?= IntSet.fromList [0, 1, 2, 3])
+  atomically (H.readStorageRequestComplete (handoff env) ra) >>= (@?= Right False)
+  H.acceptTransaction (handoff env) ra 0 (head (txs env)) >>= (@?= Right H.Useful)
+  atomically (H.readStorageRequestComplete (handoff env) ra) >>= (@?= Right False)
+  H.acceptTransaction (handoff env) rb 0 (txs env !! 2) >>= (@?= Right H.Useful)
+  H.acceptTransaction (handoff env) rb 1 (txs env !! 3) >>= (@?= Right H.Useful)
+  atomically $ do
+    H.finishStorageRequest (handoff env) (H.storageRequestKey rb) A.NormalTerminal
+      >>= either (error . show) pure
+    releaseCheckpoint (assignments env) (H.storageRequestKey rb)
+  replacement <- fromJust . right <$> atomically transfer
+  offsetsOf (H.storageRequestPrepared replacement) @?= [1]
+  assigned env >>= (@?= IntSet.singleton 1)
+  H.storageRequestPrepared ra @?= immutable
+  H.acceptTransaction (handoff env) ra 1 (txs env !! 1) >>= (@?= Right H.Useful)
+  atomically (H.readStorageRequestComplete (handoff env) ra) >>= (@?= Right True)

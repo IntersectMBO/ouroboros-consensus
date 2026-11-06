@@ -31,6 +31,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -93,6 +94,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition 
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as Admission
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body as BodyPolicy
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as AtomicClient
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure as ClosurePolicy
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as Deadline
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor (PayloadBytes (..))
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as Handoff
@@ -314,6 +316,17 @@ tests =
                     (IOLike.ExceptionInLinkedThread "test" (toException AtomicClient.ClientBodySizeMisstated))
                 ]
               classify (toException (Handoff.StorageException Handoff.InvalidDescriptor)) @?= "ShutdownNode"
+        ]
+    , testGroup
+        "closure rescue over connections"
+        [ testCase "a later full offer rescues a silent primary and takes over its queued tail" $
+            runSimFinishing (closureRecovery False) >>= (@?= True)
+        , testCase "a verified prefix survives a committed partial response and only missing TXs are rescued" $
+            runSimFinishing (closureRecovery True) >>= (@?= True)
+        , testCase "a sole slow closure primary persists and completes after expiry" $
+            runSimFinishing closureSoleSource >>= (@?= True)
+        , testCase "a failed rescue rotates obligations FIFO before retrying the original head" $
+            runSimFinishing closureRescueRotation >>= (@?= True)
         ]
     , testGroup
         "body hedging over connections"
@@ -2167,3 +2180,208 @@ bodyBehindTransactions = do
               && observedBodyTriggers observation == 0
               && observedBodyFailures observation == 0
           )
+
+-- A stalled committed original retains its descriptor and verified prefix.
+-- Rescue logs only request membership; production retains fixed-size counters.
+closureRecovery :: forall s. Bool -> IOSim s Bool
+closureRecovery partial = do
+  db <- newLeiosDBInMemory
+  let config =
+        atomicNodeConfig
+          { nodeCheckpointLimits =
+              must (AtomicAcquisition.mkCheckpointLimits (if partial then 200 else 100) 500000 20000 550000)
+          }
+      must = either (error . show) id
+  withAtomicNodeOver config db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offersA <- newTQueueIO
+    offersB <- newTQueueIO
+    started <- newTVarIO False
+    logVar <- newTVarIO ([] :: [(Bool, [Int])])
+    sendCount <- newTVarIO (0 :: Int)
+    gate <- newTVarIO False
+    let provider :: Bool -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider isPrimary = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ _ -> pure (AtomicServer.PreparedBody (encodeEndorserBlockSize fetchedEb) fetchedEb)
+          AtomicServer.ServeTransactions _ _ bitmaps -> do
+            let offsets = bitmapOffsets (NE.toList bitmaps)
+                txs = V.fromList [fetchedTxs V.! off | off <- offsets]
+            atomically $ do
+              modifyTVar logVar (<> [(isPrimary, offsets)])
+              when isPrimary $ writeTVar started True
+            when (isPrimary && not partial) $ atomically retry
+            pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 103 + 8) txs)
+        adjust channel =
+          channel
+            { send = \bytes -> do
+                index <- atomically $ do
+                  index <- readTVar sendCount
+                  writeTVar sendCount (index + 1)
+                  pure index
+                if index == 1
+                  then do
+                    -- A complete isPrimary 100 B TX and an unfinished second TX.
+                    send channel (BSL.take 110 bytes)
+                    atomically $ readTVar gate >>= check
+                    send channel (BSL.drop 110 bytes)
+                  else send channel bytes
+            }
+        upstream notifications isPrimary =
+          EnvPeer
+            (feedingLeiosNotifyServer node notifications)
+            Nothing
+            (bodyServing (provider isPrimary) (if isPrimary && partial then adjust else id))
+            Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream offersA True) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream offersB False) $ \_ -> do
+        atomically $ mapM_ (writeTQueue offersA) (announcingAndOffering fetchedEb announcingFetched)
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        atomically $ readTVar started >>= check
+        atomically $ case nodeAtomicFetch node of
+          Nothing -> retry
+          Just runtime -> do
+            observation <- readNodeObservation runtime
+            check (observedClosureStalls observation == 1)
+            when partial $ do
+              snapshots <- readNodeClosureSnapshots runtime
+              let copies = ClosurePolicy.closureCopies <$> Map.lookup fetchedPoint snapshots
+              check (maybe False (IntMap.notMember 0) copies)
+        atomically $ mapM_ (writeTQueue offersB) (announcingAndOffering fetchedEb announcingFetched)
+        awaitAcquired next (AcquiredClosure fetchedPoint)
+        checkStored node fetchedPoint fetchedEb fetchedTxs
+        observation <- atomicObservation node
+        seen <- readTVarIO logVar
+        usage <- bodyUsageOf node (PeerAddr 1)
+        ensure (observedClosureStalls observation == 1) "queued tail falsely charged its own service timer"
+        ensure (observedClosureRescues observation == 1) "closure rescue was missing or exceeded its slot"
+        ensure
+          (observedClosureHandoffs observation == if partial then 1 else 2)
+          "productive rescue did not take over the whole-batch tail"
+        ensure (observedPeakClosureCopies observation == 2) "wanted closure copy bound was not observed"
+        ensure (observedClosureFailures observation == 0) "successful rescue charged a hedge failure"
+        let rescued = [offsets | (False, offsets) <- seen]
+        ensure
+          (rescued == if partial then [[1], [2]] else [[0], [1], [2]])
+          "replacement requested a verified prefix or lost a needed transaction"
+        when partial $ do
+          ensure
+            (Admission.usedData usage > 0)
+            "committed partial original released its reservation before wire drain"
+          atomically $ writeTVar gate True
+          atomically $ do
+            usages <- case nodeAtomicFetch node of Nothing -> retry; Just runtime -> readNodeClientUsage runtime
+            let active =
+                  [u | (MkLeiosPeerLifetimeId conn _, Right u) <- Map.toList usages, remoteAddress conn == PeerAddr 1]
+            check
+              (not (null active) && all (\u -> Admission.usedData u == 0 && Admission.usedExchanges u == 0) active)
+        pure True
+
+closureSoleSource :: forall s. IOSim s Bool
+closureSoleSource = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    initialRequest <- newTVarIO True
+    let provider :: AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ _ -> pure (AtomicServer.PreparedBody (encodeEndorserBlockSize fetchedEb) fetchedEb)
+          AtomicServer.ServeTransactions _ _ bitmaps -> do
+            shouldDelay <- atomically $ do
+              before <- readTVar initialRequest
+              writeTVar initialRequest False
+              pure before
+            when shouldDelay $ threadDelay 1.2
+            let txs = V.fromList [fetchedTxs V.! off | off <- bitmapOffsets (NE.toList bitmaps)]
+            pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 103 + 8) txs)
+        upstream = EnvPeer (feedingLeiosNotifyServer node offers) Nothing (bodyServing provider id) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) upstream $ \_ -> do
+      atomically $ mapM_ (writeTQueue offers) (announcingAndOffering fetchedEb announcingFetched)
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      ensure
+        ( observedClosureStalls observation == 1
+            && observedClosureRescues observation == 0
+            && observedClosureCancels observation == 0
+        )
+        (show observation)
+      pure True
+
+closureRescueRotation :: forall s. IOSim s Bool
+closureRescueRotation = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- mapM (const newTQueueIO) [1 .. 3 :: Int]
+    requests <- newTVarIO ([] :: [(Int, [Int], Time)])
+    cancellationGate <- newTVarIO False
+    let provider :: Int -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider n = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ _ -> pure (AtomicServer.PreparedBody (encodeEndorserBlockSize fetchedEb) fetchedEb)
+          AtomicServer.ServeTransactions _ _ bitmaps -> do
+            let offsets = bitmapOffsets (NE.toList bitmaps)
+                txs = V.fromList [fetchedTxs V.! off | off <- offsets]
+            now <- getMonotonicTime
+            atomically $ modifyTVar requests (<> [(n, offsets, now)])
+            when (n < 3) $ atomically retry
+            pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 103 + 8) txs)
+        holdCancellation channel =
+          channel
+            { send = \bytes -> do
+                atomically $ readTVar cancellationGate >>= check
+                send channel bytes
+            }
+        connect [] action = action
+        connect ((n, notifications) : rest) action =
+          let upstream =
+                EnvPeer
+                  (feedingLeiosNotifyServer node notifications)
+                  Nothing
+                  (bodyServing (provider n) (if n == 2 then holdCancellation else id))
+                  Nothing
+           in withNodeVsEnvConnection node (PeerAddr n) upstream (const (connect rest action))
+        publish n =
+          atomically $
+            mapM_ (writeTQueue (offers !! (n - 1))) (announcingAndOffering fetchedEb announcingFetched)
+        requested n = atomically $ do
+          seen <- readTVar requests
+          check (any (\(p, _, _) -> p == n) seen)
+    connect (zip [1 .. 3] offers) $ do
+      publish 1
+      requested 1
+      publish 2
+      requested 2
+      publish 3
+      threadDelay 0.1
+      before <- readTVarIO requests
+      ensure (all (\(n, _, _) -> n < 3) before) "a second rescue started before the first rescue's expiry"
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      debt <- bodyUsageOf node (PeerAddr 2)
+      ensure
+        (Admission.usedData debt == 1 && Admission.usedExchanges debt == 2)
+        "canceled rescue was reused or uncharged before its original/ACK arrived"
+      atomically $ writeTVar cancellationGate True
+      atomically $ case nodeAtomicFetch node of
+        Nothing -> retry
+        Just runtime -> do
+          usages <- readNodeClientUsage runtime
+          let active =
+                [u | (MkLeiosPeerLifetimeId conn _, Right u) <- Map.toList usages, remoteAddress conn == PeerAddr 2]
+          check
+            (not (null active) && all (\u -> Admission.usedData u == 0 && Admission.usedExchanges u == 0) active)
+      seen <- readTVarIO requests
+      ensure
+        ([offsets | (3, offsets, _) <- seen] == [[1], [2], [0]])
+        ("unexpected rotated rescue schedule: " ++ show (seen, observation))
+      ensure
+        ( observedClosureRescues observation == 3
+            && observedClosureFailures observation == 1
+            && observedClosureStalls observation == 1
+            && observedPeakClosureCopies observation == 2
+            && observedClosureHandoffs observation == 1
+        )
+        (show observation)
+      pure True

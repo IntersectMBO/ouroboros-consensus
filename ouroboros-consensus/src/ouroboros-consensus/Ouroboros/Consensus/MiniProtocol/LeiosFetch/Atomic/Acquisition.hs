@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
   , prepareLegacyBatch
   , OrdinaryAssignments
   , newOrdinaryAssignments
+  , assignCheckpointWithin
   , assignCheckpoint
   , readAssignedOffsets
   , releaseCheckpoint
@@ -219,7 +220,26 @@ assignCheckpoint ::
   PeerOffer ->
   LeiosOutstanding p ->
   STM m (Either AcquisitionError (Maybe (StorageRequest peer)))
-assignCheckpoint assignments@(OrdinaryAssignments state) handoff limits session point generation offer outstanding
+assignCheckpoint assignments handoff limits session point generation offer outstanding =
+  assignCheckpointWithin assignments handoff limits session point generation offer outstanding Nothing
+
+-- | As 'assignCheckpoint', restricted to a replacement's still-needed subset.
+-- Whole-batch handoff releases the old ordinary claim and admits the new claim
+-- in one STM transaction; admission failure must roll back that transaction.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#when-only-part-of-a-batch-becomes-redundant@.
+assignCheckpointWithin ::
+  (MonadSTM m, Ord owner, Ord peer) =>
+  OrdinaryAssignments m peer ->
+  StorageHandoff m owner peer ->
+  CheckpointLimits ->
+  StorageSession peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  PeerOffer ->
+  LeiosOutstanding p ->
+  Maybe IntSet.IntSet ->
+  STM m (Either AcquisitionError (Maybe (StorageRequest peer)))
+assignCheckpointWithin assignments@(OrdinaryAssignments state) handoff limits session point generation offer outstanding permitted
   | not (Map.member point (ebState outstanding) && isFocusedPoint point outstanding) =
       pure (Left PointNotFocused)
   | OfferedBody{} <- poOffered offer = pure (Left ClosureNotOffered)
@@ -231,7 +251,8 @@ assignCheckpoint assignments@(OrdinaryAssignments state) handoff limits session 
           | snapshotGeneration snapshot /= generation -> pure (Left StaleAcquisition)
           | otherwise -> do
               assigned <- readAssignedOffsets assignments point generation
-              let eligible = IntSet.difference (snapshotMissing snapshot) assigned
+              let unassigned = IntSet.difference (snapshotMissing snapshot) assigned
+                  eligible = maybe unassigned (IntSet.intersection unassigned) permitted
               case buildCheckpoint limits point snapshot eligible of
                 Left err -> pure (Left err)
                 Right Nothing -> pure (Right Nothing)

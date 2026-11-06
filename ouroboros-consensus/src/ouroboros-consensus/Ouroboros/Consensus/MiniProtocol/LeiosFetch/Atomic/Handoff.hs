@@ -17,6 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , storageRequestKey
   , storageSessionIdentity
   , readStorageSessionUsage
+  , readStorageRequestComplete
   , storageRequestPrepared
   , StorageError (..)
   , StorageException (..)
@@ -135,6 +136,23 @@ readStorageSessionUsage ::
 readStorageSessionUsage h session = do
   state <- readTVar (handoffState h)
   pure (A.admissionUsage . sessionLedger <$> lookupSession session state)
+
+-- | Whether every normal response element has been validated on this exact
+-- original. Read in the same STM transaction as a proposed cancel: acceptance
+-- updates the admission counter before later client callbacks or storage events.
+-- A complete payload still owes its typed terminal and possibly a cancel ACK;
+-- this observation releases no reservation. Duplicates count as received too.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-liveness-rule-for-an-unfinished-data-reply@.
+readStorageRequestComplete ::
+  (MonadSTM m, Ord peer) =>
+  StorageHandoff m owner peer -> StorageRequest peer -> STM m (Either StorageError Bool)
+readStorageRequestComplete h request = do
+  state <- readTVar (handoffState h)
+  pure $ do
+    session <- lookupSession (requestSession (storageRequestKey request)) state
+    EntryCount count <-
+      admission (A.observedElements (storageRequestKey request) (sessionLedger session))
+    pure (count == fromIntegral (NE.length (preparedElements (storageRequestPrepared request))))
 
 -- | Pinned immutable context returned only after reserving handoff capacity.
 data StorageRequest peer = StorageRequest
