@@ -10,20 +10,16 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, unless, when)
+import Cardano.Prelude (Generic, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Applicative ((<|>))
 import Control.Concurrent.Class.MonadSTM.Strict
-  ( StrictTChan
-  , StrictTVar
-  , dupTChan
+  ( StrictTVar
   , modifyTVar
-  , newBroadcastTChan
   , newTVarIO
   , readTVar
-  , writeTChan
   , writeTVar
   )
+import Control.Monad (guard)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.IntMap.Strict (IntMap)
@@ -31,7 +27,6 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
@@ -41,18 +36,20 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
-  , encodeEndorserBlockSize
   , endorserBlockReferences
+  , hashLeiosTx
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
-  , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -71,42 +68,41 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
-  { imEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
-  -- ^ Tx bytes owned by the referencing EB, keyed by offset -- mirrors the
-  -- SQLite backend's @ebTxBytes@ table. A tx shared by two EBs is stored
-  -- twice, deliberately.
-  , imEbPoints :: !(Map LeiosPoint BytesSize)
-  -- ^ Inserted EB points with their expected sizes. The same EB
-  -- content can be inserted at multiple slots; each
-  -- @(slot, hash)@ point has its own entry and completes
-  -- independently.
-  , imEbBodiesDownloaded :: !(Set LeiosPoint)
-  -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
-  -- called. Only these points are considered for completion.
-  , imEbBodies :: !(Map EndorserBlockHash (IntMap {- txOffset -} EbTxEntry))
-  -- ^ EB tx-hash list, keyed by EB hash. Shared across every
-  -- point that references the same EB.
-  , imCompletedEbs :: !(Set LeiosPoint)
-  -- ^ Points for which 'AcquiredEbTxs' has already been broadcast.
-  -- The completion predicate stays true once an EB is complete, so
-  -- any later batch containing one of its txs would re-trigger it
-  -- without this guard; downstream consumers (e.g. 'runLeiosVoting')
-  -- treat the re-notification as fatal ('AlreadyKnown' from
-  -- 'addVote'). Each point carries the EB's hash and its announcer slot,
-  -- so this is also the source for
-  -- 'scanCompleteEbClosuresNotOlderThanSlot'.
-  , imImmutableEbBodies :: !(Map EndorserBlockHash (IntMap EbTxEntry))
-  -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted. The garbage
-  -- collection evicts such an EB from the other fields like any other, and the
-  -- reads fall back to this and 'imImmutableEbTxBytes'.
-  , imImmutableEbTxBytes :: !(Map EndorserBlockHash (IntMap {- txOffset -} ByteString))
+  { imEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
+  -- ^ Tx bytes owned by the point, keyed by offset -- the SQLite backend's
+  -- @txs@ column, one tx at a time. A tx shared by two EBs, or two points of
+  -- an EB, is stored twice, deliberately.
+  , imEbPoints :: !(Set LeiosPoint)
+  -- ^ Inserted EB points. The same EB content can be inserted at multiple
+  -- slots; each @(slot, hash)@ point has its own entry.
+  , imEbBodies :: !(Map EndorserBlockHash StoredBody)
+  -- ^ EB bodies, keyed by EB hash. Shared across every point that references
+  -- the same EB.
+  , imImmutableEbBodies :: !(Map LeiosPoint StoredBody)
+  -- ^ The bodies of the EBs 'leiosDbPromoteToImmutable' promoted, at the
+  -- points they were promoted at. The garbage collection evicts such an EB from
+  -- the other fields like any other.
+  , imImmutableEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
+  , imGcSlot :: !SlotNo
+  -- ^ The slot of the latest garbage collection. The writes of a point before
+  -- it are dropped, and its reads go to 'imImmutableEbBodies' and
+  -- 'imImmutableEbTxBytes'.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty 0
+
+-- | An EB body: the bytes it arrived in, as the SQLite backend's @body@
+-- column, and the txs it lists by offset.
+data StoredBody = StoredBody
+  { sbBytes :: !ByteString
+  , sbTxs :: !(IntMap {- txOffset -} EbTxEntry)
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 -- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
@@ -124,24 +120,21 @@ newLeiosDBInMemory = do
   newLeiosDBInMemoryWith stateVar
 
 newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
-newLeiosDBInMemoryWith stateVar = do
-  notificationChan <- atomically newBroadcastTChan
+newLeiosDBInMemoryWith stateVar =
   pure $
     LeiosDbHandle
       { -- Nothing to close: the state is a 'StrictTVar'.
         closeLeiosDbHandle = pure ()
-      , subscribeEbNotifications =
-          atomically (dupTChan notificationChan)
       , garbageCollect = imGarbageCollect stateVar
       , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
-      , openWriter = openInMemoryWriter stateVar notificationChan
+      , openWriter = openInMemoryWriter stateVar
       }
 
 -- | Copy the closures of the given EBs to 'imImmutableEbBodies' and
--- 'imImmutableEbTxBytes', unless they are there already. The node pins only what
+-- 'imImmutableEbTxBytes', unless they are there already. The node promotes only what
 -- the immutable chain certifies, and only once it holds its closure, so a
 -- closure that is incomplete is a caller's bug: this then fails, changing
 -- nothing.
@@ -149,19 +142,20 @@ imPromoteToImmutable :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint]
 imPromoteToImmutable stateVar points = do
   incomplete <- atomically $ do
     s <- readTVar stateVar
-    let closures =
-          Map.fromSet
-            ( \ebHash -> do
-                entries <- Map.lookup ebHash (imEbBodies s)
-                let txBytes = volatileTxBytes s ebHash
-                _ <- closureWith txBytes entries
-                pure (entries, txBytes)
-            )
-            ( Set.fromList (map pointEbHash points)
-                `Set.difference` Map.keysSet (imImmutableEbBodies s)
-            )
-        copied = Map.mapMaybe id closures
-        incomplete = Map.keys (Map.filter isNothing closures)
+    let promoted = Set.fromList (map pointEbHash (Map.keys (imImmutableEbBodies s)))
+        -- The first point given of each EB not promoted yet.
+        closures =
+          Map.fromList
+            [ (pointEbHash point, (point, closureAt point))
+            | point <- reverse points
+            , Set.notMember (pointEbHash point) promoted
+            ]
+        closureAt point = do
+          body <- Map.lookup (pointEbHash point) (imEbBodies s)
+          let txBytes = volatileTxBytes s point
+          if hashesMatch txBytes body then Just (body, txBytes) else Nothing
+        copied = Map.fromList [(point, closure) | (point, Just closure) <- Map.elems closures]
+        incomplete = [point | (point, Nothing) <- Map.elems closures]
     when (null incomplete) $
       writeTVar
         stateVar
@@ -175,20 +169,18 @@ imPromoteToImmutable stateVar points = do
       "leiosDbPromoteToImmutable: incomplete closure (programmer error): " <> show incomplete
 
 -- | Evict every EB all of whose points are older than the slot, with its body
--- and tx bytes. A promoted EB keeps its copy in 'imImmutableEbBodies' and
--- 'imImmutableEbTxBytes'.
+-- and tx bytes, and drop the older points of every other EB. A promoted EB
+-- keeps its copy in 'imImmutableEbBodies' and 'imImmutableEbTxBytes'.
 imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
 imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
   let newestPointSlots =
-        Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Map.keys (imEbPoints s)]
+        Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Set.toList (imEbPoints s)]
       evicted = Map.keysSet (Map.filter (< slot) newestPointSlots)
-      kept p = pointEbHash p `Set.notMember` evicted
    in s
-        { imEbPoints = Map.filterWithKey (\p _ -> kept p) (imEbPoints s)
-        , imEbBodiesDownloaded = Set.filter kept (imEbBodiesDownloaded s)
+        { imEbPoints = Set.filter ((>= slot) . pointSlotNo) (imEbPoints s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
-        , imEbTxBytes = Map.withoutKeys (imEbTxBytes s) evicted
-        , imCompletedEbs = Set.filter kept (imCompletedEbs s)
+        , imEbTxBytes = Map.filterWithKey (\p _ -> pointSlotNo p >= slot) (imEbTxBytes s)
+        , imGcSlot = max slot (imGcSlot s)
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -200,7 +192,6 @@ openInMemoryReader stateVar =
       , lookupEbBody = imLookupEbBody stateVar
       , lookupEbClosure = imLookupEbClosure stateVar
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
-      , testScanEbPoints = imScanEbPoints stateVar
       , -- ThreadNet persists 'stateVar' across simulated restarts, so on
         -- restart this seeds the restored acquired-EB-closures set.
         scanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
@@ -214,20 +205,17 @@ openInMemoryWriter ::
   forall m.
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   m (LeiosDbWriter m)
-openInMemoryWriter stateVar notificationChan =
+openInMemoryWriter stateVar =
   pure
     LeiosDbWriter
       { closeWriter = pure ()
-      , writeEbPoint = \point ebBytesSize ->
-          resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
-      , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+      , writeEbBody = \point eb fills ->
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb fills)
       , writeTxs = \point txs ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
-            (imInsertTxs stateVar notificationChan point txs)
+            (imInsertTxs stateVar point txs)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -246,213 +234,179 @@ openInMemoryWriter stateVar notificationChan =
 
 -- * Top-level implementations
 
-imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EndorserBlockHash)]
-imScanEbPoints stateVar = atomically $ do
-  state <- readTVar stateVar
-  pure
-    [ (pointSlotNo p, pointEbHash p)
-    | p <- Map.keys (imEbPoints state)
-    ]
-
--- | Insert an announced EB point. Idempotent: a second insert at the
--- same point keeps the first-seen size.
-imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
-imInsertEbPoint stateVar point ebBytesSize = atomically $
-  modifyTVar stateVar $ \s ->
-    s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
+-- | Insert a point, unless the latest garbage collection collects it.
+insertPoint :: LeiosPoint -> InMemoryLeiosDb -> InMemoryLeiosDb
+insertPoint point s
+  | pointSlotNo point < imGcSlot s = s
+  | otherwise = s{imEbPoints = Set.insert point (imEbPoints s)}
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m [(TxHash, BytesSize)]
-imLookupEbBody stateVar ebHash = atomically $ do
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe ByteString)
+imLookupEbBody stateVar point = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup ebHash (imEbBodies state) <|> Map.lookup ebHash (imImmutableEbBodies state) of
-    Nothing -> pure []
-    Just offsetMap ->
-      pure
-        [ (eteTxHash e, eteTxBytesSize e)
-        | e <- IntMap.elems offsetMap
-        ]
+  pure $ sbBytes <$> bodyAt state point
 
+-- | Mirrors the SQLite backend: the point if not written yet, then the body,
+-- returning the offsets the point holds. Nothing, if the latest garbage
+-- collection collects the point.
 imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   EndorserBlock ->
-  m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
-  let items = zip [0 :: Int ..] (endorserBlockReferences eb)
-      ebBytesSize = encodeEndorserBlockSize eb
-  when (null items) $
+  [LocalFill] ->
+  m [TxOffset]
+imInsertEbBody stateVar point eb fills = do
+  when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  known <- Map.member point . imEbPoints <$> atomically (readTVar stateVar)
-  unless known $
-    throwLeiosDbException "writeEbBody: point not registered (programmer error)"
   atomically $ do
-    let entries =
-          IntMap.fromList
-            [ ( offset
-              , EbTxEntry
-                  { eteTxHash = txHash
-                  , eteTxBytesSize = size
-                  }
-              )
-            | (offset, (txHash, size)) <- items
-            ]
+    collected <- (pointSlotNo point <) . imGcSlot <$> readTVar stateVar
+    if collected then pure [] else fill
+ where
+  fill = do
     modifyTVar stateVar $ \s ->
-      s
-        { -- The tx-hash list is fully determined by the EB content
-          -- hash, so a second insertion at the same hash is a no-op.
+      (insertPoint point s)
+        { -- The body is fully determined by the EB content hash, so a second
+          -- insertion at the same hash is a no-op.
           imEbBodies =
-            Map.insertWith (\_ old -> old) (pointEbHash point) entries (imEbBodies s)
-        , -- Mark this point as downloaded. Other points referencing
-          -- the same EB hash are unaffected; each needs its own
-          -- 'writeEbBody' to be considered complete.
-          imEbBodiesDownloaded =
-            Set.insert point (imEbBodiesDownloaded s)
+            Map.insertWith (\_ old -> old) ebHash body (imEbBodies s)
         }
-    writeTChan notificationChan $ AcquiredEb point ebBytesSize
-    -- If every tx referenced by this body is already present, the closure
-    -- is complete the moment the body lands — no subsequent
-    -- 'writeTxs' will fire for this point, so we must notify here.
-    -- Only trigger for a novel point ('imCompletedEbs' is our idempotency
-    -- guard). This mirrors what 'imInsertTxs' does when the last missing
-    -- tx of an already-downloaded body arrives.
-    state <- readTVar stateVar
-    let allTxsPresent = hashCompleteIn state (pointEbHash point)
-        alreadyNotified = Set.member point (imCompletedEbs state)
-    if allTxsPresent && not alreadyNotified
-      then do
-        modifyTVar stateVar $ \s ->
-          s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
-        pure [point]
-      else pure []
-
--- | Whether every offset of this EB body has its bytes.
-hashCompleteIn :: InMemoryLeiosDb -> EndorserBlockHash -> Bool
-hashCompleteIn state h = case Map.lookup h (imEbBodies state) of
-  Nothing -> False
-  Just entries ->
-    let txBytesByOffset = Map.findWithDefault IntMap.empty h (imEbTxBytes state)
-     in IntMap.keysSet entries `IntSet.isSubsetOf` IntMap.keysSet txBytesByOffset
+    s <- readTVar stateVar
+    let
+      atPoint = IntMap.keysSet (volatileTxBytes s point)
+      -- Mirrors the SQLite backend: a fill lands only on an offset the body
+      -- declares, at its declared size, from a point of the source holding
+      -- bytes that hash to the tx this body lists there, the first of the
+      -- fills winning an offset.
+      filled =
+        IntMap.fromListWith
+          (\_new old -> old)
+          [ (off, bytes)
+          | (off, MkTxLocation srcHash srcOff) <- fills
+          , Just e <- [IntMap.lookup off refs]
+          , bytes : _ <-
+              [ [ tx
+                | (p, txs) <- Map.toList (imEbTxBytes s)
+                , pointEbHash p == srcHash
+                , Just tx <- [IntMap.lookup srcOff txs]
+                ]
+              ]
+          , hashLeiosTx (MkLeiosTx bytes) == eteTxHash e
+          , fromIntegral (BS.length bytes) == eteTxBytesSize e
+          ]
+      toWrite = filled `IntMap.withoutKeys` atPoint
+    unless (IntMap.null toWrite) $
+      modifyTVar stateVar $ \s' ->
+        s'{imEbTxBytes = Map.insertWith IntMap.union point toWrite (imEbTxBytes s')}
+    pure (IntSet.toAscList (atPoint <> IntMap.keysSet toWrite))
+  ebHash = pointEbHash point
+  refs =
+    IntMap.fromList
+      [ (offset, EbTxEntry{eteTxHash = txHash, eteTxBytesSize = size})
+      | (offset, (txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
+      ]
+  body = StoredBody{sbBytes = serialiseEndorserBlock eb, sbTxs = refs}
 
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m CompletedEbs
-imInsertTxs stateVar notificationChan point offBytes = atomically $ do
+  m [TxOffset]
+imInsertTxs stateVar point offBytes = atomically $ do
   let ebHash = pointEbHash point
-  -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
-  -- pre-allocated row, i.e. an offset the body declared, once, at the declared
-  -- size. Anything else changes nothing.
-  modifyTVar stateVar $ \s ->
-    let declared = Map.findWithDefault IntMap.empty ebHash (imEbBodies s)
-        held = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes s)
-        accepted =
-          IntMap.fromList
-            [ (off, bytes)
-            | (off, bytes) <- offBytes
-            , Just e <- [IntMap.lookup off declared]
-            , fromIntegral (BS.length bytes) == eteTxBytesSize e
-            , not (IntMap.member off held)
-            ]
-     in if IntMap.null accepted
-          then s
-          else s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
-  state <- readTVar stateVar
-  -- Candidates: every point of THIS EB whose body has been downloaded and
-  -- whose closure is now complete. Tx bytes are not shared among overlapping
-  -- EBs, so no other hash can have been affected.
-  --
-  -- 'hashCompleteIn' does not depend on the point, so judge the closure once
-  -- rather than once per downloaded point. A batch that does not complete the
-  -- closure -- the common case while a multi-batch fetch is in flight -- then
-  -- scans nothing, which keeps the growth of the 'imEbBodiesDownloaded' set
-  -- from increasing the per-write cost.
-  let candidates
-        | hashCompleteIn state ebHash =
-            [ p
-            | p <- Set.toList (imEbBodiesDownloaded state)
-            , pointEbHash p == ebHash
-            ]
-        | otherwise = []
-      completed =
-        filter
-          (\p -> not (Set.member p (imCompletedEbs state)))
-          candidates
-  modifyTVar stateVar $ \s ->
-    s
-      { imCompletedEbs =
-          foldr Set.insert (imCompletedEbs s) completed
-      }
-  -- Emit a closure-completion notification for each newly-complete EB. The
-  -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  forM_ completed $ \p ->
-    writeTChan notificationChan (AcquiredEbTxs p)
-  pure completed
+  -- Mirrors the SQLite backend's in-place fill: a tx only lands at an offset
+  -- the body declared at the point, at the declared size, the first of a write
+  -- winning.
+  declared <-
+    ( \s ->
+        maybe
+          IntMap.empty
+          sbTxs
+          (guard (Set.member point (imEbPoints s)) *> Map.lookup ebHash (imEbBodies s))
+    )
+      <$> readTVar stateVar
+  let inBody = [(off, bytes, e) | (off, bytes) <- offBytes, Just e <- [IntMap.lookup off declared]]
+      sized (_, bytes, e) = fromIntegral (BS.length bytes) == eteTxBytesSize e
+      accepted = IntMap.fromListWith (\_new old -> old) [(off, bytes) | tx@(off, bytes, _) <- inBody, sized tx]
+  unless (IntMap.null accepted) $
+    modifyTVar stateVar $ \s ->
+      s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
+  pure [off | tx@(off, _, _) <- inBody, not (sized tx)]
 
--- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
--- announced no older than the given slot.
---
--- Derived from 'imCompletedEbs': an EB's greatest announcer slot is no older
--- than @sinceSlot@ exactly when at least one of its completed points has a slot
--- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
--- is precise across all of an EB's announcer slots, as in the SQLite backend.
+-- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
+-- than the given slot whose closure is complete where its reads go
+-- ('readsImmutable'). A volatile closure is complete if each of its txs hashes
+-- to what the body lists, and a promoted one is, since only complete EBs are
+-- promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
+  let isComplete p
+        | pointSlotNo p < imGcSlot s = Map.member p (imImmutableEbBodies s)
+        | otherwise =
+            maybe False (hashesMatch (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
   pure
     [ p
-    | p <- Set.toList (imCompletedEbs s)
+    | p <- Set.toAscList (imEbPoints s <> Map.keysSet (imImmutableEbBodies s))
     , pointSlotNo p >= sinceSlot
+    , isComplete p
     ]
 
--- | This falls back to the immutable copy only when 'imEbBodies' lacks the
--- body, even if that body's closure is incomplete. The SQLite implementation
--- has the same shortcoming (see the TODO on @sqlBatchRetrieveTxs@).
+-- | Each requested offset the body declares, with its bytes, or 'Nothing' if
+-- not written.
 imBatchRetrieveTxs ::
   IOLike m =>
-  StrictTVar m InMemoryLeiosDb ->
-  EndorserBlockHash ->
-  [Int] ->
-  m [(Int, TxHash, Maybe ByteString)]
-imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
+  StrictTVar m InMemoryLeiosDb -> LeiosPoint -> [Int] -> m [(Int, Maybe ByteString)]
+imBatchRetrieveTxs stateVar point offsets = atomically $ do
   state <- readTVar stateVar
-  pure $ case Map.lookup ebHash (imEbBodies state) of
-    Just offsetMap -> retrieve offsetMap (Map.findWithDefault IntMap.empty ebHash (imEbTxBytes state))
-    Nothing -> case Map.lookup ebHash (imImmutableEbBodies state) of
-      Just offsetMap -> retrieve offsetMap (Map.findWithDefault IntMap.empty ebHash (imImmutableEbTxBytes state))
-      Nothing -> []
- where
-  retrieve offsetMap txBytesByOffset =
-    [ (offset, eteTxHash entry, IntMap.lookup offset txBytesByOffset)
-    | offset <- offsets
-    , Just entry <- [IntMap.lookup offset offsetMap]
+  pure
+    [ (offset, writtenTx state point offset)
+    | Just body <- [bodyAt state point]
+    , offset <- IntSet.toAscList (IntSet.fromList offsets)
+    , IntMap.member offset (sbTxs body)
     ]
 
 imLookupEbClosure ::
-  IOLike m =>
-  StrictTVar m InMemoryLeiosDb -> EndorserBlockHash -> m (Maybe [(TxHash, ByteString)])
-imLookupEbClosure stateVar ebHash = atomically $ do
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [ByteString])
+imLookupEbClosure stateVar point = atomically $ do
   state <- readTVar stateVar
-  pure $ case Map.lookup ebHash (imEbBodies state) >>= closureWith (volatileTxBytes state ebHash) of
-    Just closure -> Just closure
-    Nothing ->
-      Map.lookup ebHash (imImmutableEbBodies state)
-        >>= closureWith (Map.findWithDefault IntMap.empty ebHash (imImmutableEbTxBytes state))
+  pure $ do
+    body <- bodyAt state point
+    traverse (writtenTx state point) (IntMap.keys (sbTxs body))
 
--- | The EB's tx bytes by offset, from 'imEbTxBytes'.
-volatileTxBytes :: InMemoryLeiosDb -> EndorserBlockHash -> IntMap ByteString
-volatileTxBytes s ebHash = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes s)
+-- | Whether reads of the point go to the immutable copies: it is older than
+-- the latest garbage collection.
+readsImmutable :: InMemoryLeiosDb -> LeiosPoint -> Bool
+readsImmutable state point = pointSlotNo point < imGcSlot state
 
--- | The body's closure, if the tx bytes hold each of its transactions.
-closureWith :: IntMap ByteString -> IntMap EbTxEntry -> Maybe [(TxHash, ByteString)]
-closureWith txBytesByOffset entries =
-  traverse
-    (\(offset, e) -> (,) (eteTxHash e) <$> IntMap.lookup offset txBytesByOffset)
-    (IntMap.toAscList entries)
+-- | The body at the point.
+bodyAt :: InMemoryLeiosDb -> LeiosPoint -> Maybe StoredBody
+bodyAt state point
+  | readsImmutable state point = Map.lookup point (imImmutableEbBodies state)
+  | otherwise =
+      guard (Set.member point (imEbPoints state)) *> Map.lookup (pointEbHash point) (imEbBodies state)
+
+-- | A tx's bytes at the point, if written.
+writtenTx :: InMemoryLeiosDb -> LeiosPoint -> Int -> Maybe ByteString
+writtenTx state point offset = IntMap.lookup offset txs
+ where
+  txs
+    | readsImmutable state point = Map.findWithDefault IntMap.empty point (imImmutableEbTxBytes state)
+    | otherwise = volatileTxBytes state point
+
+-- | The point's tx bytes by offset, from 'imEbTxBytes'.
+volatileTxBytes :: InMemoryLeiosDb -> LeiosPoint -> IntMap ByteString
+volatileTxBytes s point = Map.findWithDefault IntMap.empty point (imEbTxBytes s)
+
+-- | Whether each tx of the body is written and hashes to what the body lists.
+hashesMatch :: IntMap ByteString -> StoredBody -> Bool
+hashesMatch txBytesByOffset body =
+  and
+    [ maybe
+        False
+        (\tx -> hashLeiosTx (MkLeiosTx tx) == eteTxHash e)
+        (IntMap.lookup off txBytesByOffset)
+    | (off, e) <- IntMap.toList (sbTxs body)
+    ]

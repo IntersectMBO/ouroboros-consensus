@@ -6,22 +6,21 @@
 -- 'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.startWriter'.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
-  , WriteResult
+  , ResolveWriteJob
   , WriteQueue (..)
   , submitJob
   , describeJob
-  , maxJobsBetweenMaintenance
   , writerQueueDepth
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTBQueue
-  , StrictTMVar
   , StrictTVar
   , isFullTBQueue
   , newEmptyTMVarIO
   , orElse
+  , putTMVar
   , readTMVar
   , readTVar
   , retry
@@ -36,14 +35,12 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
-  , EndorserBlockHash
+  ( EndorserBlock
   , LeiosPoint (..)
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -53,62 +50,44 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 
 -- * The single writer
 
--- | One queued write, carrying the variable its result lands in.
+-- | One queued write, carrying how to resolve its 'Promise'.
 --
 -- The insert jobs come from 'LeiosDbWriter', the rest from the handle's
--- promote\/GC entry points. One worker running them all is what makes the
+-- GC entry point. One worker running them all is what makes the
 -- single-writer property total: no two in-process connections ever contend
--- for a write lock on the volatile partition. Sweeping is not a job at all
--- -- the worker does it between jobs; see 'startWriter'.
+-- for a write lock on the volatile partition.
 data WriteJob
-  = WriteEbPoint
-      -- | the announced EB
-      !LeiosPoint
-      -- | its announced size
-      !BytesSize
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | WriteEbBody
+  = WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
       !EndorserBlock
-      -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      -- | the txs to fill from local bytes
+      ![LocalFill]
+      -- | where the worker puts the offsets the point holds
+      !(ResolveWriteJob [TxOffset])
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
-      -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      -- | where the worker puts the offsets dropped for their size
+      !(ResolveWriteJob [TxOffset])
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
-    Flush !(WriteResult ())
-  | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
-    PinEb
-      -- | the EBs to pin
-      ![EndorserBlockHash]
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | -- | The volatile half of a copy: the EB is in the immutable partition
-    -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
-    MarkCopied
-      -- | the EBs now in the immutable partition
-      ![EndorserBlockHash]
-      -- | where the worker puts the result
-      !(WriteResult ())
-  | -- | The GC MARK phase; see 'gcMark'.
-    GcMark
-      -- | the GC frontier slot
+    Flush !(ResolveWriteJob ())
+  | -- | Garbage collection; see 'sqlGarbageCollect'.
+    GarbageCollect
+      -- | the GC slot
       !SlotNo
-      -- | where the worker puts the number of 'ebs' rows marked
-      !(WriteResult Int)
+      -- | where the worker puts whether rows before the slot are left
+      !(ResolveWriteJob Bool)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
-    Shutdown !(WriteResult ())
+    Shutdown !(ResolveWriteJob ())
 
-type WriteResult a = StrictTMVar IO a
+-- | Resolve a job's 'Promise' with its result. Called once, by the worker.
+type ResolveWriteJob a = a -> IO ()
 
 -- | The writer's submission side: the job queue, and -- once the worker has
 -- stopped -- the exception every submission throws instead of queueing.
@@ -128,10 +107,10 @@ data WriteQueue = WriteQueue
 -- seals the queue no job can slip in unserved: submission throws the
 -- worker's parting exception instead -- also waking any submitter that was
 -- blocked on a full queue.
-submitJob :: HasCallStack => WriteQueue -> (WriteResult a -> WriteJob) -> IO (Promise IO a)
+submitJob :: HasCallStack => WriteQueue -> (ResolveWriteJob a -> WriteJob) -> IO (Promise IO a)
 submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
   resultVar <- newEmptyTMVarIO
-  let job = mkJob resultVar
+  let job = mkJob (atomically . putTMVar resultVar)
       -- Failures surface far from their submitter -- on the worker, or on
       -- whichever thread awaits -- so name the write and its submission site.
       wrap cause =
@@ -174,34 +153,17 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 -- never its payload.
 describeJob :: WriteJob -> String
 describeJob = \case
-  WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
+  WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
-  MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
-  GcMark slot _ -> "GcMark " <> show slot
+  GarbageCollect slot _ -> "GarbageCollect " <> show slot
   Shutdown _ -> "Shutdown"
-
--- | How many queued jobs the writer serves back-to-back before it takes a
--- turn of maintenance anyway.
---
--- Maintenance runs when the queue drains, which is the common case; this is
--- the floor under a queue that never does. One queue-full: under saturation
--- maintenance still gets a turn as often as the producers can refill, and
--- the resulting share (one turn in @'writerQueueDepth' + 1@) is far above
--- what copying and eviction ask for -- they are per promoted or expired EB,
--- not per write. 'TraceLeiosDbStats' is where a volatile partition that
--- still grows would show up.
-maxJobsBetweenMaintenance :: Int
-maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
--- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
--- little slack. Deliberately shallow: depth beyond that adds no throughput
--- (there is one worker) and only delays the commit-time notifications that
--- gate vote scheduling and chain selection. A producer that outruns the disk
+-- schedulers (the ChainDB's GC calls) -- and a little slack. Deliberately shallow: depth beyond that adds no throughput
+-- (there is one worker) and only delays the commits that gate vote
+-- scheduling and chain selection. A producer that outruns the disk
 -- blocks on submission, which is the backpressure.
 writerQueueDepth :: Natural
 writerQueueDepth = numUpstreamPeers + forge + maintenance + slack

@@ -88,7 +88,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosEbNotification (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..))
 import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
@@ -117,11 +117,16 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | The LeiosDB's next notification, subscribed to before seeding
-  -- 'cdbAcquiredLeiosEbs', so that none is missed in between.
-  STM m LeiosEbNotification ->
+  -- | The point of the next closure the node acquires, subscribed to before
+  -- seeding 'cdbAcquiredLeiosEbs', so that none is missed in between. It names
+  -- every point of the EB that is its election's focus and not older than the
+  -- ImmutableDB tip, even one that becomes the focus after the closure was
+  -- acquired. An election's focus is the first announcement in it that the
+  -- node accepts, until a verified certificate names another, so every point
+  -- that a block certifies is among them.
+  STM m LeiosPoint ->
   m ()
-launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
+launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -148,7 +153,7 @@ launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
 
   !leiosAcquiredEbsThread <-
     launch "ChainDB.leiosAcquiredEbsRunner" $
-      leiosAcquiredEbsRunner cdb nextLeiosEbNotification
+      leiosAcquiredEbsRunner cdb nextAcquiredLeiosClosure
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -164,23 +169,25 @@ launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
 
--- | Grow 'cdbAcquiredLeiosEbs' from the LeiosDB's notifications, and enqueue a
--- reprocess of the blocks parked on each endorser block the first time its
--- closure is acquired.
+-- | Grow 'cdbAcquiredLeiosEbs' from the points of the acquired closures, and
+-- enqueue a reprocess of the blocks parked on each endorser block the first
+-- time its closure is acquired.
+--
+-- REVIEW: Would the fetch logic rather keep a fingerprinted set of the points
+-- it acquired closures at? ChainSel could read that set directly, and this
+-- runner would only reprocess what is new since the last fingerprint.
 leiosAcquiredEbsRunner ::
-  IOLike m => ChainDbEnv m blk -> STM m LeiosEbNotification -> m Void
-leiosAcquiredEbsRunner CDB{..} nextNotification =
-  forever $
-    atomically nextNotification >>= \case
-      AcquiredEb{} -> pure ()
-      AcquiredEbTxs point -> do
-        novel <- atomically $ do
-          acquired <- readTVar cdbAcquiredLeiosEbs
-          writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
-          pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
-        -- The set has already grown, so ChainSel sees the closure even while
-        -- this enqueue blocks on a full queue.
-        when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
+  IOLike m => ChainDbEnv m blk -> STM m LeiosPoint -> m Void
+leiosAcquiredEbsRunner CDB{..} nextAcquiredClosure =
+  forever $ do
+    point <- atomically nextAcquiredClosure
+    novel <- atomically $ do
+      acquired <- readTVar cdbAcquiredLeiosEbs
+      writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
+      pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
+    -- The set has already grown, so ChainSel sees the closure even while
+    -- this enqueue blocks on a full queue.
+    when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
@@ -199,10 +206,11 @@ leiosAcquiredEbsRunner CDB{..} nextNotification =
 -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
 -- returned. This can be used for a garbage collection on the VolatileDB.
 --
--- Before copying any of the blocks, this pins in the LeiosDB the endorser
--- blocks they certify, so that the LeiosDB's garbage collection never evicts
--- them. A crash in between leaves only the pins, and copying the same blocks
--- again after the restart pins the same endorser blocks.
+-- Before copying any of the blocks, this copies the endorser blocks they
+-- certify into the LeiosDB's immutable partition, so every block in the
+-- ImmutableDB has its certified endorser block there. A crash in between leaves
+-- only the endorser blocks, and copying the same blocks again after the restart
+-- copies the same endorser blocks.
 copyToImmutableDB ::
   forall m blk.
   ( IOLike m
@@ -508,8 +516,8 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
 -- the VolatileDB, and for the endorser blocks in the LeiosDB all of whose
--- announcements are older than it. 'copyToImmutableDB' has already pinned the
--- certified ones, which the LeiosDB keeps.
+-- announcements are older than it. 'copyToImmutableDB' has already copied the
+-- certified ones into the LeiosDB's immutable partition.
 --
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --

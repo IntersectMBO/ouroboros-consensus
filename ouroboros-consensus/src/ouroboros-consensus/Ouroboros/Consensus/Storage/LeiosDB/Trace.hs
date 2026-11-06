@@ -35,28 +35,16 @@ data TraceLeiosDb
     TraceLeiosDbWriteJobDone
       -- | the job
       String
+      -- | seconds the writer spent on it
+      Double
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
-  | -- | The background copier committed EBs' closures to the immutable
-    -- partition.
+  | -- | A promotion committed EBs' closures to the immutable partition.
     TraceLeiosDbCopiedToImmutable
       -- | number of EBs copied
       Int
-  | -- | A sweep pass evicted EB announcement rows from the volatile
-    -- partition.
+  | -- | A garbage collection deleted rows from the volatile partition.
     TraceLeiosDbEvicted
       -- | number of rows evicted
       Int
-  | -- | The background sweeper failed a sweep pass; the connection is
-    -- dropped and the pass retried.
-    TraceLeiosDbGCError
-      -- | the error
-      String
-  | -- | Copying an EB failed. It stays pinned, so it is still the next one
-    -- to copy.
-    TraceLeiosDbCopyError
-      -- | the EB hash
-      String
-      -- | the reason
-      String
   deriving Show
