@@ -127,12 +127,17 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
+  ( AtomicNodeConfig
+  , defaultAtomicNodeConfig
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Network.NodeToNode.AtomicFetch (withAtomicFetchApps)
 import Ouroboros.Consensus.Node.DbLock
 import Ouroboros.Consensus.Node.DbMarker
 import Ouroboros.Consensus.Node.ExitPolicy
@@ -301,6 +306,10 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   -- be created.
   , llrnWithLeiosDB :: forall a. (LeiosDbHandle m -> m a) -> m a
   -- ^ Open the LeiosDB, run the action with it, and close it.
+  , llrnAtomicFetchConfig :: AtomicNodeConfig
+  -- ^ Local atomic policy/resource settings. Used when version 17 is supported;
+  -- standard assembly supplies 'defaultAtomicNodeConfig'. The scoped runtime
+  -- is installed before the node hook and owns storage through diffusion exit.
   , llrnCustomiseChainDbArgs ::
       Complete ChainDbArgs m blk ->
       Complete ChainDbArgs m blk
@@ -639,7 +648,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
-            rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
             let consensusDiffusionArgs =
@@ -681,7 +689,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
-            let ntnApps =
+            let legacyNtnApps =
                   mkNodeToNodeApps
                     ntnAppsRng
                     rnTraceNTN
@@ -694,16 +702,26 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     encAddrNtN
                     decAddrNtN
                 ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
-                apps =
-                  mkDiffusionApplications
-                    stdGen
-                    consensusDiffusionArgs
-                    (miniProtocolParameters nodeKernelArgs)
-                    ntnApps
-                    ntcApps
-                    nodeKernel
-
-            llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
+                runDiffusion ntnApps = do
+                  rnNodeKernelHook registry nodeKernel
+                  let apps =
+                        mkDiffusionApplications
+                          stdGen
+                          consensusDiffusionArgs
+                          (miniProtocolParameters nodeKernelArgs)
+                          ntnApps
+                          ntcApps
+                          nodeKernel
+                  llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
+            if Map.member NodeToNodeV_17 llrnNodeToNodeVersions
+              then
+                withAtomicFetchApps
+                  llrnAtomicFetchConfig
+                  nodeKernel
+                  (NTN.tLeiosFetchAtomicTracer rnTraceNTN)
+                  legacyNtnApps
+                  (\_ -> runDiffusion)
+              else runDiffusion legacyNtnApps
  where
   (gsmAntiThunderingHerd, rng') = splitGen llrnRng
   (peerSelectionRng, rng'') = splitGen rng'
@@ -1234,6 +1252,7 @@ stdLowLevelRunNodeArgsIO
               (nonImmutableDbPath srnDatabasePath </> "leios.vol.db")
               (immutableDbPath srnDatabasePath </> "leios.imm.db")
         , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
+        , llrnAtomicFetchConfig = defaultAtomicNodeConfig
         , llrnCustomiseChainDbArgs = id
         , llrnCustomiseNodeKernelArgs
         , llrnRunDataDiffusion =

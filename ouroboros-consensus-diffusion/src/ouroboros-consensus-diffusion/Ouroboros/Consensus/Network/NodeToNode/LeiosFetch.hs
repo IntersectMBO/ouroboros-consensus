@@ -8,6 +8,8 @@
 module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
   ( leiosFetchClient
   , leiosFetchMiniProtocol
+  , leiosFetchMiniProtocolWithLimits
+  , leiosFetchProtocolLimits
   , leiosFetchServer
   , withLeiosFetchAtomicServer
   , catchAndRethrow
@@ -247,11 +249,19 @@ catchAndRethrow tracer mkEvent action =
 leiosFetchMiniProtocol ::
   RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
   MiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c
-leiosFetchMiniProtocol run =
+leiosFetchMiniProtocol = leiosFetchMiniProtocolWithLimits leiosFetchProtocolLimits
+
+-- | Construct the negotiated fetch application with its own input capacity.
+-- Legacy callers retain the existing wrapper and its limit.
+leiosFetchMiniProtocolWithLimits ::
+  MiniProtocolLimits ->
+  RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
+  MiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c
+leiosFetchMiniProtocolWithLimits limits run =
   MiniProtocol
     { miniProtocolNum = leiosFetchMiniProtocolNum
     , miniProtocolStart = StartOnDemand
-    , miniProtocolLimits = leiosFetchProtocolLimits
+    , miniProtocolLimits = limits
     , miniProtocolRun = run
     }
 

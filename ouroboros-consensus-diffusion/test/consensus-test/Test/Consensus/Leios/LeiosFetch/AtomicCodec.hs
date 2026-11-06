@@ -85,6 +85,13 @@ tests =
     , testCase
         "experimental version-map opt-in retains version-16 block serialization"
         testExplicitVersions
+    , testCase "default atomic transport bounds cover both message directions" testAtomicIngress
+    , testCase
+        "atomic transport bounds reject invalid counts, undersized bodies and overflow"
+        testAtomicIngressInvalid
+    , testCase
+        "configured response budgets resize input independently of legacy limits"
+        testAtomicIngressOverride
     ]
 
 txA, txB :: LeiosTx
@@ -330,3 +337,29 @@ testExplicitVersions = do
       experimental = withExperimentalAtomicFetchVersion old
   experimental Map.! NodeToNodeV_17 @?= "block-v2"
   Map.delete NodeToNodeV_17 experimental @?= old
+
+-- Concrete regression anchors for B=1 MiB, D=64 and a larger local override.
+testAtomicIngress :: Assertion
+testAtomicIngress = do
+  atomicIngressLimits 1048576 64 @?= Right (AtomicIngressLimits 1122304 4263936)
+  atomicIngressLimits 600003 1 @?= Right (AtomicIngressLimits 665667 665667)
+  let maximumWindow = atomicIngressLimits 1048576 32767
+  if toInteger (maxBound :: Int) >= 2149548033
+    then maximumWindow @?= Right (AtomicIngressLimits 5308288 2149548033)
+    else maximumWindow @?= Left InvalidAtomicFetchLimits
+
+testAtomicIngressInvalid :: Assertion
+testAtomicIngressInvalid = do
+  forM_ [0, 32768, maxBound] $ \d ->
+    atomicIngressLimits 1048576 d @?= Left InvalidAtomicFetchLimits
+  forM_ [0, 524288, 600002] $ \bytes ->
+    atomicIngressLimits bytes 64 @?= Left InvalidAtomicFetchLimits
+  atomicIngressLimits maxBound 64 @?= Left InvalidAtomicFetchLimits
+  atomicIngressLimits maxBound 32767 @?= Left InvalidAtomicFetchLimits
+
+testAtomicIngressOverride :: Assertion
+testAtomicIngressOverride = do
+  atomicIngressLimits 8388608 64 @?= Right (AtomicIngressLimits 8462336 8462336)
+  atomicIngressLimits 1048576 4 @?= Right (AtomicIngressLimits 1114624 1114624)
+  let existing = Map.fromList [(NodeToNodeV_16, "legacy"), (NodeToNodeV_17, "explicit")]
+  withExperimentalAtomicFetchVersion existing @?= existing

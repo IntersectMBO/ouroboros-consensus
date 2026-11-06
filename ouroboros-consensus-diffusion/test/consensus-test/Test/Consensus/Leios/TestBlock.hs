@@ -898,7 +898,7 @@ instance BlockSupportsSanityCheck LeiosTestBlock where
 
 instance SupportedNetworkProtocolVersion LeiosTestBlock where
   supportedNodeToNodeVersions _ =
-    Map.singleton NodeToNodeV_16 ()
+    Map.fromList [(NodeToNodeV_16, ()), (NodeToNodeV_17, ())]
   supportedNodeToClientVersions _ =
     Map.singleton maxBound ()
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

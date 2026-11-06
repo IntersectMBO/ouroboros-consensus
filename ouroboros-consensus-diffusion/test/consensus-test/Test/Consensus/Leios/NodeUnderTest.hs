@@ -50,7 +50,7 @@ import Cardano.Network.Diffusion.Configuration
   )
 import Cardano.Network.NodeToNode.Version
   ( DiffusionMode (..)
-  , NodeToNodeVersion
+  , NodeToNodeVersion (..)
   , NodeToNodeVersionData (..)
   , getLocalLeiosFetchRequestLimit
   , getLocalPerasSupport
@@ -67,6 +67,7 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
+import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust))
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
@@ -98,7 +99,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
-import Ouroboros.Consensus.Network.NodeToNode.AtomicFetch (atomicFetchApps)
+import Ouroboros.Consensus.Network.NodeToNode.AtomicFetch (withAtomicFetchApps)
 import Ouroboros.Consensus.Node
   ( mkNodeKernelArgs
   , mkNodeToNodeApps
@@ -116,11 +117,10 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( BlockNodeToNodeVersion
   , supportedNodeToNodeVersions
-  , withExperimentalAtomicFetchVersion
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
-  ( NodeKernel (getLeiosFetchKernel)
+  ( NodeKernel
   , NodeKernelArgs (..)
   , initNodeKernel
   )
@@ -352,23 +352,22 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               NoTxSubmissionInitDelay
         kernel <- initNodeKernel kernelArgs
         peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
-        let withFetch k = case nodeConfigAtomicFetch cfg of
-              Nothing -> k Nothing
-              Just config -> withAtomicFetchNode config (getLeiosFetchKernel kernel) (k . Just)
-        withFetch $ \atomic -> do
-          let legacyApps =
-                mkNodeToNodeApps
-                  (seedNodeToNodeApps seeds)
-                  NTN.nullTracers
-                  defaultChainSyncIdleTimeout
-                  disableGenesisConfig
-                  defaultTxSubmissionLogicVersion
-                  kernelArgs
-                  kernel
-                  peerMetrics
-                  (const encodePeerAddr)
-                  (const decodePeerAddr)
-          let apps version = maybe id (\runtime -> atomicFetchApps runtime kernel nullTracer) atomic (legacyApps version)
+        let legacyApps =
+              mkNodeToNodeApps
+                (seedNodeToNodeApps seeds)
+                NTN.nullTracers
+                defaultChainSyncIdleTimeout
+                disableGenesisConfig
+                defaultTxSubmissionLogicVersion
+                kernelArgs
+                kernel
+                peerMetrics
+                (const encodePeerAddr)
+                (const decodePeerAddr)
+            withFetch k = case nodeConfigAtomicFetch cfg of
+              Nothing -> k Nothing legacyApps
+              Just config -> withAtomicFetchApps config kernel nullTracer legacyApps (\runtime -> k (Just runtime))
+        withFetch $ \atomic apps -> do
           connectedPeers <- newTVarIO Set.empty
           body
             NodeUnderTest
@@ -382,7 +381,10 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                     (featureFlags kernelArgs)
                     (miniProtocolParameters kernelArgs)
                     nodeVersionData
-                    ( (maybe id (const withExperimentalAtomicFetchVersion) (nodeConfigAtomicFetch cfg))
+                    ( ( case nodeConfigAtomicFetch cfg of
+                          Nothing -> Map.filterWithKey (\version _ -> version <= NodeToNodeV_16)
+                          Just _ -> id
+                      )
                         (supportedNodeToNodeVersions (Proxy @Blk))
                     )
                     apps

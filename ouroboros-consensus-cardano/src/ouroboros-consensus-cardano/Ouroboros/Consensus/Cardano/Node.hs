@@ -330,6 +330,7 @@ instance
       [ (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       , (NodeToNodeV_15, CardanoNodeToNodeVersion2)
       , (NodeToNodeV_16, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_17, CardanoNodeToNodeVersion2)
       ]
 
   -- \| The @cardano-node@ release that first shipped each version, which is what

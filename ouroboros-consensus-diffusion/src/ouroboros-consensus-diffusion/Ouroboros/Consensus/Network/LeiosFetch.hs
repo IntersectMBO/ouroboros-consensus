@@ -10,6 +10,8 @@ module Ouroboros.Consensus.Network.LeiosFetch
   ( leiosFetchMiniProtocolNum
   , leiosFetchPipelineDepth
   , maxLeiosFetchIngressBytes
+  , AtomicIngressLimits (..)
+  , atomicIngressLimits
   , LeiosFetchProtocol (..)
   , LeiosFetchProtocolError (..)
   , negotiatedLeiosFetchProtocol
@@ -26,17 +28,52 @@ import Control.Monad.Class.MonadThrow (Exception, MonadThrow, throwIO)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer (Tracer)
 import qualified Data.ByteString.Lazy as BL
+import Data.Word (Word16, Word32, Word64)
 import Network.Mux.Timeout (withTimeoutSerial)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec (AnnotatedCodec)
 import Network.TypedProtocol.Core (Protocol (..))
 import Network.TypedProtocol.Driver (runLookaheadPeerWithDriver)
 import Network.TypedProtocol.Peer (PeerLookahead)
+import Ouroboros.Consensus.Leios.Types (maxEndorserBlockBytesSize)
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (TraceSendRecv, annotatedDriverWithLimits)
-import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits, ProtocolTimeLimits)
+import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits, ProtocolTimeLimits, smallByteLimit)
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
+
+-- | Directional atomic input bounds, independent of the legacy 60 MB budget.
+-- The common mux limit covers both directions; the progress reader needs only
+-- the response direction. Neither value is a complete connection heap bound.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+data AtomicIngressLimits = AtomicIngressLimits
+  { atomicClientChunkBytes :: !Word32
+  -- ^ Reserved replies plus bounded original/cancel terminals and one SDU.
+  , atomicMuxIngressBytes :: !Int
+  -- ^ Larger of response and request directions, including one SDU allowance.
+  }
+  deriving (Eq, Show)
+
+-- | Size input from a local response-byte budget and the negotiated D. Request
+-- messages retain their existing 65,535 B protocol guard; each fixed control
+-- fits in 64 B even with widest CBOR integers/list lengths. At most D data and
+-- D cancel requests, followed by Done, may be queued. A 65,536 B margin covers
+-- one maximum mux SDU. Widen all arithmetic before checked narrowing.
+atomicIngressLimits :: Word32 -> Word16 -> Either LeiosFetchProtocolError AtomicIngressLimits
+atomicIngressLimits responseBytes count
+  | count == 0 || count > maxBound `div` 2 = Left InvalidAtomicFetchLimits
+  | fromIntegral responseBytes < (fromIntegral maxEndorserBlockBytesSize + 3 :: Word64) =
+      Left InvalidAtomicFetchLimits
+  | muxBytes > fromIntegral (maxBound :: Word32) || muxBytes > fromIntegral (maxBound :: Int) =
+      Left InvalidAtomicFetchLimits
+  | otherwise = Right (AtomicIngressLimits (fromIntegral replyBytes) (fromIntegral muxBytes))
+ where
+  d = fromIntegral count :: Word64
+  response = fromIntegral responseBytes :: Word64
+  replies = response + 2 * d * 64
+  requests = d * fromIntegral smallByteLimit + d * 64 + 64
+  replyBytes = replies + 65536
+  muxBytes = max replies requests + 65536
 
 -- | Immutable fetch capability selected once from negotiated connection data.
 data LeiosFetchProtocol
@@ -47,7 +84,10 @@ data LeiosFetchProtocol
   deriving (Eq, Show)
 
 -- | Invalid version/capability pairs never silently select another wire format.
-data LeiosFetchProtocolError = InvalidLeiosFetchCapability | AtomicLeiosFetchNotActivated
+data LeiosFetchProtocolError
+  = InvalidLeiosFetchCapability
+  | AtomicLeiosFetchNotActivated
+  | InvalidAtomicFetchLimits
   deriving (Eq, Show)
 
 instance Exception LeiosFetchProtocolError

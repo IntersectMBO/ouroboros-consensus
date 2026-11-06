@@ -1,17 +1,22 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
--- | Opt-in concrete-byte node assembly for the experimental atomic protocol.
--- Keeping this separate preserves the generic/identity-codec legacy assembly
--- and normal supported-version maps until activation is explicitly approved.
--- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
-module Ouroboros.Consensus.Network.NodeToNode.AtomicFetch (atomicFetchApps) where
+-- | Concrete-byte atomic fetch assembly. The node brackets this runtime around
+-- diffusion before advertising its cancellation-capable version. Generic and
+-- identity-codec applications retain the separate legacy assembly.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-initial-sizing-and-validation@.
+module Ouroboros.Consensus.Network.NodeToNode.AtomicFetch
+  ( atomicFetchApps
+  , withAtomicFetchApps
+  ) where
 
 import Cardano.Network.NodeToNode.Version (getLeiosFetchRequestLimit)
+import Control.Monad (void, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Tracer (Tracer, nullTracer)
+import Control.Tracer (Tracer, contramap)
 import qualified Data.ByteString.Lazy as BL
 import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as C
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server (atomicServerPeer)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State (defaultServerLimits)
@@ -21,36 +26,83 @@ import Ouroboros.Consensus.Network.LeiosFetch
 import Ouroboros.Consensus.Network.NodeToNode (Apps (..))
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (withLeiosFetchAtomicServer)
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult (..))
+import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API (withReader)
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.BlockFetch (TraceLabelPeer (..))
 import Ouroboros.Network.BlockFetch.ClientRegistry (lookupKeepAliveRtt)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Context (ExpandedInitiatorContext (..), ResponderContext (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver.Limits (TraceSendRecv)
+import Ouroboros.Network.Mux (MiniProtocolLimits (..))
 
--- | Replace only the LeiosFetch pair of explicitly selected development apps.
--- The negotiated capability is frozen independently on each connection. A
--- legacy selection delegates to its original app with the shared receipt bridge.
--- The caller brackets the entire connection lifetime inside 'withAtomicFetchNode'.
+-- | One node-owned runtime shared by every concrete-byte fetch application.
+-- Validate local transport and indivisible-body capacity before peers start.
+-- The action owns/joins its connections; accepted storage then drains on exit.
+withAtomicFetchApps ::
+  (IOLike m, MonadTimer m, Ord addr) =>
+  AtomicNodeConfig ->
+  NodeKernel m addr addrNTC blk ->
+  Tracer
+    m
+    ( TraceLabelPeer
+        (ConnectionId addr)
+        (TraceSendRecv (LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx))
+    ) ->
+  (version -> Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN BL.ByteString NodeToNodeInitiatorResult ()) ->
+  ( AtomicFetchNode m addr (ConnectionId addr) blk ->
+    (version -> Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN BL.ByteString NodeToNodeInitiatorResult ()) ->
+    m a
+  ) ->
+  m a
+withAtomicFetchApps config kernel tracer legacy action = do
+  -- Validate for every legal negotiated count, not only the current local 64.
+  void $ either throwIO pure (atomicIngressLimits (nodeResponseBytes config) 32767)
+  when (H.storageBytesPerOwner (nodeStorageLimits config) < maxEndorserBlockBytesSize) $
+    throwIO InvalidAtomicFetchLimits
+  withAtomicFetchNode config (getLeiosFetchKernel kernel) $ \node ->
+    action node (atomicFetchApps node kernel tracer . legacy)
+
+-- | Replace the fetch pair and its input limits together. Legacy selection
+-- delegates to its original app with the shared durable-receipt bridge. Both
+-- peers' frozen negotiated count and this runtime's byte budget size transport.
 atomicFetchApps ::
   (IOLike m, MonadTimer m, Ord addr) =>
   AtomicFetchNode m addr (ConnectionId addr) blk ->
   NodeKernel m addr addrNTC blk ->
-  Tracer m (TraceSendRecv (LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx)) ->
+  Tracer
+    m
+    ( TraceLabelPeer
+        (ConnectionId addr)
+        (TraceSendRecv (LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx))
+    ) ->
   Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN BL.ByteString NodeToNodeInitiatorResult () ->
   Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN BL.ByteString NodeToNodeInitiatorResult ()
 atomicFetchApps node kernel tracer legacy =
   legacy
-    { aLeiosFetchClient = \count version ctx@ExpandedInitiatorContext{eicConnectionId = conn, eicControlMessage, eicIsBigLedgerPeer} channel -> do
+    { aLeiosFetchProtocolLimits = \count version ->
+        case negotiatedLeiosFetchProtocol version count of
+          Right (AtomicLeiosFetch d) -> case atomicIngressLimits (atomicResponseBudget node) (getLeiosFetchRequestLimit d) of
+            Right limits -> MiniProtocolLimits (atomicMuxIngressBytes limits)
+            Left _ -> MiniProtocolLimits 0
+          Right LegacyLeiosFetch -> aLeiosFetchProtocolLimits legacy count version
+          -- Invalid negotiation gets no ingress; the app reports its error.
+          Left _ -> MiniProtocolLimits 0
+    , aLeiosFetchClient = \count version ctx@ExpandedInitiatorContext{eicConnectionId = conn, eicControlMessage, eicIsBigLedgerPeer} channel -> do
         selected <- either throwIO pure (negotiatedLeiosFetchProtocol version count)
         withLeiosFetchPeer (getLeiosFetchKernel kernel) conn eicIsBigLedgerPeer $ \lifetime _ ->
           case selected of
             LegacyLeiosFetch -> withNodeLegacyClient node lifetime (aLeiosFetchClient legacy count version ctx channel)
             AtomicLeiosFetch limit -> do
-              -- Capture once. Missing/retired registration and missing samples
-              -- use the timing module's explicit fallback, never GSV smoothing.
+              bounds <-
+                either
+                  throwIO
+                  pure
+                  (atomicIngressLimits (atomicResponseBudget node) (getLeiosFetchRequestLimit limit))
+              -- Capture once. Missing/retired registrations and missing samples
+              -- retain explicit fallback; never borrow a replacement's sample.
               rtt <- atomically $ lookupKeepAliveRtt (getKeepAliveRegistry kernel) conn
               withNodeAtomicClient node (remoteAddress conn) lifetime (getLeiosFetchRequestLimit limit) rtt $ \client ->
                 withAsync
@@ -59,22 +111,32 @@ atomicFetchApps node kernel tracer legacy =
                       atomically $ C.stopAtomicClient client
                   )
                   $ \_ -> do
-                    trailing <- C.runAtomicClient tracer 20000 (fromIntegral maxLeiosFetchIngressBytes) channel client
+                    trailing <-
+                      C.runAtomicClient
+                        (contramap (TraceLabelPeer conn) tracer)
+                        20000
+                        (atomicClientChunkBytes bounds)
+                        channel
+                        client
                     pure (NoInitiatorResult, trailing)
-    , aLeiosFetchServer = \count version ctx@ResponderContext{rcConnectionId = _conn} channel -> do
+    , aLeiosFetchServer = \count version ctx@ResponderContext{rcConnectionId = conn} channel -> do
         selected <- either throwIO pure (negotiatedLeiosFetchProtocol version count)
         case selected of
           LegacyLeiosFetch -> aLeiosFetchServer legacy count version ctx channel
           AtomicLeiosFetch limit ->
             withReader (getLeiosDB kernel) $ \reader ->
-              withLeiosFetchAtomicServer nullTracer (defaultServerLimits (getLeiosFetchRequestLimit limit)) reader $ \server ->
-                runLookaheadPeerWithAnnotatedLimits
-                  tracer
-                  codec
-                  (byteLimitsLeiosFetchAtomic (fromIntegral . BL.length))
-                  timeLimitsLeiosFetchAtomic
-                  channel
-                  (atomicServerPeer server)
+              withLeiosFetchAtomicServer
+                (contramap (TraceLabelPeer conn) (Node.leiosFetchServerTracer (getTracers kernel)))
+                (defaultServerLimits (getLeiosFetchRequestLimit limit))
+                reader
+                $ \server ->
+                  runLookaheadPeerWithAnnotatedLimits
+                    (contramap (TraceLabelPeer conn) tracer)
+                    codec
+                    (byteLimitsLeiosFetchAtomic (fromIntegral . BL.length))
+                    timeLimitsLeiosFetchAtomic
+                    channel
+                    (atomicServerPeer server)
     }
  where
   codec =

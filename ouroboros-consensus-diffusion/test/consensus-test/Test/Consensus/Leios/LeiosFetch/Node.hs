@@ -12,7 +12,11 @@ module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
-import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
+import Cardano.Network.NodeToNode.Version
+  ( NodeToNodeVersion (..)
+  , NodeToNodeVersionData (..)
+  , mkLeiosFetchRequestLimit
+  )
 import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM, forM_, replicateM, replicateM_, unless, void, when)
@@ -166,12 +170,14 @@ import Ouroboros.Consensus.Network.LeiosFetch
   ( leiosFetchMiniProtocolNum
   , runLookaheadPeerWithAnnotatedLimits
   )
+import qualified Ouroboros.Consensus.Network.LeiosFetch as FetchTransport
 import Ouroboros.Consensus.Network.LeiosNotify
   ( leiosNotifyMiniProtocolNum
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (withLeiosFetchAtomicServer)
+import qualified Ouroboros.Consensus.Network.NodeToNode.LeiosFetch as FetchAssembly
 import Ouroboros.Consensus.Node.RethrowPolicy (consensusRethrowPolicy)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -191,6 +197,7 @@ import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
+  , MiniProtocolLimits (..)
   , TemperatureBundle (..)
   , WithProtocolTemperature (..)
   )
@@ -282,7 +289,17 @@ tests =
         prop_listenerReach
     , testGroup
         "atomic node integration"
-        [ testCase "version 17 fetches the body before any closure offer, then pipelines durable checkpoints" $
+        [ testCase "normal default assembly negotiates atomic fetch with its matching mux budget" $
+            runSimFinishing (atomicDefaultActivation False) >>= (@?= True)
+        , testCase "a response-budget override also resizes the negotiated atomic mux" $
+            runSimFinishing (atomicDefaultActivation True) >>= (@?= True)
+        , testCase "offered work reclaims an empty unoffered acquisition without waiting for pruning" $
+            runSimFinishing atomicReclaimsEmpty >>= (@?= True)
+        , testCase "arena pressure preserves an in-flight body and its original generation" $
+            runSimFinishing atomicPreservesWanted >>= (@?= True)
+        , testCase "arena pressure preserves a verified body awaiting its durable receipt" $
+            runSimFinishing atomicPreservesAccepted >>= (@?= True)
+        , testCase "version 17 fetches the body before any closure offer, then pipelines durable checkpoints" $
             runSimFinishing (atomicHonest 0) >>= (@?= (1, 3))
         , testCase "local durable possession removes only already held TXs" $
             runSimFinishing (atomicHonest 1) >>= (@?= (1, 2))
@@ -2900,3 +2917,136 @@ coordinatorShutdownStorage = do
         body <- lookupEbBody reader fetchedPoint
         ensure (body == Just (endorserBlockBytes fetchedEb)) "drained body was not durable"
       pure True
+
+-- Use the production assembly helper, defaults and normal supported map; the
+-- fixture does not add version 17 through the old experimental-map adapter.
+atomicDefaultActivation :: Bool -> IOSim s Bool
+atomicDefaultActivation larger = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  let config = defaultAtomicNodeConfig{nodeResponseBytes = if larger then 8388608 else 1048576}
+      limitOf version dataValue apps =
+        case withHot (NTN.initiator mempty defaultMiniProtocolParameters version dataValue apps) of
+          WithHot protocols -> case [ maximumIngressQueue (miniProtocolLimits mini)
+                                    | mini <- protocols
+                                    , miniProtocolNum mini == leiosFetchMiniProtocolNum
+                                    ] of
+            [found] -> found
+            _ -> error "fetch mini-protocol missing"
+  withAtomicNodeOver config db $ \node -> do
+    let apps = nodeApps node ()
+        expected = if larger then 8462336 else 4263936
+        normal = nodeVersionData NodeToNodeV_17
+    ensure (limitOf NodeToNodeV_17 normal apps == expected) "atomic mux ignored the response budget"
+    ensure
+      ( limitOf NodeToNodeV_16 (nodeVersionData NodeToNodeV_16) apps
+          == maximumIngressQueue FetchAssembly.leiosFetchProtocolLimits
+      )
+      "legacy ingress budget changed"
+    let smallD = normal{leiosFetchRequestLimit = mkLeiosFetchRequestLimit 4}
+        expectedSmall =
+          either
+            (error . show)
+            FetchTransport.atomicMuxIngressBytes
+            (FetchTransport.atomicIngressLimits (nodeResponseBytes config) 4)
+    ensure (limitOf NodeToNodeV_17 smallD apps == expectedSmall) "mux ignored the negotiated count"
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    let upstream = EnvPeer (feedingLeiosNotifyServer node offers) Nothing (atomicServing serverDb) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) upstream $ \connection -> do
+      ensure (connVersion connection == NodeToNodeV_17) "normal map did not negotiate version 17"
+      atomically $ mapM_ (writeTQueue offers) (announcingAndOffering fetchedEb announcingFetched)
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      pure
+        ( observedAtomicConnections observation == 1
+            && observedBodyRequests observation == 1
+            && observedCheckpoints observation == 1
+        )
+
+-- Keep the first announcement focused and unpruned, but make only the later
+-- election fetchable. One acquisition slot must suffice without a lost wakeup.
+atomicReclaimsEmpty :: IOSim s Bool
+atomicReclaimsEmpty = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb refocusedPoint fetchedEb fetchedTxs
+  let config =
+        defaultAtomicNodeConfig
+          { nodeStorageLimits = (nodeStorageLimits defaultAtomicNodeConfig){Handoff.storageMaxAcquisitions = 1}
+          }
+  withAtomicNodeOver config db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    let upstream = EnvPeer (feedingLeiosNotifyServer node offers) Nothing (atomicServing serverDb) Nothing
+    threadDelay 2
+    withNodeVsEnvConnection node (PeerAddr 1) upstream $ \_ -> do
+      atomically $ writeTQueue offers (MsgLeiosBlockAnnouncement (ltbHeader announcingFetched))
+      atomically $ case nodeAtomicFetch node of
+        Just runtime -> readNodeBodySnapshots runtime >>= check . Map.member fetchedPoint
+        Nothing -> retry
+      atomically $ mapM_ (writeTQueue offers) (announcingAndOffering fetchedEb reannouncingFetched)
+      awaitAcquired next (AcquiredClosure refocusedPoint)
+      checkStored node refocusedPoint fetchedEb fetchedTxs
+      outstanding <- readOutstanding node
+      ensure
+        (outstandingPrunedSlot outstanding <= blockSlot announcingFetched)
+        "fixture pruned away the empty arena"
+      pure (Map.member fetchedPoint (ebState outstanding))
+
+-- Resource reclamation must not become a second stall/preemption policy.
+atomicPreservesWanted :: IOSim s Bool
+atomicPreservesWanted = atomicPreservesActive False
+
+atomicPreservesAccepted :: IOSim s Bool
+atomicPreservesAccepted = atomicPreservesActive True
+
+atomicPreservesActive :: Bool -> IOSim s Bool
+atomicPreservesActive waitingStorage = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  fillLeiosDb serverDb refocusedPoint fetchedEb fetchedTxs
+  submitted <- newTVarIO False
+  release <- newTVarIO False
+  let config =
+        defaultAtomicNodeConfig
+          { nodeStorageLimits = (nodeStorageLimits defaultAtomicNodeConfig){Handoff.storageMaxAcquisitions = 1}
+          }
+      localDb = if waitingStorage then holdBodyReceipt db submitted release else db
+  withAtomicNodeOver config localDb $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    a <- newTQueueIO
+    b <- newTQueueIO
+    sends <- newTVarIO 0
+    releaseAck <- newTVarIO True
+    let upstream queue adjust = EnvPeer (feedingLeiosNotifyServer node queue) Nothing (atomicServing serverDb . adjust) Nothing
+    threadDelay 2
+    withNodeVsEnvConnection
+      node
+      (PeerAddr 1)
+      (upstream a (if waitingStorage then id else committedBodyChannel sends release releaseAck))
+      $ \_ ->
+        withNodeVsEnvConnection node (PeerAddr 2) (upstream b id) $ \_ -> do
+          atomically $ mapM_ (writeTQueue a) (announcingAndOffering fetchedEb announcingFetched)
+          if waitingStorage
+            then atomically (readTVar submitted >>= check)
+            else atomically (readTVar sends >>= check . (>= 1))
+          original <- bodySnapshotOf node
+          atomically $ mapM_ (writeTQueue b) (announcingAndOffering fetchedEb reannouncingFetched)
+          threadDelay 0.1
+          atomically $ case nodeAtomicFetch node of
+            Nothing -> retry
+            Just runtime -> do
+              bodies <- readNodeBodySnapshots runtime
+              let retained = BodyPolicy.bodyGeneration <$> Map.lookup fetchedPoint bodies
+              unless
+                (retained == Just (BodyPolicy.bodyGeneration original) && Map.notMember refocusedPoint bodies)
+                (throwSTM (userError "arena pressure evicted active body service"))
+          atomically $ writeTVar release True
+          awaitAcquired next (AcquiredClosure fetchedPoint)
+          awaitAcquired next (AcquiredClosure refocusedPoint)
+          checkStored node refocusedPoint fetchedEb fetchedTxs
+          pure True

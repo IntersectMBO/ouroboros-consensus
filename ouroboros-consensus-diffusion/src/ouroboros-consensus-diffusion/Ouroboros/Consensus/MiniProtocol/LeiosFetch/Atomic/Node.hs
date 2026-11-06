@@ -3,8 +3,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Explicit node-scoped atomic acquisition. Normal node assembly does not
--- install this extension. Connections share durable possession and budgets;
+-- | Node-scoped atomic acquisition. Connections share durable possession and budgets;
 -- their wire identities and immutable reply contexts remain independent.
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@ (node assembly) and
 -- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy) and
@@ -14,6 +13,8 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   ( AtomicFetchNode
   , AtomicNodeConfig (..)
+  , defaultAtomicNodeConfig
+  , atomicResponseBudget
   , NodeObservation (..)
   , NodeIntegrationError (..)
   , withAtomicFetchNode
@@ -39,7 +40,11 @@ import Data.Word (Word16, Word32, Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), encodeEndorserBlockSize)
+import Ouroboros.Consensus.Leios.Types
+  ( LeiosPoint (..)
+  , encodeEndorserBlockSize
+  , maxEndorserBlockBytesSize
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body as B
@@ -66,8 +71,8 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch.ClientRegistry (KeepAliveRttReader)
 import Ouroboros.Network.Driver.Progress (ProgressEvent (..))
 
--- | Explicit fixture/development sizing. No normal node defaults or version
--- advertisement are changed by constructing this value.
+-- | Local atomic policy and resource settings. Constructing this value does
+-- not advertise a capability; normal assembly owns negotiation and lifetime.
 data AtomicNodeConfig = AtomicNodeConfig
   { nodeStorageLimits :: !H.StorageLimits
   -- ^ Node-owned storage/session/acquisition bounds, including draining peers.
@@ -80,6 +85,31 @@ data AtomicNodeConfig = AtomicNodeConfig
   , nodeTimingConfig :: !D.TimingConfig
   -- ^ Receiver policy, checked against the actual protocol guard by each client.
   }
+
+-- | Initial source-tree defaults for the roughly 260 kB MVP profile. These
+-- are local resource/policy settings, not publication sizes or wire constants.
+-- Standard node assembly permits overriding this configuration at its low-level
+-- entry point. The 0.3 Mb/s benchmark remains provisional.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-initial-sizing-and-validation@.
+defaultAtomicNodeConfig :: AtomicNodeConfig
+defaultAtomicNodeConfig =
+  AtomicNodeConfig
+    { nodeStorageLimits = H.StorageLimits 1048576 4096 128 64 20000
+    , nodeResponseBytes = 1048576
+    , nodeCheckpointLimits = defaultCheckpointLimits
+    , nodeClosureRetryConfig = Retry.defaultRetryConfig
+    , nodeTimingConfig =
+        must
+          (D.mkTimingConfig 300000 14600 0.5 2 60 (PayloadBytes (fromIntegral maxEndorserBlockBytesSize)))
+    }
+ where
+  must :: Show e => Either e a -> a
+  must = either (error . show) id
+
+-- | Frozen response budget of the owning runtime. Transport assembly reads
+-- this value, rather than accepting a second potentially inconsistent budget.
+atomicResponseBudget :: AtomicFetchNode m owner peer blk -> Word32
+atomicResponseBudget = nodeResponseBytes . fetchConfig
 
 -- | Fixed-size functional counters, retained without an attempt/event history.
 -- Saturation makes a long-lived node safe from counter wraparound.
@@ -167,7 +197,7 @@ data AtomicFetchNode m owner peer blk = AtomicFetchNode
   , fetchOwnerThread :: !(ThreadId m)
   -- ^ Storage/receipt failures are linked to this node scope rather than a departing peer.
   , fetchObservation :: !(StrictTVar m NodeObservation)
-  -- ^ Bounded functional evidence for explicit test/development activation.
+  -- ^ Bounded functional evidence for negotiation and policy validation.
   }
 
 readNodeObservation :: MonadSTM m => AtomicFetchNode m owner peer blk -> STM m NodeObservation
@@ -549,11 +579,7 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
       previous -> do
         gen <- case previous of
           Just (Just g) -> pure (Just g)
-          Nothing ->
-            H.beginAcquisition handoff point >>= \case
-              Right g -> modifyTVar (fetchGenerations node) (Map.insert point (Just g)) >> pure (Just g)
-              Left H.AcquisitionCapacity -> pure Nothing
-              Left e -> throwSTM (H.StorageException e)
+          Nothing -> begin state point
         case gen of
           Nothing -> pure state
           Just g -> do
@@ -576,6 +602,58 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
                     retire node point g
                     modifyTVar (fetchGenerations node) (Map.insert point Nothing)
                 pure projected
+  -- An unoffered announcement can occupy a cheap empty arena indefinitely.
+  -- Reclaim one only when offered work needs capacity; never evict verified
+  -- metadata/storage, a wanted body attempt or outstanding legacy body work.
+  -- Old wire descriptors retain their own generation/accounting after retire.
+  begin state point = do
+    initial <- H.beginAcquisition handoff point
+    result <- case initial of
+      Left H.AcquisitionCapacity -> do
+        eligible <- hasBodyOffer point
+        reclaimed <- if eligible then reclaim state point else pure False
+        if reclaimed then H.beginAcquisition handoff point else pure initial
+      _ -> pure initial
+    case result of
+      Right g -> modifyTVar (fetchGenerations node) (Map.insert point (Just g)) >> pure (Just g)
+      Left H.AcquisitionCapacity -> pure Nothing
+      Left e -> throwSTM (H.StorageException e)
+  hasBodyOffer point = do
+    clients <- readTVar (fetchClients node)
+    legacy <- readTVar (fetchLegacy node)
+    let registered = Map.keysSet clients `Set.union` Map.keysSet legacy
+    pure $
+      any
+        ( \source -> case Map.lookup source offers >>= Map.lookup point of
+            Just offer -> case poOffered offer of OfferedClosure -> False; _ -> True
+            Nothing -> False
+        )
+        (Set.toList registered)
+  reclaim state incoming = do
+    generations <- readTVar (fetchGenerations node)
+    search [(point, gen) | (point, Just gen) <- Map.toAscList generations, point /= incoming]
+   where
+    search [] = pure False
+    search ((point, gen) : rest) = do
+      offered <- hasBodyOffer point
+      bodyState <- readTVar (fetchBodies node)
+      snapshot <- H.readAcquisition handoff point
+      let wanted =
+            maybe
+              False
+              (\body -> B.bodyPrimary body /= Nothing || B.bodyHedge body /= Nothing)
+              (B.bodySnapshot point bodyState)
+          empty =
+            maybe
+              False
+              (\current -> H.snapshotGeneration current == gen && H.snapshotReferences current == Nothing)
+              snapshot
+      if not offered && not wanted && empty && Map.notMember point (requestedEbPeers state)
+        then do
+          retire node point gen
+          modifyTVar (fetchGenerations node) (Map.delete point)
+          pure True
+        else search rest
   closureCandidates closure times clients point =
     [ (client, offer)
     | (_, _, _, client, offer) <-

@@ -18,12 +18,11 @@ tests =
     "network protocol versions"
     [ testCase "Cardano contiguous network protocol versions" $
         contiguousSupportedNetworkProtocolVersions (Proxy @(CardanoBlock StandardCrypto))
-    , testCase "atomic fetch version is absent from ordinary supported versions" $
-        assertBool "version 17 advertised without explicit activation" $
-          Map.notMember NodeToNodeV_17 ordinary
-    , testCase "explicit atomic fetch selection reuses version 16 serialization" $
-        Map.lookup NodeToNodeV_17 (withExperimentalAtomicFetchVersion ordinary)
-          @?= Map.lookup NodeToNodeV_16 ordinary
+    , testCase "atomic fetch is present in the normal supported map with version 16 serialization" $ do
+        assertBool "version 17 missing from supported versions" (Map.member NodeToNodeV_17 ordinary)
+        Map.lookup NodeToNodeV_17 ordinary @?= Map.lookup NodeToNodeV_16 ordinary
+    , testCase "atomic support preserves the existing Cardano released-version cutoff" $
+        fst (latestReleasedNodeVersion (Proxy @(CardanoBlock StandardCrypto))) @?= Just NodeToNodeV_15
     ]
  where
   ordinary = supportedNodeToNodeVersions (Proxy @(CardanoBlock StandardCrypto))
