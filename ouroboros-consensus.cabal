@@ -207,6 +207,7 @@ library
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
     Ouroboros.Consensus.Mempool
@@ -1576,6 +1577,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
