@@ -4,6 +4,8 @@
 -- | Creating a mempool
 module Ouroboros.Consensus.Mempool.Init
   ( openMempool
+  , openMempoolWithLocalReuse
+  , openMempoolWithoutSyncThreadWithLocalReuse
   , openMempoolWithoutSyncThread
   ) where
 
@@ -44,8 +46,25 @@ openMempool ::
   Maybe MempoolTimeoutConfig ->
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
-openMempool topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
-  env <- initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
+openMempool = openMempoolWithLocalReuse False
+
+openMempoolWithLocalReuse ::
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
+  , ValidateEnvelope blk
+  ) =>
+  Bool ->
+  ResourceRegistry m ->
+  LedgerInterface m blk ->
+  LedgerConfig blk ->
+  MempoolCapacityBytesOverride ->
+  Maybe MempoolTimeoutConfig ->
+  Tracer m (TraceEventMempool blk) ->
+  m (Mempool m blk)
+openMempoolWithLocalReuse enabled topLevelRegistry ledger cfg capacityOverride timeoutConfig tracer = do
+  env <- initMempoolEnvWithLocalReuse enabled ledger cfg capacityOverride timeoutConfig tracer
   forkSyncStateOnTipPointChange env topLevelRegistry
   return $ mkMempool env
 
@@ -98,8 +117,24 @@ openMempoolWithoutSyncThread ::
   Maybe MempoolTimeoutConfig ->
   Tracer m (TraceEventMempool blk) ->
   m (Mempool m blk)
-openMempoolWithoutSyncThread ledger cfg capacityOverride timeoutConfig tracer =
-  mkMempool <$> initMempoolEnv ledger cfg capacityOverride timeoutConfig tracer
+openMempoolWithoutSyncThread = openMempoolWithoutSyncThreadWithLocalReuse False
+
+openMempoolWithoutSyncThreadWithLocalReuse ::
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
+  , ValidateEnvelope blk
+  ) =>
+  Bool ->
+  LedgerInterface m blk ->
+  LedgerConfig blk ->
+  MempoolCapacityBytesOverride ->
+  Maybe MempoolTimeoutConfig ->
+  Tracer m (TraceEventMempool blk) ->
+  m (Mempool m blk)
+openMempoolWithoutSyncThreadWithLocalReuse enabled ledger cfg capacityOverride timeoutConfig tracer =
+  mkMempool <$> initMempoolEnvWithLocalReuse enabled ledger cfg capacityOverride timeoutConfig tracer
 
 mkMempool ::
   ( IOLike m
@@ -108,11 +143,13 @@ mkMempool ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   ) =>
-  MempoolEnv m blk -> Mempool m blk
+  MempoolEnv m blk ->
+  Mempool m blk
 mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
+    , getLeiosTxIndex = (\is -> (isLeiosEpoch is, isLeiosIndex is)) <$> readTMVar istate
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate

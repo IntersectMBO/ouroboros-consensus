@@ -46,13 +46,16 @@ module Ouroboros.Consensus.Mempool.API
 
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
 import NoThunks.Class
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (BytesSize, TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -176,6 +179,11 @@ data Mempool m blk = Mempool
   -- persistence.
   , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
   -- ^ Manually remove the given transactions from the mempool.
+  , getLeiosTxIndex :: STM m (Natural, Map TxHash (BytesSize, Validated (GenTx blk)))
+  -- ^ Coherent source revision and full-Leios-byte-hash index. A non-emptying
+  -- state read can wait while a writer owns the mempool TMVar; consumers must
+  -- retain no local reservation across that wait. The index is empty when
+  -- local reuse is disabled. Borrow bounded entries, not a snapshot across IO.
   , getSnapshot :: STM m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the current mempool state. This allows for
   -- further pure queries on the snapshot.

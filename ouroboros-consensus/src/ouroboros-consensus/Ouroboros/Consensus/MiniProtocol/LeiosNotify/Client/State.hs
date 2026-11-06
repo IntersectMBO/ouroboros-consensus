@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -69,7 +70,11 @@ import Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, onValidAnnouncement)
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( AnnounceState
+  , WhetherNewAnnouncement (..)
+  , onValidAnnouncement
+  )
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -87,9 +92,10 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcemen
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity
   , AnnouncingHeader (ancAnnouncement, ancElectionId)
+  , LeiosAnnouncementAgeLimits (..)
+  , ValidAnnouncement
   , announcementValidity
   , announcingRbHash
-  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -188,9 +194,10 @@ data ExnLeiosNotifyInvalidOffer
   | -- | An offer below the slot this peer's state has been pruned to, which is
     -- therefore unanswerable on its own terms.
     --
-    -- TODO When the honest server offers endorser blocks, explain why it never
-    -- trips this, eg because it offers one only while it is at least a minimum
-    -- lead younger than its own immutable tip.
+    -- An honest server never trips this: it offers an endorser block only at an
+    -- announcement it relays, and only until shortly after that announcement is
+    -- 'maxAnnouncementAgeSend' old, which must be far younger than any peer's
+    -- immutable tip.
     ExnLeiosOfferTooOld
       !LeiosPoint
       -- | the slot this peer's state has been pruned to
@@ -289,31 +296,38 @@ instance
 
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
--- An accepted announcement goes on to the node's 'AnnounceState'.
+-- An accepted announcement goes on to the node's 'AnnounceState', and, if it
+-- is new there, to the given action.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , ConvertRawHash blk
   ) =>
+  LeiosAnnouncementAgeLimits ->
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st hdr = do
+onLeiosNotifyAnnouncement ageLimits systemTime futureCheck cfg announceState onNew immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
       liftEither $ Announcements.insert (ancElectionId anc) anc (lnpsAnnouncements st)
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
-    valid <- announcementValidity systemTime futureCheck cfg immLedger anc
-    lift $ atomically $ onValidAnnouncement announceState valid
+    valid <- announcementValidity ageLimits systemTime futureCheck cfg immLedger anc
+    lift $
+      atomically (onValidAnnouncement announceState valid) >>= \case
+        NewAnnouncement -> onNew valid
+        NotNewAnnouncement -> pure ()
     pure
       st
         { lnpsAnnouncements = announcements
@@ -409,12 +423,12 @@ data VoteWindow = MkVoteWindow
 -- | When a vote is worth relaying, given its election's ledger view and when
 -- its election slot began: from 3 L_hdr after until 3 L_hdr + L_vote + L_diff
 -- after, or until its announcement is no longer relayed, if sooner.
-leiosVoteWindow :: LeiosLedgerView -> RelativeTime -> VoteWindow
-leiosVoteWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
+leiosVoteWindow :: LeiosAnnouncementAgeLimits -> LeiosLedgerView -> RelativeTime -> VoteWindow
+leiosVoteWindow ageLimits MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
   MkVoteWindow
     (onset `plus` (3 * lHdr))
     -- NOTE: This cap never applies on mainnet, as L_diff is under 20 s.
-    (onset `plus` (min (3 * lHdr + lVote + lDiff) maxAnnouncementAgeSend))
+    (onset `plus` (min (3 * lHdr + lVote + lDiff) (maxAnnouncementAgeSend ageLimits)))
  where
   plus = flip addRelTime
 
@@ -435,6 +449,7 @@ checkLeiosVotes ::
   , HasHardForkHistory blk
   ) =>
   TopLevelConfig blk ->
+  LeiosAnnouncementAgeLimits ->
   -- | the most that an honest peer's clock may differ from ours
   InFutureCheck.ClockSkew ->
   -- | the immutable tip's ledger state
@@ -444,7 +459,7 @@ checkLeiosVotes ::
   NonEmpty LeiosVote ->
   LeiosNotifyPeerState blk ->
   Except ExnLeiosNotifyInvalidVotes (LeiosNotifyPeerState blk, [AcceptedVote])
-checkLeiosVotes cfg skew immLedger now votes st0 =
+checkLeiosVotes cfg ageLimits skew immLedger now votes st0 =
   fmap reverse <$> foldM checkOne (st0, []) votes
  where
   checkOne (st, accepted) vote = do
@@ -472,7 +487,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
     leiosView@MkLeiosLedgerView{llvCommittee} <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
-    let window = leiosVoteWindow leiosView onset
+    let window = leiosVoteWindow ageLimits leiosView onset
     when (now < addRelTime (negate (InFutureCheck.unClockSkew skew)) (voteFrom window)) $
       throwError (ExnLeiosVoteTooEarly rbHash slot age)
     when (now > addRelTime voteLateGrace (voteUntil window)) $

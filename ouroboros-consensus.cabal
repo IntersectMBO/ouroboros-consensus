@@ -202,10 +202,18 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
+    Ouroboros.Consensus.Leios.LocalStore
+    Ouroboros.Consensus.Leios.TxCache
+    Ouroboros.Consensus.Leios.TxCache.API
+    Ouroboros.Consensus.Leios.TxCache.Internal
+    Ouroboros.Consensus.Leios.TxCache.Optimized
+    Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Ouroboros.Consensus.Leios.TxCache.Reference
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
     Ouroboros.Consensus.Mempool
@@ -224,7 +232,26 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Inbound
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -429,6 +456,7 @@ library
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
     measures,
     mempack,
+    monoidal-synchronisation ^>=0.1,
     mtl,
     multiset ^>=0.3,
     nonempty-containers,
@@ -827,6 +855,7 @@ test-suite consensus-test
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.LocalReuse
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
@@ -1033,6 +1062,7 @@ test-suite leios-storage-test
     bytestring,
     cardano-crypto-class,
     cardano-slotting,
+    cborg,
     containers,
     contra-tracer,
     deepseq,
@@ -1327,11 +1357,17 @@ library diffusion
   visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.LocalReuse
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Codec
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
     Ouroboros.Consensus.Network.LeiosFetch
     Ouroboros.Consensus.Network.LeiosNotify
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
     Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
+    Ouroboros.Consensus.Network.NodeToNode.AtomicFetch
     Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
     Ouroboros.Consensus.Node
     Ouroboros.Consensus.Node.DbLock
@@ -1378,7 +1414,7 @@ library diffusion
     text,
     time,
     transformers,
-    typed-protocols:{stateful, typed-protocols} ^>=1.2.2,
+    typed-protocols:{cborg, stateful, typed-protocols} ^>=1.2.2,
     vector,
 
 library unstable-diffusion-testlib
@@ -1518,14 +1554,33 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.AcquiredEbs
     Test.Consensus.Leios.Cert
     Test.Consensus.Leios.ChainDB
     Test.Consensus.Leios.Committee
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.Forge
+    Test.Consensus.Leios.TxCache
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Test.Consensus.Leios.LeiosFetch
+    Test.Consensus.Leios.LeiosFetch.Admission
+    Test.Consensus.Leios.LeiosFetch.Acquisition
+    Test.Consensus.Leios.LeiosFetch.AtomicClient
+    Test.Consensus.Leios.LeiosFetch.AtomicCodec
+    Test.Consensus.Leios.LeiosFetch.AtomicReceive
+    Test.Consensus.Leios.LeiosFetch.AtomicServer
+    Test.Consensus.Leios.LeiosFetch.Body
+    Test.Consensus.Leios.LeiosFetch.Closure
+    Test.Consensus.Leios.LeiosFetch.Retry
     Test.Consensus.Leios.LeiosFetch.Codec
+    Test.Consensus.Leios.LeiosFetch.Decision
+    Test.Consensus.Leios.LeiosFetch.Handoff
+    Test.Consensus.Leios.LeiosFetch.LocalReuse
     Test.Consensus.Leios.LeiosFetch.Node
+    Test.Consensus.Leios.LeiosFetch.Pilots
+    Test.Consensus.Leios.LeiosFetch.Replies
+    Test.Consensus.Leios.LeiosFetch.Timing
+    Test.Consensus.Leios.LeiosFetch.Wait
     Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Leios.LeiosNotify.Codec
     Test.Consensus.Leios.LeiosNotify.Node
@@ -1592,6 +1647,7 @@ test-suite consensus-diffusion-test
     monoidal-containers ^>=0.6,
     mtl,
     network-mux,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
@@ -1667,6 +1723,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
     Ouroboros.Consensus.Shelley.Ledger.Mempool
+    Ouroboros.Consensus.Shelley.Ledger.TxBytes
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol
@@ -2107,7 +2164,7 @@ library unstable-cardano-tools
     cardano-config >=2.1 && <2.3,
     cardano-crypto-class,
     cardano-crypto-wrapper,
-    cardano-diffusion:cardano-diffusion,
+    cardano-diffusion:{api, cardano-diffusion},
     cardano-git-rev ^>=0.2.1,
     cardano-keys ^>=11,
     cardano-ledger-allegra,

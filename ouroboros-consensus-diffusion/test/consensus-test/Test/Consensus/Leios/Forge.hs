@@ -2,8 +2,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Tests that 'forkBlockForging' writes each endorser block that it forges to
--- the LeiosDB.
+-- | Tests that the node writes each endorser block that it forges to the
+-- LeiosDB, and acquires it as it would one fetched from a peer.
 module Test.Consensus.Leios.Forge (tests) where
 
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -14,11 +14,17 @@ import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract (GetTip (..))
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  )
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node (defaultAtomicNodeConfig)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
-import Ouroboros.Consensus.Util.IOLike (atomically)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader (..), newLeiosDBInMemory, withReader)
+import Ouroboros.Consensus.Util.IOLike (atomically, orElse)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
@@ -30,8 +36,9 @@ tests :: TestTree
 tests =
   testGroup
     "Forging"
-    [ testCase
-        "the node stores each endorser block that it forges, at the point that the header announces"
+    [ testCase "E22 forged receipts publish exact durable source locations" unit_forgedCached
+    , testCase
+        "the node stores and acquires each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
     ]
 
@@ -40,17 +47,27 @@ tests =
 --
 -- * If the node forges no block, the other checks pass with no data. The
 --   first check catches this.
--- * If 'forkBlockForging' does not give 'storeForgedEb' to 'forge', or if
---   'storeForgedEb' writes at a slot or a hash that differs from the
+-- * If 'forkBlockForging' does not hand the endorser block on from 'forge', or
+--   if the node writes it at a slot or a hash that differs from the
 --   announcement in the header, the second check fails.
--- * If 'storeForgedEb' does not write the transaction bytes, the third check
---   fails.
+-- * If the node does not write the transaction bytes, the third check fails.
+-- * If the node does not emit both acquisitions at each such point, as it would
+--   for an endorser block fetched from a peer, the fourth check fails.
 unit_storesForgedEbs :: Assertion
 unit_storesForgedEbs = do
-  let ForgeOutcome{announcedEbs, storedPoints} = runSimOrThrow forgedEbs
+  let ForgeOutcome{announcedEbs, storedPoints, acquisitions} = runSimOrThrow forgedEbs
+      points = [(announcedSlot eb, announcedHash eb) | eb <- announcedEbs]
   assertBool "the node forged no block" (not (null announcedEbs))
-  sort storedPoints @?= sort [(announcedSlot eb, announcedHash eb) | eb <- announcedEbs]
+  sort storedPoints @?= sort points
   map storedTxs announcedEbs @?= map (Just . forgedTxs) announcedEbs
+  sort acquisitions
+    @?= sort
+      ( concat
+          [ [AcquiredBody point, AcquiredClosure point]
+          | (slot, ebHash) <- points
+          , let point = MkLeiosPoint slot ebHash
+          ]
+      )
 
 -- | What the chain and the LeiosDB hold after the node forges.
 data ForgeOutcome = ForgeOutcome
@@ -58,7 +75,13 @@ data ForgeOutcome = ForgeOutcome
   -- ^ The endorser blocks that the blocks on the chain announce, oldest first.
   , storedPoints :: [(SlotNo, EndorserBlockHash)]
   -- ^ The points in the LeiosDB.
+  , acquisitions :: [Acquired]
+  -- ^ What the node emitted as acquired.
   }
+
+-- | An acquisition, comparably.
+data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
+  deriving (Eq, Ord, Show)
 
 -- | An endorser block that a block on the chain announces.
 data AnnouncedEb = AnnouncedEb
@@ -74,6 +97,7 @@ data AnnouncedEb = AnnouncedEb
 -- | The node forges in each of the first slots.
 forgedEbs :: IOSim s ForgeOutcome
 forgedEbs = withNode $ \node -> do
+  next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
   setBlockForging (nodeKernel node) [MkBlockForging (pure ebForging)]
   -- A slot is one second, so the node forges in slots 0 to 3. The half slot
   -- lets the forge of slot 3 add its block to the ChainDB.
@@ -84,12 +108,21 @@ forgedEbs = withNode $ \node -> do
       sequence
         [ AnnouncedEb (blockSlot hdr) ebHash [txInSlot (blockSlot hdr)]
             . fmap (map snd)
-            <$> lookupEbClosure reader ebHash
+            <$> lookupEbClosure reader (MkLeiosPoint (blockSlot hdr) ebHash)
         | hdr <- AF.toOldestFirst chain
         , Just (ebHash, _size) <- [lthAnnouncement hdr]
         ]
     storedPoints <- testScanEbPoints reader
-    pure ForgeOutcome{announcedEbs, storedPoints}
+    acquisitions <- drain next
+    pure ForgeOutcome{announcedEbs, storedPoints, acquisitions}
+ where
+  drain next =
+    atomically ((Just <$> next) `orElse` pure Nothing) >>= \case
+      Nothing -> pure []
+      Just notification -> (acquiredOf notification :) <$> drain next
+  acquiredOf = \case
+    AcquiredEb point _size -> AcquiredBody point
+    AcquiredEbTxs point -> AcquiredClosure point
 
 -- | A forging that leads in every slot. Each block extends the ledger tip and
 -- announces an endorser block with one transaction, whose bytes depend on the
@@ -127,3 +160,21 @@ blockAfter = \case
 
 txInSlot :: SlotNo -> ByteString
 txInSlot slot = BS8.pack ("tx in slot " <> show (unSlotNo slot))
+
+unit_forgedCached :: Assertion
+unit_forgedCached = assertBool "forged sources are reusable" $ runSimOrThrow $ do
+  raw <- newLeiosDBInMemory
+  cache <- Cache.newReferenceCache (Cache.CacheConfig 4 17)
+  withAtomicLocalNodeOver defaultAtomicNodeConfig cache raw $ \node -> do
+    setBlockForging (nodeKernel node) [MkBlockForging (pure ebForging)]
+    threadDelay 3.5
+    chain <- atomically $ getCurrentChain (nodeChainDB node)
+    let announced = [(blockSlot hdr, h) | hdr <- AF.toOldestFirst chain, Just (h, _) <- [lthAnnouncement hdr]]
+    results <-
+      sequence
+        [ do
+            (_, locations) <- Cache.lookupLocations cache [(0, hashLeiosTx (MkLeiosTx (txInSlot slot)))]
+            pure (locations == [(0, Just (MkTxLocation (MkLeiosPoint slot h) 0))])
+        | (slot, h) <- announced
+        ]
+    pure (not (null results) && and results)

@@ -19,19 +19,7 @@ import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
 import Data.Functor ((<&>))
 import GHC.Generics (Generic)
-import Network.TypedProtocol.Codec (PeerRole (..))
-import Network.TypedProtocol.Core
-  ( IsPipelined (..)
-  , N (..)
-  , Nat (..)
-  , ReflRelativeAgency (..)
-  , SenderVariability (..)
-  )
-import Network.TypedProtocol.Peer
-  ( Peer (..)
-  , PeerLookaheadFixedSender (..)
-  , Sender (..)
-  )
+import Network.TypedProtocol.Peer.Server
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Ouroboros.Consensus.Util.IOLike
@@ -42,7 +30,7 @@ import Ouroboros.Consensus.Util.IOLike
   )
 
 type LeiosNotifyServerPeerLookahead point announcement vote m =
-  PeerLookaheadFixedSender (LeiosNotify point announcement vote) AsServer StIdle m ()
+  ServerLookaheadFixedSender (LeiosNotify point announcement vote) StIdle m ()
 
 -- | Whether incrementing the count of outstanding LeiosNotify requests found the
 -- peer already at its pipelining bound, i.e. requesting more than it is allowed.
@@ -64,38 +52,37 @@ leiosNotifyServerPeerLookahead ::
   m (LeiosNotifyServerPeerLookahead point announcement vote m)
 leiosNotifyServerPeerLookahead incr next = do
   quitVar <- newTVarIO NotYetQuitting
-  pure $ PeerLookaheadFixedSender (responder quitVar) (start quitVar)
+  pure $ ServerLookaheadFixedSender (responder quitVar) (start quitVar)
  where
   responder ::
     StrictTVar m WhetherQuitting ->
-    Sender (LeiosNotify point announcement vote) AsServer VariableSender StBusy StIdle m
+    Sender (LeiosNotify point announcement vote) VariableSender StBusy StIdle m
   responder quitVar =
     SenderEffect $
       atomically $
         orElse
           ( readTVar quitVar >>= \case
-              Quitting -> pure $ SenderYield ReflServerAgency MsgCanceled SenderDone
+              Quitting -> pure $ SenderYield MsgCanceled SenderDone
               NotYetQuitting -> retry
           )
-          (next <&> \msg -> SenderYield ReflServerAgency msg SenderDone)
+          (next <&> \msg -> SenderYield msg SenderDone)
 
   -- StIdle with nothing outstanding: receive the first request (or quit). A
   -- plain 'Await' is required here; 'AwaitLookahead' defers the StBusy->StIdle
   -- send, so it is only usable once we hold a request (i.e. are at StBusy).
   start ::
     StrictTVar m WhetherQuitting ->
-    Peer
+    Server
       (LeiosNotify point announcement vote)
-      AsServer
       (Lookahead Z (FixedSender StBusy StIdle))
       StIdle
       m
       ()
   start quitVar =
-    Await ReflClientAgency $ \case
+    Await $ \case
       MsgQuit -> Effect $ do
         atomically $ writeTVar quitVar Quitting
-        pure $ Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
+        pure $ Yield MsgDone $ Done ()
       MsgLeiosNotificationRequestNext ->
         Effect $ do
           incr >>= \case
@@ -109,15 +96,14 @@ leiosNotifyServerPeerLookahead incr next = do
     forall n.
     StrictTVar m WhetherQuitting ->
     Nat n ->
-    Peer
+    Server
       (LeiosNotify point announcement vote)
-      AsServer
       (Lookahead n (FixedSender StBusy StIdle))
       StBusy
       m
       ()
   busy quitVar n =
-    AwaitLookahead ReflClientAgency TheSender $ \case
+    AwaitLookahead TheSender $ \case
       MsgQuit -> Effect $ do
         atomically (writeTVar quitVar Quitting)
         pure $ drain (Succ n)
@@ -135,15 +121,14 @@ leiosNotifyServerPeerLookahead incr next = do
   drain ::
     forall n.
     Nat n ->
-    Peer
+    Server
       (LeiosNotify point announcement vote)
-      AsServer
       (Lookahead n (FixedSender StBusy StIdle))
       StQuit
       m
       ()
   drain = \case
-    Zero -> Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
+    Zero -> Yield MsgDone $ Done ()
     Succ j -> FlushSender Nothing (drain j)
 
 data ExnLeiosNotifyExcessiveRequests = ExnLeiosNotifyExcessiveRequests

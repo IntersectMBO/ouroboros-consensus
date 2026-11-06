@@ -494,10 +494,11 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
           (isLedgerState is `withLedgerTables` emptyLedgerTables)
           (isLastTicketNo is)
           newGen
+          (isLeiosEnabled is)
           toKeep
       traceWith trcr $
         TraceMempoolManuallyRemovedTxs toRemove (map getInvalidated removed) (isMempoolSize is')
-      pure ((), is')
+      pure ((), is'{isLeiosEpoch = isLeiosEpoch is + if isLeiosEnabled is then 1 else 0})
  where
   MempoolEnv
     { mpEnvStateVar = istate
@@ -589,6 +590,7 @@ implSyncWithLedger projectResult mpEnv =
                 ls
                 (isLastTicketNo is0)
                 (isRemovalCounter is0)
+                (isLeiosEnabled is0)
                 (TxSeq.toList (isTxs is0))
             -- A bounded catch-up loop reapplying whatever was added or
             -- removed while this ran, so the state lock is held only briefly at
@@ -680,7 +682,8 @@ implSyncWithLedger projectResult mpEnv =
                           TraceMempoolCapacityChanged (isCapacity isLocked) (isCapacity isFinal)
                       -- Store the forker to be used with the new state
                       modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
-                      pure (Just (projectResult isFinal), isFinal)
+                      let published = isFinal{isLeiosEpoch = isLeiosEpoch isLocked + if isLeiosEnabled isLocked then 1 else 0}
+                      pure (Just (projectResult published), published)
 
   MempoolEnv
     { mpEnvStateVar = istate

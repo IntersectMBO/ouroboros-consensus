@@ -1,0 +1,16 @@
+; Experimental cancellation-capable LeiosFetch. Version 16 keeps its own schema.
+; Replies preserve FIFO identity and do not echo ordinals.
+leiosFetchAtomicMessage = msgDone / msgLeiosBlockRequest / msgLeiosBlock / msgLeiosBlockTxsRequest / msgLeiosBlockTxs / msgTryCancel / msgCancelled / msgAckTryCancel
+msgDone                 = [0]
+msgLeiosBlockRequest    = [1, ordinal, point]
+msgLeiosBlock           = [2, endorser_block]
+msgLeiosBlockTxsRequest = [3, ordinal, point, bitmaps]
+msgLeiosBlockTxs        = [4, [+ tx]]
+msgTryCancel           = [5, ordinal, ordinal]
+msgCancelled           = [6]
+msgAckTryCancel        = [7]
+ordinal = uint .size 8
+point = [uint .size 8, bytes .size 32]
+endorser_block = { + bytes .size 32 => uint .size 4 }
+bitmaps = { + uint .size 2 => 1..18446744073709551615 }
+tx = #6.24(bytes)

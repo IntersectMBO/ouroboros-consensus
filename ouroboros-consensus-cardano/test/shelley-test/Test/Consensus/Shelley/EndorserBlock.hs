@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 -- | The sizes the mempool charges for an endorser block agree with
 -- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
@@ -11,7 +13,11 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Data.Proxy (Proxy (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , LedgerSupportsMempool (txBytesForLeios)
+  )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
@@ -23,8 +29,9 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
+import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx, txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -34,6 +41,9 @@ tests =
   testGroup
     "Endorser block"
     [ testProperty
+        "local mempool projection uses exact whole Dijkstra EB bytes"
+        (withNumTests 10 prop_localMempoolBytes)
+    , testProperty
         "sizeEndorserBlockReference consistent with encodeEndorserBlock"
         prop_referenceSizeConsistent
     , testProperty
@@ -167,3 +177,10 @@ prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
   map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (serializeTxForLeios tx))))
     === [extractHash (hashAnnotated tx)]
+
+-- The public ledger hook used by the resolver must preserve the original
+-- whole-transaction bytes, including witnesses and the validity flag.
+prop_localMempoolBytes :: Tx TopTx DijkstraEra -> Property
+prop_localMempoolBytes tx =
+  txBytesForLeios (Proxy @StandardDijkstraBlock) (mkShelleyTx tx)
+    === Just (serializeTxForLeios tx)

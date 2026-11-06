@@ -16,6 +16,7 @@ import Cardano.Network.NodeToNode
   , Versions (..)
   )
 import qualified Cardano.Network.NodeToNode as N2N
+import Cardano.Network.NodeToNode.Version (getLocalLeiosFetchRequestLimit)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (forever)
@@ -100,11 +101,14 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
       Version
         { versionApplication = const $ mkR version blockVersion
         , versionData =
-            stdVersionDataNTN
-              networkMagic
-              N2N.InitiatorOnlyDiffusionMode
-              PeerSharingDisabled
-              PerasUnsupported
+            ( stdVersionDataNTN
+                networkMagic
+                N2N.InitiatorOnlyDiffusionMode
+                PeerSharingDisabled
+                PerasUnsupported
+            )
+              { leiosFetchRequestLimit = getLocalLeiosFetchRequestLimit version
+              }
         }
 
   application ::

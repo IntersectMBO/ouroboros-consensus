@@ -20,6 +20,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , SingLeiosFetch (..)
   , TxBitmaps
   , bitmapOffsets
+  , encodeBitmaps
+  , decodeBitmaps
   , byteLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId

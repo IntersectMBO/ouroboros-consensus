@@ -27,7 +27,10 @@ module Test.Consensus.Leios.Environment
   , envLeiosFetchCodec
   , envLeiosNotifyCodec
   , refusingLeiosFetchServer
+  , silentLeiosFetchServer
   , withNodeVsEnvConnection
+  , withNodeVsEnvConnectionVersion
+  , withNodeVsEnvConnectionDelayed
   ) where
 
 import Cardano.Network.NodeToNode
@@ -41,12 +44,17 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion, NodeToNodeVersionD
 import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable (..))
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
+import Control.Monad (forever, when)
+import qualified Control.Monad.Class.MonadTime.SI as SI
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Foldable (for_)
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Traversable (for)
 import qualified Network.Mux as Mx
 import Network.Mux.Bearer.Queues (QueueChannel (..), queueChannelAsBearer)
@@ -65,8 +73,10 @@ import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
 import Ouroboros.Consensus.Network.LeiosNotify (leiosNotifyMiniProtocolNum)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
+import Ouroboros.Consensus.NodeKernel (NodeKernel (getKeepAliveRegistry))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block (Tip (..))
+import Ouroboros.Network.BlockFetch.ClientRegistry (lookupKeepAliveRtt)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.ConnectionManager.Types (DataFlow (..), Provenance (..))
@@ -138,7 +148,9 @@ data EnvPeer m = EnvPeer
 -- | A connection from the node to a peer, once the handshake has settled on a
 -- version.
 data NodeVsEnvConnection m = NodeVsEnvConnection
-  { connTerminate :: m ()
+  { connVersion :: NodeToNodeVersion
+  -- ^ Version actually selected by the real handshake.
+  , connTerminate :: m ()
   -- ^ Tell the node's initiators to wind down, as when the node demotes the
   -- peer.
   , connNodeInitiators ::
@@ -160,98 +172,186 @@ withNodeVsEnvConnection ::
   EnvPeer (IOSim s) ->
   (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeVsEnvConnection node addr envPeer body = do
+withNodeVsEnvConnection = withNodeVsEnvConnectionVersions Nothing
+
+-- | Restrict only the environment's handshake advertisement, to exercise
+-- version-16 fallback alongside a new-version connection to the same node.
+withNodeVsEnvConnectionVersion ::
+  NodeToNodeVersion ->
+  NodeUnderTest (IOSim s) ->
+  PeerAddr ->
+  EnvPeer (IOSim s) ->
+  (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeVsEnvConnectionVersion version = withNodeVsEnvConnectionVersions (Just version)
+
+withNodeVsEnvConnectionVersions ::
+  Maybe NodeToNodeVersion ->
+  NodeUnderTest (IOSim s) ->
+  PeerAddr ->
+  EnvPeer (IOSim s) ->
+  (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeVsEnvConnectionVersions = withNodeVsEnvConnectionDelayed 0
+
+-- | Apply propagation to the entire connection, including KeepAlive. Pending
+-- deliveries are bounded and use absolute arrival times so queued packets
+-- overlap propagation. Establish warm KeepAlive before hot applications;
+-- existing fixtures keep their zero-delay eager path.
+-- See @docs/fetch-policy/cancellation-contract.md#13-scenarios-the-eventual-implementation-must-cover@.
+withNodeVsEnvConnectionDelayed ::
+  SI.DiffTime ->
+  Maybe NodeToNodeVersion ->
+  NodeUnderTest (IOSim s) ->
+  PeerAddr ->
+  EnvPeer (IOSim s) ->
+  (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeVsEnvConnectionDelayed propagation onlyVersion node addr envPeer body = withOnlyConnection node addr $ do
   nodeToPeer <- Strict.newTBQueueIO bearerQueueCapacity
   peerToNode <- Strict.newTBQueueIO bearerQueueCapacity
-  let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerToNode, writeQueue = nodeToPeer}
-      peerBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = nodeToPeer, writeQueue = peerToNode}
-      nodeConnId = ConnectionId{localAddress = nodeAddr, remoteAddress = addr}
-      peerConnId = ConnectionId{localAddress = addr, remoteAddress = nodeAddr}
-  (bundle, version) <-
-    concurrently
-      (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nodeVersions node))
-      (runHandshakeServer peerBearer peerConnId handshakeArguments peerVersions)
-      >>= \case
-        (Right (HandshakeNegotiationResult bundle version _), Right HandshakeNegotiationResult{}) ->
-          pure (bundle, version)
-        _ -> throwIO $ userError "the node and the peer did not agree on a version"
-  controlMessage <- Strict.newTVarIO Continue
-  peerSharingAPI <- do
-    publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-    newPeerSharingAPI
-      publicPeerSelectionStateVar
-      (seedEnvPeerSharing (nodeSeeds node))
-      ps_POLICY_PEER_SHARE_STICKY_TIME
-      ps_POLICY_PEER_SHARE_MAX_PEERS
-  let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
-      infos = mkMiniProtocolInfos (\_ _ -> Nothing) Outbound Duplex bundle
-      codecs = envCodecs node version
-  nodeMux <- Mx.new Mx.nullTracers infos
-  peerMux <- Mx.new Mx.nullTracers infos
-  withAsync (Mx.run nodeMux nodeBearer) $ \_ ->
-    withAsync (Mx.run peerMux peerBearer) $ \_ -> do
-      for_ protocols $ \MiniProtocol{miniProtocolNum} ->
-        Mx.runMiniProtocol
-          peerMux
-          miniProtocolNum
-          Mx.ResponderDirection
-          Mx.StartOnDemand
-          (peerResponder codecs peerSharingAPI envPeer miniProtocolNum)
-      connPeerLeiosNotifyClient <-
-        for (epLeiosNotifyClient envPeer) $ \client ->
-          Mx.runMiniProtocol
-            peerMux
-            leiosNotifyMiniProtocolNum
-            Mx.InitiatorDirection
-            Mx.StartEagerly
-            (fmap (,Nothing) . client)
-      connPeerLeiosFetchClient <-
-        for (epLeiosFetchClient envPeer) $ \client ->
-          Mx.runMiniProtocol
-            peerMux
-            leiosFetchMiniProtocolNum
-            Mx.InitiatorDirection
-            Mx.StartEagerly
-            (fmap (,Nothing) . client)
-      nodeProtocols <-
-        for protocols $ \MiniProtocol{miniProtocolNum, miniProtocolStart, miniProtocolRun} ->
-          case miniProtocolRun of
-            InitiatorAndResponderProtocol initiator responder -> do
-              initiatorResult <-
-                Mx.runMiniProtocol
-                  nodeMux
-                  miniProtocolNum
-                  Mx.InitiatorDirection
-                  Mx.StartEagerly
-                  ( runMiniProtocolCb
-                      initiator
-                      ExpandedInitiatorContext
-                        { eicConnectionId = nodeConnId
-                        , eicControlMessage = Strict.readTVar controlMessage
-                        , eicIsBigLedgerPeer = IsBigLedgerPeer
-                        , eicExtraFlags = IsNotTrustable
-                        }
-                  )
-              responderResult <-
-                Mx.runMiniProtocol
-                  nodeMux
-                  miniProtocolNum
-                  Mx.ResponderDirection
-                  miniProtocolStart
-                  (runMiniProtocolCb responder ResponderContext{rcConnectionId = nodeConnId})
-              pure ((miniProtocolNum, initiatorResult), (miniProtocolNum, responderResult))
-      result <-
-        body
-          NodeVsEnvConnection
-            { connTerminate = atomically $ Strict.writeTVar controlMessage Terminate
-            , connNodeInitiators = Map.fromList (map fst nodeProtocols)
-            , connNodeResponders = Map.fromList (map snd nodeProtocols)
-            , connPeerLeiosNotifyClient
-            , connPeerLeiosFetchClient
-            }
-      Mx.stop nodeMux
-      Mx.stop peerMux
-      pure result
+  withPropagation propagation peerToNode $ \peerArrival ->
+    withPropagation propagation nodeToPeer $ \nodeArrival -> do
+      let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerArrival, writeQueue = nodeToPeer}
+          peerBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = nodeArrival, writeQueue = peerToNode}
+          nodeConnId = ConnectionId{localAddress = nodeAddr, remoteAddress = addr}
+          peerConnId = ConnectionId{localAddress = addr, remoteAddress = nodeAddr}
+      (bundle, version) <-
+        concurrently
+          (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nodeVersions node))
+          (runHandshakeServer peerBearer peerConnId handshakeArguments (peerVersions onlyVersion))
+          >>= \case
+            (Right (HandshakeNegotiationResult bundle version _), Right HandshakeNegotiationResult{}) ->
+              pure (bundle, version)
+            _ -> throwIO $ userError "the node and the peer did not agree on a version"
+      controlMessage <- Strict.newTVarIO Continue
+      peerSharingAPI <- do
+        publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+        newPeerSharingAPI
+          publicPeerSelectionStateVar
+          (seedEnvPeerSharing (nodeSeeds node))
+          ps_POLICY_PEER_SHARE_STICKY_TIME
+          ps_POLICY_PEER_SHARE_MAX_PEERS
+      let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
+          infos = mkMiniProtocolInfos (\_ _ -> Nothing) Outbound Duplex bundle
+          codecs = envCodecs node version
+      nodeMux <- Mx.new Mx.nullTracers infos
+      peerMux <- Mx.new Mx.nullTracers infos
+      withAsync (Mx.run nodeMux nodeBearer) $ \_ ->
+        withAsync (Mx.run peerMux peerBearer) $ \_ -> do
+          for_ protocols $ \MiniProtocol{miniProtocolNum} ->
+            Mx.runMiniProtocol
+              peerMux
+              miniProtocolNum
+              Mx.ResponderDirection
+              Mx.StartOnDemand
+              (peerResponder codecs peerSharingAPI envPeer miniProtocolNum)
+          connPeerLeiosNotifyClient <-
+            for (epLeiosNotifyClient envPeer) $ \client ->
+              Mx.runMiniProtocol
+                peerMux
+                leiosNotifyMiniProtocolNum
+                Mx.InitiatorDirection
+                Mx.StartEagerly
+                (fmap (,Nothing) . client)
+          connPeerLeiosFetchClient <-
+            for (epLeiosFetchClient envPeer) $ \client ->
+              Mx.runMiniProtocol
+                peerMux
+                leiosFetchMiniProtocolNum
+                Mx.InitiatorDirection
+                Mx.StartEagerly
+                (fmap (,Nothing) . client)
+          nodeProtocols <-
+            for
+              ( if propagation > 0
+                  then sortOn ((/= keepAliveMiniProtocolNum) . miniProtocolNum) protocols
+                  else protocols
+              )
+              $ \MiniProtocol{miniProtocolNum, miniProtocolStart, miniProtocolRun} ->
+                case miniProtocolRun of
+                  InitiatorAndResponderProtocol initiator responder -> do
+                    initiatorResult <-
+                      Mx.runMiniProtocol
+                        nodeMux
+                        miniProtocolNum
+                        Mx.InitiatorDirection
+                        Mx.StartEagerly
+                        ( runMiniProtocolCb
+                            initiator
+                            ExpandedInitiatorContext
+                              { eicConnectionId = nodeConnId
+                              , eicControlMessage = Strict.readTVar controlMessage
+                              , eicIsBigLedgerPeer = IsBigLedgerPeer
+                              , eicExtraFlags = IsNotTrustable
+                              }
+                        )
+                    responderResult <-
+                      Mx.runMiniProtocol
+                        nodeMux
+                        miniProtocolNum
+                        Mx.ResponderDirection
+                        miniProtocolStart
+                        (runMiniProtocolCb responder ResponderContext{rcConnectionId = nodeConnId})
+                    -- Warm KeepAlive precedes hot fetch in the delayed fixture.
+                    -- Historical zero-delay fixtures keep their eager order.
+                    when (propagation > 0 && miniProtocolNum == keepAliveMiniProtocolNum) $ atomically $ do
+                      reader <- lookupKeepAliveRtt (getKeepAliveRegistry (nodeKernel node)) nodeConnId
+                      maybe retry (const (pure ())) reader
+                    pure ((miniProtocolNum, initiatorResult), (miniProtocolNum, responderResult))
+          result <-
+            body
+              NodeVsEnvConnection
+                { connVersion = version
+                , connTerminate = atomically $ Strict.writeTVar controlMessage Terminate
+                , connNodeInitiators = Map.fromList (map fst nodeProtocols)
+                , connNodeResponders = Map.fromList (map snd nodeProtocols)
+                , connPeerLeiosNotifyClient
+                , connPeerLeiosFetchClient
+                }
+          Mx.stop nodeMux
+          Mx.stop peerMux
+          pure result
+
+-- | Deliver each captured SDU after its own one-way delay. Two bounded pumps
+-- separate capture from delivery; waiting for one packet never re-stamps later
+-- queued packets or makes them pay the propagation delay serially.
+withPropagation ::
+  SI.DiffTime ->
+  Strict.StrictTBQueue (IOSim s) ByteString ->
+  (Strict.StrictTBQueue (IOSim s) ByteString -> IOSim s a) ->
+  IOSim s a
+withPropagation delay input action
+  | delay <= 0 = action input
+  | otherwise = do
+      pending <- Strict.newTBQueueIO bearerQueueCapacity
+      output <- Strict.newTBQueueIO bearerQueueCapacity
+      let capture = forever $ do
+            bytes <- atomically (Strict.readTBQueue input)
+            now <- SI.getMonotonicTime
+            atomically (Strict.writeTBQueue pending (SI.addTime delay now, bytes))
+          deliver = forever $ do
+            (arrival, bytes) <- atomically (Strict.readTBQueue pending)
+            now <- SI.getMonotonicTime
+            when (now < arrival) (SI.threadDelay (SI.diffTime arrival now))
+            atomically (Strict.writeTBQueue output bytes)
+      withAsync capture $ \_ -> withAsync deliver $ \_ -> action output
+
+-- | Run the action as the node's only connection to the peer at the given
+-- address, as the diffusion layer would: two connections with the same
+-- 'ConnectionId' never run mini-protocols at the same time (see
+-- "Ouroboros.Network.ConnectionId#exclusivity"), and the node relies on that.
+withOnlyConnection :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s a -> IOSim s a
+withOnlyConnection node addr = bracket_ connect disconnect
+ where
+  connect = atomically $ do
+    connected <- readTVar (nodeConnectedPeers node)
+    when (Set.member addr connected) $
+      throwSTM $
+        userError $
+          "the node connects to " <> show addr <> " while still connected to it"
+    writeTVar (nodeConnectedPeers node) (Set.insert addr connected)
+  disconnect = atomically $ modifyTVar (nodeConnectedPeers node) (Set.delete addr)
 
 -- | The node's own address.
 nodeAddr :: PeerAddr
@@ -282,11 +382,11 @@ handshakeArguments =
 
 -- | The peer offers every version, with the version data the node itself
 -- offers.
-peerVersions :: Versions NodeToNodeVersion NodeToNodeVersionData ()
-peerVersions =
+peerVersions :: Maybe NodeToNodeVersion -> Versions NodeToNodeVersion NodeToNodeVersionData ()
+peerVersions onlyVersion =
   combineVersions
     [ simpleSingletonVersions version (nodeVersionData version) (const ())
-    | version <- [minBound .. maxBound]
+    | version <- maybe [minBound .. maxBound] (: []) onlyVersion
     ]
 
 -- | The peer's answer to the node's initiator with the given number.
@@ -371,6 +471,14 @@ envLeiosNotifyCodec node = NTN.cLeiosNotifyCodec (envCodecs node maxBound)
 
 envLeiosFetchCodec :: NodeUnderTest (IOSim s) -> LeiosFetchCodec s
 envLeiosFetchCodec node = NTN.cLeiosFetchCodec (envCodecs node maxBound)
+
+-- | A LeiosFetch server that never replies, as a peer that offers what it then
+-- does not serve.
+silentLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+silentLeiosFetchServer node chan =
+  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer silent)
+ where
+  silent = MkLeiosFetchRequestHandler $ \_request -> atomically retry
 
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()

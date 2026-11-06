@@ -6,29 +6,35 @@
 -- single writer, which calls them from its
 -- 'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue.WriteJob's.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
-  ( sqlInsertEbPoint
-  , sqlInsertEbBody
+  ( sqlInsertEbBody
   , sqlInsertTxs
+  , sqlCopyTxs
   ) where
 
-import Cardano.Crypto.Hash (hashToBytes)
-import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM, forM_, when)
 import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Int (Int64)
+import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
+import Data.Word (Word64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , LeiosPoint (..)
+  , LeiosTx (..)
+  , TxLocation (..)
   , TxOffset
-  , encodeEndorserBlockSize
+  , endorserBlockBytes
   , endorserBlockReferences
+  , hashLeiosTx
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosEbNotification (..)
+  ( CopyFailure (..)
+  , LocalFill (..)
+  , TxCopyReceipt (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
@@ -37,85 +43,84 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (bumpVolatileStats)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
+  ( immBatchRetrieveTxs
+  , sqlBatchRetrieveTxs
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
 
-sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-    dbBindHash stmt 2 (pointEbHash point)
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-    DB.changes db
-  bumpVolatileStats conn inserted
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint = stmt}} = conn
-
--- | Persist an EB body. The point MUST already be present (inserted
--- via 'sqlInsertEbPoint' on the announcement path).
+-- | Persist an EB body at a point, recording the point, in one transaction.
+-- Returns the offsets at which the point then holds its txs.
+--
+-- Those offsets are read back from 'ebTxBytes': a range of the primary key,
+-- one row per tx the body references, so up to
+-- 'Ouroboros.Consensus.Leios.Types.maxTxsPerEndorserBlock' rows. If that read
+-- is ever too slow, the point's 'ebs' row could keep a bitfield of which of its
+-- txs are filled, about 2 kB at that many bits, updated in the same transaction
+-- as the bytes: then this would read that one small blob instead.
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   EndorserBlock ->
-  IO CompletedEbs
-sqlInsertEbBody tracer conn notify point eb = do
+  IO [TxOffset]
+sqlInsertEbBody tracer conn point eb = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  completedNow <- dbWithWriteTransaction conn $ do
+  (inserted, held) <- dbWithWriteTransaction conn $ do
+    inserted <- useStmt stInsertEbPoint $ do
+      dbBindPoint stInsertEbPoint point
+      dbBindBlob stInsertEbPoint 3 (endorserBlockBytes eb)
+      dbStep1 stInsertEbPoint
+      DB.changes db
     forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do
-      dbBindHash stInsertEbTxsRow 1 (pointEbHash point)
-      dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
-      dbBindHash stInsertEbTxsRow 3 txHash
-      dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
+      dbBindPoint stInsertEbTxsRow point
+      dbBindInt64 stInsertEbTxsRow 3 (fromIntegral txOffset)
+      dbBindHash stInsertEbTxsRow 4 txHash
+      dbBindInt64 stInsertEbTxsRow 5 (fromIntegral txBytesSize)
       dbStepInsertOrTrace
         tracer
         "ebTxs"
-        (show (pointEbHash point) <> "@" <> show txOffset)
+        (show point <> "@" <> show txOffset)
         stInsertEbTxsRow
     -- Allocate this body's tx-bytes rows, then count the unfilled ones. Both
     -- in this transaction, so a fill can never see the rows without the count
     -- or the other way round.
     useStmt stPreallocEbTxBytes $ do
-      dbBindHash stPreallocEbTxBytes 1 (pointEbHash point)
+      dbBindPoint stPreallocEbTxBytes point
       dbStep1 stPreallocEbTxBytes
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above. If this EB's
-    -- body was already written for another point, then the inserts above
-    -- changed nothing, and the new count accounts for every tx already
-    -- written for this EB hash, including those written while this row's
-    -- count was NULL.
-    missingCount <- useStmt stInitMissingCount $ do
-      dbBindHash stInitMissingCount 1 (pointEbHash point)
-      dbBindHash stInitMissingCount 2 (pointEbHash point)
-      dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo (pointSlotNo point))
-      readReturningInt64 stInitMissingCount
-    if missingCount == 0
-      then do
-        useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-          dbBindHash stMarkPointNotified 2 (pointEbHash point)
-          dbStep1 stMarkPointNotified
-        pure [point]
-      else pure []
-  notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
-  pure completedNow
+    -- If the body was already written at this point, by an earlier delivery,
+    -- the inserts above changed nothing, and the count accounts for every tx
+    -- written since.
+    useStmt stInitMissingCount $ do
+      dbBindPoint stInitMissingCount point
+      dbStep1 stInitMissingCount
+    -- Those written since an earlier delivery of the same body.
+    held <- useStmt stHeldOffsets $ do
+      dbBindPoint stHeldOffsets point
+      let loop acc =
+            dbStep stHeldOffsets >>= \case
+              DB.Done -> pure (reverse acc)
+              DB.Row -> do
+                off <- fromIntegral <$> DB.columnInt64 stHeldOffsets 0
+                loop (off : acc)
+      loop []
+    pure (inserted, held)
+  bumpVolatileStats conn inserted
+  pure held
  where
   items = zip [0 :: Int ..] (endorserBlockReferences eb)
-  ebBytesSize = encodeEndorserBlockSize eb
-  Conn{connVolStmts} = conn
+  Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
-    { stInsertEbTxsRow
+    { stInsertEbPoint
+    , stInsertEbTxsRow
     , stPreallocEbTxBytes
     , stInitMissingCount
-    , stMarkPointNotified
+    , stHeldOffsets
     } = connVolStmts
 
--- | Persist tx bytes for one EB by filling the rows 'sqlInsertEbBody'
+-- | Persist tx bytes for one point by filling the rows 'sqlInsertEbBody'
 -- pre-allocated.
 --
 -- PREREQ: each tx's bytes hash to the tx hash the body lists at its offset.
@@ -125,62 +130,148 @@ sqlInsertEbBody tracer conn notify point eb = do
 -- * its offset is not in the body;
 -- * its offset is already filled (@filled = 1@);
 -- * or its size is not the declared one.
+--
+-- Returns confirmed/unconfirmed submitted offsets and existing size diagnostics
+-- only after successful commit. Confirmation queries metadata rather than
+-- returning payload blobs, including copies in the immutable partition.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
   -- | The EB the txs belong to
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   [(TxOffset, ByteString)] ->
-  IO CompletedEbs
-sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
-  completed <- dbWithWriteTransaction conn $ do
-    -- Fill the pre-allocated rows of the ebTxBytes table.
-    -- Count how many txs were successfully filled (i.e. not dropped).
-    nFilled <-
+  IO TxWriteReceipt
+sqlInsertTxs _tracer conn point txBytesWithOffsets = do
+  dbWithWriteTransaction conn $ do
+    -- Fill the pre-allocated rows of the ebTxBytes table, counting how many
+    -- txs filled, and collecting those dropped because the EB referenced them
+    -- with the wrong size.
+    (nFilled, wrongSize) <-
       foldM
-        ( \acc (txOffset, txBytes) -> do
+        ( \(n, wrong) (txOffset, txBytes) -> do
             useStmt stFillEbTxBytes $ do
-              dbBindBlob stFillEbTxBytes 1 ebHash
-              dbBindInt64 stFillEbTxBytes 2 (fromIntegral txOffset)
-              dbBindBlob stFillEbTxBytes 3 txBytes
+              dbBindPoint stFillEbTxBytes point
+              dbBindInt64 stFillEbTxBytes 3 (fromIntegral txOffset)
+              dbBindBlob stFillEbTxBytes 4 txBytes
               dbStep1 stFillEbTxBytes
             changed <- DB.changes db
-            pure (acc + fromIntegral changed)
+            if changed > 0
+              then pure (n + fromIntegral changed, wrong)
+              else do
+                declared <- useStmt stDeclaredTxSize $ do
+                  dbBindPoint stDeclaredTxSize point
+                  dbBindInt64 stDeclaredTxSize 3 (fromIntegral txOffset)
+                  dbStep stDeclaredTxSize >>= \case
+                    DB.Done -> pure Nothing
+                    DB.Row -> Just <$> DB.columnInt64 stDeclaredTxSize 0
+                pure $ case declared of
+                  Just size | size /= fromIntegral (BS.length txBytes) -> (n, txOffset : wrong)
+                  _ -> (n, wrong)
         )
-        (0 :: Int64)
+        (0 :: Int64, [])
         txBytesWithOffsets
-    if nFilled == 0
-      then pure []
-      else do
-        -- Decrement the missingTxCount of every ebs row with this EB hash and
-        -- collect the ones this batch completed.
-        completedSlots <- useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 ebHash
-          dbBindInt64 stDecrMissingCount 2 nFilled
-          let loop acc =
-                dbStep stDecrMissingCount >>= \case
-                  DB.Done -> pure (reverse acc)
-                  DB.Row -> do
-                    slot <- SlotNo . fromIntegral <$> DB.columnInt64 stDecrMissingCount 0
-                    left <- DB.columnInt64 stDecrMissingCount 1
-                    loop (if left == 0 then slot : acc else acc)
-          loop []
-        -- Mark them notified so they are not completed twice.
-        forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
-          dbBindBlob stMarkPointNotified 2 ebHash
-          dbStep1 stMarkPointNotified
-        pure [MkLeiosPoint slot (pointEbHash point) | slot <- completedSlots]
-  -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \p -> notify (AcquiredEbTxs p)
-  pure completed
+    when (nFilled > 0) $
+      useStmt stDecrMissingCount $ do
+        dbBindPoint stDecrMissingCount point
+        dbBindInt64 stDecrMissingCount 3 nFilled
+        dbStep1 stDecrMissingCount
+    let submitted = IntSet.fromList (map fst txBytesWithOffsets)
+    volatile <- confirmedOffsets stConfirmedTxOffsets submitted
+    let remaining = IntSet.difference submitted volatile
+    immutable <- confirmedOffsets immStConfirmedTxOffsets remaining
+    let confirmed = IntSet.union volatile immutable
+    pure (TxWriteReceipt confirmed (IntSet.difference submitted confirmed) (reverse wrongSize))
  where
-  ebHash = hashToBytes (pointEbHash point)
-  Conn{conVolDb = db, connVolStmts} = conn
+  Conn{conVolDb = db, connVolStmts, connImmStmts = ImmStmts{immStConfirmedTxOffsets}} = conn
   VolStmts
     { stFillEbTxBytes
     , stDecrMissingCount
-    , stMarkPointNotified
+    , stDeclaredTxSize
+    , stConfirmedTxOffsets
     } = connVolStmts
+  confirmedOffsets stmt offsets
+    | IntSet.null offsets = pure IntSet.empty
+    | otherwise = useStmt stmt $ do
+        dbBindPoint stmt point
+        dbBindUtf8 stmt 3 (jsonIntArray (IntSet.toAscList offsets))
+        let loop found =
+              dbStep stmt >>= \case
+                DB.Done -> pure found
+                DB.Row -> do
+                  offset <- fromIntegral <$> DB.columnInt64 stmt 0
+                  loop (IntSet.insert offset found)
+        loop IntSet.empty
+
+-- | A bounded local-copy job on the existing writer connection. No other
+-- volatile writer/GC job can interleave these guards and commit. Immutable
+-- sources are append-only; read them using this connection's own statements.
+-- Check metadata before fetching blobs, then hash the actual bytes. The existing
+-- insert operation supplies the real commit boundary and presence receipt.
+sqlCopyTxs :: Tracer IO TraceLeiosDb -> Conn -> LeiosPoint -> [LocalFill] -> IO TxCopyReceipt
+sqlCopyTxs tracer conn target fills = do
+  (payloads, already, failures) <- foldM prepare ([], IntSet.empty, IntMap.empty) fills
+  written <- sqlInsertTxs tracer conn target (reverse payloads)
+  let confirmed = IntSet.union already (txWriteConfirmed written)
+      submitted = IntSet.fromList (map fillTargetOffset fills)
+      receipt =
+        written{txWriteConfirmed = confirmed, txWriteUnconfirmed = submitted `IntSet.difference` confirmed}
+  pure (TxCopyReceipt receipt (IntMap.withoutKeys failures confirmed))
+ where
+  reference point off = do
+    vol <-
+      dbWithTransaction (conVolDb conn) $ readReference (stTxReference (connVolStmts conn)) point off
+    case vol of
+      Just (_, _, True) -> pure vol
+      _ -> do
+        imm <- readReference (immStTxReference (connImmStmts conn)) point off
+        -- A late body may recreate unfilled volatile rows after promotion/GC.
+        -- Those placeholders must not shadow complete immutable presence.
+        pure $ case imm of
+          Just (_, _, True) -> imm
+          _ -> case vol of
+            Nothing -> imm
+            Just _ -> vol
+  readReference stmt point off = useStmt stmt $ do
+    dbBindPoint stmt point
+    dbBindInt64 stmt 3 (fromIntegral off)
+    dbStep stmt >>= \case
+      DB.Done -> pure Nothing
+      DB.Row -> do
+        h <- dbColumnHash stmt 0
+        n <- DB.columnInt64 stmt 1
+        present <- DB.columnInt64 stmt 2
+        pure (Just (h, n, present == 1))
+  sourcePayload point off = do
+    rows <- sqlBatchRetrieveTxs conn point [off]
+    case rows of
+      [(_, _, Just _)] -> pure rows
+      -- The metadata guard may have selected the immutable partition while a
+      -- late volatile placeholder still exists. Read the same durable source.
+      _ -> immBatchRetrieveTxs conn point [off]
+  matches fill (h, n, _) = h == fillExpectedHash fill && n == fromIntegral (fillExpectedSize fill)
+  prepare (bytes, held, failed) fill = do
+    let off = fillTargetOffset fill
+        miss reason = pure (bytes, held, IntMap.insert off reason failed)
+    targetRef <- reference target off
+    case targetRef of
+      Nothing -> miss CopyTargetUnavailable
+      Just r | not (matches fill r) -> miss CopyTargetMismatch
+      Just (_, _, True) -> pure (bytes, IntSet.insert off held, IntMap.delete off failed)
+      Just _ -> do
+        let MkTxLocation source sourceOff = fillSource fill
+        sourceRef <- reference source sourceOff
+        case sourceRef of
+          Nothing -> miss CopySourceUnavailable
+          Just (h, _, _) | h /= fillExpectedHash fill -> miss CopySourceMismatch
+          Just (_, n, _) | n /= fromIntegral (fillExpectedSize fill) -> miss CopyTargetMismatch
+          Just (_, _, False) -> miss CopySourceUnavailable
+          Just _ ->
+            sourcePayload source sourceOff >>= \case
+              [(_, h, Just payload)]
+                | h == fillExpectedHash fill
+                , (fromIntegral (BS.length payload) :: Word64) == fromIntegral (fillExpectedSize fill)
+                , hashLeiosTx (MkLeiosTx payload) == fillExpectedHash fill ->
+                    pure ((off, payload) : bytes, held, IntMap.delete off failed)
+              _ -> miss CopySourceMismatch

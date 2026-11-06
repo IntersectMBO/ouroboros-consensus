@@ -23,19 +23,8 @@ import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
-import Network.TypedProtocol.Codec (PeerRole (..))
-import Network.TypedProtocol.Core
-  ( IsPipelined (..)
-  , N (..)
-  , Nat (..)
-  , ReflRelativeAgency (..)
-  , natToInt
-  )
-import Network.TypedProtocol.Peer
-  ( Peer (..)
-  , PeerPipelined (..)
-  , Receiver (..)
-  )
+import Network.TypedProtocol.Core (natToInt)
+import Network.TypedProtocol.Peer.Client
 import Ouroboros.Consensus.BlockchainTime (CurrentSlot (..))
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Forecast (forecastFor)
@@ -114,15 +103,15 @@ instance Exception ExnLeiosNotifyUnexpectedCancel
 
 -- | Merely an abbreviation local to this module
 type X point announcement vote st m a n =
-  Peer (LeiosNotify point announcement vote) AsClient (Pipelined n C) st m a
+  Client (LeiosNotify point announcement vote) (Pipelined n C) st m a
 
 type LeiosNotifyClientPeerPipelined point announcement vote m a =
-  PeerPipelined (LeiosNotify point announcement vote) AsClient StIdle m a
+  ClientPipelined (LeiosNotify point announcement vote) StIdle m a
 
 toLeiosNotifyClientPeerPipelined ::
-  Peer (LeiosNotify point announcement vote) AsClient (Pipelined Z C) StIdle m a ->
+  Client (LeiosNotify point announcement vote) (Pipelined Z C) StIdle m a ->
   LeiosNotifyClientPeerPipelined point announcement vote m a
-toLeiosNotifyClientPeerPipelined = PeerPipelined
+toLeiosNotifyClientPeerPipelined = ClientPipelined
 
 data C = MkC
 
@@ -136,7 +125,7 @@ leiosNotifyClientPeerPipelined ::
   -- | INVARIANT: this will only be 'MsgCanceled' if the peer sent that before
   -- we sent 'MsgQuit'
   m (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ()) ->
-  Peer (LeiosNotify point announcement vote) AsClient (Pipelined Z C) StIdle m a
+  Client (LeiosNotify point announcement vote) (Pipelined Z C) StIdle m a
 leiosNotifyClientPeerPipelined checkDone k0 =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
@@ -157,12 +146,11 @@ leiosNotifyClientPeerPipelined checkDone k0 =
               Prim.writeMutVar stop AlreadyDraining
               pure @m $ case n of
                 Zero ->
-                  Yield ReflClientAgency MsgQuit $
-                    Await ReflServerAgency $ \MsgDone ->
-                      Done ReflNobodyAgency x
+                  Yield MsgQuit $
+                    Await $ \MsgDone ->
+                      Done x
                 Succ _ ->
                   YieldPipelined
-                    ReflClientAgency
                     MsgQuit
                     (ReceiverDone MkC) -- note that this Receiver doesn't await the MsgDone response
                     $ drainThePipe x (Succ n)
@@ -195,7 +183,6 @@ leiosNotifyClientPeerPipelined checkDone k0 =
     X point announcement vote StIdle m a n
   sendAnother stop arrived !n =
     YieldPipelined
-      ReflClientAgency
       MsgLeiosNotificationRequestNext
       (receiver stop arrived)
       (go stop arrived $ Succ n)
@@ -203,9 +190,9 @@ leiosNotifyClientPeerPipelined checkDone k0 =
   receiver ::
     MutVar (PrimState m) WhetherDraining ->
     StrictTVar m Int ->
-    Receiver (LeiosNotify point announcement vote) AsClient StBusy StIdle m C
+    Receiver (LeiosNotify point announcement vote) StBusy StIdle m C
   receiver stop arrived =
-    ReceiverAwait ReflServerAgency $ \msg -> case msg of
+    ReceiverAwait $ \msg -> case msg of
       MsgLeiosBlockAnnouncement{} -> handler stop arrived k0 msg
       MsgLeiosBlockOffer{} -> handler stop arrived k0 msg
       MsgLeiosBlockTxsOffer{} -> handler stop arrived k0 msg
@@ -217,7 +204,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
     StrictTVar m Int ->
     m (msg -> m ()) ->
     msg ->
-    Receiver (LeiosNotify point announcement vote) AsClient StIdle StIdle m C
+    Receiver (LeiosNotify point announcement vote) StIdle StIdle m C
   handler stop arrived k x = ReceiverEffect $ do
     Prim.readMutVar stop >>= \case
       AlreadyDraining -> pure ()
@@ -228,8 +215,8 @@ leiosNotifyClientPeerPipelined checkDone k0 =
   drainThePipe :: a -> Nat n -> X point announcement vote StQuit m a n
   drainThePipe x = \case
     Zero ->
-      Await ReflServerAgency $ \MsgDone ->
-        Done ReflNobodyAgency x
+      Await $ \MsgDone ->
+        Done x
     Succ m ->
       Collect
         Nothing -- OK to block, since we're entirely passive now

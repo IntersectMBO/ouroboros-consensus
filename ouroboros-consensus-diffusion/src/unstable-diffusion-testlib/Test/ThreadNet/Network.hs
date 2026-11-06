@@ -89,11 +89,15 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( defaultLeiosAnnouncementAgeLimits
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote (PerasVoteDiffusion)
@@ -331,7 +335,9 @@ runThreadNetwork ::
   , TracingConstraints blk
   , HasCallStack
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
   systemTime
   ThreadNetworkArgs
@@ -1053,6 +1059,7 @@ runThreadNetwork
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
           (psRng, chainSyncRng) = splitGen rng''
+          (lfRng, txRng) = splitGen chainSyncRng
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1064,6 +1071,7 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , leiosTxCache = Nothing
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck
@@ -1076,6 +1084,14 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = txRng
+              , -- These nodes' ChainDBs subscribe to nothing; see
+                -- 'fromMinimalChainDbArgs'.
+                leiosAcquisitions = noLeiosAcquisitions
+              , -- Split off generators the node uses anyway, so that the others'
+                -- streams stay as they were.
+                leiosFetchRng = lfRng
+              , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration

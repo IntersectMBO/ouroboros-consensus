@@ -25,6 +25,9 @@ import Ouroboros.Consensus.Leios.VoteState
   , pruneVotes
   , recordVote
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( defaultLeiosAnnouncementAgeLimits
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( AcceptedVote (..)
   , VoteWindow (..)
@@ -64,7 +67,7 @@ prop_keepsUnexpired :: Property
 prop_keepsUnexpired = forAll genVotes $ \vs ->
   let (kept, recorded) = runSimOrThrow $ do
         notifyLog <- newNotifyLog @_ @LeiosTestBlock
-        announceState <- newAnnounceState notifyLog
+        announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
         st <- newVoteState nullTracer announceState notifyLog
         recorded' <- fmap catMaybes $ forM vs $ \(at, slot, vote) -> atomically $ do
           pruneVotes st at

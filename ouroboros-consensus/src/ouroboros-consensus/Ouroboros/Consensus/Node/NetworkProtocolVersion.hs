@@ -5,6 +5,7 @@ module Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
   , SupportedNetworkProtocolVersion (..)
   , latestReleasedNodeVersionDefault
+  , withExperimentalAtomicFetchVersion
 
     -- * Re-exports
   , NodeToClientVersion (..)
@@ -77,3 +78,12 @@ latestReleasedNodeVersionDefault prx =
   ( fmap fst $ Map.lookupMax $ supportedNodeToNodeVersions prx
   , fmap fst $ Map.lookupMax $ supportedNodeToClientVersions prx
   )
+
+-- | Compatibility helper for older test maps that contain only version 16.
+-- The normal Cardano supported map includes version 17 directly. Preserve an
+-- explicitly supplied version-17 format, and otherwise reuse version 16. This
+-- helper alone does not install atomic applications or change release cutoffs.
+withExperimentalAtomicFetchVersion :: Map NodeToNodeVersion a -> Map NodeToNodeVersion a
+withExperimentalAtomicFetchVersion versions = case Map.lookup NodeToNodeV_16 versions of
+  Nothing -> versions
+  Just blockVersion -> Map.insertWith (\_ existing -> existing) NodeToNodeV_17 blockVersion versions
