@@ -226,10 +226,10 @@ tests =
     [ adjustQuickCheckTests (`div` 10) $
         testProperty "basic functionality" prop_leios
     , -- Fail fast rather than letting a slow seed run out CI's 6h budget. The
-      -- property must not swallow this; see 'prop_leios_late_join'.
+      -- property must not swallow this; see 'prop_leios_late_join'. A run
+      -- takes about half a minute, so only one.
       localOption (mkTimeout 600_000_000) $
-        adjustQuickCheckTests (`div` 10) $
-          testProperty "late join" prop_leios_late_join
+        testProperty "late join" (once . prop_leios_late_join)
     , adjustQuickCheckTests (`div` 10) $
         testProperty "invalid endorsed tx is not certified" prop_leios_invalid_eb
     , testProperty "hard fork from Conway" prop_leios_hard_fork_from_conway
