@@ -36,6 +36,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeOver
+  , withNodeOverConfig
   , withAtomicNodeOver
   , withNodeOverDBs
   , withNodeUnderTest
@@ -401,6 +402,23 @@ withNodeForecastingOnly range body = do
   leiosDB <- newLeiosDBInMemory
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold range)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
+
+-- | Override the standard test configuration without changing older fixtures.
+-- Resource pilots use explicit ledger sizes and the same inputs for both paths.
+-- See @docs/fetch-policy/cancellation-contract.md#13-scenarios-the-eventual-implementation-must-cover@.
+withNodeOverConfig ::
+  (NodeUnderTestConfig -> NodeUnderTestConfig) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverConfig adjust leiosDB body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTest
+    (adjust (forecastingOnly testCommittee testQuorumStakeThreshold 100000))
     nullTracers
     nodeDBs
     leiosDB

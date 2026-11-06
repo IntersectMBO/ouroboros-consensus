@@ -1565,6 +1565,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Handoff
     Test.Consensus.Leios.LeiosFetch.Node
+    Test.Consensus.Leios.LeiosFetch.Pilots
     Test.Consensus.Leios.LeiosFetch.Replies
     Test.Consensus.Leios.LeiosFetch.Timing
     Test.Consensus.Leios.LeiosFetch.Wait
