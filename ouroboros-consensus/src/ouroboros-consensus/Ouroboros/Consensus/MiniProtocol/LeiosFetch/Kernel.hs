@@ -10,6 +10,9 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , LeiosFetchExtension (..)
+  , OfferTimes (..)
+  , legacyClientContext
   , LeiosPeerLifetimeId (..)
   , newLeiosFetchKernel
   , withLeiosFetchPeer
@@ -28,6 +31,7 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Void (Void)
+import Data.Word (Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
@@ -60,6 +64,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosEbBounds (..)
   , LeiosFetchRequest
   , LeiosOutstanding (..)
+  , OfferedHalves (..)
   , PeerOffer (..)
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
@@ -84,8 +89,10 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
   , IOLike
+  , STM
   , StrictMVar
   , StrictTVar
+  , Time
   , atomically
   , bracket
   , diffTime
@@ -115,11 +122,52 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   , lfkNextLifetimeId :: !(StrictTVar m Natural)
   -- ^ What tells the next registration's 'LeiosPeerLifetimeId' apart from
   -- every earlier one.
+  , lfkExtension :: !(StrictTVar m (Maybe (LeiosFetchExtension m peer blk)))
+  -- ^ Explicit opt-in integration. Ordinary kernels leave this absent.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
   -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
   -- to. Nothing older is recorded afterwards, so that an offer that arrives
   -- after the pruning cannot undo it.
   }
+
+-- | Node-scoped integration around the legacy decision loop. Callbacks run
+-- under its outstanding-state lock; STM callbacks must not acquire that lock.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+data LeiosFetchExtension m peer blk = LeiosFetchExtension
+  { extensionDecide ::
+      Time ->
+      (SlotNo -> Maybe LeiosEbBounds) ->
+      Maybe (SlotNo, Word64) ->
+      Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk) ->
+      Map.Map (LeiosPeerLifetimeId peer) (Map.Map LeiosPoint PeerOffer) ->
+      LeiosOutstanding (LeiosPeerLifetimeId peer) ->
+      m
+        ( LeiosOutstanding (LeiosPeerLifetimeId peer)
+        , Map.Map (LeiosPeerLifetimeId peer) (Map.Map LeiosPoint PeerOffer)
+        )
+  -- ^ Project shared progress, schedule new-version work, and return only the
+  -- offers eligible for the unchanged legacy scheduler.
+  , extensionPrune :: SlotNo -> STM m ()
+  -- ^ Retire acquisition generations before later receipts can observe pruning.
+  , extensionRemovePeer :: LeiosPeerLifetimeId peer -> STM m ()
+  -- ^ Withdraw exact-registration ownership when either protocol unregisters.
+  , extensionLegacyContext :: LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
+  -- ^ Legacy validation/accounting with a durable-receipt storage bridge.
+  }
+
+-- | First arrival of each independently offered half. Repeating a body offer
+-- never gives its later closure offer an earlier arrival time.
+data OfferTimes = OfferTimes
+  { bodyOfferTime :: !(Maybe Time)
+  -- ^ First body offer in this peer registration.
+  , closureOfferTime :: !(Maybe Time)
+  -- ^ First full-closure offer in this peer registration.
+  }
+
+-- | Capture the optional legacy receipt bridge before taking a command.
+legacyClientContext ::
+  IOLike m => LeiosFetchKernel m peer blk -> m (LeiosFetchClientContext m (LeiosPeerLifetimeId peer))
+legacyClientContext kernel = atomically $ maybe (lfkContext kernel) extensionLegacyContext <$> readTVar (lfkExtension kernel)
 
 -- | What the node's LeiosFetch state holds about one upstream peer.
 data LeiosFetchPeer m blk = MkLeiosFetchPeer
@@ -130,6 +178,8 @@ data LeiosFetchPeer m blk = MkLeiosFetchPeer
   -- ^ The peer's current offers, keyed by point. Written only by the
   -- LeiosNotify client, as the peer offers, and by the decision loop and the
   -- pruner, as offers go dead.
+  , lfpOfferTimes :: !(StrictTVar m (Map.Map LeiosPoint OfferTimes))
+  -- ^ Arrival order for each half, pruned alongside the corresponding offers.
   , lfpRequestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ The requests the decision loop assigned to this peer that its LeiosFetch
   -- client has not sent yet.
@@ -161,12 +211,14 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   lfkPeers <- uncheckedNewTVarM Map.empty
   lfkNextLifetimeId <- uncheckedNewTVarM 0
   lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
+  lfkExtension <- uncheckedNewTVarM Nothing
   pure
     MkLeiosFetchKernel
       { lfkContext = mkContext outstanding ready
       , lfkPeers
       , lfkNextLifetimeId
       , lfkPrunedSlot
+      , lfkExtension
       }
 
 -- | Run the action with this peer's LeiosFetch state and the
@@ -197,6 +249,7 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
     fresh <-
       MkLeiosFetchPeer isBig
         <$> uncheckedNewTVarM Map.empty
+        <*> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM Seq.empty
     atomically $ do
       peers <- readTVar lfkPeers
@@ -216,7 +269,10 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
   -- section in which it assigns requests, so it cannot assign this peer
   -- anything after its requests are cancelled here.
   unregister (lifetimeId, _) = modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
-    atomically $ modifyTVar lfkPeers (Map.delete lifetimeId)
+    atomically $ do
+      modifyTVar lfkPeers (Map.delete lifetimeId)
+      extension <- readTVar (lfkExtension kernel)
+      forM_ extension $ \e -> extensionRemovePeer e lifetimeId
     pure $! removePeerFromOutstanding lifetimeId outstanding
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
@@ -229,11 +285,23 @@ recordLeiosOffer ::
   LeiosPoint ->
   PeerOffer ->
   m ()
-recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
+recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings, lfpOfferTimes} point offer = do
+  now <- getMonotonicTime
   atomically $ do
     prunedSlot <- readTVar (lfkPrunedSlot kernel)
-    unless (pointSlotNo point < prunedSlot) $
+    unless (pointSlotNo point < prunedSlot) $ do
       modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
+      let fresh = case poOffered offer of
+            OfferedBody{} -> OfferTimes (Just now) Nothing
+            OfferedClosure -> OfferTimes Nothing (Just now)
+            OfferedBodyAndClosure{} -> OfferTimes (Just now) (Just now)
+          preserve new old =
+            OfferTimes
+              (first (bodyOfferTime old) (bodyOfferTime new))
+              (first (closureOfferTime old) (closureOfferTime new))
+          first (Just old) _ = Just old
+          first Nothing new = new
+      modifyTVar lfpOfferTimes (Map.insertWith preserve point fresh)
   void $ tryPutMVar (lfcReady (lfkContext kernel)) ()
 
 -- | List the endorser block a new announcement names as one to fetch, if it
@@ -318,20 +386,35 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
               SlotNo window =
                 minCertificationSlot slotLength llvAnnouncementPeriod llvVotePeriod llvDiffusionPeriod 0
           pure (slot, window)
-      (!outstanding', requests, offerDrops) =
-        leiosFetchLogicIteration
-          (lfcStaticEnv lfkContext)
-          forecastEbBounds
+    extension <- atomically $ readTVar (lfkExtension kernel)
+    (shared, legacyOffers) <- case extension of
+      Nothing -> pure (outstanding, offerings)
+      Just e ->
+        extensionDecide
+          e
+          iterationStart
+          (either (const Nothing) Just . forecastEbBounds)
           mbHorizon
+          peersVars
           offerings
-          (Map.map lfpIsBigLedgerPeer peersVars)
           outstanding
+    let (!outstanding', requests, offerDrops) =
+          leiosFetchLogicIteration
+            (lfcStaticEnv lfkContext)
+            forecastEbBounds
+            mbHorizon
+            legacyOffers
+            (Map.map lfpIsBigLedgerPeer peersVars)
+            shared
     pure (outstanding', (requests, offerDrops, peersVars))
   atomically $ do
     -- Prune what of the offers the decision found can no longer help.
     forM_ (Map.toList offerDrops) $ \(peer, pruned) ->
       forM_ (Map.lookup peer peersVars) $ \vars ->
-        modifyTVar (lfpOfferings vars) (pruneOffers (NEMap.toMap pruned))
+        do
+          modifyTVar (lfpOfferings vars) (pruneOffers (NEMap.toMap pruned))
+          live <- readTVar (lfpOfferings vars)
+          modifyTVar (lfpOfferTimes vars) (`Map.intersection` live)
     -- Published after the lock is released, so a peer that unregistered
     -- meanwhile still gets these, although unregistering cancelled their
     -- accounting. That is harmless: a peer unregisters only when one of its
@@ -369,11 +452,16 @@ leiosFetchPruner chainDB kernel = go (SlotNo 0)
       case getTipSlot (ledgerState immLedger) of
         NotOrigin slot | prunedSlot < slot -> pure slot
         _ -> retry
-    modifyMVar_ lfcOutstanding $ pure . snd . pruneOutstandingToImmTip immTipSlot
+    modifyMVar_ lfcOutstanding $ \outstanding -> do
+      atomically $ do
+        extension <- readTVar (lfkExtension kernel)
+        forM_ extension $ \e -> extensionPrune e immTipSlot
+      pure $ snd $ pruneOutstandingToImmTip immTipSlot outstanding
     -- Offers are keyed by point, which orders by slot first.
     atomically $ do
       writeTVar lfkPrunedSlot immTipSlot
       peersVars <- readTVar lfkPeers
-      forM_ peersVars $ \vars ->
+      forM_ peersVars $ \vars -> do
         modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
+        modifyTVar (lfpOfferTimes vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
     go immTipSlot

@@ -19,6 +19,11 @@ import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as AtomicClient
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as Handoff
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node (NodeIntegrationError)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as Receive
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State as AtomicServer
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (ExnLeiosFetchInvalidReply)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
 import Ouroboros.Consensus.Node.DbLock
@@ -124,6 +129,30 @@ consensusRethrowPolicy pb =
     -- A LeiosFetch client requested what the node does not hold.
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosInvalidRequest) -> theyBuggyOrEvil)
     <> mkRethrowPolicy (\_ctx (_ :: ExnLeiosFetchInvalidReply) -> theyBuggyOrEvil)
+    -- Peer/data faults keep their original type through the new client wrapper.
+    -- Explicit removal is connection-local; malformed data must not be turned
+    -- into a node shutdown by an otherwise generic atomic exception handler.
+    <> mkRethrowPolicy
+      ( \_ctx (e :: AtomicClient.ClientError) -> case e of
+          AtomicClient.ClientBodySizeMisstated -> theyBuggyOrEvil
+          AtomicClient.ClientClosed -> ShutdownPeer
+          _ -> ourBug
+      )
+    <> mkRethrowPolicy (\_ctx (_ :: Receive.ReceiveError) -> theyBuggyOrEvil)
+    <> mkRethrowPolicy
+      ( \_ctx (e :: AtomicServer.ServerError) -> case e of
+          AtomicServer.ServerIncoming{} -> theyBuggyOrEvil
+          AtomicServer.ServerDataCapacity -> theyBuggyOrEvil
+          AtomicServer.ServerControlCapacity -> theyBuggyOrEvil
+          AtomicServer.ServerExchangeCapacity -> theyBuggyOrEvil
+          _ -> ourBug
+      )
+    <> mkRethrowPolicy (\_ctx (_ :: NodeIntegrationError) -> ourBug)
+    -- This exception is reserved for the node-owned storage worker/receipt
+    -- invariants, after peer payload authentication. Raw LeiosDB failures keep
+    -- the conservative peer-only policy above; peer validation errors use
+    -- ReceiveStorageError rather than this worker exception.
+    <> mkRethrowPolicy (\_ctx (_ :: Handoff.StorageException) -> shutdownNode)
     -- Dispatch on nested exception
     <> mkRethrowPolicy
       ( \ctx (ExceptionInLinkedThread _ e) ->

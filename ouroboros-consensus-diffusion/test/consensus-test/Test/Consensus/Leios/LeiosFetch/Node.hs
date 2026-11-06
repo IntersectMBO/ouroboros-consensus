@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Tests of the node's LeiosFetch client and server, over real connections,
@@ -12,8 +13,9 @@ module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
+import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
-import Control.Monad (forM_, replicateM, replicateM_, unless, void)
+import Control.Monad (forM, forM_, replicateM, replicateM_, unless, void, when)
 import Control.Monad.Class.MonadAsync (withAsync)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), addTime, diffTime, getMonotonicTime)
@@ -30,14 +32,17 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Time (NominalDiffTime, addUTCTime)
 import qualified Data.Vector.Strict as V
-import Network.TypedProtocol.Codec (PeerRole (..))
+import Data.Word (Word64)
+import Network.TypedProtocol.Codec (AnnotatedCodec, PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
+import qualified Network.TypedProtocol.Peer.Client as AtomicPeer
 import Ouroboros.Consensus.Block
   ( Header
   , Point
@@ -69,7 +74,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosTx (..)
   , LeiosVote
   , TxHash
+  , decodeEndorserBlock
+  , decodeLeiosPoint
+  , decodeLeiosTx
+  , encodeEndorserBlock
   , encodeEndorserBlockSize
+  , encodeLeiosPoint
+  , encodeLeiosTx
+  , endorserBlockBytes
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
@@ -77,6 +89,16 @@ import Ouroboros.Consensus.Leios.Types
   , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition as AtomicAcquisition
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as AtomicClient
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as Deadline
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor (PayloadBytes (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as Handoff
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as AtomicReceive
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server as AtomicServer
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State as AtomicServerState
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type as Atomic
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , LeiosFetchClientContext (..)
@@ -86,6 +108,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , OfferedHalves (..)
   , PeerOffer (..)
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity (WireOrdinal (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
@@ -132,17 +155,26 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , timeLimitsLeiosNotify
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type as LN
-import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
+import Ouroboros.Consensus.Network.LeiosFetch
+  ( leiosFetchMiniProtocolNum
+  , runLookaheadPeerWithAnnotatedLimits
+  )
 import Ouroboros.Consensus.Network.LeiosNotify
   ( leiosNotifyMiniProtocolNum
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (withLeiosFetchAtomicServer)
+import Ouroboros.Consensus.Node.RethrowPolicy (consensusRethrowPolicy)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbWriter (..)
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , Promise (..)
+  , withReader
   , withWriter
   )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
@@ -156,6 +188,7 @@ import Ouroboros.Network.Mux
   , WithProtocolTemperature (..)
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
+import Ouroboros.Network.RethrowPolicy (ErrorContext (..), RethrowPolicy (..))
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
@@ -240,6 +273,46 @@ tests =
     , testProperty
         "the node relays an announcement, and offers at its point, to a listener that connects before the node stops relaying it, and nothing to one that connects after, whatever the listener's immutable tip and clock"
         prop_listenerReach
+    , testGroup
+        "atomic node integration"
+        [ testCase "version 17 fetches the body before any closure offer, then pipelines durable checkpoints" $
+            runSimFinishing (atomicHonest 0) >>= (@?= (1, 3))
+        , testCase "local durable possession removes only already held TXs" $
+            runSimFinishing (atomicHonest 1) >>= (@?= (1, 2))
+        , testCase "a locally held closure completes after the independent body with no TX request" $
+            runSimFinishing (atomicHonest 3) >>= (@?= (1, 0))
+        , testCase "a previously held point is neither fetched nor notified again" $
+            runSimFinishing atomicAlreadyHeld >>= (@?= (0, 0))
+        , testCase "new acquisition relays durable body and closure offers to a legacy downstream" $
+            runSimFinishing atomicRelaysDurably >>= (@?= relayedFetchedAt fetchedPoint)
+        , testCase "an earlier body offer cannot backdate the same peer's later closure offer" $
+            runSimFinishing atomicOfferOrder >>= (@?= (0, 3))
+        , testCase "the new server serves real body bytes and the exact requested transaction vector" $
+            runSimFinishing atomicNodeServes >>= (@?= True)
+        , testCase "a valid understated body remains durable after the peer fault" $
+            runSimFinishing atomicMisstatement >>= (@?= True)
+        , testCase "legacy body receipts feed new-version checkpoint acquisition" $
+            runSimFinishing (atomicMixed True) >>= (@?= (0, 3))
+        , testCase "legacy whole-vector receipts finish a new-version body without duplicate notifications" $
+            runSimFinishing (atomicMixed False) >>= (@?= (1, 0))
+        , testCase "three EBs share one connection and reuse the two-acquisition capacity" $
+            runSimFinishing atomicConcurrentEbs >>= (@?= (3, 7))
+        , testCase
+            "peer protocol/data faults and deliberate removal stay peer-local; storage receipt invariants are fatal"
+            $ do
+              let classify e = show $ runRethrowPolicy (consensusRethrowPolicy (Proxy @Blk)) OutboundError e
+              mapM_
+                ((@?= "ShutdownPeer") . classify)
+                [ toException AtomicClient.ClientBodySizeMisstated
+                , toException AtomicClient.ClientClosed
+                , toException AtomicReceive.ReceiveWrongCount
+                , toException (AtomicReceive.ReceiveStorageError Handoff.InvalidTransaction)
+                , toException AtomicServerState.ServerDataCapacity
+                , toException
+                    (IOLike.ExceptionInLinkedThread "test" (toException AtomicClient.ClientBodySizeMisstated))
+                ]
+              classify (toException (Handoff.StorageException Handoff.InvalidDescriptor)) @?= "ShutdownNode"
+        ]
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on, and not before" $
         forM_ [minBound .. NodeToNodeV_16] $ \ntnVersion -> do
           let runs = ntnVersion >= NodeToNodeV_16
@@ -1336,3 +1409,358 @@ nodeLeiosFetchServer ::
 nodeLeiosFetchServer conn =
   maybe (throwIO $ userError "the node does not run a LeiosFetch server") pure $
     Map.lookup leiosFetchMiniProtocolNum (connNodeResponders conn)
+
+-- Explicit, small fixture geometry exercises several wire batches without
+-- changing normal node defaults or tying service checkpoints to publication.
+atomicNodeConfig :: AtomicNodeConfig
+atomicNodeConfig =
+  AtomicNodeConfig
+    { nodeStorageLimits = Handoff.StorageLimits 2097152 2048 16 2 100
+    , nodeResponseBytes = 1048576
+    , nodeCheckpointLimits = must (AtomicAcquisition.mkCheckpointLimits 100 500000 20000 550000)
+    , nodeTimingConfig = must (Deadline.mkTimingConfig 1500000 14600 0.5 2 60 (PayloadBytes 600000))
+    }
+ where
+  must result = either (error . show) id result
+
+atomicCodec ::
+  AnnotatedCodec
+    (Atomic.LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx)
+    CBOR.DeserialiseFailure
+    (IOSim s)
+    ByteString
+atomicCodec =
+  Atomic.codecLeiosFetchAtomic
+    20000
+    encodeLeiosPoint
+    decodeLeiosPoint
+    encodeEndorserBlock
+    decodeEndorserBlock
+    encodeLeiosTx
+    decodeLeiosTx
+
+fillLeiosDb ::
+  LeiosDbHandle (IOSim s) -> LeiosPoint -> EndorserBlock -> V.Vector LeiosTx -> IOSim s ()
+fillLeiosDb db point eb txs = withWriter db $ \writer -> do
+  void $ writeEbBody writer point eb >>= await
+  void $ writeTxs writer point (zip [0 ..] (map leiosTxBytes (V.toList txs))) >>= await
+
+atomicServing :: LeiosDbHandle (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
+atomicServing db = atomicServingCounted db (pure ())
+
+atomicServingCounted ::
+  LeiosDbHandle (IOSim s) -> STM (IOSim s) () -> Channel (IOSim s) ByteString -> IOSim s ()
+atomicServingCounted db counted channel = withReader db $ \reader ->
+  let instrumented =
+        reader
+          { batchRetrieveTxs = \point offsets -> atomically counted >> batchRetrieveTxs reader point offsets
+          }
+   in withLeiosFetchAtomicServer nullTracer (AtomicServerState.defaultServerLimits 64) instrumented $ \server ->
+        void $
+          runLookaheadPeerWithAnnotatedLimits
+            nullTracer
+            atomicCodec
+            (Atomic.byteLimitsLeiosFetchAtomic (fromIntegral . BSL.length))
+            Atomic.timeLimitsLeiosFetchAtomic
+            channel
+            (AtomicServer.atomicServerPeer server)
+
+atomicObservation :: NodeUnderTest (IOSim s) -> IOSim s NodeObservation
+atomicObservation node = case nodeAtomicFetch node of
+  Nothing -> throwIO $ userError "the explicitly selected atomic node did not start"
+  Just runtime -> atomically (readNodeObservation runtime)
+
+ensure :: Bool -> String -> IOSim s ()
+ensure condition message = unless condition (throwIO (userError message))
+
+checkStored ::
+  NodeUnderTest (IOSim s) -> LeiosPoint -> EndorserBlock -> V.Vector LeiosTx -> IOSim s ()
+checkStored node point eb txs = withReader (getLeiosDB (nodeKernel node)) $ \reader -> do
+  body <- lookupEbBody reader point
+  closure <- lookupEbClosure reader point
+  ensure (body == Just (endorserBlockBytes eb)) "stored body bytes differ from the wire body"
+  ensure
+    (closure == Just [(hashLeiosTx tx, leiosTxBytes tx) | tx <- V.toList txs])
+    "stored closure differs from the requested TXs"
+
+-- Body-only announcement must not authorize a closure request. Seed local
+-- possession after kernel startup, so the next body receipt must discover it.
+atomicHonest :: Int -> IOSim s (Word64, Word64)
+atomicHonest cached = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    when (cached > 0) $ fillLeiosDb db fetchedPoint fetchedEb (V.take cached fetchedTxs)
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    notifications <- newTQueueIO
+    atomically $
+      mapM_
+        (writeTQueue notifications)
+        [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+        , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+        ]
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing serverDb) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \conn -> do
+      ensure (connVersion conn == NodeToNodeV_17) "atomic fixture negotiated the legacy version"
+      firstAcquired <- acquiredOf <$> atomically next
+      ensure
+        (firstAcquired == AcquiredBody fetchedPoint)
+        "closure arrived before the independently durable body"
+      threadDelay 1
+      before <- atomicObservation node
+      ensure (observedCheckpoints before == 0) "a body-only offer authorized TX requests"
+      atomically $ writeTQueue notifications (MsgLeiosBlockTxsOffer fetchedPoint)
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      ensure
+        (observedAtomicConnections observation == 1 && observedLegacyConnections observation == 0)
+        "the new client was not the one that ran"
+      ensure
+        (observedScopedRttReaders observation + observedRttFallbacks observation == 1)
+        "RTT capture was not accounted for"
+      when (cached == 0) $ ensure (observedPeakData observation >= 2) "checkpoints were not pipelined"
+      connTerminate conn
+      result <- atomically $ (connNodeInitiators conn Map.! leiosFetchMiniProtocolNum)
+      either throwIO (const (pure ())) result
+      pure (observedBodyRequests observation, observedCheckpoints observation)
+
+atomicAlreadyHeld :: IOSim s (Word64, Word64)
+atomicAlreadyHeld = do
+  db <- newLeiosDBInMemory
+  fillLeiosDb db fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    notifications <- newTQueueIO
+    atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
+    let peer =
+          EnvPeer
+            (feedingLeiosNotifyServer node notifications)
+            Nothing
+            (\_ -> throwIO (userError "a held point was fetched"))
+            Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \_ -> do
+      threadDelay 2
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      pure (observedBodyRequests observation, observedCheckpoints observation)
+
+atomicNodeServes :: forall s. IOSim s Bool
+atomicNodeServes = do
+  db <- newLeiosDBInMemory
+  fillLeiosDb db fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    notifications <- newTQueueIO
+    let requester :: Channel (IOSim s) ByteString -> IOSim s ()
+        requester channel = void $ runAnnotatedPeer nullTracer atomicCodec channel requestPeer
+        requestPeer ::
+          AtomicPeer.Client
+            (Atomic.LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx)
+            NonPipelined
+            Atomic.StIdle
+            (IOSim s)
+            ()
+        requestPeer = AtomicPeer.Yield (Atomic.MsgLeiosBlockRequest (WireOrdinal 0) fetchedPoint) $
+          AtomicPeer.Await $ \case
+            Atomic.MsgLeiosBlock body -> AtomicPeer.Effect $ do
+              ensure
+                (endorserBlockBytes body == endorserBlockBytes fetchedEb)
+                "atomic server changed original body bytes"
+              let bitmap = NE.fromList (bitmapsNaming [0, 2])
+              pure $
+                AtomicPeer.Yield (Atomic.MsgLeiosBlockTxsRequest (WireOrdinal 1) fetchedPoint bitmap) $
+                  AtomicPeer.Await $ \case
+                    Atomic.MsgLeiosBlockTxs txs -> AtomicPeer.Effect $ do
+                      ensure
+                        (txs == V.fromList [fetchedTxs V.! 0, fetchedTxs V.! 2])
+                        "atomic server returned the wrong bitmap vector"
+                      pure $ AtomicPeer.Yield Atomic.MsgDone (AtomicPeer.Done ())
+                    Atomic.MsgBlockTxsCancelled -> AtomicPeer.Effect $ throwIO (userError "honest TX request was cancelled")
+            Atomic.MsgBlockCancelled -> AtomicPeer.Effect $ throwIO (userError "honest body request was cancelled")
+        peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing db) (Just requester)
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \conn -> do
+      case connPeerLeiosFetchClient conn of
+        Nothing -> throwIO $ userError "the atomic requesting peer was not started"
+        Just outcome -> atomically outcome >>= either throwIO pure
+      pure (connVersion conn == NodeToNodeV_17)
+
+atomicMisstatement :: IOSim s Bool
+atomicMisstatement = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    notifications <- newTQueueIO
+    atomically $
+      mapM_
+        (writeTQueue notifications)
+        [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+        , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb - 1)
+        ]
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing serverDb) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \conn -> do
+      outcome <- atomically (connNodeInitiators conn Map.! leiosFetchMiniProtocolNum)
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      stored <- withReader db $ \reader -> lookupEbBody reader fetchedPoint
+      pure
+        ( case outcome of
+            Left e ->
+              show e == show AtomicClient.ClientBodySizeMisstated && stored == Just (endorserBlockBytes fetchedEb)
+            Right _ -> False
+        )
+
+atomicMixed :: Bool -> IOSim s (Word64, Word64)
+atomicMixed legacyBody = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    atomicOffers <- newTQueueIO
+    legacyOffers <- newTQueueIO
+    let newPeer = EnvPeer (feedingLeiosNotifyServer node atomicOffers) Nothing (atomicServing serverDb) Nothing
+        oldPeer = EnvPeer (feedingLeiosNotifyServer node legacyOffers) Nothing (servingFetched node) Nothing
+        bodyOffers = if legacyBody then legacyOffers else atomicOffers
+        txOffers = if legacyBody then atomicOffers else legacyOffers
+    withNodeVsEnvConnection node (PeerAddr 1) newPeer $ \newConn ->
+      withNodeVsEnvConnectionVersion NodeToNodeV_16 node (PeerAddr 2) oldPeer $ \oldConn -> do
+        ensure
+          (connVersion newConn == NodeToNodeV_17 && connVersion oldConn == NodeToNodeV_16)
+          "mixed fixture negotiated wrong versions"
+        atomically $
+          mapM_
+            (writeTQueue bodyOffers)
+            [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+            , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+            ]
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        atomically $
+          mapM_
+            (writeTQueue txOffers)
+            [MsgLeiosBlockAnnouncement (ltbHeader announcingFetched), MsgLeiosBlockTxsOffer fetchedPoint]
+        awaitAcquired next (AcquiredClosure fetchedPoint)
+        duplicate <- timeout 1 (atomically next)
+        ensure
+          (case duplicate of Nothing -> True; _ -> False)
+          "mixed acquisition emitted a duplicate notification"
+        checkStored node fetchedPoint fetchedEb fetchedTxs
+        observation <- atomicObservation node
+        ensure
+          (observedAtomicConnections observation == 1 && observedLegacyConnections observation == 1)
+          "mixed paths were not both exercised"
+        pure (observedBodyRequests observation, observedCheckpoints observation)
+
+atomicConcurrentEbs :: IOSim s (Word64, Word64)
+atomicConcurrentEbs = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  let thirdAnnouncement =
+        setAnnouncement
+          (endorserBlockHash fetchedEb)
+          (encodeEndorserBlockSize fetchedEb)
+          (successorLeiosBlock reannouncingFetched)
+      thirdPoint = MkLeiosPoint (blockSlot thirdAnnouncement) (endorserBlockHash fetchedEb)
+      otherPoint = MkLeiosPoint (blockSlot announcingHonest) (endorserBlockHash honestEb)
+  fillLeiosDb serverDb thirdPoint fetchedEb fetchedTxs
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  fillLeiosDb serverDb otherPoint honestEb (V.singleton sharedTx)
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    notifications <- newTQueueIO
+    threadDelay 6
+    atomically $
+      mapM_
+        (writeTQueue notifications)
+        ( announcingAndOffering fetchedEb announcingFetched
+            ++ announcingAndOffering fetchedEb thirdAnnouncement
+            ++ announcingAndOffering honestEb announcingHonest
+        )
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing serverDb) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \_ -> do
+      acquired <- replicateM 6 (acquiredOf <$> atomically next)
+      ensure
+        ( List.sortOn show acquired
+            == List.sortOn
+              show
+              [ AcquiredBody fetchedPoint
+              , AcquiredClosure fetchedPoint
+              , AcquiredBody otherPoint
+              , AcquiredClosure otherPoint
+              , AcquiredBody thirdPoint
+              , AcquiredClosure thirdPoint
+              ]
+        )
+        "concurrent EB acquisitions differ"
+      checkStored node thirdPoint fetchedEb fetchedTxs
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      checkStored node otherPoint honestEb (V.singleton sharedTx)
+      observation <- atomicObservation node
+      ensure
+        (observedPeakData observation >= 2 && observedPeakData observation <= 64)
+        "concurrent EBs bypassed the negotiated window"
+      pure (observedBodyRequests observation, observedCheckpoints observation)
+
+atomicRelaysDurably :: IOSim s [Relayed]
+atomicRelaysDurably = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    listener <- newListener node
+    notifications <- newTQueueIO
+    atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing serverDb) Nothing
+    withNodeVsEnvConnectionVersion NodeToNodeV_16 node (PeerAddr 2) (listening node listener) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 1) peer $ \_ -> relayedBy listener 3
+
+atomicOfferOrder :: IOSim s (Int, Int)
+atomicOfferOrder = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offersA <- newTQueueIO
+    offersB <- newTQueueIO
+    requestsA <- newTVarIO 0
+    requestsB <- newTVarIO 0
+    let peer offers counter =
+          EnvPeer
+            (feedingLeiosNotifyServer node offers)
+            Nothing
+            (atomicServingCounted serverDb (modifyTVar counter (+ 1)))
+            Nothing
+        kernel = getLeiosFetchKernel (nodeKernel node)
+        waitOffered addr = IOLike.atomically $ do
+          peers <- IOLike.readTVar (lfkPeers kernel)
+          found <- forM (Map.toList peers) $ \(MkLeiosPeerLifetimeId conn _, vars) -> do
+            offers <- IOLike.readTVar (lfpOfferings vars)
+            pure
+              ( remoteAddress conn == addr && case poOffered <$> Map.lookup fetchedPoint offers of
+                  Just OfferedClosure -> True
+                  Just OfferedBodyAndClosure{} -> True
+                  _ -> False
+              )
+          IOLike.check (or found)
+    withNodeVsEnvConnection node (PeerAddr 1) (peer offersA requestsA) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (peer offersB requestsB) $ \_ -> do
+        atomically $ do
+          mapM_
+            (writeTQueue offersA)
+            [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+            , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+            ]
+          writeTQueue offersB (MsgLeiosBlockAnnouncement (ltbHeader announcingFetched))
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        -- Let both announcement callbacks finish before holding their shared
+        -- decision lock. Offers themselves use only STM and a nonblocking wake.
+        threadDelay 0.01
+        IOLike.withMVar (lfcOutstanding (lfkContext kernel)) $ \_ -> do
+          atomically $ writeTQueue offersB (MsgLeiosBlockTxsOffer fetchedPoint)
+          waitOffered (PeerAddr 2)
+          threadDelay 0.01
+          atomically $ writeTQueue offersA (MsgLeiosBlockTxsOffer fetchedPoint)
+          waitOffered (PeerAddr 1)
+        awaitAcquired next (AcquiredClosure fetchedPoint)
+        atomically $ (,) <$> readTVar requestsA <*> readTVar requestsB

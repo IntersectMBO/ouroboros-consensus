@@ -29,6 +29,7 @@ module Test.Consensus.Leios.Environment
   , refusingLeiosFetchServer
   , silentLeiosFetchServer
   , withNodeVsEnvConnection
+  , withNodeVsEnvConnectionVersion
   ) where
 
 import Cardano.Network.NodeToNode
@@ -141,7 +142,9 @@ data EnvPeer m = EnvPeer
 -- | A connection from the node to a peer, once the handshake has settled on a
 -- version.
 data NodeVsEnvConnection m = NodeVsEnvConnection
-  { connTerminate :: m ()
+  { connVersion :: NodeToNodeVersion
+  -- ^ Version actually selected by the real handshake.
+  , connTerminate :: m ()
   -- ^ Tell the node's initiators to wind down, as when the node demotes the
   -- peer.
   , connNodeInitiators ::
@@ -163,7 +166,27 @@ withNodeVsEnvConnection ::
   EnvPeer (IOSim s) ->
   (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ do
+withNodeVsEnvConnection = withNodeVsEnvConnectionVersions Nothing
+
+-- | Restrict only the environment's handshake advertisement, to exercise
+-- version-16 fallback alongside a new-version connection to the same node.
+withNodeVsEnvConnectionVersion ::
+  NodeToNodeVersion ->
+  NodeUnderTest (IOSim s) ->
+  PeerAddr ->
+  EnvPeer (IOSim s) ->
+  (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeVsEnvConnectionVersion version = withNodeVsEnvConnectionVersions (Just version)
+
+withNodeVsEnvConnectionVersions ::
+  Maybe NodeToNodeVersion ->
+  NodeUnderTest (IOSim s) ->
+  PeerAddr ->
+  EnvPeer (IOSim s) ->
+  (NodeVsEnvConnection (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeVsEnvConnectionVersions onlyVersion node addr envPeer body = withOnlyConnection node addr $ do
   nodeToPeer <- Strict.newTBQueueIO bearerQueueCapacity
   peerToNode <- Strict.newTBQueueIO bearerQueueCapacity
   let nodeBearer = queueChannelAsBearer sduSize QueueChannel{readQueue = peerToNode, writeQueue = nodeToPeer}
@@ -173,7 +196,7 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
   (bundle, version) <-
     concurrently
       (runHandshakeClient nodeBearer nodeConnId handshakeArguments (nodeVersions node))
-      (runHandshakeServer peerBearer peerConnId handshakeArguments peerVersions)
+      (runHandshakeServer peerBearer peerConnId handshakeArguments (peerVersions onlyVersion))
       >>= \case
         (Right (HandshakeNegotiationResult bundle version _), Right HandshakeNegotiationResult{}) ->
           pure (bundle, version)
@@ -246,7 +269,8 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
       result <-
         body
           NodeVsEnvConnection
-            { connTerminate = atomically $ Strict.writeTVar controlMessage Terminate
+            { connVersion = version
+            , connTerminate = atomically $ Strict.writeTVar controlMessage Terminate
             , connNodeInitiators = Map.fromList (map fst nodeProtocols)
             , connNodeResponders = Map.fromList (map snd nodeProtocols)
             , connPeerLeiosNotifyClient
@@ -301,11 +325,11 @@ handshakeArguments =
 
 -- | The peer offers every version, with the version data the node itself
 -- offers.
-peerVersions :: Versions NodeToNodeVersion NodeToNodeVersionData ()
-peerVersions =
+peerVersions :: Maybe NodeToNodeVersion -> Versions NodeToNodeVersion NodeToNodeVersionData ()
+peerVersions onlyVersion =
   combineVersions
     [ simpleSingletonVersions version (nodeVersionData version) (const ())
-    | version <- [minBound .. maxBound]
+    | version <- maybe [minBound .. maxBound] (: []) onlyVersion
     ]
 
 -- | The peer's answer to the node's initiator with the given number.

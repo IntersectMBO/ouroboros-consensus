@@ -36,6 +36,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeOver
+  , withAtomicNodeOver
   , withNodeOverDBs
   , withNodeUnderTest
   ) where
@@ -94,7 +95,9 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Network.NodeToNode.AtomicFetch (atomicFetchApps)
 import Ouroboros.Consensus.Node
   ( mkNodeKernelArgs
   , mkNodeToNodeApps
@@ -112,10 +115,11 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( BlockNodeToNodeVersion
   , supportedNodeToNodeVersions
+  , withExperimentalAtomicFetchVersion
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
-  ( NodeKernel
+  ( NodeKernel (getLeiosFetchKernel)
   , NodeKernelArgs (..)
   , initNodeKernel
   )
@@ -154,6 +158,8 @@ type Blk = LeiosTestBlock
 data NodeUnderTestConfig = NodeUnderTestConfig
   { nodeConfigSecurityParam :: SecurityParam
   , nodeConfigLedger :: LeiosTestLedgerConfig
+  , nodeConfigAtomicFetch :: Maybe AtomicNodeConfig
+  -- ^ Explicit fixture-only atomic protocol/assembly opt-in.
   , nodeConfigRandomness :: StdGen
   -- ^ The root of all the test's randomness; see 'Seeds'.
   }
@@ -164,6 +170,7 @@ defaultNodeUnderTestConfig nodeConfigSecurityParam nodeConfigLedger =
     { nodeConfigSecurityParam
     , nodeConfigLedger
     , nodeConfigRandomness = mkStdGen 0
+    , nodeConfigAtomicFetch = Nothing
     }
 
 -- | All the randomness of a Leios node-vs-environment test.
@@ -200,6 +207,8 @@ data NodeUnderTest m = NodeUnderTest
   , nodeTopLevelConfig :: TopLevelConfig Blk
   , nodeKernel :: NodeKernel m PeerAddr (ConnectionId ()) Blk
   , nodeApps :: BlockNodeToNodeVersion Blk -> NodeApps m
+  , nodeAtomicFetch :: Maybe (AtomicFetchNode m PeerAddr (ConnectionId PeerAddr) Blk)
+  -- ^ Functional observations of the explicitly enabled new path.
   , nodeVersions :: NodeVersions m
   , nodeSeeds :: Seeds StdGen
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
@@ -342,36 +351,44 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               NoTxSubmissionInitDelay
         kernel <- initNodeKernel kernelArgs
         peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
-        let apps =
-              mkNodeToNodeApps
-                (seedNodeToNodeApps seeds)
-                NTN.nullTracers
-                defaultChainSyncIdleTimeout
-                disableGenesisConfig
-                defaultTxSubmissionLogicVersion
-                kernelArgs
-                kernel
-                peerMetrics
-                (const encodePeerAddr)
-                (const decodePeerAddr)
-        connectedPeers <- newTVarIO Set.empty
-        body
-          NodeUnderTest
-            { nodeChainDB = chainDB
-            , nodeTopLevelConfig = topLevelConfigOf cfg
-            , nodeKernel = kernel
-            , nodeApps = apps
-            , nodeVersions =
-                mkNodeToNodeInitiatorResponderVersions
-                  (featureFlags kernelArgs)
-                  (miniProtocolParameters kernelArgs)
-                  nodeVersionData
-                  (supportedNodeToNodeVersions (Proxy @Blk))
-                  apps
-            , nodeSeeds = seeds
-            , nodeLeiosAcquisitions = leiosAcquisitions
-            , nodeConnectedPeers = connectedPeers
-            }
+        let withFetch k = case nodeConfigAtomicFetch cfg of
+              Nothing -> k Nothing
+              Just config -> withAtomicFetchNode config (getLeiosFetchKernel kernel) (k . Just)
+        withFetch $ \atomic -> do
+          let legacyApps =
+                mkNodeToNodeApps
+                  (seedNodeToNodeApps seeds)
+                  NTN.nullTracers
+                  defaultChainSyncIdleTimeout
+                  disableGenesisConfig
+                  defaultTxSubmissionLogicVersion
+                  kernelArgs
+                  kernel
+                  peerMetrics
+                  (const encodePeerAddr)
+                  (const decodePeerAddr)
+          let apps version = maybe id (\runtime -> atomicFetchApps runtime kernel nullTracer) atomic (legacyApps version)
+          connectedPeers <- newTVarIO Set.empty
+          body
+            NodeUnderTest
+              { nodeChainDB = chainDB
+              , nodeTopLevelConfig = topLevelConfigOf cfg
+              , nodeKernel = kernel
+              , nodeApps = apps
+              , nodeAtomicFetch = atomic
+              , nodeVersions =
+                  mkNodeToNodeInitiatorResponderVersions
+                    (featureFlags kernelArgs)
+                    (miniProtocolParameters kernelArgs)
+                    nodeVersionData
+                    ( (maybe id (const withExperimentalAtomicFetchVersion) (nodeConfigAtomicFetch cfg))
+                        (supportedNodeToNodeVersions (Proxy @Blk))
+                    )
+                    apps
+              , nodeSeeds = seeds
+              , nodeLeiosAcquisitions = leiosAcquisitions
+              , nodeConnectedPeers = connectedPeers
+              }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
@@ -397,6 +414,18 @@ withNodeCommittee committee range body = do
   nodeDBs <- emptyNodeDBs
   leiosDB <- newLeiosDBInMemory
   withNodeUnderTest (forecastingOnly committee maxBound range) nullTracers nodeDBs leiosDB body
+
+-- | Explicit new-version node, preserving the ordinary fixture defaults.
+withAtomicNodeOver ::
+  AtomicNodeConfig -> LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withAtomicNodeOver config leiosDB body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTest
+    ((forecastingOnly testCommittee testQuorumStakeThreshold 100000){nodeConfigAtomicFetch = Just config})
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
 
 -- | 'withNode' over the given LeiosDB, which a test can fill before the node
 -- starts.
