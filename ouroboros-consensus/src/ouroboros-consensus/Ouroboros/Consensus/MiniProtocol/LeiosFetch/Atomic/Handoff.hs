@@ -43,6 +43,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , acceptBody
   , acceptLegacyBatch
   , readAcquisition
+  , BodySource (..)
+  , readVerifiedBodySource
   , readStorageSnapshot
   ) where
 
@@ -155,18 +157,30 @@ data Session owner peer = Session
   , sessionClosed :: !Bool
   }
 
+-- | The first verified whole-body source. Keeping the immutable original key
+-- lets policy cancel losers even if storage commits before typed settlement.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#9-late-replies-validation-and-acquisition@.
+data BodySource peer
+  = -- | Original new-version request that supplied the first verified whole body.
+    BodyFromRequest !(RequestKey peer)
+  | -- | Already durable legacy/storage input, without a new-version request key.
+    BodyFromStorage
+  deriving (Eq, Show)
+
 -- | Acquisition state for one live EB point and relevance generation, shared
 -- across peers and wire attempts. Pending claims suppress duplicate fetching;
 -- only storage confirmation establishes durable possession.
 --
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
-data Acquisition = Acquisition
+data Acquisition peer = Acquisition
   { acquisitionGeneration :: !AcquisitionGeneration
   -- ^ This point's current relevance generation. A receipt from a retired
   -- generation must not complete work for a later incarnation of the point.
   , acquisitionBody :: !(Maybe EndorserBlock)
   -- ^ Verified whole body, once known. Its metadata can be used while its
   -- storage write is still pending; this field alone does not imply durability.
+  , acquisitionBodySource :: !(Maybe (BodySource peer))
+  -- ^ First verified body provenance, retained through durability and disconnect.
   , acquisitionReferences :: !(IntMap.IntMap (TxHash, Word32))
   -- ^ Expected transaction hash and declared byte size by EB-body offset.
   -- Empty until the verified body is known.
@@ -231,7 +245,7 @@ data HandoffState owner peer = HandoffState
   { storageSessions :: !(Map.Map (StorageSession peer) (Session owner peer))
   -- ^ Live and closed-but-draining sessions. A closed entry remains while it
   -- owns pending tickets, so reconnecting cannot reset those charges.
-  , storageAcquisitions :: !(Map.Map LeiosPoint Acquisition)
+  , storageAcquisitions :: !(Map.Map LeiosPoint (Acquisition peer))
   -- ^ Relevant points and their current generations. Retirement removes an
   -- entry without waiting for older writes to finish.
   , storageClaims :: !(Map.Map Natural (Claim peer))
@@ -424,7 +438,18 @@ beginAcquisition h point = transition h $ \s -> do
         (fromIntegral (Map.size (storageAcquisitions s)) >= storageMaxAcquisitions (handoffLimits h))
         (Left AcquisitionCapacity)
       let gen = AcquisitionGeneration (storageNextGeneration s)
-          a = Acquisition gen Nothing IntMap.empty False IntSet.empty IntSet.empty IntMap.empty Nothing False
+          a =
+            Acquisition
+              gen
+              Nothing
+              Nothing
+              IntMap.empty
+              False
+              IntSet.empty
+              IntSet.empty
+              IntMap.empty
+              Nothing
+              False
       Right
         ( gen
         , s
@@ -473,6 +498,7 @@ registerDurableBody h notify point gen body held
       let next =
             a
               { acquisitionBody = Just body
+              , acquisitionBodySource = case acquisitionBodySource a of Nothing -> Just BodyFromStorage; known -> known
               , acquisitionReferences = refs
               , acquisitionBodyDurable = True
               , acquisitionHeld = IntSet.union held (acquisitionHeld a)
@@ -637,6 +663,7 @@ acceptBody h req body = case preparedDescriptor (requestPrepared req) of
                   point
                   ( (getCurrent point gen next)
                       { acquisitionBody = Just body
+                      , acquisitionBodySource = Just (BodyFromRequest (storageRequestKey req))
                       , acquisitionReferences = references body
                       , acquisitionPendingBody = Just cid
                       }
@@ -727,6 +754,19 @@ readAcquisition h point = do
           (IntSet.difference (IntMap.keysSet (acquisitionReferences a)) (IntSet.union held pending))
       )
 
+-- | Read first whole-body provenance under the exact current generation.
+-- It is published atomically with acceptance and survives its durable write;
+-- pending/partial bytes never establish a source. No new wire debt is created.
+readVerifiedBodySource ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  STM m (Maybe (BodySource peer))
+readVerifiedBodySource h point gen = do
+  s <- readTVar (handoffState h)
+  pure $ either (const Nothing) acquisitionBodySource (current point gen s)
+
 -- | Inspect total pressure, including retired sessions with unsettled data.
 readStorageSnapshot :: MonadSTM m => StorageHandoff m owner peer -> STM m StorageSnapshot
 readStorageSnapshot h = do
@@ -799,16 +839,20 @@ descriptorIdentity (BodyRequest body) = (bodyPoint body, bodyGeneration body)
 descriptorIdentity (BatchRequest batch) = (batchPoint batch, batchGeneration batch)
 
 current ::
-  LeiosPoint -> AcquisitionGeneration -> HandoffState owner peer -> Either StorageError Acquisition
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  HandoffState owner peer ->
+  Either StorageError (Acquisition peer)
 current point gen s = do
   a <- maybe (Left UnknownAcquisition) Right (Map.lookup point (storageAcquisitions s))
   unless (acquisitionGeneration a == gen) (Left StaleAcquisition)
   Right a
 
-getCurrent :: LeiosPoint -> AcquisitionGeneration -> HandoffState owner peer -> Acquisition
+getCurrent :: LeiosPoint -> AcquisitionGeneration -> HandoffState owner peer -> Acquisition peer
 getCurrent point gen = either (error . show) id . current point gen
 
-putAcquisition :: LeiosPoint -> Acquisition -> HandoffState owner peer -> HandoffState owner peer
+putAcquisition ::
+  LeiosPoint -> Acquisition peer -> HandoffState owner peer -> HandoffState owner peer
 putAcquisition point a s = s{storageAcquisitions = Map.insert point a (storageAcquisitions s)}
 
 references :: EndorserBlock -> IntMap.IntMap (TxHash, Word32)
@@ -817,7 +861,7 @@ references = IntMap.fromDistinctAscList . zip [0 ..] . endorserBlockReferences
 validBody :: LeiosPoint -> EndorserBlock -> Bool
 validBody point body = endorserBlockHash body == pointEbHash point && not (null (endorserBlockReferences body))
 
-matchesExpected :: Acquisition -> ExpectedTx -> Bool
+matchesExpected :: Acquisition peer -> ExpectedTx -> Bool
 matchesExpected a expected =
   IntMap.lookup (expectedOffset expected) (acquisitionReferences a)
     == Just (expectedHash expected, expectedSize expected)
@@ -1004,7 +1048,7 @@ coalesce remaining (item@(_, c) : rest) =
           coalesce (remaining - fromIntegral (BS.length bytes)) rest
     _ -> []
 
-completeClosure :: LeiosPoint -> Acquisition -> (Acquisition, [StorageEvent])
+completeClosure :: LeiosPoint -> Acquisition peer -> (Acquisition peer, [StorageEvent])
 completeClosure point a
   | acquisitionBodyDurable a
       && not (acquisitionClosureNotified a)

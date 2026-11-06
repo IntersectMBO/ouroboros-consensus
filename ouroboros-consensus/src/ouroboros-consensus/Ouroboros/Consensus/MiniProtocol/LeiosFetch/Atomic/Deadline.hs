@@ -17,6 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
   , conservativeRtt
   , TimingSnapshot
   , snapshotTiming
+  , bodyBackoffFactor
   , snapshotPayload
   , snapshotRtt
   , transferAllowance
@@ -32,6 +33,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline
 import Control.Monad (when)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime, diffTime)
 import qualified Data.List.NonEmpty as NE
+import Data.Word (Word32)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 
@@ -207,6 +209,19 @@ snapshotTiming config now sample factor request = do
   bytes = case preparedDescriptor request of
     BodyRequest BodyDescriptor{bodyAnnouncedBytes} -> fromIntegral bodyAnnouncedBytes
     BatchRequest{} -> sum [n | PayloadBytes n <- NE.toList (preparedElements request)]
+
+-- | Body-only 1.5^k backoff, clipped before an exponent can grow without
+-- bound. Any positive DiffTime base is at least 10^-12 seconds, so a factor
+-- reaching ceiling / 10^-12 already saturates every representable base. Zero
+-- bases remain zero. This preserves the later base-dependent clipping exactly.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-hedge-ceiling-rule@.
+bodyBackoffFactor :: TimingConfig -> Word32 -> Rational
+bodyBackoffFactor config failures = go failures 1
+ where
+  limit = max 1 (toRational (configHedgeCeiling config) * 1000000000000)
+  go remaining factor
+    | remaining == 0 || factor >= limit = min limit factor
+    | otherwise = go (remaining - 1) (min limit (factor * 3 / 2))
 
 -- | Smallest positive K for I*(2^K-1) >= B. The accumulator never overflows.
 -- A zero reference window is rejected instead of looping or dividing by zero.

@@ -90,6 +90,8 @@ import Ouroboros.Consensus.Leios.Types
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition as AtomicAcquisition
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as Admission
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body as BodyPolicy
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as AtomicClient
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as Deadline
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor (PayloadBytes (..))
@@ -178,7 +180,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
-import Ouroboros.Network.Channel (Channel)
+import Ouroboros.Network.Channel (Channel (..))
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
@@ -312,6 +314,27 @@ tests =
                     (IOLike.ExceptionInLinkedThread "test" (toException AtomicClient.ClientBodySizeMisstated))
                 ]
               classify (toException (Handoff.StorageException Handoff.InvalidDescriptor)) @?= "ShutdownNode"
+        ]
+    , testGroup
+        "body hedging over connections"
+        [ testCase "a sole slow primary completes without cancellation or restart" $
+            runSimFinishing bodySoleSource >>= (@?= (1, 1, 0))
+        , testCase "a new alternative can hedge a retained primary after its trigger fired" $
+            runSimFinishing (bodyNewAlternative False) >>= (@?= (2, 1, 0))
+        , testCase "a valid understated hedge body wins before its peer is disconnected" $
+            runSimFinishing (bodyNewAlternative True) >>= (@?= (2, 1, 0))
+        , testCase "round-robin alternatives share cumulative backoff and recycle only after wire drain" $
+            runSimFinishing bodyRoundRobin >>= (@?= True)
+        , testCase
+            "concurrent EBs each get a hedge even when the second primary waits behind a blocked FIFO head"
+            $ runSimFinishing bodyConcurrentEbs >>= (@?= True)
+        , testCase
+            "a body queued behind another EB's stalled TX reply is rescued without starting its own timer"
+            $ runSimFinishing bodyBehindTransactions >>= (@?= True)
+        , testCase "a late persistent primary wins and cancels its hedge" $
+            runSimFinishing (bodyLateWinner True) >>= (@?= True)
+        , testCase "a retiring committed hedge can win; original and ACK debt retire independently" $
+            runSimFinishing (bodyLateWinner False) >>= (@?= True)
         ]
     , testCase "the node runs LeiosFetch from NodeToNodeV_16 on, and not before" $
         forM_ [minBound .. NodeToNodeV_16] $ \ntnVersion -> do
@@ -1764,3 +1787,383 @@ atomicOfferOrder = do
           waitOffered (PeerAddr 1)
         awaitAcquired next (AcquiredClosure fetchedPoint)
         atomically $ (,) <$> readTVar requestsA <*> readTVar requestsB
+
+-- Body fixtures record only a small, bounded schedule in these short tests.
+type BodyLog s = StrictTVar (IOSim s) [(PeerAddr, Time)]
+
+bodyOffer ::
+  NodeUnderTest (IOSim s) ->
+  StrictTQueue (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) LN.StBusy LN.StIdle) ->
+  IOSim s ()
+bodyOffer _ notifications =
+  atomically $
+    mapM_
+      (writeTQueue notifications)
+      [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+      , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+      ]
+
+bodyProvider ::
+  BodyLog s ->
+  PeerAddr ->
+  Maybe DiffTime ->
+  AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+bodyProvider logVar addr delay = AtomicServer.AtomicRequestHandler $ \case
+  AtomicServer.ServeBody _ _ -> do
+    now <- getMonotonicTime
+    atomically $ modifyTVar logVar (<> [(addr, now)])
+    case delay of { Nothing -> atomically retry; Just duration -> threadDelay duration }
+    pure
+      (AtomicServer.PreparedBody (fromIntegral (BS.length (endorserBlockBytes fetchedEb)) + 2) fetchedEb)
+  AtomicServer.ServeTransactions{} -> throwIO $ userError "a body-only offer authorized a closure request"
+
+bodyServing ::
+  AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s) ->
+  (Channel (IOSim s) ByteString -> Channel (IOSim s) ByteString) ->
+  Channel (IOSim s) ByteString ->
+  IOSim s ()
+bodyServing provider adjust channel = AtomicServer.withAtomicServer (AtomicServerState.defaultServerLimits 64) provider $ \server ->
+  void $
+    runLookaheadPeerWithAnnotatedLimits
+      nullTracer
+      atomicCodec
+      (Atomic.byteLimitsLeiosFetchAtomic (fromIntegral . BSL.length))
+      Atomic.timeLimitsLeiosFetchAtomic
+      (adjust channel)
+      (AtomicServer.atomicServerPeer server)
+
+-- The first body is irrevocably committed before its first partial send. Its
+-- remaining bytes and the later cancel ACK each have an independent barrier.
+committedBodyChannel ::
+  StrictTVar (IOSim s) Int ->
+  StrictTVar (IOSim s) Bool ->
+  StrictTVar (IOSim s) Bool ->
+  Channel (IOSim s) ByteString ->
+  Channel (IOSim s) ByteString
+committedBodyChannel sends bodyGate ackGate channel =
+  channel
+    { send = \bytes -> do
+        index <- atomically $ do
+          n <- readTVar sends
+          writeTVar sends (n + 1)
+          pure n
+        case index of
+          0 -> do
+            send channel (BSL.take 8 bytes)
+            atomically $ readTVar bodyGate >>= check
+            send channel (BSL.drop 8 bytes)
+          1 -> atomically (readTVar ackGate >>= check) >> send channel bytes
+          _ -> send channel bytes
+    }
+
+waitBodyRequests :: Int -> BodyLog s -> IOSim s [(PeerAddr, Time)]
+waitBodyRequests count logVar = atomically $ do
+  seen <- readTVar logVar
+  check (length seen >= count)
+  pure seen
+
+bodySnapshotOf ::
+  NodeUnderTest (IOSim s) -> IOSim s (BodyPolicy.BodySnapshot (ConnectionId PeerAddr))
+bodySnapshotOf node = case nodeAtomicFetch node of
+  Nothing -> throwIO $ userError "body policy is not installed"
+  Just runtime -> atomically $ do
+    snapshots <- readNodeBodySnapshots runtime
+    maybe retry pure (Map.lookup fetchedPoint snapshots)
+
+bodyUsageOf :: NodeUnderTest (IOSim s) -> PeerAddr -> IOSim s Admission.Usage
+bodyUsageOf node addr = case nodeAtomicFetch node of
+  Nothing -> throwIO $ userError "body policy is not installed"
+  Just runtime -> atomically $ do
+    usages <- readNodeClientUsage runtime
+    case [u | (MkLeiosPeerLifetimeId conn _, Right u) <- Map.toList usages, remoteAddress conn == addr] of
+      [usage] -> pure usage
+      _ -> retry
+
+bodySoleSource :: IOSim s (Word64, Word64, Word64)
+bodySoleSource = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    logVar <- newTVarIO []
+    bodyOffer node offers
+    let upstream =
+          EnvPeer
+            (feedingLeiosNotifyServer node offers)
+            Nothing
+            (bodyServing (bodyProvider logVar (PeerAddr 1) (Just 2.5)) id)
+            Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) upstream $ \_ -> do
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      observation <- atomicObservation node
+      pure
+        ( observedBodyRequests observation
+        , observedBodyTriggers observation
+        , observedBodyFailures observation
+        )
+
+bodyNewAlternative :: Bool -> IOSim s (Word64, Word64, Word64)
+bodyNewAlternative misstate = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    firstOffers <- newTQueueIO
+    nextOffers <- newTQueueIO
+    logVar <- newTVarIO []
+    let upstream offers addr delay =
+          EnvPeer
+            (feedingLeiosNotifyServer node offers)
+            Nothing
+            (bodyServing (bodyProvider logVar addr delay) id)
+            Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream firstOffers (PeerAddr 1) Nothing) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream nextOffers (PeerAddr 2) (Just 0)) $ \alternative -> do
+        bodyOffer node firstOffers
+        void $ waitBodyRequests 1 logVar
+        threadDelay 1.2
+        if misstate
+          then
+            atomically $
+              mapM_
+                (writeTQueue nextOffers)
+                [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+                , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb - 1)
+                ]
+          else bodyOffer node nextOffers
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        when misstate $ do
+          outcome <- atomically (connNodeInitiators alternative Map.! leiosFetchMiniProtocolNum)
+          ensure
+            (case outcome of Left e -> show e == show AtomicClient.ClientBodySizeMisstated; _ -> False)
+            "a hedge body-size misstatement lost its original peer fault"
+        observation <- atomicObservation node
+        ensure
+          (observedPeakWantedBodies observation == 2)
+          "body hedge exceeded or missed the wanted-copy bound"
+        pure
+          ( observedBodyRequests observation
+          , observedBodyTriggers observation
+          , observedBodyFailures observation
+          )
+
+bodyRoundRobin :: IOSim s Bool
+bodyRoundRobin = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    offers <- mapM (const newTQueueIO) [1 .. 4 :: Int]
+    logVar <- newTVarIO []
+    let connect [] action = action
+        connect ((n, notifications) : rest) action =
+          let upstream =
+                EnvPeer
+                  (feedingLeiosNotifyServer node notifications)
+                  Nothing
+                  (bodyServing (bodyProvider logVar (PeerAddr n) Nothing) id)
+                  Nothing
+           in withNodeVsEnvConnection node (PeerAddr n) upstream (const (connect rest action))
+    connect (zip [1 .. 4] offers) $ do
+      bodyOffer node (head offers)
+      void $ waitBodyRequests 1 logVar
+      mapM_ (bodyOffer node) (tail offers)
+      seen <- take 5 <$> waitBodyRequests 5 logVar
+      observation <- atomicObservation node
+      let deltas = zipWith (\(_, a) (_, b) -> diffTime b a) seen (tail seen)
+          near a b = abs (a - b) < 0.001
+      ensure
+        (map fst seen == map PeerAddr [1, 2, 3, 4, 2])
+        "body retries did not follow arrived-peer round robin"
+      ensure
+        (and (zipWith near deltas [1, 1, 1.5, 2]))
+        "body backoff did not span peers or respect the ceiling"
+      pure
+        ( observedBodyTriggers observation == 1
+            && observedBodyFailures observation == 3
+            && observedPeakWantedBodies observation == 2
+        )
+
+bodyLateWinner :: Bool -> IOSim s Bool
+bodyLateWinner primaryWins = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- mapM (const newTQueueIO) [1 .. 4 :: Int]
+    logVar <- newTVarIO []
+    sends <- newTVarIO 0
+    bodyGate <- newTVarIO False
+    ackGate <- newTVarIO primaryWins
+    let blocked = if primaryWins then 1 else 2
+        connect [] action = action
+        connect ((n, notifications) : rest) action =
+          let adjust = if n == blocked then committedBodyChannel sends bodyGate ackGate else id
+              delay = if n == blocked then Just 0 else Nothing
+              upstream =
+                EnvPeer
+                  (feedingLeiosNotifyServer node notifications)
+                  Nothing
+                  (bodyServing (bodyProvider logVar (PeerAddr n) delay) adjust)
+                  Nothing
+           in withNodeVsEnvConnection node (PeerAddr n) upstream (const (connect rest action))
+    connect (zip [1 .. 4] offers) $ do
+      bodyOffer node (head offers)
+      void $ waitBodyRequests 1 logVar
+      mapM_ (bodyOffer node) (tail offers)
+      void $ waitBodyRequests (if primaryWins then 2 else 4) logVar
+      before <- bodySnapshotOf node
+      ensure (BodyPolicy.bodyWanted before == 2) "body logical slots were not bounded"
+      unless primaryWins $ do
+        usage <- bodyUsageOf node (PeerAddr 2)
+        ensure
+          ( Admission.usedData usage == 1
+              && Admission.usedExchanges usage == 2
+              && Admission.usedResponseBytes usage > 0
+          )
+          "a retiring hedge prematurely released its original/cancel debt"
+        ensure (BodyPolicy.bodyDraining before >= 1) "the retiring committed hedge was forgotten"
+      atomically $ writeTVar bodyGate True
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      threadDelay 0.01
+      fulfilled <- bodySnapshotOf node
+      ensure
+        (BodyPolicy.bodyFulfilled fulfilled && BodyPolicy.bodyWanted fulfilled == 0)
+        "a valid late body did not fulfill the acquisition"
+      let failures = if primaryWins then 0 else 2
+      ensure
+        (BodyPolicy.bodyFailures fulfilled == failures)
+        "late fulfillment lost or duplicated a hedge failure"
+      unless primaryWins $ do
+        usage <- bodyUsageOf node (PeerAddr 2)
+        ensure
+          (Admission.usedData usage == 1 && Admission.usedExchanges usage == 1)
+          "consuming an original prematurely released its pending ACK record"
+        threadDelay 0.6
+        observation <- atomicObservation node
+        ensure
+          (observedBodyFailures observation == fromIntegral failures)
+          "a redundant/cancel ACK deadline added body backoff"
+        atomically $ writeTVar ackGate True
+        atomically $ case nodeAtomicFetch node of
+          Nothing -> retry
+          Just runtime -> do
+            usages <- readNodeClientUsage runtime
+            let retired =
+                  [ Admission.usedData u == 0
+                  | (MkLeiosPeerLifetimeId conn _, Right u) <- Map.toList usages
+                  , remoteAddress conn == PeerAddr 2
+                  ]
+            check (retired == [True])
+      observation <- atomicObservation node
+      pure (observedBodyTriggers observation == 1 && observedPeakWantedBodies observation == 2)
+
+-- A second EB's primary is queued behind the first EB's stalled body. Its own
+-- timer must stay inactive, but that FIFO dependency must not strand its body.
+bodyConcurrentEbs :: forall s. IOSim s Bool
+bodyConcurrentEbs = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offersA <- newTQueueIO
+    offersB <- newTQueueIO
+    let otherPoint = MkLeiosPoint (blockSlot announcingHonest) (endorserBlockHash honestEb)
+        bodies = Map.fromList [(fetchedPoint, fetchedEb), (otherPoint, honestEb)]
+        provider :: Bool -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider withheld = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ point -> do
+            when withheld (atomically retry)
+            let body = bodies Map.! point
+            pure (AtomicServer.PreparedBody (fromIntegral (BS.length (endorserBlockBytes body)) + 2) body)
+          AtomicServer.ServeTransactions{} -> throwIO $ userError "body-only concurrent offers authorized TX fetching"
+        upstream notifications withheld =
+          EnvPeer
+            (feedingLeiosNotifyServer node notifications)
+            Nothing
+            (bodyServing (provider withheld) id)
+            Nothing
+        publish ::
+          StrictTQueue (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) LN.StBusy LN.StIdle) ->
+          IOSim s ()
+        publish notifications =
+          atomically $
+            mapM_
+              (writeTQueue notifications)
+              [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+              , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+              , MsgLeiosBlockAnnouncement (ltbHeader announcingHonest)
+              , MsgLeiosBlockOffer otherPoint (encodeEndorserBlockSize honestEb)
+              ]
+    threadDelay 4
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream offersA True) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream offersB False) $ \_ -> do
+        publish offersA
+        atomically $ case nodeAtomicFetch node of
+          Nothing -> retry
+          Just runtime -> readNodeObservation runtime >>= check . (>= 2) . observedBodyRequests
+        publish offersB
+        acquired <- replicateM 2 (acquiredOf <$> atomically next)
+        ensure
+          (List.sortOn show acquired == List.sortOn show [AcquiredBody fetchedPoint, AcquiredBody otherPoint])
+          "queued EB body was stranded behind another EB's stalled original"
+        observation <- atomicObservation node
+        pure
+          ( observedBodyHedges observation == 2
+              && observedBodyFailures observation == 0
+              && observedPeakWantedBodies observation == 2
+          )
+
+-- With the large trusted reservation, the common predecessor is TX data from
+-- another EB, rather than another body. Exercise that actual mixed reply path.
+bodyBehindTransactions :: forall s. IOSim s Bool
+bodyBehindTransactions = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offersA <- newTQueueIO
+    offersB <- newTQueueIO
+    txStarted <- newTVarIO False
+    unexpectedBodyStarted <- newTVarIO False
+    let otherPoint = MkLeiosPoint (blockSlot announcingHonest) (endorserBlockHash honestEb)
+        provider :: Bool -> AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        provider blocksTxs = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ point -> do
+            when (blocksTxs && point == otherPoint) $ atomically $ writeTVar unexpectedBodyStarted True
+            let body = if point == fetchedPoint then fetchedEb else honestEb
+            pure (AtomicServer.PreparedBody (fromIntegral (BS.length (endorserBlockBytes body)) + 2) body)
+          AtomicServer.ServeTransactions{} -> do
+            atomically $ writeTVar txStarted True
+            atomically retry
+        upstream notifications blocksTxs =
+          EnvPeer
+            (feedingLeiosNotifyServer node notifications)
+            Nothing
+            (bodyServing (provider blocksTxs) id)
+            Nothing
+        publish ::
+          StrictTQueue (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) LN.StBusy LN.StIdle) ->
+          IOSim s ()
+        publish notifications =
+          atomically $
+            mapM_
+              (writeTQueue notifications)
+              [ MsgLeiosBlockAnnouncement (ltbHeader announcingHonest)
+              , MsgLeiosBlockOffer otherPoint (encodeEndorserBlockSize honestEb)
+              ]
+    threadDelay 4
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream offersA True) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream offersB False) $ \_ -> do
+        atomically $ mapM_ (writeTQueue offersA) (announcingAndOffering fetchedEb announcingFetched)
+        awaitAcquired next (AcquiredBody fetchedPoint)
+        atomically $ readTVar txStarted >>= check
+        publish offersA
+        atomically $ case nodeAtomicFetch node of
+          Nothing -> retry
+          Just runtime -> readNodeObservation runtime >>= check . (>= 2) . observedBodyRequests
+        publish offersB
+        awaitAcquired next (AcquiredBody otherPoint)
+        wasServed <- readTVarIO unexpectedBodyStarted
+        observation <- atomicObservation node
+        ensure (not wasServed) "the supposedly queued body reached its serving head"
+        pure
+          ( observedBodyRequests observation == 3
+              && observedBodyHedges observation == 1
+              && observedBodyTriggers observation == 0
+              && observedBodyFailures observation == 0
+          )

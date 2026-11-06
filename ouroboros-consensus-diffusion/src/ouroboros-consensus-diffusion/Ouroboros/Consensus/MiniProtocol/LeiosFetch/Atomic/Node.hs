@@ -6,7 +6,8 @@
 -- | Explicit node-scoped atomic acquisition. Normal node assembly does not
 -- install this extension. Connections share durable possession and budgets;
 -- their wire identities and immutable reply contexts remain independent.
--- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@ (node assembly) and
+-- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy and deadline loop).
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   ( AtomicFetchNode
   , AtomicNodeConfig (..)
@@ -16,14 +17,17 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   , withNodeAtomicClient
   , withNodeLegacyClient
   , readNodeObservation
+  , readNodeBodySnapshots
+  , readNodeClientUsage
   ) where
 
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import Control.Monad (foldM, forM_, forever, unless, void, when)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Data.IntSet as IntSet
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust)
+import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word32, Word64)
@@ -32,10 +36,14 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), encodeEndorserBlockSize)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Body as B
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as C
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as D
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as R
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing as T
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
@@ -75,6 +83,16 @@ data NodeObservation = NodeObservation
   -- ^ Connections with no matching registration at capture time.
   , observedBodyRequests :: !Word64
   -- ^ Admitted new-version body requests.
+  , observedBodyHedges :: !Word64
+  -- ^ Successfully admitted logical body hedges.
+  , observedBodyTriggers :: !Word64
+  -- ^ Primary trigger expiries; each retained primary is charged once.
+  , observedBodyFailures :: !Word64
+  -- ^ Body hedge expiries, without primary/closure/cancellation penalties.
+  , observedBodyCancels :: !Word64
+  -- ^ Separately admitted body cancellation exchanges.
+  , observedPeakWantedBodies :: !Int
+  -- ^ Largest wanted-copy count for any one EB; never exceeds two.
   , observedCheckpoints :: !Word64
   -- ^ Admitted new-version transaction batches.
   , observedPeakData :: !Int
@@ -87,6 +105,7 @@ data NodeIntegrationError
   = ExtensionAlreadyInstalled
   | PeersAlreadyRunning
   | InvalidAcquisition !AcquisitionError
+  | InvalidBodyPolicy !B.BodyError
   deriving (Eq, Show)
 
 instance Exception NodeIntegrationError
@@ -108,8 +127,10 @@ data AtomicFetchNode m owner peer blk = AtomicFetchNode
   -- ^ Connections eligible for the existing legacy scheduler.
   , fetchGenerations :: !(StrictTVar m (Map.Map LeiosPoint (Maybe AcquisitionGeneration)))
   -- ^ Active generation, or completed/abandoned tombstone. Never recreated by a receipt.
-  , fetchBodies :: !(StrictTVar m (Map.Map LeiosPoint (RequestKey peer)))
-  -- ^ One ordinary new-version body request per point; not a wire-debt ledger.
+  , fetchBodies :: !(StrictTVar m (B.BodyState peer (H.StorageRequest peer)))
+  -- ^ Per-EB persistent primary/hedge slots and exact unresolved body originals.
+  , fetchBodyReady :: !(W.Readiness m)
+  -- ^ Body-only deadline/readiness loop; ordinary legacy planning keeps its cadence.
   , fetchReady :: !(StrictTVar m Bool)
   -- ^ Coalesced STM-to-MVar wakeup, with no retained event queue.
   , fetchLegacyReceipts :: !(StrictTVar m Word32)
@@ -128,7 +149,7 @@ readNodeObservation = readTVar . fetchObservation
 -- The legacy writer retains its own admission/validation and supplies only
 -- durable receipts to the shared acquisition, never a new-version reservation.
 withAtomicFetchNode ::
-  (IOLike m, Ord peer, Ord owner) =>
+  (IOLike m, MonadTimer m, Ord peer, Ord owner) =>
   AtomicNodeConfig ->
   LeiosFetchKernel m peer blk ->
   (AtomicFetchNode m owner peer blk -> m a) ->
@@ -140,9 +161,10 @@ withAtomicFetchNode config kernel action = do
   clients <- uncheckedNewTVarM Map.empty
   legacy <- uncheckedNewTVarM Set.empty
   generations <- uncheckedNewTVarM Map.empty
-  bodies <- uncheckedNewTVarM Map.empty
+  bodies <- uncheckedNewTVarM B.emptyBodyState
+  bodyReady <- atomically W.newReadiness
   ready <- uncheckedNewTVarM False
-  observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0)
+  observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0)
   legacyReceipts <- uncheckedNewTVarM 0
   ownerThread <- myThreadId
   let node =
@@ -155,6 +177,7 @@ withAtomicFetchNode config kernel action = do
           legacy
           generations
           bodies
+          bodyReady
           ready
           legacyReceipts
           ownerThread
@@ -182,7 +205,10 @@ withAtomicFetchNode config kernel action = do
         void $ tryPutMVar (lfcReady context) ()
   bracket_ install uninstall $
     H.withStorageHandoff handoff (lfcWriter context) (storageEvent node) $ \_ ->
-      withAsync wakeLoop $ \_ -> action node `finally` atomically (readTVar legacyReceipts >>= check . (== 0))
+      withAsync wakeLoop $ \_ ->
+        withAsync (bodyCoordinator node) $ \bodyWorker -> do
+          link bodyWorker
+          action node `finally` atomically (readTVar legacyReceipts >>= check . (== 0))
 
 -- | Register one actual new-version client with its frozen D and one captured
 -- connection-scoped RTT reader. The caller joins the interpreter in the action.
@@ -229,7 +255,33 @@ withNodeAtomicClient node owner lifetime d rtt action =
   hooks =
     C.nullClientHooks
       { C.clientWakeup = wake node
-      , C.clientReply = \key _ -> modifyTVar (fetchBodies node) (Map.filter (/= key))
+      , C.clientExpired = \expiry -> do
+          state <- readTVar (fetchBodies node)
+          let T.Expiry{T.expiryToken = T.TimerToken key _, T.chargeDataFailure} = expiry
+              (change, next) = B.expireBodyAttempt key chargeDataFailure state
+          writeTVar (fetchBodies node) next
+          case change of
+            B.BodyPrimaryTriggered -> observe node $ \s -> s{observedBodyTriggers = inc (observedBodyTriggers s)}
+            B.BodyHedgeFailed -> observe node $ \s -> s{observedBodyFailures = inc (observedBodyFailures s)}
+            B.NoBodyChange -> pure ()
+      , C.clientReply = \key completion -> do
+          state <- readTVar (fetchBodies node)
+          let accepted = case R.completedOutcome completion of
+                R.BodyReceived body -> H.acceptedBody body /= H.Irrelevant
+                _ -> False
+          won <- case B.bodyRequestPoint key state of
+            Just (point, generation) | accepted -> do
+              source <- H.readVerifiedBodySource (fetchHandoff node) point generation
+              let winner = case source of
+                    Just (H.BodyFromRequest original) -> Just original
+                    Just H.BodyFromStorage -> Nothing
+                    Nothing -> Just key
+              pure (B.fulfillBody point generation winner state)
+            _ -> pure state
+          let next = case R.completedOutcome completion of
+                R.CancelAcknowledged -> B.finishBodyCancel key won
+                _ -> B.finishBodyOriginal key won
+          writeTVar (fetchBodies node) next
       }
 
 -- | Permit only an explicitly selected fallback connection to use legacy
@@ -246,7 +298,7 @@ withNodeLegacyClient node lifetime =
     (atomically (removePeer node lifetime))
 
 wake :: MonadSTM m => AtomicFetchNode m owner peer blk -> STM m ()
-wake node = writeTVar (fetchReady node) True
+wake node = writeTVar (fetchReady node) True >> W.notifyReadiness (fetchBodyReady node)
 
 observe ::
   MonadSTM m => AtomicFetchNode m owner peer blk -> (NodeObservation -> NodeObservation) -> STM m ()
@@ -272,9 +324,7 @@ removePeer node lifetime = do
   forM_ (Map.lookup lifetime clients) C.closeAtomicClient
   modifyTVar (fetchClients node) (Map.delete lifetime)
   modifyTVar (fetchLegacy node) (Set.delete lifetime)
-  modifyTVar
-    (fetchBodies node)
-    (Map.filter (\key -> case key of RequestKey original _ _ -> original /= lifetime))
+  modifyTVar (fetchBodies node) (B.removeBodyPeer lifetime)
   releasePeerAssignments (fetchAssignments node) lifetime
   wake node
 
@@ -284,7 +334,6 @@ prune node slot = do
   forM_ (Map.toList (Map.takeWhileAntitone ((< slot) . pointSlotNo) generations)) $ \(point, gen) ->
     forM_ gen (retire node point)
   modifyTVar (fetchGenerations node) (Map.dropWhileAntitone ((< slot) . pointSlotNo))
-  modifyTVar (fetchBodies node) (Map.dropWhileAntitone ((< slot) . pointSlotNo))
   wake node
 
 retire ::
@@ -292,7 +341,15 @@ retire ::
   AtomicFetchNode m owner peer blk -> LeiosPoint -> AcquisitionGeneration -> STM m ()
 retire node point gen = do
   releaseAcquisitionAssignments (fetchAssignments node) point gen
+  source <- H.readVerifiedBodySource (fetchHandoff node) point gen
+  forM_ source $ \winner ->
+    modifyTVar (fetchBodies node) $
+      B.fulfillBody
+        point
+        gen
+        (case winner of H.BodyFromRequest key -> Just key; H.BodyFromStorage -> Nothing)
   H.retireAcquisition (fetchHandoff node) point gen
+  modifyTVar (fetchBodies node) (B.retireBodyAcquisition point gen)
 
 -- | Called under the kernel's outstanding-state lock. No DB operation belongs
 -- here: storage callbacks supply all durable metadata. Legacy scheduling runs
@@ -314,46 +371,16 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
   active <- readTVar (fetchGenerations node)
   shared <-
     foldM synchronize outstanding (Set.toAscList (Set.union (Map.keysSet active) (Set.fromList points)))
+  driveBodies node now peers offers shared
   clients <- readTVar (fetchClients node)
   times <- traverse (readTVar . lfpOfferTimes) peers
   forM_ ordered $ \point -> do
     generations <- readTVar (fetchGenerations node)
     forM_ (Map.lookup point generations >>= id) $ \gen -> do
       current <- H.readAcquisition (fetchHandoff node) point
-      forM_ current $ \snapshot -> do
-        unless (H.snapshotBodyDurable snapshot || isJust (H.snapshotReferences snapshot)) $ do
-          bodyClaims <- readTVar (fetchBodies node)
-          unless (Map.member point bodyClaims || Map.member point (requestedEbPeers shared)) $
-            firstSuccessful (bodyCandidates times clients point) $ \(client, offer) -> do
-              case poOffered offer of
-                OfferedClosure -> pure False
-                half -> do
-                  let announced = case half of
-                        OfferedBody size -> size
-                        OfferedBodyAndClosure size -> size
-                      trusted = case poEbBounds offer of
-                        SJust b -> Just b
-                        SNothing -> bounds (pointSlotNo point)
-                  case trusted of
-                    Nothing -> pure False
-                    Just b -> do
-                      prepared <-
-                        either (throwSTM . H.StorageException . const H.InvalidDescriptor) pure $
-                          prepareBody
-                            (BodyDescriptor point gen announced b)
-                            (EncodedBytes (fromIntegral (lebMaxBodySize b) + 3))
-                      admitted <- C.admitClientRequest client now 1 prepared
-                      case admitted of
-                        Left e | clientCapacity e -> pure False
-                        Left e -> throwSTM e
-                        Right req -> do
-                          modifyTVar (fetchBodies node) (Map.insert point (H.storageRequestKey req))
-                          observe node $ \s -> s{observedBodyRequests = inc (observedBodyRequests s)}
-                          peak node client
-                          pure True
-        when (H.snapshotBodyDurable snapshot) $
-          forM_ (closureCandidates times clients point) $
-            \(client, offer) -> fill shared point gen client offer
+      forM_ current $ \snapshot -> when (H.snapshotBodyDurable snapshot) $
+        forM_ (closureCandidates times clients point) $
+          \(client, offer) -> fill shared point gen client offer
   legacy <- readTVar (fetchLegacy node)
   bodyClaims <- readTVar (fetchBodies node)
   pure
@@ -388,6 +415,9 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
         case gen of
           Nothing -> pure state
           Just g -> do
+            previousBody <- readTVar (fetchBodies node)
+            let updatedBody = B.ensureBodyAcquisition point g (bounds (pointSlotNo point)) previousBody
+            when (updatedBody /= previousBody) $ writeTVar (fetchBodies node) updatedBody >> wake node
             current <- H.readAcquisition handoff point
             case current of
               Nothing -> throwSTM (H.StorageException H.UnknownAcquisition)
@@ -413,7 +443,6 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
           , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= which]
           ]
     ]
-  bodyCandidates = candidates bodyOfferTime
   closureCandidates = candidates closureOfferTime
   fill shared point gen client offer = do
     state <- C.readClientSnapshot client
@@ -444,14 +473,18 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
             if clientCapacity e then pure False else throwSTM e
       when keepGoing (fill shared point gen client offer)
   withoutClaimedBody claimed point offer
-    | Map.notMember point claimed = Just offer
+    | maybe
+        True
+        (\body -> B.bodyPrimary body == Nothing && not (B.bodyFulfilled body))
+        (B.bodySnapshot point claimed) =
+        Just offer
     | otherwise = case poOffered offer of
         OfferedBody{} -> Nothing
         _ -> Just offer{poOffered = OfferedClosure}
 
-firstSuccessful :: Monad m => [a] -> (a -> m Bool) -> m ()
-firstSuccessful [] _ = pure ()
-firstSuccessful (x : xs) f = f x >>= \ok -> unless ok (firstSuccessful xs f)
+firstSuccessful :: Monad m => [a] -> (a -> m Bool) -> m Bool
+firstSuccessful [] _ = pure False
+firstSuccessful (x : xs) f = f x >>= \ok -> if ok then pure True else firstSuccessful xs f
 
 peak ::
   (IOLike m, Ord peer) => AtomicFetchNode m owner peer blk -> C.AtomicClient m owner peer -> STM m ()
@@ -547,3 +580,172 @@ trackLegacyReceipt node submit reconcile = mask_ $ do
       `onException` atomically finished
   linkTo (fetchOwnerThread node) task
   pure $ Promise $ atomically (Strict.readTMVar result) >>= either throwIO pure
+
+-- | Read logical slots and unresolved original debt without retaining history.
+readNodeBodySnapshots ::
+  MonadSTM m => AtomicFetchNode m owner peer blk -> STM m (Map.Map LeiosPoint (B.BodySnapshot peer))
+readNodeBodySnapshots node = B.bodySnapshots <$> readTVar (fetchBodies node)
+
+-- | Physical per-session usage, including canceled originals and their ACKs.
+readNodeClientUsage ::
+  (MonadSTM m, Ord peer) =>
+  AtomicFetchNode m owner peer blk ->
+  STM m (Map.Map (LeiosPeerLifetimeId peer) (Either H.StorageError A.Usage))
+readNodeClientUsage node = readTVar (fetchClients node) >>= traverse C.readClientUsage
+
+-- | Body timers are independent of the throttled legacy decision loop. Reuse
+-- the common cancellable readiness/deadline/fallback wait, and hold the existing
+-- outstanding lock while assigning so prune/focus/removal cannot race admission.
+bodyCoordinator ::
+  (IOLike m, MonadTimer m, Ord owner, Ord peer) => AtomicFetchNode m owner peer blk -> m ()
+bodyCoordinator node = forever $ do
+  now <- getMonotonicTime
+  deadline <- withMVar (lfcOutstanding (lfkContext kernel)) $ \outstanding -> atomically $ do
+    peers <- readTVar (lfkPeers kernel)
+    offers <- traverse (readTVar . lfpOfferings) peers
+    driveBodies node now peers offers outstanding
+    clients <- readTVar (fetchClients node)
+    snapshots <- traverse C.readClientSnapshot clients
+    pure $ case mapMaybe (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots) of
+      [] -> Nothing
+      due -> Just (minimum due)
+  void $ W.waitForWakeup (fetchBodyReady node) deadline
+ where
+  kernel = fetchKernel node
+
+-- | Shared by the normal pass and the body-only deadline loop. Never change an
+-- admitted timer snapshot, and process verified winners before issuing cancels.
+driveBodies ::
+  (IOLike m, Ord owner, Ord peer) =>
+  AtomicFetchNode m owner peer blk ->
+  Time ->
+  Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk) ->
+  Map.Map (LeiosPeerLifetimeId peer) (Map.Map LeiosPoint PeerOffer) ->
+  LeiosOutstanding (LeiosPeerLifetimeId peer) ->
+  STM m ()
+driveBodies node now peers offers outstanding = do
+  clients <- readTVar (fetchClients node)
+  mapM_ (`C.pollAtomicClient` now) clients
+  forM_ clients $ \client -> do
+    snapshot <- C.readClientSnapshot client
+    forM_ (T.rescuableRequests (C.snapshotClientTiming snapshot)) $ \key ->
+      modifyTVar bodies (B.rescueBlockedBody key)
+  times <- traverse (readTVar . lfpOfferTimes) peers
+  policies <- readNodeBodySnapshots node
+  forM_ (Map.toList policies) $ \(point, snapshot) -> do
+    let generation = B.bodyGeneration snapshot
+    if not (Map.member point (ebState outstanding) && isFocusedPoint point outstanding)
+      then modifyTVar bodies (B.retireBodyAcquisition point generation)
+      else do
+        source <- H.readVerifiedBodySource (fetchHandoff node) point generation
+        forM_ source $ \winner ->
+          modifyTVar
+            bodies
+            ( B.fulfillBody
+                point
+                generation
+                (case winner of H.BodyFromRequest key -> Just key; H.BodyFromStorage -> Nothing)
+            )
+        let arrived =
+              sortOn
+                fst
+                [ (at, lifetime)
+                | lifetime <- Map.keys clients
+                , Just offer <- [Map.lookup lifetime offers >>= Map.lookup point]
+                , offersBody offer
+                , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= bodyOfferTime]
+                ]
+        modifyTVar bodies (B.registerBodyOffers point (map snd arrived))
+  -- Withdraw once even when no control reservation is currently available.
+  unwithdrawn <- B.unwithdrawnBodyAttempts <$> readTVar bodies
+  forM_ unwithdrawn $ \key -> forM_ (clientFor clients key) $ \client -> do
+    (C.withdrawClientRequest client now key) `catch` \(e :: C.ClientError) -> case e of
+      C.ClientTimingEventError T.UnknownTimingKey -> pure ()
+      _ -> throwSTM e
+    modifyTVar bodies (B.recordBodyWithdrawal key)
+  pending <- B.pendingBodyCancels <$> readTVar bodies
+  forM_ pending $ \(original, request) -> forM_ (clientFor clients original) $ \client -> do
+    result <- C.cancelClientRequest client now request
+    case result of
+      Right cancelKey -> do
+        current <- readTVar bodies
+        updated <-
+          either (throwSTM . InvalidBodyPolicy) pure (B.recordBodyCancel original cancelKey current)
+        writeTVar bodies updated
+        observe node $ \s -> s{observedBodyCancels = inc (observedBodyCancels s)}
+      Left e | clientCapacity e || retiredTarget e -> pure ()
+      Left e -> throwSTM e
+  forM_ (Map.keys policies) $ \point -> do
+    current <- readTVar bodies
+    case B.bodySnapshot point current of
+      Just snapshot
+        | not (B.bodyFulfilled snapshot)
+        , Map.notMember point (requestedEbPeers outstanding) -> do
+            issued <- issue clients point snapshot
+            when issued $ do
+              next <- readTVar bodies
+              -- A replacement primary can retain an already-fired trigger; fill its
+              -- separate hedge slot without waiting for another unrelated wake.
+              forM_ (B.bodySnapshot point next) $ \fresh -> void (issue clients point fresh)
+      _ -> pure ()
+ where
+  bodies = fetchBodies node
+  config = fetchConfig node
+  offersBody offer = case poOffered offer of OfferedClosure -> False; _ -> True
+  clientFor clients key@(RequestKey lifetime _ _) = do
+    client <- Map.lookup lifetime clients
+    let (registered, session) = H.storageSessionIdentity (C.clientStorageSession client)
+    case key of
+      RequestKey original token _ | original == registered && token == session -> Just client
+      _ -> Nothing
+  retiredTarget (C.ClientStorageError (H.AdmissionFailure e)) = e `elem` [A.UnknownRequest, A.InvalidCancelTarget, A.AlreadyCancelled]
+  retiredTarget _ = False
+  issue clients point snapshot = do
+    state <- readTVar bodies
+    case B.nextBodyRole point state of
+      Nothing -> pure False
+      Just role -> firstSuccessful (B.bodyCandidates point state) $ \lifetime ->
+        case (Map.lookup lifetime clients, Map.lookup lifetime offers >>= Map.lookup point) of
+          (Just client, Just offer) -> case poOffered offer of
+            OfferedClosure -> pure False
+            half -> do
+              let announced = case half of OfferedBody size -> size; OfferedBodyAndClosure size -> size
+                  trusted = case poEbBounds offer of SJust b -> Just b; SNothing -> B.bodyBounds snapshot
+                  factor = case role of
+                    B.BodyPrimary -> 1
+                    B.BodyHedge -> D.bodyBackoffFactor (nodeTimingConfig config) (B.bodyFailures snapshot)
+              case trusted of
+                Nothing -> pure False
+                Just bounds -> do
+                  prepared <-
+                    either (throwSTM . H.StorageException . const H.InvalidDescriptor) pure $
+                      prepareBody
+                        (BodyDescriptor point (B.bodyGeneration snapshot) announced bounds)
+                        (EncodedBytes (fromIntegral (lebMaxBodySize bounds) + 3))
+                  result <- C.admitClientRequest client now factor prepared
+                  case result of
+                    Left e | clientCapacity e -> pure False
+                    Left e -> throwSTM e
+                    Right request -> do
+                      current <- readTVar bodies
+                      updated <-
+                        either (throwSTM . InvalidBodyPolicy) pure $
+                          B.admitBodyAttempt
+                            point
+                            (B.bodyGeneration snapshot)
+                            role
+                            (H.storageRequestKey request)
+                            request
+                            current
+                      writeTVar bodies updated
+                      let wanted = maybe 0 B.bodyWanted (B.bodySnapshot point updated)
+                      observe node $ \s ->
+                        s
+                          { observedBodyRequests = inc (observedBodyRequests s)
+                          , observedBodyHedges =
+                              if role == B.BodyHedge then inc (observedBodyHedges s) else observedBodyHedges s
+                          , observedPeakWantedBodies = max (observedPeakWantedBodies s) wanted
+                          }
+                      peak node client
+                      pure True
+          _ -> pure False
