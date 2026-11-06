@@ -9,7 +9,8 @@
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@ (node assembly) and
 -- @docs/fetch-policy/cancellation-contract.md#2-separate-policy-obligations-from-wire-attempts@ (body policy) and
 -- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (closure rescue and shared loop),
--- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (backoff, recovery and cooldown).
+-- @docs/fetch-policy/cancellation-contract.md#8-checkpoint-deadlines-and-policy-reactions@ (backoff, recovery and cooldown),
+-- @docs/fetch-policy/cancellation-contract.md#agreed-coordinator-wakeups@ (unified planning and cleanup).
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   ( AtomicFetchNode
   , AtomicNodeConfig (..)
@@ -21,12 +22,12 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   , readNodeObservation
   , readNodeClosureSnapshots
   , readNodeBodySnapshots
+  , readNodeStorageSnapshot
   , readNodeClientUsage
   ) where
 
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
-import Control.Monad (foldM, forM_, forever, unless, void, when)
-import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.Monad (foldM, forM_, unless, void, when)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List (sortOn)
@@ -35,6 +36,7 @@ import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word32, Word64)
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), encodeEndorserBlockSize)
@@ -128,6 +130,8 @@ data NodeIntegrationError
   | InvalidAcquisition !AcquisitionError
   | InvalidBodyPolicy !B.BodyError
   | InvalidClosurePolicy !L.ClosureError
+  | FetchClientAlreadyRegistered
+  | UnknownFetchRegistration
   deriving (Eq, Show)
 
 instance Exception NodeIntegrationError
@@ -145,18 +149,19 @@ data AtomicFetchNode m owner peer blk = AtomicFetchNode
   -- ^ Ordinary scheduling ownership for new-version requests.
   , fetchClients :: !(StrictTVar m (Map.Map (LeiosPeerLifetimeId peer) (C.AtomicClient m owner peer)))
   -- ^ Live new-version clients only, removed by exact registration.
-  , fetchLegacy :: !(StrictTVar m (Set.Set (LeiosPeerLifetimeId peer)))
-  -- ^ Connections eligible for the existing legacy scheduler.
+  , fetchLegacy :: !(StrictTVar m (Map.Map (LeiosPeerLifetimeId peer) Natural))
+  -- ^ Legacy invocations and their non-reusable local cleanup tokens.
+  , fetchNextLegacy :: !(StrictTVar m Natural)
+  -- ^ Next invocation token; delayed cleanup cannot remove a replacement.
   , fetchGenerations :: !(StrictTVar m (Map.Map LeiosPoint (Maybe AcquisitionGeneration)))
-  -- ^ Active generation, or completed/abandoned tombstone. Never recreated by a receipt.
+  -- ^ Active generation or completed tombstone. Focus loss removes an active
+  -- generation so explicit refocus can start anew; receipts never recreate it.
   , fetchBodies :: !(StrictTVar m (B.BodyState peer (H.StorageRequest peer)))
   -- ^ Per-EB persistent primary/hedge slots and exact unresolved body originals.
   , fetchClosures :: !(StrictTVar m (L.ClosureState peer (H.StorageRequest peer)))
   -- ^ Persistent ordinary episodes, one rescue slot per EB and whole-batch debt.
-  , fetchPolicyReady :: !(W.Readiness m)
-  -- ^ Shared body/closure policy loop; ordinary legacy planning keeps its cadence.
-  , fetchReady :: !(StrictTVar m Bool)
-  -- ^ Coalesced STM-to-MVar wakeup, with no retained event queue.
+  , fetchClosing :: !(StrictTVar m Bool)
+  -- ^ Stop new planning before draining storage; final projection still runs.
   , fetchLegacyReceipts :: !(StrictTVar m Word32)
   -- ^ Node-owned legacy receipt waiters, including replies whose peer already left.
   , fetchOwnerThread :: !(ThreadId m)
@@ -173,7 +178,7 @@ readNodeObservation = readTVar . fetchObservation
 -- The legacy writer retains its own admission/validation and supplies only
 -- durable receipts to the shared acquisition, never a new-version reservation.
 withAtomicFetchNode ::
-  (IOLike m, MonadTimer m, Ord peer, Ord owner) =>
+  (IOLike m, Ord peer, Ord owner) =>
   AtomicNodeConfig ->
   LeiosFetchKernel m peer blk ->
   (AtomicFetchNode m owner peer blk -> m a) ->
@@ -183,7 +188,8 @@ withAtomicFetchNode config kernel action = do
     H.newStorageHandoff (nodeStorageLimits config) >>= either (throwIO . H.StorageException) pure
   assignments <- newOrdinaryAssignments
   clients <- uncheckedNewTVarM Map.empty
-  legacy <- uncheckedNewTVarM Set.empty
+  legacy <- uncheckedNewTVarM Map.empty
+  nextLegacy <- uncheckedNewTVarM 0
   generations <- uncheckedNewTVarM Map.empty
   bodies <- uncheckedNewTVarM B.emptyBodyState
   initialClosure <-
@@ -195,8 +201,7 @@ withAtomicFetchNode config kernel action = do
           (checkpointTargetBytes (nodeCheckpointLimits config))
       )
   closures <- uncheckedNewTVarM initialClosure
-  policyReady <- atomically W.newReadiness
-  ready <- uncheckedNewTVarM False
+  closing <- uncheckedNewTVarM False
   observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
   legacyReceipts <- uncheckedNewTVarM 0
   ownerThread <- myThreadId
@@ -208,16 +213,23 @@ withAtomicFetchNode config kernel action = do
           assignments
           clients
           legacy
+          nextLegacy
           generations
           bodies
           closures
-          policyReady
-          ready
+          closing
           legacyReceipts
           ownerThread
           observation
       context = lfkContext kernel
-      extension = LeiosFetchExtension (decide node) (prune node) (removePeer node) (bridgeContext node)
+      extension =
+        LeiosFetchExtension
+          { extensionDecide = decide node
+          , extensionNextDeadline = nextPolicyDeadline node
+          , extensionPrune = prune node
+          , extensionRemovePeer = removePeer node
+          , extensionLegacyContext = bridgeContext node
+          }
       install = modifyMVar_ (lfcOutstanding context) $ \outstanding -> do
         atomically $ do
           current <- readTVar (lfkExtension kernel)
@@ -225,24 +237,23 @@ withAtomicFetchNode config kernel action = do
           peers <- readTVar (lfkPeers kernel)
           unless (Map.null peers) (throwSTM PeersAlreadyRunning)
           writeTVar (lfkExtension kernel) (Just extension)
+          wake node
         pure outstanding
-      uninstall = modifyMVar_ (lfcOutstanding context) $ \outstanding -> do
-        atomically $ do
-          peers <- readTVar (lfkPeers kernel)
-          unless (Map.null peers) (throwSTM PeersAlreadyRunning)
-          writeTVar (lfkExtension kernel) Nothing
-        pure outstanding
-      wakeLoop = forever $ do
-        atomically $ do
-          readTVar ready >>= check
-          writeTVar ready False
-        void $ tryPutMVar (lfcReady context) ()
+      uninstall = modifyMVar_ (lfcOutstanding context) $ \outstanding -> atomically $ do
+        peers <- readTVar (lfkPeers kernel)
+        unless (Map.null peers) (throwSTM PeersAlreadyRunning)
+        -- The worker has drained. Project its final durable receipts even if
+        -- the coordinator did not get another turn before scope release.
+        shared <- projectKnown node outstanding
+        writeTVar (lfkExtension kernel) Nothing
+        wake node
+        pure shared
+      finish = do
+        atomically $ writeTVar closing True >> wake node
+        atomically (readTVar legacyReceipts >>= check . (== 0))
   bracket_ install uninstall $
     H.withStorageHandoff handoff (lfcWriter context) (storageEvent node) $ \_ ->
-      withAsync wakeLoop $ \_ ->
-        withAsync (policyCoordinator node) $ \policyWorker -> do
-          link policyWorker
-          action node `finally` atomically (readTVar legacyReceipts >>= check . (== 0))
+      action node `finally` finish
 
 -- | Register one actual new-version client with its frozen D and one captured
 -- connection-scoped RTT reader. The caller joins the interpreter in the action.
@@ -269,6 +280,12 @@ withNodeAtomicClient node owner lifetime d rtt action =
     $ \client ->
       bracket_
         ( atomically $ do
+            ensureRegistration node lifetime
+            clients <- readTVar (fetchClients node)
+            legacy <- readTVar (fetchLegacy node)
+            when
+              (Map.member lifetime clients || Map.member lifetime legacy)
+              (throwSTM FetchClientAlreadyRegistered)
             modifyTVar (fetchClients node) (Map.insert lifetime client)
             observe node $ \s ->
               s
@@ -282,7 +299,7 @@ withNodeAtomicClient node owner lifetime d rtt action =
                 }
             wake node
         )
-        (atomically (removePeer node lifetime))
+        (atomically (removeAtomicClient node lifetime client))
         (action client)
  where
   config = fetchConfig node
@@ -341,17 +358,73 @@ withNodeAtomicClient node owner lifetime d rtt action =
 -- scheduling. A Notify-only registration is not mistaken for a legacy fetcher.
 withNodeLegacyClient ::
   (IOLike m, Ord peer) => AtomicFetchNode m owner peer blk -> LeiosPeerLifetimeId peer -> m a -> m a
-withNodeLegacyClient node lifetime =
-  bracket_
-    ( atomically $ do
-        modifyTVar (fetchLegacy node) (Set.insert lifetime)
-        observe node $ \s -> s{observedLegacyConnections = inc (observedLegacyConnections s)}
-        wake node
-    )
-    (atomically (removePeer node lifetime))
+withNodeLegacyClient node lifetime action = bracket register unregister (const action)
+ where
+  register = atomically $ do
+    ensureRegistration node lifetime
+    clients <- readTVar (fetchClients node)
+    legacy <- readTVar (fetchLegacy node)
+    when
+      (Map.member lifetime clients || Map.member lifetime legacy)
+      (throwSTM FetchClientAlreadyRegistered)
+    token <- readTVar (fetchNextLegacy node)
+    writeTVar (fetchNextLegacy node) (token + 1)
+    writeTVar (fetchLegacy node) (Map.insert lifetime token legacy)
+    observe node $ \s -> s{observedLegacyConnections = inc (observedLegacyConnections s)}
+    wake node
+    pure token
+  unregister token = atomically $ do
+    current <- readTVar (fetchLegacy node)
+    when (Map.lookup lifetime current == Just token) (removePeer node lifetime)
 
+-- | All participants signal the kernel's one coalescing STM readiness cell.
 wake :: MonadSTM m => AtomicFetchNode m owner peer blk -> STM m ()
-wake node = writeTVar (fetchReady node) True >> W.notifyReadiness (fetchPolicyReady node)
+wake node = W.notifyReadiness (lfcReady (lfkContext (fetchKernel node)))
+
+-- | Reject a late client start after Notify/the connection retired its exact
+-- registration. Opening a storage session does not itself register a peer.
+ensureRegistration ::
+  (IOLike m, Ord peer) => AtomicFetchNode m owner peer blk -> LeiosPeerLifetimeId peer -> STM m ()
+ensureRegistration node lifetime = do
+  peers <- readTVar (lfkPeers (fetchKernel node))
+  unless (Map.member lifetime peers) (throwSTM UnknownFetchRegistration)
+  readTVar (fetchClosing node) >>= \closing -> when closing (throwSTM UnknownFetchRegistration)
+
+-- | An old invocation's finalizer owns only its captured storage session.
+removeAtomicClient ::
+  (IOLike m, Ord peer) =>
+  AtomicFetchNode m owner peer blk ->
+  LeiosPeerLifetimeId peer ->
+  C.AtomicClient m owner peer ->
+  STM m ()
+removeAtomicClient node lifetime original = do
+  clients <- readTVar (fetchClients node)
+  forM_ (Map.lookup lifetime clients) $ \current ->
+    when
+      ( H.storageSessionIdentity (C.clientStorageSession current)
+          == H.storageSessionIdentity (C.clientStorageSession original)
+      )
+      $ removePeer node lifetime
+
+-- | Publish the last shared possession view under the outstanding lock. No
+-- request allocation, DB access or wire publication belongs to shutdown.
+projectKnown ::
+  IOLike m =>
+  AtomicFetchNode m owner peer blk ->
+  LeiosOutstanding (LeiosPeerLifetimeId peer) ->
+  STM m (LeiosOutstanding (LeiosPeerLifetimeId peer))
+projectKnown node outstanding = do
+  generations <- readTVar (fetchGenerations node)
+  foldM project outstanding (Map.toList generations)
+ where
+  project state (point, Just gen) = do
+    current <- H.readAcquisition (fetchHandoff node) point
+    pure $ case current of
+      Just snapshot
+        | H.snapshotGeneration snapshot == gen ->
+            projectAcquisition (lfcStaticEnv (lfkContext (fetchKernel node))) point gen snapshot state
+      _ -> state
+  project state (_, Nothing) = pure state
 
 observe ::
   MonadSTM m => AtomicFetchNode m owner peer blk -> (NodeObservation -> NodeObservation) -> STM m ()
@@ -376,7 +449,7 @@ removePeer node lifetime = do
   clients <- readTVar (fetchClients node)
   forM_ (Map.lookup lifetime clients) C.closeAtomicClient
   modifyTVar (fetchClients node) (Map.delete lifetime)
-  modifyTVar (fetchLegacy node) (Set.delete lifetime)
+  modifyTVar (fetchLegacy node) (Map.delete lifetime)
   modifyTVar (fetchBodies node) (B.removeBodyPeer lifetime)
   modifyTVar (fetchClosures node) (L.removeClosurePeer lifetime)
   releasePeerAssignments (fetchAssignments node) lifetime
@@ -423,26 +496,33 @@ decide ::
     , Map.Map (LeiosPeerLifetimeId peer) (Map.Map LeiosPoint PeerOffer)
     )
 decide node now bounds horizon peers offers outstanding = atomically $ do
+  closing <- readTVar (fetchClosing node)
   active <- readTVar (fetchGenerations node)
   shared <-
-    foldM synchronize outstanding (Set.toAscList (Set.union (Map.keysSet active) (Set.fromList points)))
-  driveBodies node now peers offers shared
-  driveClosure node now peers offers shared
-  clients <- readTVar (fetchClients node)
-  times <- traverse (readTVar . lfpOfferTimes) peers
-  forM_ ordered $ \point -> do
-    generations <- readTVar (fetchGenerations node)
-    forM_ (Map.lookup point generations >>= id) $ \gen -> do
-      current <- H.readAcquisition (fetchHandoff node) point
-      forM_ current $ \snapshot -> when (H.snapshotBodyDurable snapshot) $ do
-        closure <- readTVar (fetchClosures node)
-        forM_ (closureCandidates closure times clients point) $
-          \(client, offer) -> fill shared point gen client offer
+    foldM
+      (synchronize closing)
+      outstanding
+      (Set.toAscList (Set.union (Map.keysSet active) (Set.fromList points)))
+  unless closing $ do
+    driveBodies node now peers offers shared
+    driveClosure node now peers offers shared
+    clients <- readTVar (fetchClients node)
+    times <- traverse (readTVar . lfpOfferTimes) peers
+    forM_ ordered $ \point -> do
+      generations <- readTVar (fetchGenerations node)
+      forM_ (Map.lookup point generations >>= id) $ \gen -> do
+        current <- H.readAcquisition (fetchHandoff node) point
+        forM_ current $ \snapshot -> when (H.snapshotBodyDurable snapshot) $ do
+          closure <- readTVar (fetchClosures node)
+          forM_ (closureCandidates closure times clients point) $
+            \(client, offer) -> fill shared point gen client offer
   legacy <- readTVar (fetchLegacy node)
   bodyClaims <- readTVar (fetchBodies node)
   pure
     ( shared
-    , Map.map (Map.mapMaybeWithKey (withoutClaimedBody bodyClaims)) (Map.restrictKeys offers legacy)
+    , Map.map
+        (Map.mapMaybeWithKey (withoutClaimedBody bodyClaims))
+        (Map.restrictKeys offers (if closing then Set.empty else Map.keysSet legacy))
     )
  where
   config = fetchConfig node
@@ -457,10 +537,15 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
   needs (BodyAcquired pool) = not (Jobs.nullLeiosJobPool pool)
   (high, low) = fetchPriorityTiers horizon [(pointSlotNo p, p) | p <- points]
   ordered = high ++ low
-  synchronize state point = do
+  synchronize closing state point = do
     generations <- readTVar (fetchGenerations node)
     case Map.lookup point generations of
+      Just (Just gen) | not (Map.member point (ebState state) && isFocusedPoint point state) -> do
+        retire node point gen
+        modifyTVar (fetchGenerations node) (Map.delete point)
+        pure state
       Just Nothing -> pure state
+      Nothing | closing -> pure state
       previous -> do
         gen <- case previous of
           Just (Just g) -> pure (Just g)
@@ -472,10 +557,11 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
         case gen of
           Nothing -> pure state
           Just g -> do
-            modifyTVar (fetchClosures node) (L.ensureClosureAcquisition point g)
-            previousBody <- readTVar (fetchBodies node)
-            let updatedBody = B.ensureBodyAcquisition point g (bounds (pointSlotNo point)) previousBody
-            when (updatedBody /= previousBody) $ writeTVar (fetchBodies node) updatedBody >> wake node
+            unless closing $ do
+              modifyTVar (fetchClosures node) (L.ensureClosureAcquisition point g)
+              previousBody <- readTVar (fetchBodies node)
+              let updatedBody = B.ensureBodyAcquisition point g (bounds (pointSlotNo point)) previousBody
+              when (updatedBody /= previousBody) $ writeTVar (fetchBodies node) updatedBody >> wake node
             current <- H.readAcquisition handoff point
             case current of
               Nothing -> throwSTM (H.StorageException H.UnknownAcquisition)
@@ -498,6 +584,7 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
           [ (L.closureFailures lifetime closure, at, lifetime, client, offer)
           | (lifetime, client) <- Map.toAscList clients
           , Just offer <- [Map.lookup lifetime offers >>= Map.lookup point]
+          , case poOffered offer of OfferedBody{} -> False; _ -> True
           , Just at <- [Map.lookup lifetime times >>= Map.lookup point >>= closureOfferTime]
           ]
     ]
@@ -651,33 +738,27 @@ readNodeClientUsage ::
   STM m (Map.Map (LeiosPeerLifetimeId peer) (Either H.StorageError A.Usage))
 readNodeClientUsage node = readTVar (fetchClients node) >>= traverse C.readClientUsage
 
--- | Body/closure timers and cooldowns are independent of the throttled legacy
--- decision loop. Reuse
--- the common cancellable readiness/deadline/fallback wait, and hold the existing
--- outstanding lock while assigning so prune/focus/removal cannot race admission.
-policyCoordinator ::
-  (IOLike m, MonadTimer m, Ord owner, Ord peer) => AtomicFetchNode m owner peer blk -> m ()
-policyCoordinator node = forever $ do
-  now <- getMonotonicTime
-  deadline <- withMVar (lfcOutstanding (lfkContext kernel)) $ \outstanding -> atomically $ do
-    peers <- readTVar (lfkPeers kernel)
-    offers <- traverse (readTVar . lfpOfferings) peers
-    driveBodies node now peers offers outstanding
-    driveClosure node now peers offers outstanding
-    clients <- readTVar (fetchClients node)
-    snapshots <- traverse C.readClientSnapshot clients
-    closure <- readTVar (fetchClosures node)
-    let cooldown = L.nextClosureRetryDeadline now closure
-    pure $ case mapMaybe
-      id
-      (cooldown : map (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots)) of
-      [] -> Nothing
-      due -> Just (minimum due)
-  void $ W.waitForWakeup (fetchPolicyReady node) deadline
- where
-  kernel = fetchKernel node
+-- | Read-only deadline contribution to the kernel coordinator. An old scope
+-- can be observed while its wake is in flight; closing scopes expose no timers.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-coordinator-wakeups@.
+nextPolicyDeadline ::
+  IOLike m => AtomicFetchNode m owner peer blk -> Time -> STM m (Maybe Time)
+nextPolicyDeadline node now = do
+  closing <- readTVar (fetchClosing node)
+  if closing
+    then pure Nothing
+    else do
+      clients <- readTVar (fetchClients node)
+      snapshots <- traverse C.readClientSnapshot clients
+      closure <- readTVar (fetchClosures node)
+      let cooldown = L.nextClosureRetryDeadline now closure
+      pure $ case mapMaybe
+        id
+        (cooldown : map (fmap snd . T.nextDeadline . C.snapshotClientTiming) (Map.elems snapshots)) of
+        [] -> Nothing
+        due -> Just (minimum due)
 
--- | Shared by the normal pass and the policy deadline loop. Never change an
+-- | Run only by the kernel coordinator. Never change an
 -- admitted timer snapshot, and process verified winners before issuing cancels.
 driveBodies ::
   (IOLike m, Ord owner, Ord peer) =>
@@ -874,7 +955,7 @@ closureClientFor clients (RequestKey lifetime token _) = do
     then Just client
     else Nothing
 
--- | One coordinator drives bodies and closure policy under the kernel lock.
+-- | The kernel coordinator drives bodies and closure policy under its lock.
 -- Rescue uses only idle eligible pipelines; productive handoff may append to a
 -- healthy pipeline, preserving the existing order. E18 adds adaptive retry.
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-liveness-rule-for-an-unfinished-data-reply@.
@@ -1021,3 +1102,8 @@ driveClosure node now peers offers outstanding = do
               `catch` (\(e :: C.ClientError) -> if clientCapacity e then pure False else throwSTM e)
         _ -> pure False
     when issued (transfer clients)
+
+-- | Count live and draining storage ownership, including closed peer sessions.
+-- This read-only view retains no payload/event history and starts no work.
+readNodeStorageSnapshot :: MonadSTM m => AtomicFetchNode m owner peer blk -> STM m H.StorageSnapshot
+readNodeStorageSnapshot = H.readStorageSnapshot . fetchHandoff

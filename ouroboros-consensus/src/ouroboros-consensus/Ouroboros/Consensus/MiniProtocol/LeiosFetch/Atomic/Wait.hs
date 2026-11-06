@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait
   ( Readiness
   , newReadiness
+  , awaitReadiness
   , notifyReadiness
   , WakeReason (..)
   , Wakeup (..)
@@ -35,6 +36,14 @@ newtype Readiness m = Readiness (StrictTVar m Bool)
 -- and is reused across successive coordinator waits.
 newReadiness :: MonadSTM m => STM m (Readiness m)
 newReadiness = Readiness <$> newTVar False
+
+-- | Park until a signal is present, then consume it atomically. The standalone
+-- legacy coordinator uses this without an idle timer; signals published after
+-- this transaction remain pending for the next pass.
+awaitReadiness :: MonadSTM m => Readiness m -> STM m ()
+awaitReadiness (Readiness ready) = do
+  readTVar ready >>= check
+  writeTVar ready False
 
 -- | Publish readiness without accumulating one wake per notification. Signal
 -- changes to the selected deadline/cooldown as well as newly available data.

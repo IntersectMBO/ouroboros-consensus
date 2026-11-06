@@ -34,6 +34,7 @@ tests =
   testGroup
     "atomic wait"
     [ testCase "readiness at 100ms wakes before the deadline and fallback" testReadiness
+    , testCase "legacy parking consumes readiness without an idle timer" testLegacyPark
     , testCase "deadline at 150ms wakes before the idle fallback" testDeadline
     , testCase "idle fallback wakes at 500ms in SI seconds" testFallback
     , testCase "a distant deadline arms only the bounded idle fallback" testDistantDeadline
@@ -275,3 +276,17 @@ propReadyTimes = forAll (chooseInt (1, 499)) $ \millis ->
         ready <- atomically newReadiness
         withAsync (notifyAfter ready delay) $ \_ -> observedWait ready Nothing
    in counterexample (show result) $ property (result == (Time delay, Wakeup ReadinessWake True))
+
+testLegacyPark :: Assertion
+testLegacyPark = do
+  let simulation = labeled $ do
+        ready <- atomically newReadiness
+        withAsync (notifyAfter ready 0.1) $ \_ -> do
+          atomically (awaitReadiness ready)
+          now <- getMonotonicTime
+          atomically (notifyReadiness ready)
+          wakeup <- waitForWakeup ready Nothing
+          pure (now, wakeup)
+  runSimOrThrow simulation @?= (at 0.1, Wakeup ReadinessWake True)
+  let created = [() | (_, _, Just "fetch-wait", EventTimerCreated{}) <- traceEvents (runSimTrace simulation)]
+  created @?= []

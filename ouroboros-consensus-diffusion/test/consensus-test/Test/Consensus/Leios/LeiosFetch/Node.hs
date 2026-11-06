@@ -16,7 +16,7 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM, forM_, replicateM, replicateM_, unless, void, when)
-import Control.Monad.Class.MonadAsync (withAsync)
+import Control.Monad.Class.MonadAsync (wait, withAsync)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), addTime, diffTime, getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
@@ -104,6 +104,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as Ret
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server as AtomicServer
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State as AtomicServerState
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type as Atomic
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait as FetchWait
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , LeiosFetchClientContext (..)
@@ -115,7 +116,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity (WireOrdinal (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
-  ( LeiosFetchKernel (..)
+  ( LeiosFetchExtension (..)
+  , LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
   , LeiosPeerLifetimeId (..)
   , recordLeiosOffer
@@ -175,7 +177,7 @@ import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
+  ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
@@ -317,6 +319,27 @@ tests =
                     (IOLike.ExceptionInLinkedThread "test" (toException AtomicClient.ClientBodySizeMisstated))
                 ]
               classify (toException (Handoff.StorageException Handoff.InvalidDescriptor)) @?= "ShutdownNode"
+        ]
+    , testGroup
+        "shared fetch coordinator"
+        [ testCase "atomic ordinary requests start promptly after body durability" $
+            runSimFinishing (coordinatorAssignment True) >>= (@?= True)
+        , testCase "fast wakes preserve the half-second legacy scheduling gate" $
+            runSimFinishing (coordinatorAssignment False) >>= (@?= True)
+        , testCase "readiness flooding cannot starve a body trigger deadline" $
+            runSimFinishing coordinatorReadinessFlood >>= (@?= True)
+        , testCase "an old atomic finalizer cannot close a replacement invocation" $
+            runSimFinishing (coordinatorClientCleanup False) >>= (@?= True)
+        , testCase "an old legacy finalizer cannot close a replacement atomic invocation" $
+            runSimFinishing (coordinatorClientCleanup True) >>= (@?= True)
+        , testCase "explicit focus loss frees the arena and refocus fences a committed old body" $
+            runSimFinishing coordinatorFocusRefocus >>= (@?= True)
+        , testCase "immutable-tip pruning frees the old acquisition in a single-arena atomic node" $
+            runSimFinishing coordinatorPrunes >>= (@?= True)
+        , testCase "same-address reconnect retains a writing claim until durable receipt" $
+            runSimFinishing coordinatorReconnectStorage >>= (@?= True)
+        , testCase "node shutdown drains a disconnected peer's accepted storage" $
+            runSimFinishing coordinatorShutdownStorage >>= (@?= True)
         ]
     , testGroup
         "closure rescue over connections"
@@ -2554,4 +2577,326 @@ closureCooldownIndependent = do
       ensure
         (observedBodyRequests observation == 2 && observedClosureFailures observation == 1)
         (show observation)
+      pure True
+
+-- The response is released 50 ms after its request. Atomic assignment must react
+-- to durability promptly; the same stimulus must leave legacy cadence intact.
+coordinatorAssignment :: forall s. Bool -> IOSim s Bool
+coordinatorAssignment atomic = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    bodyAt <- newEmptyTMVarIO
+    txAt <- newEmptyTMVarIO
+    release <- newTVarIO False
+    let bodyReady = do
+          now <- getMonotonicTime
+          atomically $ putTMVar bodyAt now
+          atomically $ readTVar release >>= check
+        txReady = do
+          now <- getMonotonicTime
+          atomically $ void (tryPutTMVar txAt now)
+        newProvider :: AtomicServer.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx (IOSim s)
+        newProvider = AtomicServer.AtomicRequestHandler $ \case
+          AtomicServer.ServeBody _ _ -> bodyReady >> pure (AtomicServer.PreparedBody (encodeEndorserBlockSize fetchedEb) fetchedEb)
+          AtomicServer.ServeTransactions _ _ bitmaps -> do
+            txReady
+            let txs = V.fromList [fetchedTxs V.! off | off <- bitmapOffsets (NE.toList bitmaps)]
+            pure (AtomicServer.PreparedTransactions (fromIntegral (V.length txs) * 103 + 8) txs)
+        oldProvider = MkLeiosFetchRequestHandler $ \request -> do
+          (case request of MsgLeiosBlockRequest{} -> bodyReady; MsgLeiosBlockTxsRequest{} -> txReady) ::
+            IOSim s ()
+          case serveEb fetchedEb fetchedTxs of { MkLeiosFetchRequestHandler serve -> serve request }
+        oldServer channel =
+          void $
+            runAnnotatedPeer nullTracer (envLeiosFetchCodec node) channel (leiosFetchServerPeer oldProvider)
+        peer =
+          EnvPeer
+            (feedingLeiosNotifyServer node offers)
+            Nothing
+            (if atomic then bodyServing newProvider id else oldServer)
+            Nothing
+        connect = if atomic then withNodeVsEnvConnection else withNodeVsEnvConnectionVersion NodeToNodeV_16
+    connect node (PeerAddr 1) peer $ \_ -> do
+      atomically $ mapM_ (writeTQueue offers) (announcingAndOffering fetchedEb announcingFetched)
+      started <- atomically (readTMVar bodyAt)
+      threadDelay 0.05
+      atomically $ writeTVar release True
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      requested <- atomically (readTMVar txAt)
+      let elapsed = diffTime requested started
+      ensure
+        (if atomic then elapsed < 0.2 else elapsed >= 0.5 && elapsed < 0.7)
+        ("unexpected assignment latency: " ++ show elapsed)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      pure True
+
+coordinatorReadinessFlood :: IOSim s Bool
+coordinatorReadinessFlood = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    a <- newTQueueIO
+    b <- newTQueueIO
+    logVar <- newTVarIO []
+    let upstream queue addr delay =
+          EnvPeer
+            (feedingLeiosNotifyServer node queue)
+            Nothing
+            (bodyServing (bodyProvider logVar addr delay) id)
+            Nothing
+        ready = lfcReady (lfkContext (getLeiosFetchKernel (nodeKernel node)))
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream a (PeerAddr 1) Nothing) $ \_ ->
+      withNodeVsEnvConnection node (PeerAddr 2) (upstream b (PeerAddr 2) (Just 0)) $ \_ -> do
+        bodyOffer node a
+        seen <- waitBodyRequests 1 logVar
+        bodyOffer node b
+        withAsync (replicateM_ 150 (threadDelay 0.01 >> atomically (FetchWait.notifyReadiness ready))) $ \_ -> do
+          awaitAcquired next (AcquiredBody fetchedPoint)
+          now <- getMonotonicTime
+          ensure (diffTime now (snd (head seen)) <= 1.05) "readiness traffic postponed the body deadline"
+          observation <- atomicObservation node
+          pure (observedBodyTriggers observation == 1 && observedBodyHedges observation == 1)
+
+coordinatorClientCleanup :: forall s. Bool -> IOSim s Bool
+coordinatorClientCleanup oldLegacy = do
+  db <- newLeiosDBInMemory
+  withAtomicNodeOver atomicNodeConfig db $ \node -> case nodeAtomicFetch node of
+    Nothing -> throwIO (userError "atomic runtime missing")
+    Just runtime -> do
+      let kernel = getLeiosFetchKernel (nodeKernel node)
+          conn = ConnectionId (PeerAddr 0) (PeerAddr 99)
+      withLeiosFetchPeer kernel conn IsNotBigLedgerPeer $ \lifetime _ -> do
+        entered <- newEmptyTMVarIO
+        release <- newEmptyTMVarIO
+        let oldAction = atomically (putTMVar entered ()) >> atomically (readTMVar release)
+            oldScope =
+              if oldLegacy
+                then withNodeLegacyClient runtime lifetime oldAction
+                else withNodeAtomicClient runtime (PeerAddr 99) lifetime 64 Nothing (const oldAction)
+        withAsync oldScope $ \old -> do
+          atomically (readTMVar entered)
+          duplicate <- try (withNodeAtomicClient runtime (PeerAddr 99) lifetime 64 Nothing (const (pure ())))
+          ensure
+            (case duplicate of Left FetchClientAlreadyRegistered -> True; _ -> False)
+            "overlapping client was not rejected"
+          atomically $ do
+            extension <- IOLike.readTVar (lfkExtension kernel)
+            maybe (throwSTM (userError "extension missing")) (\e -> extensionRemovePeer e lifetime) extension
+          withNodeAtomicClient runtime (PeerAddr 99) lifetime 64 Nothing $ \fresh -> do
+            atomically $ putTMVar release ()
+            wait old
+            state <- atomically (AtomicClient.readClientSnapshot fresh)
+            ensure (not (AtomicClient.snapshotClientClosed state)) "old finalizer closed its replacement"
+            usage <- atomically (readNodeClientUsage runtime)
+            ensure (Map.size usage == 1) "old finalizer removed the replacement registration"
+            pure True
+
+coordinatorFocusRefocus :: IOSim s Bool
+coordinatorFocusRefocus = do
+  db <- newLeiosDBInMemory
+  let config =
+        atomicNodeConfig
+          { nodeStorageLimits = (nodeStorageLimits atomicNodeConfig){Handoff.storageMaxAcquisitions = 1}
+          }
+  withAtomicNodeOver config db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    a <- newTQueueIO
+    b <- newTQueueIO
+    logVar <- newTVarIO []
+    sends <- newTVarIO 0
+    releaseBody <- newTVarIO False
+    releaseAck <- newTVarIO True
+    let kernel = getLeiosFetchKernel (nodeKernel node)
+        context = lfkContext kernel
+        upstream queue addr adjust =
+          EnvPeer
+            (feedingLeiosNotifyServer node queue)
+            Nothing
+            (bodyServing (bodyProvider logVar addr (Just 0)) adjust)
+            Nothing
+    withNodeVsEnvConnection
+      node
+      (PeerAddr 1)
+      (upstream a (PeerAddr 1) (committedBodyChannel sends releaseBody releaseAck))
+      $ \_ ->
+        withNodeVsEnvConnection node (PeerAddr 2) (upstream b (PeerAddr 2) id) $ \_ -> do
+          bodyOffer node a
+          void (waitBodyRequests 1 logVar)
+          atomically $ readTVar sends >>= check . (>= 1)
+          original <- bodySnapshotOf node
+          focused <- IOLike.modifyMVar (lfcOutstanding context) $ \state -> do
+            atomically $ FetchWait.notifyReadiness (lfcReady context)
+            pure (state{elFocus = Map.empty}, elFocus state)
+          atomically $ case nodeAtomicFetch node of
+            Nothing -> retry
+            Just runtime -> readNodeBodySnapshots runtime >>= check . Map.notMember fetchedPoint
+          IOLike.modifyMVar_ (lfcOutstanding context) $ \state -> do
+            atomically $ FetchWait.notifyReadiness (lfcReady context)
+            pure state{elFocus = focused}
+          bodyOffer node b
+          awaitAcquired next (AcquiredBody fetchedPoint)
+          replacement <- bodySnapshotOf node
+          ensure
+            (BodyPolicy.bodyGeneration replacement /= BodyPolicy.bodyGeneration original)
+            "refocus reused the old acquisition generation"
+          atomically $ writeTVar releaseBody True
+          atomically $ case nodeAtomicFetch node of
+            Nothing -> retry
+            Just runtime -> do
+              usages <- readNodeClientUsage runtime
+              check
+                ( all
+                    (\u -> case u of Right x -> Admission.usedData x == 0 && Admission.usedExchanges x == 0; _ -> False)
+                    (Map.elems usages)
+                )
+          duplicate <- timeout 0.1 (atomically next)
+          ensure
+            (case duplicate of Nothing -> True; _ -> False)
+            "old generation emitted a duplicate acquisition"
+          final <- bodySnapshotOf node
+          pure
+            ( BodyPolicy.bodyGeneration final == BodyPolicy.bodyGeneration replacement
+                && BodyPolicy.bodyFulfilled final
+            )
+
+-- Exercise the real immutable-tip pruner. Before pruning the earlier point
+-- occupies the only arena, so the later point must wait for its retirement.
+coordinatorPrunes :: IOSim s Bool
+coordinatorPrunes = do
+  db <- newLeiosDBInMemory
+  serverDb <- newLeiosDBInMemory
+  fillLeiosDb serverDb refocusedPoint fetchedEb fetchedTxs
+  let config =
+        atomicNodeConfig
+          { nodeStorageLimits = (nodeStorageLimits atomicNodeConfig){Handoff.storageMaxAcquisitions = 1}
+          }
+  withAtomicNodeOver config db $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    offers <- newTQueueIO
+    let upstream = EnvPeer (feedingLeiosNotifyServer node offers) Nothing (atomicServing serverDb) Nothing
+    -- Let these chain blocks' slots pass so none is from the future.
+    threadDelay 20
+    withNodeVsEnvConnection node (PeerAddr 1) upstream $ \_ -> do
+      atomically $
+        mapM_
+          (writeTQueue offers . MsgLeiosBlockAnnouncement . ltbHeader)
+          [announcingFetched, reannouncingFetched]
+      atomically $ case nodeAtomicFetch node of
+        Nothing -> retry
+        Just runtime -> do
+          bodies <- readNodeBodySnapshots runtime
+          check (Map.member fetchedPoint bodies && Map.notMember refocusedPoint bodies)
+      addBlocks node $ announcingFetched : take 11 (iterate successorLeiosBlock reannouncingFetched)
+      awaitPrunedPast node (blockSlot announcingFetched)
+      atomically $
+        mapM_
+          (writeTQueue offers)
+          [ MsgLeiosBlockOffer refocusedPoint (encodeEndorserBlockSize fetchedEb)
+          , MsgLeiosBlockTxsOffer refocusedPoint
+          ]
+      awaitAcquired next (AcquiredBody refocusedPoint)
+      awaitAcquired next (AcquiredClosure refocusedPoint)
+      checkStored node refocusedPoint fetchedEb fetchedTxs
+      pure True
+
+-- Hold a real writer receipt after submission. The raw DB may already contain
+-- the bytes, but possession/notification and the reservation await this gate.
+holdBodyReceipt ::
+  LeiosDbHandle (IOSim s) ->
+  StrictTVar (IOSim s) Bool ->
+  StrictTVar (IOSim s) Bool ->
+  LeiosDbHandle (IOSim s)
+holdBodyReceipt db entered release =
+  db
+    { openWriter = do
+        writer <- openWriter db
+        pure
+          writer
+            { writeEbBody = \point body -> do
+                promise <- writeEbBody writer point body
+                atomically $ writeTVar entered True
+                pure (Promise (atomically (readTVar release >>= check) >> await promise))
+            }
+    }
+
+coordinatorReconnectStorage :: IOSim s Bool
+coordinatorReconnectStorage = do
+  db <- newLeiosDBInMemory
+  submitted <- newTVarIO False
+  release <- newTVarIO False
+  withAtomicNodeOver atomicNodeConfig (holdBodyReceipt db submitted release) $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    serverDb <- newLeiosDBInMemory
+    fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
+    a <- newTQueueIO
+    b <- newTQueueIO
+    let upstream queue = EnvPeer (feedingLeiosNotifyServer node queue) Nothing (atomicServing serverDb) Nothing
+        snapshot = case nodeAtomicFetch node of
+          Nothing -> throwSTM (userError "runtime missing")
+          Just runtime -> readNodeStorageSnapshot runtime
+    old <- withNodeVsEnvConnection node (PeerAddr 1) (upstream a) $ \_ -> do
+      bodyOffer node a
+      atomically $ readTVar submitted >>= check
+      atomically $ case nodeAtomicFetch node of
+        Nothing -> retry
+        Just runtime -> Map.keys <$> readNodeClientUsage runtime
+    drained <- atomically snapshot
+    ensure
+      (Handoff.snapshotDrainingSessions drained == 1 && Handoff.snapshotClaims drained == 1)
+      "disconnect refunded a writing body"
+    withNodeVsEnvConnection node (PeerAddr 1) (upstream b) $ \_ -> do
+      bodyOffer node b
+      fresh <- atomically $ case nodeAtomicFetch node of
+        Nothing -> retry
+        Just runtime -> do
+          usage <- readNodeClientUsage runtime
+          check (not (Map.null usage))
+          pure (Map.keys usage)
+      ensure (old /= fresh) "same-address reconnect reused the peer lifetime"
+      both <- atomically snapshot
+      ensure
+        (Handoff.snapshotSessions both == 2 && Handoff.snapshotDrainingSessions both == 1)
+        "old storage debt was not retained beside the new session"
+      atomically $ writeTVar release True
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      atomically $ writeTQueue b (MsgLeiosBlockTxsOffer fetchedPoint)
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      settled <- atomically snapshot
+      ensure (Handoff.snapshotDrainingSessions settled == 0) "settled old session remained charged"
+      observation <- atomicObservation node
+      pure (observedAtomicConnections observation == 2 && observedBodyRequests observation == 1)
+
+coordinatorShutdownStorage :: IOSim s Bool
+coordinatorShutdownStorage = do
+  db <- newLeiosDBInMemory
+  submitted <- newTVarIO False
+  release <- newTVarIO False
+  scopeEnding <- newEmptyTMVarIO
+  withAsync
+    ( withAtomicNodeOver atomicNodeConfig (holdBodyReceipt db submitted release) $ \node -> do
+        offers <- newTQueueIO
+        logVar <- newTVarIO []
+        let upstream =
+              EnvPeer
+                (feedingLeiosNotifyServer node offers)
+                Nothing
+                (bodyServing (bodyProvider logVar (PeerAddr 1) (Just 0)) id)
+                Nothing
+        withNodeVsEnvConnection node (PeerAddr 1) upstream $ \_ -> do
+          bodyOffer node offers
+          atomically $ readTVar submitted >>= check
+        atomically $ putTMVar scopeEnding ()
+    )
+    $ \task -> do
+      atomically (readTMVar scopeEnding)
+      early <- timeout 0.05 (wait task)
+      ensure (case early of Nothing -> True; _ -> False) "shutdown abandoned an accepted storage write"
+      atomically $ writeTVar release True
+      wait task
+      withReader db $ \reader -> do
+        body <- lookupEbBody reader fetchedPoint
+        ensure (body == Just (endorserBlockBytes fetchedEb)) "drained body was not durable"
       pure True

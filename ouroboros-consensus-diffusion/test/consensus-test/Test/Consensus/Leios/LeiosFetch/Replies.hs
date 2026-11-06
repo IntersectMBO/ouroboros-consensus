@@ -50,6 +50,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , mkEndorserBlock
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , LeiosFetchClientContext (..)
@@ -83,8 +84,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , Promise (..)
   , TxWriteReceipt (..)
   )
-import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar, takeMVar)
-import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, uncheckedNewMVar)
+import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar)
+import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
 import Test.Tasty (TestTree, testGroup)
@@ -160,7 +161,7 @@ newContextGated point gate = do
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
         recordReferencedPoint point SNothing $
           emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
-  ready <- uncheckedNewEmptyMVar
+  ready <- atomically W.newReadiness
   notes <- newTVarIO []
   let note = \case
         AcquiredEb p _bodySize -> AcquiredBody p
@@ -366,12 +367,12 @@ test_prunedWhileWriting = do
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   -- What 'processLeiosBlock' itself signals, so that what is left to await is
   -- the body's settlement.
-  takeMVar (lfcReady ctx)
+  atomically (W.awaitReadiness (lfcReady ctx))
   modifyMVar_ (lfcOutstanding ctx) $ pure . snd . pruneOutstandingToImmTip (SlotNo 6)
   modifyMVar_ (lfcOutstanding ctx) $
     pure . recordReferencedPoint newer SNothing
   atomically $ putTMVar written ()
-  Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
+  Timeout.timeout 5000000 (atomically (W.awaitReadiness (lfcReady ctx)))
     >>= maybe (assertFailure "timed out waiting for the body to settle") pure
   readTVarIO notes >>= (@?= [])
   outstanding <- readMVar (lfcOutstanding ctx)

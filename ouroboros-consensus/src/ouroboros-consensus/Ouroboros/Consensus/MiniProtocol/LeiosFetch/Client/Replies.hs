@@ -19,7 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   ) where
 
-import Control.Monad (forM_, unless, void, when)
+import Control.Monad (forM_, unless, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import Data.Foldable (fold)
@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , leiosEbSizes
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
@@ -101,7 +102,6 @@ import Ouroboros.Consensus.Util.IOLike
   , readTVar
   , retry
   , throwIO
-  , tryPutMVar
   , writeTVar
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
@@ -110,8 +110,9 @@ import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   { lfcStaticEnv :: !LeiosFetchStaticEnv
   , lfcOutstanding :: !(StrictMVar m (LeiosOutstanding peer))
-  , lfcReady :: !(StrictMVar m ())
-  -- ^ Filled by anything that might unblock a new fetch decision.
+  , lfcReady :: !(W.Readiness m)
+  -- ^ Coalesced STM signal for the one kernel coordinator.
+  -- See @docs/fetch-policy/cancellation-contract.md#agreed-coordinator-wakeups@.
   , lfcWriter :: !(LeiosDbWriter m)
   , lfcNotify :: !(LeiosEbNotification -> STM m ())
   -- ^ Emit an acquisition to the rest of the node.
@@ -274,7 +275,7 @@ processLeiosBlock ctx peer req eb = do
       Just (MkEbState _onset BodyAcquired{}) -> pure (cleaned, (False, fetchArrivalExtra ebBytesSize))
       Just (MkEbState _onset NoBody) ->
         pure (cleaned, (True, fetchArrivalGood ebBytesSize))
-  void $ tryPutMVar lfcReady ()
+  atomically $ W.notifyReadiness lfcReady
   traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
   when novel $ do
     bodyWritten <- writeEbBody lfcWriter point eb
@@ -352,7 +353,7 @@ settleBody ctx point eb now bodyWritten = do
                 | Jobs.nullLeiosJobPool jobPool
                 ]
           )
-  void $ tryPutMVar lfcReady ()
+  atomically $ W.notifyReadiness lfcReady
   mapM_ (traceWith lfcTracer) acquired
  where
   MkLeiosFetchClientContext
@@ -413,7 +414,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
           sum [fromIntegral (BS.length bytes) | (_off, _txHash, bytes) <- toIngest]
   traceWith lfcTracer $ TraceLeiosFetchClientTxsArrived point (arrival <> redundantExtra)
   modifyMVar_ lfcOutstanding (pure . refundTxRequest peer (fromIntegral batchBytes))
-  void $ tryPutMVar lfcReady ()
+  atomically $ W.notifyReadiness lfcReady
   -- Retiring the jobs waits for the write: retiring them drops them from the
   -- pool for every peer, so doing it on arrival would leave the closure
   -- incomplete for good if the write never landed. Until then they stay
@@ -482,7 +483,7 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now txsWritten = do
               atomically $ lfcNotify $ AcquiredEbTxs point
               pure (outstanding', Just onset)
       _ -> pure (outstanding', Nothing)
-  void $ tryPutMVar lfcReady ()
+  atomically $ W.notifyReadiness lfcReady
   forM_ completed $ \onset ->
     traceWith lfcTracer $
       TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
