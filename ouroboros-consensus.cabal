@@ -1522,6 +1522,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.Forge
     Test.Consensus.Leios.LeiosFetch
+    Test.Consensus.Leios.LeiosFetch.Client
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosNotify
@@ -1573,6 +1574,7 @@ test-suite consensus-diffusion-test
     cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-binary,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,

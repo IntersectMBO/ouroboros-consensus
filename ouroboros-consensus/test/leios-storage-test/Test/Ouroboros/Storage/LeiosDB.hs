@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
@@ -171,7 +172,7 @@ rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
 rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe BS.ByteString)
-rwLookupEbBody = lookupEbBody . rwReader
+rwLookupEbBody rw point = fmap (BS.toStrict . unSerialised) <$> lookupEbBody (rwReader rw) point
 
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
 rwLookupEbClosure = lookupEbClosure . rwReader
@@ -359,7 +360,7 @@ allTxsFor eb = [(off, txBytesFor eb off) | off <- [0 .. length (endorserBlockRef
 
 -- | The bytes the EB arrived in, as 'lookupEbBody' returns them.
 bodyBytes :: EndorserBlock -> BS.ByteString
-bodyBytes = serialiseEndorserBlock
+bodyBytes = BS.toStrict . unSerialised . serialiseEndorserBlock
 
 -- * Test fixtures for unit tests
 
@@ -588,7 +589,7 @@ test_ebBodyWritesPoint :: LeiosDbHandle IO -> IO ()
 test_ebBodyWritesPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
   rwInsertEbBody con (mkTestPoint 1 1) eb
-  rwLookupEbBody con (mkTestPoint 1 1) >>= (@?= Just (serialiseEndorserBlock eb))
+  rwLookupEbBody con (mkTestPoint 1 1) >>= (@?= Just (bodyBytes eb))
 
 -- | A body written again holds the txs written since, and one written at a new
 -- point of the EB holds none, whatever another point holds.

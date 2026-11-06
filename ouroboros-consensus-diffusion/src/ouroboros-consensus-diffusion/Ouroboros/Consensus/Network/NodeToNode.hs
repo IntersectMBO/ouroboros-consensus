@@ -74,14 +74,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint
   , LeiosTx
   , LeiosVote
-  , decodeEndorserBlock
   , decodeLeiosPoint
   , decodeLeiosTx
   , decodeLeiosVote
-  , encodeEndorserBlock
+  , decodeSerialisedEndorserBlock
   , encodeLeiosPoint
   , encodeLeiosTx
   , encodeLeiosVote
+  , encodeSerialisedEndorserBlock
   , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
@@ -342,12 +342,12 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      LeiosFetchClientPeer LeiosPoint EndorserBlock LeiosTx m ()
+      LeiosFetchClientPeer LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
       LeiosDbReader m ->
-      LeiosFetchServerPeer LeiosPoint EndorserBlock LeiosTx m ()
+      LeiosFetchServerPeer LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
   }
 
 mkHandlers ::
@@ -535,10 +535,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN bLF = Codec
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
-  , cLeiosFetchCodec :: AnnotatedCodec (LeiosFetch LeiosPoint EndorserBlock LeiosTx) e m bLF
-  -- ^ Unlike the others, an 'AnnotatedCodec', because a received
-  -- 'EndorserBlock' keeps the bytes it arrived in. Its driver joins the chunks a
-  -- message arrives in, so 'mkApps' requires a 'Monoid' of @bLF@.
+  , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) e m bLF
   }
 
 -- | Protocol codecs for the node-to-node protocols
@@ -631,8 +628,8 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
           maxTxsPerEndorserBlock
           encodeLeiosPoint
           decodeLeiosPoint
-          encodeEndorserBlock
-          decodeEndorserBlock
+          encodeSerialisedEndorserBlock
+          decodeSerialisedEndorserBlock
           encodeLeiosTx
           decodeLeiosTx
     }
@@ -661,7 +658,7 @@ identityCodecs ::
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
-    (AnyMessage (LeiosFetch LeiosPoint EndorserBlock LeiosTx))
+    (AnyMessage (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx))
 identityCodecs =
   Codecs
     { cChainSyncCodec = codecChainSyncId
@@ -674,7 +671,7 @@ identityCodecs =
     , cKeepAliveCodec = codecKeepAliveId
     , cPeerSharingCodec = codecPeerSharingId
     , cLeiosNotifyCodec = codecLeiosNotifyId
-    , cLeiosFetchCodec = hoistAnnotation (Annotator . const) codecLeiosFetchId
+    , cLeiosFetchCodec = codecLeiosFetchId
     }
 
 {-------------------------------------------------------------------------------
@@ -702,7 +699,7 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tLeiosNotifyTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint (Header blk) LeiosVote)))
   , tLeiosFetchTracer ::
-      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint EndorserBlock LeiosTx)))
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)))
   }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
@@ -938,7 +935,6 @@ mkApps ::
   , Ord addrNTN
   , Exception e
   , NFData e
-  , Monoid bLF
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , ShowProxy blk
@@ -1400,7 +1396,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     channel = do
       labelThisThread "LeiosFetchClient"
       ((), trailing) <-
-        runAnnotatedPeerWithLimits
+        runPeerWithLimits
           (TraceLabelPeer them `contramap` tLeiosFetchTracer)
           (cLeiosFetchCodec (mkCodecs version))
           blLeiosFetch
@@ -1424,7 +1420,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         (catchAndRethrow tracer TraceLeiosFetchServerOpenReaderDbFailure (openReader getLeiosDB))
         closeReader
         $ \reader ->
-          runAnnotatedPeerWithLimits
+          runPeerWithLimits
             (TraceLabelPeer them `contramap` tLeiosFetchTracer)
             (cLeiosFetchCodec (mkCodecs version))
             blLeiosFetch
