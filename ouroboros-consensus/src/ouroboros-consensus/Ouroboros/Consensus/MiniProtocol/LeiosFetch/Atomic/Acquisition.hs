@@ -49,6 +49,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   , StorageRequest
   , StorageSession
   , admitStorageRequest
+  , consumeLocalDiscovery
   , readAcquisition
   , storageRequestKey
   )
@@ -252,7 +253,10 @@ assignCheckpointWithin assignments@(OrdinaryAssignments state) handoff limits se
           | snapshotGeneration snapshot /= generation -> pure (Left StaleAcquisition)
           | otherwise -> do
               assigned <- readAssignedOffsets assignments point generation
-              let unassigned = IntSet.difference (snapshotMissing snapshot) assigned
+              let unassigned =
+                    IntSet.difference
+                      (IntSet.intersection (snapshotMissing snapshot) (snapshotFetchable snapshot))
+                      assigned
                   eligible = maybe unassigned (IntSet.intersection unassigned) permitted
               case buildCheckpoint limits point snapshot eligible of
                 Left err -> pure (Left err)
@@ -264,6 +268,11 @@ assignCheckpointWithin assignments@(OrdinaryAssignments state) handoff limits se
                     case admitted of
                       Left err -> pure (Left (StorageAdmissionError err))
                       Right request -> do
+                        consumeLocalDiscovery
+                          handoff
+                          point
+                          generation
+                          (IntSet.fromList (map expectedOffset (NE.toList (batchExpected descriptor))))
                         entries <- readTVar state
                         writeTVar state (Map.insert (storageRequestKey request) descriptor entries)
                         pure (Right (Just request))
@@ -271,7 +280,10 @@ assignCheckpointWithin assignments@(OrdinaryAssignments state) handoff limits se
 -- | Offsets held only by current ordinary scheduling claims for this generation.
 readAssignedOffsets ::
   MonadSTM m =>
-  OrdinaryAssignments m peer -> LeiosPoint -> AcquisitionGeneration -> STM m IntSet.IntSet
+  OrdinaryAssignments m peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  STM m IntSet.IntSet
 readAssignedOffsets (OrdinaryAssignments state) point generation = do
   entries <- readTVar state
   pure $ foldMap offsets (Map.elems entries)
@@ -300,7 +312,10 @@ releasePeerAssignments (OrdinaryAssignments state) lifetime =
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#10-admission-shutdown-and-compatibility@.
 releaseSessionAssignments ::
   (MonadSTM m, Eq peer) =>
-  OrdinaryAssignments m peer -> LeiosPeerLifetimeId peer -> FetchSessionToken -> STM m ()
+  OrdinaryAssignments m peer ->
+  LeiosPeerLifetimeId peer ->
+  FetchSessionToken ->
+  STM m ()
 releaseSessionAssignments (OrdinaryAssignments state) lifetime session =
   modifyTVar
     state

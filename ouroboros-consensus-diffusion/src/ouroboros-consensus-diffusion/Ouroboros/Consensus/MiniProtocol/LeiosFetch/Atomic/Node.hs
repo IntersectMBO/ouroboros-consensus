@@ -18,6 +18,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
   , NodeObservation (..)
   , NodeIntegrationError (..)
   , withAtomicFetchNode
+  , withAtomicFetchNodeWithLocal
   , withNodeAtomicClient
   , withNodeLegacyClient
   , readNodeObservation
@@ -32,6 +33,7 @@ import Control.Monad (foldM, forM_, unless, void, when)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List (sortOn)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -40,6 +42,7 @@ import Data.Word (Word16, Word32, Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
+import Ouroboros.Consensus.Leios.TxCache (CacheConfig, LeiosTxCache, defaultCacheConfig)
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint (..)
   , encodeEndorserBlockSize
@@ -53,6 +56,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Closure as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as D
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.LocalReuse as Local
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Retry as Retry
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing as T
@@ -76,6 +80,12 @@ import Ouroboros.Network.Driver.Progress (ProgressEvent (..))
 data AtomicNodeConfig = AtomicNodeConfig
   { nodeStorageLimits :: !H.StorageLimits
   -- ^ Node-owned storage/session/acquisition bounds, including draining peers.
+  , nodeLocalStorageLimits :: !H.LocalStorageLimits
+  -- ^ Additional node-wide local bytes/entries, never borrowed from peer budgets.
+  , nodeLocalResolverConfig :: !Local.LocalResolverConfig
+  -- ^ Bounded memory work per resolver turn.
+  , nodeCacheConfig :: !CacheConfig
+  -- ^ Explicit announcement/table resource geometry for the observed local store.
   , nodeResponseBytes :: !Word32
   -- ^ Per-connection shared response budget, across every EB and request kind.
   , nodeCheckpointLimits :: !CheckpointLimits
@@ -95,6 +105,9 @@ defaultAtomicNodeConfig :: AtomicNodeConfig
 defaultAtomicNodeConfig =
   AtomicNodeConfig
     { nodeStorageLimits = H.StorageLimits 1048576 4096 128 64 20000
+    , nodeLocalStorageLimits = H.defaultLocalStorageLimits
+    , nodeLocalResolverConfig = Local.defaultLocalResolverConfig
+    , nodeCacheConfig = defaultCacheConfig
     , nodeResponseBytes = 1048576
     , nodeCheckpointLimits = defaultCheckpointLimits
     , nodeClosureRetryConfig = Retry.defaultRetryConfig
@@ -196,6 +209,8 @@ data AtomicFetchNode m owner peer blk = AtomicFetchNode
   -- ^ Node-owned legacy receipt waiters, including replies whose peer already left.
   , fetchOwnerThread :: !(ThreadId m)
   -- ^ Storage/receipt failures are linked to this node scope rather than a departing peer.
+  , fetchLocalReady :: !(W.Readiness m)
+  -- ^ Independent coalescing resolver signal; never consumes planner readiness.
   , fetchObservation :: !(StrictTVar m NodeObservation)
   -- ^ Bounded functional evidence for negotiation and policy validation.
   }
@@ -213,9 +228,21 @@ withAtomicFetchNode ::
   LeiosFetchKernel m peer blk ->
   (AtomicFetchNode m owner peer blk -> m a) ->
   m a
-withAtomicFetchNode config kernel action = do
+withAtomicFetchNode config = withAtomicFetchNodeWithLocal config Nothing
+
+withAtomicFetchNodeWithLocal ::
+  (IOLike m, Ord peer, Ord owner) =>
+  AtomicNodeConfig ->
+  Maybe (LeiosTxCache m, Local.LocalSource m tx) ->
+  LeiosFetchKernel m peer blk ->
+  (AtomicFetchNode m owner peer blk -> m a) ->
+  m a
+withAtomicFetchNodeWithLocal config localSources kernel action = do
   handoff <-
-    H.newStorageHandoff (nodeStorageLimits config) >>= either (throwIO . H.StorageException) pure
+    H.newStorageHandoffWithLocal
+      (nodeStorageLimits config)
+      (nodeLocalStorageLimits config <$ localSources)
+      >>= either (throwIO . H.StorageException) pure
   assignments <- newOrdinaryAssignments
   clients <- uncheckedNewTVarM Map.empty
   legacy <- uncheckedNewTVarM Map.empty
@@ -233,6 +260,7 @@ withAtomicFetchNode config kernel action = do
   closures <- uncheckedNewTVarM initialClosure
   closing <- uncheckedNewTVarM False
   observation <- uncheckedNewTVarM (NodeObservation 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+  localReady <- atomically W.newReadiness
   legacyReceipts <- uncheckedNewTVarM 0
   ownerThread <- myThreadId
   let node =
@@ -250,6 +278,7 @@ withAtomicFetchNode config kernel action = do
           closing
           legacyReceipts
           ownerThread
+          localReady
           observation
       context = lfkContext kernel
       extension =
@@ -279,11 +308,27 @@ withAtomicFetchNode config kernel action = do
         wake node
         pure shared
       finish = do
-        atomically $ writeTVar closing True >> wake node
+        atomically $ writeTVar closing True >> wake node >> W.notifyReadiness localReady
         atomically (readTVar legacyReceipts >>= check . (== 0))
   bracket_ install uninstall $
     H.withStorageHandoff handoff (lfcWriter context) (storageEvent node) $ \_ ->
-      action node `finally` finish
+      case localSources of
+        Nothing -> action node `finally` finish
+        Just (cache, source) -> withAsync
+          ( Local.runLocalResolver
+              (nodeLocalResolverConfig config)
+              handoff
+              cache
+              source
+              localReady
+              (readTVar closing)
+              (wake node)
+          )
+          $ \resolver -> do
+            link resolver
+            result <- action node `finally` finish
+            wait resolver
+            pure result
 
 -- | Register one actual new-version client with its frozen D and one captured
 -- connection-scoped RTT reader. The caller joins the interpreter in the action.
@@ -469,6 +514,7 @@ storageEvent node event = do
     H.BodyDurable point _ body _ -> notify (AcquiredEb point (encodeEndorserBlockSize body))
     H.ClosureDurable point _ -> notify (AcquiredEbTxs point)
     _ -> pure ()
+  W.notifyReadiness (fetchLocalReady node)
   wake node
  where
   notify = lfcNotify (lfkContext (fetchKernel node))
@@ -495,7 +541,10 @@ prune node slot = do
 
 retire ::
   (IOLike m, Ord peer) =>
-  AtomicFetchNode m owner peer blk -> LeiosPoint -> AcquisitionGeneration -> STM m ()
+  AtomicFetchNode m owner peer blk ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  STM m ()
 retire node point gen = do
   releaseAcquisitionAssignments (fetchAssignments node) point gen
   source <- H.readVerifiedBodySource (fetchHandoff node) point gen
@@ -615,7 +664,10 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
         if reclaimed then H.beginAcquisition handoff point else pure initial
       _ -> pure initial
     case result of
-      Right g -> modifyTVar (fetchGenerations node) (Map.insert point (Just g)) >> pure (Just g)
+      Right g ->
+        modifyTVar (fetchGenerations node) (Map.insert point (Just g))
+          >> W.notifyReadiness (fetchLocalReady node)
+          >> pure (Just g)
       Left H.AcquisitionCapacity -> pure Nothing
       Left e -> throwSTM (H.StorageException e)
   hasBodyOffer point = do
@@ -737,7 +789,8 @@ storageCapacity = \case
 -- Notification has one owner: idempotent shared storage events.
 bridgeContext ::
   (IOLike m, Ord peer) =>
-  AtomicFetchNode m owner peer blk -> LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
+  AtomicFetchNode m owner peer blk ->
+  LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
 bridgeContext node = context{lfcWriter = writer, lfcNotify = const (pure ())}
  where
   context = lfkContext (fetchKernel node)
@@ -783,7 +836,11 @@ bridgeContext node = context{lfcWriter = writer, lfcNotify = const (pure ())}
 -- and drain these waiters before shutting down the shared acquisition arena.
 trackLegacyReceipt ::
   forall m owner peer blk a.
-  IOLike m => AtomicFetchNode m owner peer blk -> m (Promise m a) -> (a -> m a) -> m (Promise m a)
+  IOLike m =>
+  AtomicFetchNode m owner peer blk ->
+  m (Promise m a) ->
+  (a -> m a) ->
+  m (Promise m a)
 trackLegacyReceipt node submit reconcile = mask_ $ do
   promise <- submit
   result <- Strict.newEmptyTMVarIO
@@ -976,7 +1033,8 @@ driveBodies node now peers offers outstanding = do
 -- | Logical closure evidence; wire reservations remain visible separately.
 readNodeClosureSnapshots ::
   MonadSTM m =>
-  AtomicFetchNode m owner peer blk -> STM m (Map.Map LeiosPoint (L.ClosureSnapshot peer))
+  AtomicFetchNode m owner peer blk ->
+  STM m (Map.Map LeiosPoint (L.ClosureSnapshot peer))
 readNodeClosureSnapshots node = L.closureSnapshots <$> readTVar (fetchClosures node)
 
 -- | Refresh possession before charging expiry: a verified winner on another
@@ -993,7 +1051,11 @@ refreshClosureRequest node key = do
 
 registerClosure ::
   (IOLike m, Ord peer) =>
-  AtomicFetchNode m owner peer blk -> Time -> L.ClosureRole peer -> H.StorageRequest peer -> STM m ()
+  AtomicFetchNode m owner peer blk ->
+  Time ->
+  L.ClosureRole peer ->
+  H.StorageRequest peer ->
+  STM m ()
 registerClosure node now role request = case preparedDescriptor (H.storageRequestPrepared request) of
   BodyRequest{} -> throwSTM (InvalidClosurePolicy L.InvalidClosureAttempt)
   BatchRequest batch -> do
@@ -1124,7 +1186,11 @@ driveClosure node now peers offers outstanding = do
                 currentAcquisition <- H.readAcquisition handoff point
                 case currentAcquisition of
                   Just acquisition | H.snapshotGeneration acquisition == gen ->
-                    case buildCheckpoint limits point acquisition eligible of
+                    case buildCheckpoint
+                      limits
+                      point
+                      acquisition
+                      (IntSet.intersection eligible (H.snapshotFetchable acquisition)) of
                       Left e -> throwSTM (InvalidAcquisition e)
                       Right Nothing -> pure False
                       Right (Just prepared) -> do
@@ -1133,6 +1199,14 @@ driveClosure node now peers offers outstanding = do
                           Left e | clientCapacity e -> pure False
                           Left e -> throwSTM e
                           Right request -> do
+                            case preparedDescriptor prepared of
+                              BatchRequest batch ->
+                                H.consumeLocalDiscovery
+                                  handoff
+                                  point
+                                  gen
+                                  (IntSet.fromList (map expectedOffset (NE.toList (batchExpected batch))))
+                              _ -> throwSTM (InvalidAcquisition InvalidSelection)
                             registerClosure node now (L.ClosureRescue parent) request
                             observe node $ \s -> s{observedClosureRescues = inc (observedClosureRescues s)}
                             peak node client

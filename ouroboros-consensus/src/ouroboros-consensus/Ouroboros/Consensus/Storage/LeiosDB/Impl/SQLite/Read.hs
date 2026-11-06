@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , sqlScanCompleteEbPointsSince
   , sqlLookupEbBody
   , sqlBatchRetrieveTxs
+  , immBatchRetrieveTxs
   , sqlLookupEbClosure
   ) where
 

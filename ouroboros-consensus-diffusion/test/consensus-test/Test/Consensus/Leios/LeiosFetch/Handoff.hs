@@ -31,9 +31,11 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEbBounds (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , TxLocation (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , endorserBlockReferences
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
@@ -43,6 +45,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbWriter (..)
   , Promise (..)
+  , TxCopyReceipt (..)
   , TxWriteReceipt (..)
   , newLeiosDBInMemory
   , withWriter
@@ -54,7 +57,19 @@ tests :: TestTree
 tests =
   testGroup
     "atomic storage handoff"
-    [ testCase "a prefix and legacy vector share one useful claim per TX" testDuplicates
+    [ testCase
+        "R04 local reservations have independent byte/entry bounds and exact refunds"
+        testLocalBounds
+    , testCase "R05 local admission requires a durable target body" testLocalBodyGate
+    , testCase "R08 copy candidate does not suppress an existing network payload" testLocalNetworkRace
+    , testCase
+        "R08 writing copy and network receipts preserve exact ownership in both orders"
+        testWritingCopyRace
+    , testCase "R06 writing local work stays charged across retirement/refocus" testLocalOldReceipt
+    , testCase "R14 uncommitted local reservations cannot block shutdown" testLocalShutdown
+    , testCase "local verified payloads settle without network service credit" testLocalPayload
+    , testCase "local misses become fetchable without pretending they are held" testLocalEligibility
+    , testCase "a prefix and legacy vector share one useful claim per TX" testDuplicates
     , testCase "simultaneous valid copies obtain exactly one claim and credit award" testConcurrentClaim
     , testCase
         "a durable legacy copy releases a queued claim without another write or a lost wakeup"
@@ -110,11 +125,14 @@ withFixture config sizes action = withUnseeded config sizes $ \env -> do
   action env
 
 withUnseeded :: StorageLimits -> [Int] -> (Fixture -> IO a) -> IO a
-withUnseeded config sizes action = bracket newLeiosDBInMemory closeLeiosDbHandle $ \db -> withWriter db $ \writer -> do
+withUnseeded config = withUnseededLocal config Nothing
+
+withUnseededLocal :: StorageLimits -> Maybe LocalStorageLimits -> [Int] -> (Fixture -> IO a) -> IO a
+withUnseededLocal config local sizes action = bracket newLeiosDBInMemory closeLeiosDbHandle $ \db -> withWriter db $ \writer -> do
   let txs = zipWith (\i size -> MkLeiosTx (BS.replicate size i)) [1 ..] sizes
       body = endorserBlockFromTxBytes (neBytes txs)
       point = MkLeiosPoint (SlotNo 5) (endorserBlockHash body)
-  handoff <- right <$> newStorageHandoff config
+  handoff <- right <$> newStorageHandoffWithLocal config local
   generation <- right <$> atomically (beginAcquisition handoff point)
   events <- newTVarIO []
   action Fixture{handoff, writer, generation, point, body, txs, events}
@@ -545,3 +563,181 @@ testLimits = withFixture limits{storageMaxAcquisitions = 1} [6] $ \env -> do
   gen <- right <$> atomically (beginAcquisition (handoff env) other)
   assertBool "retirement does not recycle generation tokens" (gen /= generation env)
   withWorker env (writer env) (pure ())
+
+withLocalFixture :: LocalStorageLimits -> [Int] -> (Fixture -> IO a) -> IO a
+withLocalFixture local sizes action = withUnseededLocal limits (Just local) sizes $ \env -> do
+  _ <- await =<< writeEbBody (writer env) (point env) (body env)
+  registerDurableBody (handoff env) (notify env) (point env) (generation env) (body env) IntSet.empty
+    >>= (@?= Right ())
+  action env
+
+expectedAt :: Fixture -> Int -> ExpectedTx
+expectedAt env off = let (h, n) = endorserBlockReferences (body env) !! off in ExpectedTx off h n
+
+reserve :: Fixture -> Int -> IO LocalReservation
+reserve env off =
+  right
+    <$> atomically (reserveLocalTransaction (handoff env) (point env) (generation env) (expectedAt env off))
+
+testLocalBounds :: Assertion
+testLocalBounds = forM_ [(LocalStorageLimits 8 2, LocalByteCapacity), (LocalStorageLimits 12 1, LocalEntryCapacity)] $ \(local, err) ->
+  withLocalFixture local [6, 6] $ \env -> do
+    first <- reserve env 0
+    atomically (reserveLocalTransaction (handoff env) (point env) (generation env) (expectedAt env 1))
+      >>= (@?= Left err)
+    owned <- atomically $ readStorageSnapshot (handoff env)
+    snapshotReservedBytes owned @?= 0
+    snapshotLocalReservedBytes owned @?= 6
+    snapshotLocalReservedEntries owned @?= 1
+    snapshotPending <$> snapshot env >>= (@?= IntSet.empty)
+    atomically $ dropLocalReservation (handoff env) first >> dropLocalReservation (handoff env) first
+    snapshotLocalReservedBytes <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 0)
+    second <- reserve env 1
+    atomically $ dropLocalReservation (handoff env) second
+
+testLocalBodyGate :: Assertion
+testLocalBodyGate = withUnseededLocal limits (Just defaultLocalStorageLimits) [6] $ \env -> do
+  session <- newSession env 1 1
+  let bodyCeiling = encodeEndorserBlockSize (body env) + 100
+      descriptor = BodyDescriptor (point env) (generation env) 1 (MkLeiosEbBounds bodyCeiling 4096)
+      prep = right $ prepareBody descriptor (EncodedBytes (fromIntegral bodyCeiling + 16))
+  request <- right <$> atomically (admitStorageRequest (handoff env) session prep)
+  atomically (dispatchStorageRequest (handoff env) (storageRequestKey request)) >>= (@?= Right ())
+  acceptBody (handoff env) request (body env) >>= (@?= Right (BodyAcceptance Useful True))
+  assertBool "verified metadata available" . maybe False (const True) . snapshotReferences
+    =<< snapshot env
+  -- No target body dependency is allocated merely by reserving a local TX.
+  atomically (reserveLocalTransaction (handoff env) (point env) (generation env) (expectedAt env 0))
+    >>= (@?= Left BodyUnknown)
+  snapshotLocalReservedBytes <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 0)
+  atomically $ retireAcquisition (handoff env) (point env) (generation env)
+  withWorker env (writer env) (pure ())
+
+testLocalNetworkRace :: Assertion
+testLocalNetworkRace = withLocalFixture defaultLocalStorageLimits [6] $ \env -> do
+  local <- reserve env 0
+  atomically (commitLocalCopy (handoff env) local (txLocationFor env)) >>= (@?= Right ())
+  session <- newSession env 1 1
+  request <- admit env session [0]
+  accept env request 0 0 >>= (@?= Right Useful)
+  withWorker env (writer env) $ awaitHeld env (IntSet.singleton 0)
+  snapshotLocalReservedBytes <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 0)
+ where
+  txLocationFor env = MkTxLocation (point env) 0
+
+testLocalOldReceipt :: Assertion
+testLocalOldReceipt = withLocalFixture defaultLocalStorageLimits [6] $ \env -> do
+  local <- reserve env 0
+  commitLocalTransaction (handoff env) local (head (txs env)) >>= (@?= Right ())
+  entered <- newEmptyTMVarIO
+  gate <- newEmptyTMVarIO
+  let storage =
+        (writer env)
+          { writeTxs = \p txs -> do
+              written <- writeTxs (writer env) p txs
+              atomically $ putTMVar entered ()
+              pure $ Promise $ atomically (readTMVar gate) >> await written
+          }
+  withWorker env storage $ do
+    _ <- awaitSTM (readTMVar entered)
+    atomically $ retireAcquisition (handoff env) (point env) (generation env)
+    newGen <- right <$> atomically (beginAcquisition (handoff env) (point env))
+    assertBool "generation changed" (newGen /= generation env)
+    snapshotLocalReservedBytes <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 6)
+    atomically $ putTMVar gate ()
+    _ <-
+      awaitSTM $ readStorageSnapshot (handoff env) >>= \st -> check (snapshotLocalReservedBytes st == 0)
+    snapshotHeld <$> snapshot env >>= (@?= IntSet.empty)
+
+testLocalShutdown :: Assertion
+testLocalShutdown = withLocalFixture defaultLocalStorageLimits [6] $ \env -> do
+  local <- reserve env 0
+  result <- SI.timeout 1 $ withWorker env (writer env) (pure ())
+  result @?= Just ()
+  atomically $ dropLocalReservation (handoff env) local
+  st <- atomically $ readStorageSnapshot (handoff env)
+  snapshotLocalReservedBytes st @?= 0
+  snapshotLocalReservedEntries st @?= 0
+
+testLocalPayload :: Assertion
+testLocalPayload = withLocalFixture defaultLocalStorageLimits [6] $ \env -> do
+  local <- reserve env 0
+  commitLocalTransaction (handoff env) local (head (txs env)) >>= (@?= Right ())
+  atomically $ dropLocalReservation (handoff env) local
+  snapshotLocalReservedBytes <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 6)
+  withWorker env (writer env) $ awaitHeld env (IntSet.singleton 0)
+  st <- atomically $ readStorageSnapshot (handoff env)
+  snapshotReservedBytes st @?= 0
+  snapshotReservedEntries st @?= 0
+  snapshotLocalReservedBytes st @?= 0
+
+testLocalEligibility :: Assertion
+testLocalEligibility = withLocalFixture defaultLocalStorageLimits [6, 6] $ \env -> do
+  snapshotMissing <$> snapshot env >>= (@?= IntSet.fromList [0, 1])
+  snapshotFetchable <$> snapshot env >>= (@?= IntSet.empty)
+  atomically
+    ( classifyLocalOffsets
+        (handoff env)
+        (point env)
+        (generation env)
+        (IntSet.fromList [0, 1])
+        (IntSet.singleton 1)
+    )
+    >>= (@?= Right ())
+  snapshotFetchable <$> snapshot env >>= (@?= IntSet.singleton 1)
+  snapshotHeld <$> snapshot env >>= (@?= IntSet.empty)
+
+-- The copy is already writing when the network payload arrives. An independent
+-- legacy receipt may then confirm presence before the copy, even if that copy
+-- ultimately reports unconfirmed. Neither outcome can refund the network claim.
+testWritingCopyRace :: Assertion
+testWritingCopyRace = forM_ [False, True] $ \copyConfirms -> forM_ [False, True] $ \externalFirst ->
+  withLocalFixture defaultLocalStorageLimits [6] $ \env -> do
+    local <- reserve env 0
+    atomically (commitLocalCopy (handoff env) local (MkTxLocation (point env) 0)) >>= (@?= Right ())
+    entered <- newEmptyTMVarIO
+    gate <- newEmptyTMVarIO
+    let receipt =
+          TxWriteReceipt
+            (if copyConfirms then IntSet.singleton 0 else IntSet.empty)
+            (if copyConfirms then IntSet.empty else IntSet.singleton 0)
+            []
+        storage =
+          (writer env)
+            { copyTxs = \_ _ -> do
+                atomically $ putTMVar entered ()
+                pure $ Promise $ atomically (readTMVar gate) >> pure (TxCopyReceipt receipt mempty)
+            }
+    withWorker env storage $ do
+      _ <- awaitSTM (readTMVar entered)
+      session <- newSession env 1 1
+      request <- admit env session [0]
+      accept env request 0 0 >>= (@?= Right Useful)
+      before <- atomically $ readStorageSnapshot (handoff env)
+      snapshotClaims before @?= 2
+      snapshotLocalWritingBytes before @?= 6
+      if externalFirst
+        then do
+          _ <- await =<< writeTxs (writer env) (point env) [(0, leiosTxBytes (head (txs env)))]
+          atomically
+            ( registerDurableTransactions
+                (handoff env)
+                (notify env)
+                (point env)
+                (generation env)
+                (IntSet.singleton 0)
+            )
+            >>= (@?= Right ())
+          -- Presence alone cannot release either writing/pending owner's charge.
+          snapshotClaims <$> atomically (readStorageSnapshot (handoff env)) >>= (@?= 2)
+        else pure ()
+      atomically $ putTMVar gate ()
+      awaitHeld env (IntSet.singleton 0)
+      _ <- awaitSTM $ do
+        st <- readStorageSnapshot (handoff env)
+        check (snapshotClaims st == 0)
+      st <- atomically $ readStorageSnapshot (handoff env)
+      snapshotLocalReservedBytes st @?= 0
+      snapshotReservedBytes st @?= 0
+      notes <- readTVarIO (events env)
+      length [() | ClosureDurable{} <- notes] @?= 1

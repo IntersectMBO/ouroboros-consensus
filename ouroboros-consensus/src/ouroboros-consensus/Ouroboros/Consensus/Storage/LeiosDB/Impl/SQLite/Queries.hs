@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_fill_ebTxBytes
   , sql_held_offsets
   , sql_declared_tx_size
+  , sql_tx_reference
   , sql_confirmed_tx_offsets_json
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
@@ -103,6 +104,18 @@ sql_held_offsets =
 sql_declared_tx_size :: String
 sql_declared_tx_size =
   "SELECT txBytesSize FROM ebTxs WHERE ebSlot = ?1 AND ebHashBytes = ?2 AND txOffset = ?3"
+
+-- | Guard local-copy work before materializing a blob. Presence uses the
+-- filled flag and actual length; preallocated zeroblobs are not held data.
+sql_tx_reference :: String
+sql_tx_reference =
+  unlines
+    [ "SELECT e.txHashBytes, e.txBytesSize,"
+    , " CASE WHEN b.filled = 1 AND length(b.txBytes) = e.txBytesSize THEN 1 ELSE 0 END"
+    , "FROM ebTxs e LEFT JOIN ebTxBytes b"
+    , " ON b.ebSlot=e.ebSlot AND b.ebHashBytes=e.ebHashBytes AND b.txOffset=e.txOffset"
+    , "WHERE e.ebSlot=?1 AND e.ebHashBytes=?2 AND e.txOffset=?3"
+    ]
 
 -- | Confirm submitted offsets using metadata only. Both partitions share these
 -- tables. Unfilled placeholders and absent/malformed rows are not presence.

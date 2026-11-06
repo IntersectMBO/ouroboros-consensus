@@ -335,7 +335,9 @@ runThreadNetwork ::
   , TracingConstraints blk
   , HasCallStack
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
   systemTime
   ThreadNetworkArgs
@@ -1069,6 +1071,7 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , leiosTxCache = Nothing
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck

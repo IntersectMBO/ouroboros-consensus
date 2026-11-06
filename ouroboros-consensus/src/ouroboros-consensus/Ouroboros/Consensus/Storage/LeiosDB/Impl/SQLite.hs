@@ -217,6 +217,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
           closeWriter = void . await =<< submitJob writeQueue Flush
         , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
+        , copyTxs = \point fills -> submitJob writeQueue (CopyTxs point fills)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'closeLeiosDbHandle': on release
@@ -353,6 +354,8 @@ startWriter registry tracer statsVar gcBatchSize volPath immPath = do
               publish resultVar (sqlInsertEbBody tracer conn point eb) >> pure Continue
             WriteTxs point txs resultVar ->
               publish resultVar (sqlInsertTxs tracer conn point txs) >> pure Continue
+            CopyTxs point fills resultVar ->
+              publish resultVar (sqlCopyTxs tracer conn point fills) >> pure Continue
             Flush resultVar ->
               publish resultVar (pure ()) >> pure Continue
             PinEb points resultVar -> do

@@ -126,6 +126,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
   , getPParams
   )
+import Ouroboros.Consensus.Shelley.Ledger.TxBytes (serializeTxForLeios)
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
 import Ouroboros.Consensus.Util.Condense
@@ -213,6 +214,10 @@ instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
   LedgerSupportsMempool (ShelleyBlock proto era)
   where
+  txBytesForLeios _ (ShelleyTx _ tx) = case getLeiosEraDict (Proxy @era) of
+    Nothing -> Nothing
+    Just LeiosEraDict -> Just (serializeTxForLeios tx)
+
   txInvariant = const True
 
   applyTx = applyShelleyTx

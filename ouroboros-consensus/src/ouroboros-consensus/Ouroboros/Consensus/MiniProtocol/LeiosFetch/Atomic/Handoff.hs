@@ -12,6 +12,18 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff
   ( StorageLimits (..)
   , StorageHandoff
+  , LocalStorageLimits (..)
+  , defaultLocalStorageLimits
+  , LocalReservation
+  , newStorageHandoffWithLocal
+  , reserveLocalTransaction
+  , commitLocalTransaction
+  , commitLocalCopy
+  , dropLocalReservation
+  , classifyLocalOffsets
+  , readLocalRevision
+  , readLocalAcquisitions
+  , consumeLocalDiscovery
   , StorageSession
   , StorageRequest
   , storageRequestKey
@@ -77,6 +89,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosTx (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
   , endorserBlockHash
@@ -88,8 +101,11 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbWriter (..)
+  ( CopyFailure (..)
+  , LeiosDbWriter (..)
+  , LocalFill (..)
   , Promise (..)
+  , TxCopyReceipt (..)
   , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -111,10 +127,34 @@ data StorageLimits = StorageLimits
   }
   deriving (Eq, Show)
 
+-- | Additional node-wide admission, independent of all peer wire reservations.
+data LocalStorageLimits = LocalStorageLimits
+  { localStorageBytes :: !Word32
+  -- ^ Reserved, queued and writing expected payload bytes, including copies.
+  , localStorageEntries :: !Word32
+  -- ^ Corresponding whole-TX slots across every relevant acquisition.
+  }
+  deriving (Eq, Show)
+
+defaultLocalStorageLimits :: LocalStorageLimits
+defaultLocalStorageLimits = LocalStorageLimits 1048576 4096
+
+-- | Immutable ownership of one reserved whole TX, not yet necessarily queued.
+-- The constructor is private; settlement uses its never-reused claim identity.
+data LocalReservation = LocalReservation
+  { localReservationId :: !Natural
+  , localReservationPoint :: !LeiosPoint
+  , localReservationGeneration :: !AcquisitionGeneration
+  , localReservationExpected :: !ExpectedTx
+  }
+  deriving (Eq, Show)
+
 -- | Handle owned by the node, rather than any individual fetch connection.
 data StorageHandoff m owner peer = StorageHandoff
   { handoffLimits :: !StorageLimits
   -- ^ Validated local limits.
+  , handoffLocalLimits :: !(Maybe LocalStorageLimits)
+  -- ^ Absent for compatibility controls; local discovery then does not gate fetch.
   , handoffState :: !(StrictTVar m (HandoffState owner peer))
   -- ^ Admission ledgers, acquisition claims and bounded payload ownership.
   }
@@ -132,7 +172,9 @@ storageSessionIdentity (StorageSession lifetime session) = (lifetime, session)
 -- session handle never follows a replacement registration or mini-protocol.
 readStorageSessionUsage ::
   (MonadSTM m, Ord peer) =>
-  StorageHandoff m owner peer -> StorageSession peer -> STM m (Either StorageError A.Usage)
+  StorageHandoff m owner peer ->
+  StorageSession peer ->
+  STM m (Either StorageError A.Usage)
 readStorageSessionUsage h session = do
   state <- readTVar (handoffState h)
   pure (A.admissionUsage . sessionLedger <$> lookupSession session state)
@@ -145,7 +187,9 @@ readStorageSessionUsage h session = do
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#agreed-liveness-rule-for-an-unfinished-data-reply@.
 readStorageRequestComplete ::
   (MonadSTM m, Ord peer) =>
-  StorageHandoff m owner peer -> StorageRequest peer -> STM m (Either StorageError Bool)
+  StorageHandoff m owner peer ->
+  StorageRequest peer ->
+  STM m (Either StorageError Bool)
 readStorageRequestComplete h request = do
   state <- readTVar (handoffState h)
   pure $ do
@@ -214,6 +258,14 @@ data Acquisition peer = Acquisition
   , acquisitionPending :: !(IntMap.IntMap Natural)
   -- ^ Transaction offset to the claim ID of its queued or writing copy.
   -- This suppresses another storage claim without implying durable possession.
+  , acquisitionLocalWork :: !(IntMap.IntMap Natural)
+  -- ^ Reservations/copies, separate from actual verified payload ownership.
+  , acquisitionClassified :: !IntSet.IntSet
+  -- ^ Completed discovery positions, including candidates deferred at capacity.
+  , acquisitionNetworkReady :: !(Maybe IntSet.IntSet)
+  -- ^ Classified local misses; Nothing preserves the original no-reuse policy.
+  , acquisitionLocalRejected :: !IntSet.IntSet
+  -- ^ Target-side local-write failures; avoid retrying an unchanged bad target.
   , acquisitionPendingBody :: !(Maybe Natural)
   -- ^ Claim ID of the queued or writing whole body, if any. Its original
   -- session ticket remains charged until that claim is released.
@@ -230,6 +282,8 @@ data ClaimPayload
   | -- | An EB-body transaction offset and an owned copy of that whole TX's
     -- bytes. Copying at acceptance avoids retaining a larger decoder buffer.
     TxPayload !TxOffset !BS.ByteString
+  | -- | Guarded whole-TX copy. A hint/reservation is not verified payload ownership.
+    CopyPayload !LocalFill
 
 -- | Node-owned storage responsibility for one accepted whole object, identified
 -- by its key in 'storageClaims'. It retains the original session's charge until
@@ -237,10 +291,14 @@ data ClaimPayload
 -- Writing claims also survive retirement of their acquisition generation.
 --
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+data ClaimOrigin peer
+  = NetworkClaim !(A.HandoffKey peer)
+  | LocalClaim !LocalReservation
+
+-- | One accepted claim has exactly one capacity owner.
 data Claim peer = Claim
-  { claimTicket :: !(A.HandoffKey peer)
-  -- ^ Original session's charged handoff ticket. Releasing this exact ticket
-  -- returns its payload/entry capacity without touching another request.
+  { claimOrigin :: !(ClaimOrigin peer)
+  -- ^ Original peer handoff ticket or separate node-local reservation.
   , claimPoint :: !LeiosPoint
   -- ^ Exact EB point used for storage and acquisition lookup.
   , claimGeneration :: !AcquisitionGeneration
@@ -269,6 +327,12 @@ data HandoffState owner peer = HandoffState
   , storageClaims :: !(Map.Map Natural (Claim peer))
   -- ^ Local claim ID to queued or writing ownership, including writing copies
   -- for retired EBs. Acquisition pending maps refer to these same IDs.
+  , storageLocalReservations :: !(Map.Map Natural LocalReservation)
+  -- ^ Includes uncommitted and queued/writing local work, charged until release.
+  , storageLocalBytes :: !Word64
+  -- ^ Cached sum of the local reservations, changed atomically with ownership.
+  , storageLocalRevision :: !Natural
+  -- ^ Atomic capacity/lifecycle wake predicate, without a consumed dirty bit.
   , storageNextSession :: !Natural
   -- ^ Next never-reused fetch-session token within this manager, across all
   -- registrations and upstream owners.
@@ -289,6 +353,11 @@ data HandoffState owner peer = HandoffState
 -- | Rejected transitions leave all reservations/claims unchanged.
 data StorageError
   = InvalidStorageLimits
+  | LocalReuseDisabled
+  | LocalByteCapacity
+  | LocalEntryCapacity
+  | LocalAlreadyOwned
+  | LocalTransactionTooLarge
   | StorageClosed
   | SessionCapacity
   | AcquisitionCapacity
@@ -341,6 +410,14 @@ data AcquisitionSnapshot = AcquisitionSnapshot
   -- ^ Durably confirmed transaction offsets.
   , snapshotPending :: !IntSet.IntSet
   -- ^ Unique offsets owned by storage, including queued and writing copies.
+  , snapshotLocalClassified :: !IntSet.IntSet
+  -- ^ Discovery has completed for these positions, even if admission deferred.
+  , snapshotFetchable :: !IntSet.IntSet
+  -- ^ Actual missing positions classified for new atomic network assignment.
+  , snapshotLocalWork :: !IntSet.IntSet
+  -- ^ Metadata reservations/copies, which must not block an existing reply.
+  , snapshotLocalRejected :: !IntSet.IntSet
+  -- ^ Do not import again into these unchanged failed targets in this generation.
   , snapshotMissing :: !IntSet.IntSet
   -- ^ Known offsets still needing service; excludes held and storage-owned data.
   }
@@ -357,6 +434,11 @@ data StorageSnapshot = StorageSnapshot
   -- ^ Total unreceived/queued/writing payload charge.
   , snapshotReservedEntries :: !Word64
   -- ^ Total unreceived/queued/writing whole-object slots.
+  , snapshotLocalReservedBytes :: !Word64
+  -- ^ Separate local-pool charge, including work not yet queued.
+  , snapshotLocalReservedEntries :: !Word64
+  , snapshotLocalQueuedBytes :: !Word64
+  , snapshotLocalWritingBytes :: !Word64
   , snapshotClaims :: !Word64
   -- ^ Unique accepted copies still owned by storage.
   }
@@ -375,7 +457,15 @@ data StorageEvent
 -- | Allocate a dormant arena with validated limits. Start its worker separately.
 newStorageHandoff ::
   MonadSTM m => StorageLimits -> m (Either StorageError (StorageHandoff m owner peer))
-newStorageHandoff limits
+newStorageHandoff limits = newStorageHandoffWithLocal limits Nothing
+
+-- | Optional local reuse is dormant until runtime assembly supplies its resolver.
+newStorageHandoffWithLocal ::
+  MonadSTM m =>
+  StorageLimits ->
+  Maybe LocalStorageLimits ->
+  m (Either StorageError (StorageHandoff m owner peer))
+newStorageHandoffWithLocal limits local
   | any
       (== 0)
       [ storageBytesPerOwner limits
@@ -385,10 +475,13 @@ newStorageHandoff limits
       , storageCheckpointBytes limits
       ] =
       pure (Left InvalidStorageLimits)
+  | Just l <- local
+  , localStorageBytes l == 0 || localStorageEntries l == 0 =
+      pure (Left InvalidStorageLimits)
   | otherwise =
-      Right . StorageHandoff limits
+      Right . StorageHandoff limits local
         <$> newTVarIO
-          (HandoffState Map.empty Map.empty Map.empty 0 0 0 False False)
+          (HandoffState Map.empty Map.empty Map.empty Map.empty 0 0 0 0 0 False False)
 
 -- | Open a session under a caller-supplied stable upstream identity. Reconnects
 -- use the same owner even if their connection/lifetime identifiers differ.
@@ -446,7 +539,9 @@ closeStorageSession h key = do
 -- retirement never reuses the point's old generation.
 beginAcquisition ::
   MonadSTM m =>
-  StorageHandoff m owner peer -> LeiosPoint -> STM m (Either StorageError AcquisitionGeneration)
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  STM m (Either StorageError AcquisitionGeneration)
 beginAcquisition h point = transition h $ \s -> do
   when (storageClosing s) (Left StorageClosed)
   case Map.lookup point (storageAcquisitions s) of
@@ -466,6 +561,10 @@ beginAcquisition h point = transition h $ \s -> do
               IntSet.empty
               IntSet.empty
               IntMap.empty
+              IntMap.empty
+              IntSet.empty
+              (IntSet.empty <$ handoffLocalLimits h)
+              IntSet.empty
               Nothing
               False
       Right
@@ -480,7 +579,10 @@ beginAcquisition h point = transition h $ \s -> do
 -- until their receipt. Old wire descriptors still validate/drain normally.
 retireAcquisition ::
   (IOLike m, Ord peer) =>
-  StorageHandoff m owner peer -> LeiosPoint -> AcquisitionGeneration -> STM m ()
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  STM m ()
 retireAcquisition h point gen = do
   s <- readTVar (handoffState h)
   case Map.lookup point (storageAcquisitions s) of
@@ -489,7 +591,21 @@ retireAcquisition h point gen = do
             Map.filter
               (\c -> claimPoint c == point && claimGeneration c == gen && not (claimWriting c))
               (storageClaims s)
-          without = s{storageAcquisitions = Map.delete point (storageAcquisitions s)}
+          reservations =
+            Map.filter
+              ( \r ->
+                  localReservationPoint r /= point
+                    || localReservationGeneration r /= gen
+                    || Map.member (localReservationId r) (storageClaims s)
+              )
+              (storageLocalReservations s)
+          without =
+            s
+              { storageAcquisitions = Map.delete point (storageAcquisitions s)
+              , storageLocalReservations = reservations
+              , storageLocalBytes = sum (map reservationBytes (Map.elems reservations))
+              , storageLocalRevision = storageLocalRevision s + 1
+              }
       next <-
         either (throwSTM . StorageException) pure $
           foldM (\st (cid, c) -> releaseClaim cid c st) without (Map.toList obsolete)
@@ -513,21 +629,12 @@ registerDurableBody h notify point gen body held
       a <- current point gen s
       let refs = references body
       unless (held `IntSet.isSubsetOf` IntMap.keysSet refs) (Left InvalidDescriptor)
-      let next =
+      let withSource =
             a
-              { acquisitionBody = Just body
-              , acquisitionBodySource = case acquisitionBodySource a of Nothing -> Just BodyFromStorage; known -> known
-              , acquisitionReferences = refs
-              , acquisitionBodyDurable = True
-              , acquisitionHeld = IntSet.union held (acquisitionHeld a)
+              { acquisitionBodySource = case acquisitionBodySource a of Nothing -> Just BodyFromStorage; known -> known
               }
-          (done, events) = completeClosure point next
-          newlyHeld = IntSet.difference held (acquisitionHeld a)
-          bodyEvents
-            | not (acquisitionBodyDurable a) = [BodyDurable point gen body held]
-            | not (IntSet.null newlyHeld) = [TransactionsDurable point gen newlyHeld]
-            | otherwise = []
-      pure ((), putAcquisition point done s, bodyEvents ++ events)
+          (done, events) = mergeDurableBody point body held withSource
+      pure ((), putAcquisition point done s, events)
 
 -- | Bridge a durable legacy TX receipt after its original whole-vector
 -- validation and write. This only reconciles global acquisition: it allocates
@@ -549,10 +656,7 @@ registerDurableTransactions h notify point gen confirmed = transitionNotify h no
   unless
     (confirmed `IntSet.isSubsetOf` IntMap.keysSet (acquisitionReferences a))
     (Left InvalidDescriptor)
-  let newlyHeld = IntSet.difference confirmed (acquisitionHeld a)
-      next = a{acquisitionHeld = IntSet.union confirmed (acquisitionHeld a)}
-      (done, closure) = completeClosure point next
-      events = [TransactionsDurable point gen newlyHeld | not (IntSet.null newlyHeld)] ++ closure
+  let (done, events) = mergeDurableTransactions point confirmed IntSet.empty a
   pure ((), putAcquisition point done s, events)
 
 -- | Reserve the complete expected handoff before wire admission. A rejected
@@ -591,13 +695,17 @@ admitStorageRequest h session prepared = transition h $ \s -> do
 -- | Hand the next admitted command to the driver, before its send returns.
 dispatchStorageRequest ::
   (MonadSTM m, Ord peer) =>
-  StorageHandoff m owner peer -> RequestKey peer -> STM m (Either StorageError ())
+  StorageHandoff m owner peer ->
+  RequestKey peer ->
+  STM m (Either StorageError ())
 dispatchStorageRequest h key = updateLedger h key $ \ledger -> ((),) <$> admission (A.dispatchNext key ledger)
 
 -- | Admit a cancel's own exchange, preserving pending storage ownership.
 cancelStorageRequest ::
   (MonadSTM m, Ord peer) =>
-  StorageHandoff m owner peer -> StorageRequest peer -> STM m (Either StorageError (RequestKey peer))
+  StorageHandoff m owner peer ->
+  StorageRequest peer ->
+  STM m (Either StorageError (RequestKey peer))
 cancelStorageRequest h req = updateLedger h (storageRequestKey req) $ admission . A.admitCancel (storageRequestKey req)
 
 -- | Retire a FIFO wire result without releasing data that awaits storage.
@@ -688,7 +796,8 @@ acceptBody h req body = case preparedDescriptor (requestPrepared req) of
                   )
                   next
                     { storageNextClaim = cid + 1
-                    , storageClaims = Map.insert cid (Claim t point gen (BodyPayload body) False) (storageClaims next)
+                    , storageClaims =
+                        Map.insert cid (Claim (NetworkClaim t) point gen (BodyPayload body) False) (storageClaims next)
                     }
         pure (BodyAcceptance result (lesBodySize sizes /= bodyAnnouncedBytes descriptor), claimed)
    where
@@ -700,7 +809,10 @@ acceptBody h req body = case preparedDescriptor (requestPrepared req) of
 -- an exception is fatal and is never converted into an empty success receipt.
 runStorageHandoff ::
   (IOLike m, Ord peer) =>
-  StorageHandoff m owner peer -> LeiosDbWriter m -> (StorageEvent -> STM m ()) -> m ()
+  StorageHandoff m owner peer ->
+  LeiosDbWriter m ->
+  (StorageEvent -> STM m ()) ->
+  m ()
 runStorageHandoff h writer notify = do
   atomically $ do
     s <- readTVar (handoffState h)
@@ -722,6 +834,12 @@ runStorageHandoff h writer notify = do
             let txs = [(off, bytes) | (_, c) <- NE.toList claims, TxPayload off bytes <- [claimPayload c]]
             receipt <- await =<< writeTxs writer (claimPoint first) txs
             atomically $ settleTransactions h notify claims receipt
+          CopyPayload{} -> do
+            let fills = [fill | (_, c) <- NE.toList claims, CopyPayload fill <- [claimPayload c]]
+            receipt <- await =<< copyTxs writer (claimPoint first) fills
+            atomically $ do
+              settleTransactions h notify claims (txCopyWriteReceipt receipt)
+              markRejectedCopies h claims (txCopyFailures receipt)
         loop
 
 -- | Scoped worker ownership. Normal exit retires wire reservations and drains
@@ -748,6 +866,20 @@ closeStorageHandoff h = do
     cleanupSessions
       s
         { storageClosing = True
+        , storageLocalReservations =
+            Map.filterWithKey (\cid _ -> Map.member cid (storageClaims s)) (storageLocalReservations s)
+        , storageLocalBytes =
+            sum
+              [ reservationBytes r
+              | (cid, r) <- Map.toList (storageLocalReservations s)
+              , Map.member cid (storageClaims s)
+              ]
+        , storageAcquisitions =
+            fmap
+              ( \a -> a{acquisitionLocalWork = IntMap.filter (`Map.member` storageClaims s) (acquisitionLocalWork a)}
+              )
+              (storageAcquisitions s)
+        , storageLocalRevision = storageLocalRevision s + 1
         , storageSessions =
             fmap
               (\v -> v{sessionClosed = True, sessionLedger = A.retireSession (sessionLedger v)})
@@ -769,6 +901,13 @@ readAcquisition h point = do
           (acquisitionBodyDurable a)
           held
           pending
+          (acquisitionClassified a)
+          ( let missing = IntSet.difference (IntMap.keysSet (acquisitionReferences a)) (IntSet.union held pending)
+             in maybe missing (IntSet.intersection missing) (acquisitionNetworkReady a)
+                  `IntSet.difference` IntMap.keysSet (acquisitionLocalWork a)
+          )
+          (IntMap.keysSet (acquisitionLocalWork a))
+          (acquisitionLocalRejected a)
           (IntSet.difference (IntMap.keysSet (acquisitionReferences a)) (IntSet.union held pending))
       )
 
@@ -797,8 +936,244 @@ readStorageSnapshot h = do
         (fromIntegral (length (filter sessionClosed entries)))
         (fromIntegral (sum (map A.usedHandoffBytes usage)))
         (fromIntegral (sum (map A.usedHandoffEntries usage)))
+        (storageLocalBytes s)
+        (fromIntegral (Map.size (storageLocalReservations s)))
+        ( sum
+            [ claimBytes c
+            | c <- Map.elems (storageClaims s)
+            , LocalClaim{} <- [claimOrigin c]
+            , not (claimWriting c)
+            ]
+        )
+        ( sum
+            [claimBytes c | c <- Map.elems (storageClaims s), LocalClaim{} <- [claimOrigin c], claimWriting c]
+        )
         (fromIntegral (Map.size (storageClaims s)))
     )
+
+-- | Reserve expected bytes before selecting/serializing a mempool TX. Compose
+-- this with the selected-entry relookup in the same STM transaction.
+reserveLocalTransaction ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  ExpectedTx ->
+  STM m (Either StorageError LocalReservation)
+reserveLocalTransaction h point gen expected = transition h $ \st -> do
+  limits <- maybe (Left LocalReuseDisabled) Right (handoffLocalLimits h)
+  when (storageClosing st) (Left StorageClosed)
+  a <- current point gen st
+  unless (acquisitionBodyDurable a) (Left BodyUnknown)
+  unless (matchesExpected a expected) (Left InvalidDescriptor)
+  let off = expectedOffset expected
+      bytes = fromIntegral (expectedSize expected) :: Word64
+      owned = storageLocalReservations st
+      used = storageLocalBytes st
+  when
+    ( IntSet.member off (acquisitionHeld a)
+        || IntMap.member off (acquisitionPending a)
+        || IntMap.member off (acquisitionLocalWork a)
+    )
+    (Left LocalAlreadyOwned)
+  when (bytes > fromIntegral (localStorageBytes limits)) (Left LocalTransactionTooLarge)
+  when (used + bytes > fromIntegral (localStorageBytes limits)) (Left LocalByteCapacity)
+  when (Map.size owned >= fromIntegral (localStorageEntries limits)) (Left LocalEntryCapacity)
+  let cid = storageNextClaim st
+      reservation = LocalReservation cid point gen expected
+      next = a{acquisitionLocalWork = IntMap.insert off cid (acquisitionLocalWork a)}
+  pure
+    ( reservation
+    , putAcquisition
+        point
+        next
+        st
+          { storageNextClaim = cid + 1
+          , storageLocalReservations = Map.insert cid reservation owned
+          , storageLocalBytes = used + bytes
+          , storageLocalRevision = storageLocalRevision st + 1
+          }
+    )
+
+-- | Commit a whole independently verified local payload. It suppresses another
+-- payload claim but earns no peer service credit. Hashing occurs outside STM.
+commitLocalTransaction ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LocalReservation ->
+  LeiosTx ->
+  m (Either StorageError ())
+commitLocalTransaction h reservation tx
+  | (fromIntegral (BS.length (leiosTxBytes tx)) :: Word64) /= fromIntegral (expectedSize expected)
+      || hashLeiosTx tx /= expectedHash expected =
+      pure (Left InvalidTransaction)
+  | otherwise =
+      let owned = BS.copy (leiosTxBytes tx)
+       in owned `seq` atomically (commitLocal h reservation (TxPayload (expectedOffset expected) owned))
+ where
+  expected = localReservationExpected reservation
+
+-- | A guarded copy remains a hint until its receipt; it must not suppress an
+-- already dispatched network payload through acquisitionPending.
+commitLocalCopy ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LocalReservation ->
+  TxLocation ->
+  STM m (Either StorageError ())
+commitLocalCopy h reservation source =
+  let e = localReservationExpected reservation
+   in commitLocal
+        h
+        reservation
+        (CopyPayload (LocalFill (expectedOffset e) (expectedHash e) (expectedSize e) source))
+
+commitLocal ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LocalReservation ->
+  ClaimPayload ->
+  STM m (Either StorageError ())
+commitLocal h reservation payload = transition h $ \st -> do
+  let cid = localReservationId reservation
+      point = localReservationPoint reservation
+      gen = localReservationGeneration reservation
+      off = expectedOffset (localReservationExpected reservation)
+  when (storageClosing st) (Left StorageClosed)
+  a <- current point gen st
+  unless
+    ( Map.lookup cid (storageLocalReservations st) == Just reservation
+        && not (Map.member cid (storageClaims st))
+    )
+    (Left InvalidDescriptor)
+  unless (acquisitionBodyDurable a) (Left BodyUnknown)
+  when
+    (IntSet.member off (acquisitionHeld a) || IntMap.member off (acquisitionPending a))
+    (Left LocalAlreadyOwned)
+  let next = case payload of
+        TxPayload{} -> a{acquisitionPending = IntMap.insert off cid (acquisitionPending a)}
+        _ -> a
+  pure
+    ( ()
+    , putAcquisition
+        point
+        next
+        st
+          { storageClaims =
+              Map.insert cid (Claim (LocalClaim reservation) point gen payload False) (storageClaims st)
+          }
+    )
+
+-- | Idempotent finalizer for uncommitted work. A committed claim owns its charge
+-- until worker settlement; cancellation cannot prematurely release that debt.
+dropLocalReservation :: MonadSTM m => StorageHandoff m owner peer -> LocalReservation -> STM m ()
+dropLocalReservation h reservation = do
+  st <- readTVar (handoffState h)
+  let cid = localReservationId reservation
+  when
+    ( Map.lookup cid (storageLocalReservations st) == Just reservation
+        && not (Map.member cid (storageClaims st))
+    )
+    $ do
+      let released =
+            st
+              { storageLocalReservations = Map.delete cid (storageLocalReservations st)
+              , storageLocalBytes = storageLocalBytes st - reservationBytes reservation
+              , storageLocalRevision = storageLocalRevision st + 1
+              }
+          next = case current (localReservationPoint reservation) (localReservationGeneration reservation) released of
+            Right a ->
+              putAcquisition
+                (localReservationPoint reservation)
+                a{acquisitionLocalWork = IntMap.filter (/= cid) (acquisitionLocalWork a)}
+                released
+            Left _ -> released
+      writeTVar (handoffState h) next
+
+-- | Publish a bounded discovery slice. Only inspected misses enter new atomic
+-- assignment; no discovery state implies held data or legacy job completion.
+classifyLocalOffsets ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  IntSet.IntSet ->
+  IntSet.IntSet ->
+  STM m (Either StorageError ())
+classifyLocalOffsets h point gen inspected misses = transition h $ \st -> do
+  a <- current point gen st
+  unless
+    ( misses `IntSet.isSubsetOf` inspected
+        && inspected `IntSet.isSubsetOf` IntMap.keysSet (acquisitionReferences a)
+    )
+    (Left InvalidDescriptor)
+  let next =
+        a
+          { acquisitionClassified = acquisitionClassified a `IntSet.union` inspected
+          , acquisitionNetworkReady =
+              fmap
+                (\ready -> (ready `IntSet.difference` inspected) `IntSet.union` misses)
+                (acquisitionNetworkReady a)
+          }
+  pure ((), putAcquisition point next st)
+
+-- | Consume discovery used by one newly admitted immutable request. A later
+-- assignment/rescue needs another bounded snapshot; no issued request is edited.
+consumeLocalDiscovery ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  LeiosPoint ->
+  AcquisitionGeneration ->
+  IntSet.IntSet ->
+  STM m ()
+consumeLocalDiscovery h point gen offsets = do
+  st <- readTVar (handoffState h)
+  case current point gen st of
+    Right a ->
+      writeTVar (handoffState h) $
+        putAcquisition
+          point
+          a
+            { acquisitionClassified = acquisitionClassified a `IntSet.difference` offsets
+            , acquisitionNetworkReady = fmap (`IntSet.difference` offsets) (acquisitionNetworkReady a)
+            }
+          st{storageLocalRevision = storageLocalRevision st + 1}
+    Left _ -> pure ()
+
+-- | Bounded relevant acquisitions for one resolver; shared immutable reference
+-- maps must not be retained in deferred payload jobs.
+readLocalAcquisitions ::
+  MonadSTM m => StorageHandoff m owner peer -> STM m [(LeiosPoint, AcquisitionSnapshot)]
+readLocalAcquisitions h = do
+  st <- readTVar (handoffState h)
+  results <- mapM (\point -> (point,) <$> readAcquisition h point) (Map.keys (storageAcquisitions st))
+  pure [(point, snapshot) | (point, Just snapshot) <- results]
+
+readLocalRevision :: MonadSTM m => StorageHandoff m owner peer -> STM m Natural
+readLocalRevision h = storageLocalRevision <$> readTVar (handoffState h)
+
+-- Unconfirmed verified payloads/invalid targets must become network-ready;
+-- stale source failures are invalidated by the observed copy promise instead.
+markRejectedCopies ::
+  MonadSTM m =>
+  StorageHandoff m owner peer ->
+  NE.NonEmpty (Natural, Claim peer) ->
+  IntMap.IntMap CopyFailure ->
+  STM m ()
+markRejectedCopies h claims failures = do
+  st <- readTVar (handoffState h)
+  let c = snd (NE.head claims)
+      rejected =
+        IntMap.keysSet
+          (IntMap.filter (\why -> why == CopyTargetUnavailable || why == CopyTargetMismatch) failures)
+  case current (claimPoint c) (claimGeneration c) st of
+    Right a ->
+      writeTVar (handoffState h) $
+        putAcquisition
+          (claimPoint c)
+          a{acquisitionLocalRejected = acquisitionLocalRejected a `IntSet.union` rejected}
+          st
+    Left _ -> pure ()
 
 -- Internal transitions never wait on external resources.
 transition ::
@@ -832,7 +1207,9 @@ requestSession (RequestKey lifetime session _) = StorageSession lifetime session
 
 lookupSession ::
   Ord peer =>
-  StorageSession peer -> HandoffState owner peer -> Either StorageError (Session owner peer)
+  StorageSession peer ->
+  HandoffState owner peer ->
+  Either StorageError (Session owner peer)
 lookupSession key s = maybe (Left UnknownStorageSession) Right (Map.lookup key (storageSessions s))
 
 updateLedger ::
@@ -957,7 +1334,7 @@ acceptTx req position expected tx s = do
               , storageClaims =
                   Map.insert
                     cid
-                    (Claim t point gen (TxPayload off (BS.copy (leiosTxBytes tx))) False)
+                    (Claim (NetworkClaim t) point gen (TxPayload off (BS.copy (leiosTxBytes tx))) False)
                     (storageClaims next)
               }
     )
@@ -973,29 +1350,61 @@ cleanupSessions s =
 
 releaseClaim ::
   Ord peer =>
-  Natural -> Claim peer -> HandoffState owner peer -> Either StorageError (HandoffState owner peer)
+  Natural ->
+  Claim peer ->
+  HandoffState owner peer ->
+  Either StorageError (HandoffState owner peer)
 releaseClaim cid claim s = do
-  let A.HandoffKey key _ = claimTicket claim; session = requestSession key
-  entry <- lookupSession session s
-  ledger <- admission (A.releaseHandoff (claimTicket claim) (sessionLedger entry))
-  let released =
+  released <- case claimOrigin claim of
+    NetworkClaim ticket -> do
+      let A.HandoffKey key _ = ticket; session = requestSession key
+      entry <- lookupSession session s
+      ledger <- admission (A.releaseHandoff ticket (sessionLedger entry))
+      pure
         s
           { storageClaims = Map.delete cid (storageClaims s)
           , storageSessions = Map.insert session (entry{sessionLedger = ledger}) (storageSessions s)
           }
+    LocalClaim reservation -> do
+      unless (Map.lookup cid (storageLocalReservations s) == Just reservation) (Left InvalidDescriptor)
+      pure
+        s
+          { storageClaims = Map.delete cid (storageClaims s)
+          , storageLocalReservations = Map.delete cid (storageLocalReservations s)
+          , storageLocalBytes = storageLocalBytes s - reservationBytes reservation
+          , storageLocalRevision = storageLocalRevision s + 1
+          }
   pure $ case current (claimPoint claim) (claimGeneration claim) released of
     Left _ -> released
     Right a ->
-      putAcquisition
-        (claimPoint claim)
-        ( case claimPayload claim of
+      let off = claimOffset (claimPayload claim)
+          clearLocal m = case off of
+            Just i | IntMap.lookup i m == Just cid -> IntMap.delete i m
+            _ -> m
+          next = case claimPayload claim of
             BodyPayload{} | acquisitionPendingBody a == Just cid -> a{acquisitionPendingBody = Nothing}
-            TxPayload off _
-              | IntMap.lookup off (acquisitionPending a) == Just cid ->
-                  a{acquisitionPending = IntMap.delete off (acquisitionPending a)}
+            TxPayload i _
+              | IntMap.lookup i (acquisitionPending a) == Just cid ->
+                  a{acquisitionPending = IntMap.delete i (acquisitionPending a)}
             _ -> a
-        )
-        released
+       in putAcquisition
+            (claimPoint claim)
+            next{acquisitionLocalWork = clearLocal (acquisitionLocalWork next)}
+            released
+
+claimOffset :: ClaimPayload -> Maybe TxOffset
+claimOffset (BodyPayload _) = Nothing
+claimOffset (TxPayload off _) = Just off
+claimOffset (CopyPayload fill) = Just (fillTargetOffset fill)
+
+reservationBytes :: LocalReservation -> Word64
+reservationBytes = fromIntegral . expectedSize . localReservationExpected
+
+claimBytes :: Claim peer -> Word64
+claimBytes c = case claimPayload c of
+  BodyPayload b -> fromIntegral (BS.length (endorserBlockBytes b))
+  TxPayload _ bytes -> fromIntegral (BS.length bytes)
+  CopyPayload fill -> fromIntegral (fillExpectedSize fill)
 
 -- Discard is a separate committed worker turn: retrying STM after freeing a
 -- redundant claim would roll back that release and its capacity notification.
@@ -1006,7 +1415,9 @@ data StorageWork peer
 
 takeWork ::
   (IOLike m, Ord peer) =>
-  StorageHandoff m owner peer -> (StorageEvent -> STM m ()) -> STM m (StorageWork peer)
+  StorageHandoff m owner peer ->
+  (StorageEvent -> STM m ()) ->
+  STM m (StorageWork peer)
 takeWork h notify = do
   s <- readTVar (handoffState h)
   case listToMaybe
@@ -1023,11 +1434,15 @@ takeWork h notify = do
     Right a -> case claimPayload c of
       BodyPayload{} -> acquisitionBodyDurable a
       TxPayload off _ -> IntSet.member off (acquisitionHeld a)
+      CopyPayload fill ->
+        IntSet.member (fillTargetOffset fill) (acquisitionHeld a)
+          || IntMap.member (fillTargetOffset fill) (acquisitionPending a)
   selectWork s = do
     let ready (_, c) =
           not (claimWriting c) && case claimPayload c of
             BodyPayload{} -> True
             TxPayload{} -> either (const False) acquisitionBodyDurable (current (claimPoint c) (claimGeneration c) s)
+            CopyPayload{} -> either (const False) acquisitionBodyDurable (current (claimPoint c) (claimGeneration c) s)
     case listToMaybe (filter ready (Map.toAscList (storageClaims s))) of
       Nothing
         | storageClosing s && Map.null (storageClaims s) -> pure StorageStopped
@@ -1045,6 +1460,16 @@ takeWork h notify = do
                   , claimGeneration other == claimGeneration c
                   , TxPayload{} <- [claimPayload other]
                   ]
+              CopyPayload{} ->
+                coalesce
+                  (fromIntegral (storageCheckpointBytes (handoffLimits h)))
+                  [ pair
+                  | pair@(_, other) <- Map.toAscList (storageClaims s)
+                  , ready pair
+                  , claimPoint other == claimPoint c
+                  , claimGeneration other == claimGeneration c
+                  , CopyPayload{} <- [claimPayload other]
+                  ]
             next =
               s
                 { storageClaims =
@@ -1060,11 +1485,7 @@ takeWork h notify = do
 coalesce :: Word64 -> [(Natural, Claim peer)] -> [(Natural, Claim peer)]
 coalesce _ [] = []
 coalesce remaining (item@(_, c) : rest) =
-  item : case claimPayload c of
-    TxPayload _ bytes
-      | fromIntegral (BS.length bytes) < remaining ->
-          coalesce (remaining - fromIntegral (BS.length bytes)) rest
-    _ -> []
+  item : if claimBytes c < remaining then coalesce (remaining - claimBytes c) rest else []
 
 completeClosure :: LeiosPoint -> Acquisition peer -> (Acquisition peer, [StorageEvent])
 completeClosure point a
@@ -1073,6 +1494,53 @@ completeClosure point a
       && IntMap.keysSet (acquisitionReferences a) `IntSet.isSubsetOf` acquisitionHeld a =
       (a{acquisitionClosureNotified = True}, [ClosureDurable point (acquisitionGeneration a)])
   | otherwise = (a, [])
+
+-- | Apply durable presence independently of the origin of its receipt. Claim
+-- matching, pending ownership and refunds stay with the respective caller.
+mergeDurableBody ::
+  LeiosPoint ->
+  EndorserBlock ->
+  IntSet.IntSet ->
+  Acquisition peer ->
+  (Acquisition peer, [StorageEvent])
+mergeDurableBody point body held a =
+  let next =
+        a
+          { acquisitionBody = Just body
+          , acquisitionReferences = references body
+          , acquisitionBodyDurable = True
+          , acquisitionHeld = IntSet.union held (acquisitionHeld a)
+          }
+      (done, closure) = completeClosure point next
+      newlyHeld = IntSet.difference held (acquisitionHeld a)
+      notes
+        | not (acquisitionBodyDurable a) = [BodyDurable point (acquisitionGeneration a) body held]
+        | not (IntSet.null newlyHeld) = [TransactionsDurable point (acquisitionGeneration a) newlyHeld]
+        | otherwise = []
+   in (done, notes ++ closure)
+
+-- | Merge confirmed target presence once. Unconfirmed positions may re-enter
+-- network eligibility but never erase data or release somebody else's claim.
+mergeDurableTransactions ::
+  LeiosPoint ->
+  IntSet.IntSet ->
+  IntSet.IntSet ->
+  Acquisition peer ->
+  (Acquisition peer, [StorageEvent])
+mergeDurableTransactions point yes no a =
+  let confirmed = yes `IntSet.difference` acquisitionHeld a
+      missing = no `IntSet.difference` acquisitionHeld a
+      next =
+        a
+          { acquisitionHeld = IntSet.union yes (acquisitionHeld a)
+          , acquisitionNetworkReady = fmap (`IntSet.union` missing) (acquisitionNetworkReady a)
+          }
+      (done, closure) = completeClosure point next
+      gen = acquisitionGeneration a
+      notes =
+        [TransactionsDurable point gen confirmed | not (IntSet.null confirmed)]
+          ++ [TransactionsUnconfirmed point gen missing | not (IntSet.null missing)]
+   in (done, notes ++ closure)
 
 settleBody ::
   (IOLike m, Ord peer) =>
@@ -1093,19 +1561,8 @@ settleBody h notify claims body held = do
       (updated, events) = case current point gen s of
         Right a
           | acquisitionPendingBody a == Just cid ->
-              let next =
-                    a
-                      { acquisitionBodyDurable = True
-                      , acquisitionPendingBody = Nothing
-                      , acquisitionHeld = IntSet.union held (acquisitionHeld a)
-                      }
-                  (done, closure) = completeClosure point next
-                  newlyHeld = IntSet.difference held (acquisitionHeld a)
-                  notes
-                    | not (acquisitionBodyDurable a) = [BodyDurable point gen body held]
-                    | not (IntSet.null newlyHeld) = [TransactionsDurable point gen newlyHeld]
-                    | otherwise = []
-               in (putAcquisition point done s, notes ++ closure)
+              let (done, notes) = mergeDurableBody point body held a{acquisitionPendingBody = Nothing}
+               in (putAcquisition point done s, notes)
         _ -> (s, [])
   next <- either (throwSTM . StorageException) pure (releaseClaim cid c updated)
   writeTVar (handoffState h) (cleanupSessions next)
@@ -1121,7 +1578,7 @@ settleTransactions ::
   STM m ()
 settleTransactions h notify claims receipt = do
   unless (null (txWriteWrongSize receipt)) (throwSTM (StorageException InvalidTransaction))
-  let submitted = IntSet.fromList [off | (_, c) <- NE.toList claims, TxPayload off _ <- [claimPayload c]]
+  let submitted = IntSet.fromList [off | (_, c) <- NE.toList claims, Just off <- [claimOffset (claimPayload c)]]
       yes = txWriteConfirmed receipt
       no = txWriteUnconfirmed receipt
   unless
@@ -1140,18 +1597,20 @@ settleTransactions h notify claims receipt = do
                   , TxPayload off _ <- [claimPayload c]
                   , IntMap.lookup off (acquisitionPending a) == Just cid
                   ]
-              confirmed = IntSet.intersection matching yes
-              missing = IntSet.intersection matching no
+              rejectedLocalPayload =
+                IntSet.fromList
+                  [ off
+                  | (_, c) <- NE.toList claims
+                  , LocalClaim{} <- [claimOrigin c]
+                  , TxPayload off _ <- [claimPayload c]
+                  , IntSet.member off no
+                  ]
               next =
                 a
                   { acquisitionPending = IntMap.withoutKeys (acquisitionPending a) matching
-                  , acquisitionHeld = IntSet.union confirmed (acquisitionHeld a)
+                  , acquisitionLocalRejected = acquisitionLocalRejected a `IntSet.union` rejectedLocalPayload
                   }
-              (done, closure) = completeClosure point next
-              notes =
-                [TransactionsDurable point gen confirmed | not (IntSet.null confirmed)]
-                  ++ [TransactionsUnconfirmed point gen missing | not (IntSet.null missing)]
-                  ++ closure
+              (done, notes) = mergeDurableTransactions point yes no next
            in (putAcquisition point done s, notes)
         Left _ -> (s, [])
   next <-

@@ -14,14 +14,17 @@ import Control.Monad (void, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer (Tracer, contramap)
 import qualified Data.ByteString.Lazy as BL
+import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool)
 import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as C
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.LocalReuse as Local
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server (atomicServerPeer)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Server.State (defaultServerLimits)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Type
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchPeer)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Consensus.Network.LeiosFetch
 import Ouroboros.Consensus.Network.NodeToNode (Apps (..))
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (withLeiosFetchAtomicServer)
@@ -42,7 +45,7 @@ import Ouroboros.Network.Mux (MiniProtocolLimits (..))
 -- Validate local transport and indivisible-body capacity before peers start.
 -- The action owns/joins its connections; accepted storage then drains on exit.
 withAtomicFetchApps ::
-  (IOLike m, MonadTimer m, Ord addr) =>
+  (IOLike m, MonadTimer m, Ord addr, LedgerSupportsMempool blk) =>
   AtomicNodeConfig ->
   NodeKernel m addr addrNTC blk ->
   Tracer
@@ -62,8 +65,14 @@ withAtomicFetchApps config kernel tracer legacy action = do
   void $ either throwIO pure (atomicIngressLimits (nodeResponseBytes config) 32767)
   when (H.storageBytesPerOwner (nodeStorageLimits config) < maxEndorserBlockBytesSize) $
     throwIO InvalidAtomicFetchLimits
-  withAtomicFetchNode config (getLeiosFetchKernel kernel) $ \node ->
-    action node (atomicFetchApps node kernel tracer . legacy)
+  when (H.localStorageBytes (nodeLocalStorageLimits config) < maxLeiosTxsRequestBytesSize) $
+    throwIO InvalidAtomicFetchLimits
+  withAtomicFetchNodeWithLocal
+    config
+    ((\cache -> (cache, Local.mempoolLocalSource (getMempool kernel))) <$> getLeiosTxCache kernel)
+    (getLeiosFetchKernel kernel)
+    $ \node ->
+      action node (atomicFetchApps node kernel tracer . legacy)
 
 -- | Replace the fetch pair and its input limits together. Legacy selection
 -- delegates to its original app with the shared durable-receipt bridge. Both

@@ -13,6 +13,7 @@ import qualified Test.Consensus.Leios.LeiosFetch.Closure as Closure
 import qualified Test.Consensus.Leios.LeiosFetch.Codec as Codec
 import qualified Test.Consensus.Leios.LeiosFetch.Decision as Decision
 import qualified Test.Consensus.Leios.LeiosFetch.Handoff as Handoff
+import qualified Test.Consensus.Leios.LeiosFetch.LocalReuse as LocalReuse
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import qualified Test.Consensus.Leios.LeiosFetch.Pilots as Pilots
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
@@ -37,6 +38,7 @@ tests =
     , Timing.tests
     , Wait.tests
     , Handoff.tests
+    , LocalReuse.tests
     , Codec.tests
     , Decision.tests
     , Replies.tests

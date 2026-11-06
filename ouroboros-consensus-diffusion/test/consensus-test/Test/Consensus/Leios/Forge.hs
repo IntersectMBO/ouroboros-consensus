@@ -18,10 +18,12 @@ import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisitions (..)
   , LeiosEbNotification (..)
   )
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node (defaultAtomicNodeConfig)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader (..), newLeiosDBInMemory, withReader)
 import Ouroboros.Consensus.Util.IOLike (atomically, orElse)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.NodeUnderTest
@@ -34,7 +36,8 @@ tests :: TestTree
 tests =
   testGroup
     "Forging"
-    [ testCase
+    [ testCase "E22 forged receipts publish exact durable source locations" unit_forgedCached
+    , testCase
         "the node stores and acquires each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
     ]
@@ -157,3 +160,21 @@ blockAfter = \case
 
 txInSlot :: SlotNo -> ByteString
 txInSlot slot = BS8.pack ("tx in slot " <> show (unSlotNo slot))
+
+unit_forgedCached :: Assertion
+unit_forgedCached = assertBool "forged sources are reusable" $ runSimOrThrow $ do
+  raw <- newLeiosDBInMemory
+  cache <- Cache.newReferenceCache (Cache.CacheConfig 4 17)
+  withAtomicLocalNodeOver defaultAtomicNodeConfig cache raw $ \node -> do
+    setBlockForging (nodeKernel node) [MkBlockForging (pure ebForging)]
+    threadDelay 3.5
+    chain <- atomically $ getCurrentChain (nodeChainDB node)
+    let announced = [(blockSlot hdr, h) | hdr <- AF.toOldestFirst chain, Just (h, _) <- [lthAnnouncement hdr]]
+    results <-
+      sequence
+        [ do
+            (_, locations) <- Cache.lookupLocations cache [(0, hashLeiosTx (MkLeiosTx (txInSlot slot)))]
+            pure (locations == [(0, Just (MkTxLocation (MkLeiosPoint slot h) 0))])
+        | (slot, h) <- announced
+        ]
+    pure (not (null results) && and results)

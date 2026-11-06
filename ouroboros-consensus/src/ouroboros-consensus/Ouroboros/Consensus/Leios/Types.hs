@@ -37,6 +37,7 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , EndorserBlock -- opaque
   , TxOffset
+  , TxLocation (..)
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , ForgedEndorserBlock
@@ -308,6 +309,18 @@ endorserBlockFromTxBytes =
 
 -- | The position of a transaction in its endorser block.
 type TxOffset = Int
+
+-- | An optimistic source of durable whole-transaction bytes. The database must
+-- still check the source hash/size before copying: GC can invalidate a location.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+data TxLocation = MkTxLocation
+  { txLocationPoint :: !LeiosPoint
+  -- ^ Full source identity, including the announcing slot.
+  , txLocationOffset :: !TxOffset
+  -- ^ Position in that source's verified EB body.
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass NoThunks
 
 -- | An endorser block that this node forged, with the bytes of its
 -- transactions. Only 'forgeLeiosEb' builds it, so that the bytes always match

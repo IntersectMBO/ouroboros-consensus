@@ -70,7 +70,8 @@ data MutableHashTable s = MutableHashTable
 new :: PrimMonad m => Int -> Word64 -> Word64 -> m (MutableHashTable (PrimState m))
 {-# SPECIALIZE new :: Int -> Word64 -> Word64 -> IO (MutableHashTable (PrimState IO)) #-}
 new nshift k0 k1
-  | nshift < 6 = error "MutableHashTable.new: nshift must be >= 6"
+  | nshift < 6 || nshift >= finiteBitSize (0 :: Int) - 6 =
+      error "MutableHashTable.new: invalid shift/allocation size"
   | otherwise = do
       let cap = 1 `unsafeShiftL` nshift
           occWords = cap `div` 64

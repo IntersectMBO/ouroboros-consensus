@@ -25,6 +25,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List (mapAccumL, sort)
 import qualified Data.Map.Strict as Map
@@ -37,20 +38,27 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , decodeEndorserBlock
   , endorserBlockBytes
+  , endorserBlockHash
   , endorserBlockReferences
+  , hashLeiosTx
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
+  ( CopyFailure (..)
+  , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
+  , LocalFill (..)
   , Promise (..)
   , TraceLeiosDb (..)
+  , TxCopyReceipt (..)
   , TxWriteReceipt (..)
   , newLeiosDBInMemory
   , truncateLeiosDbAfterSlot
@@ -66,7 +74,11 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , mkConn
   , openRawConnection
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert (sqlInsertEbBody, sqlInsertTxs)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
+  ( sqlCopyTxs
+  , sqlInsertEbBody
+  , sqlInsertTxs
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives (dbExec)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (sqlBatchRetrieveTxs)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
@@ -126,7 +138,9 @@ tests =
              ]
          , testGroup
              "transaction receipt commit boundary (SQLite)"
-             [ testCase "a write promise cannot settle while its commit is blocked" test_receiptCommitBarrier
+             [ testCase "a copy promise cannot settle before its real commit" test_copyCommitBarrier
+             , testCase "copy commit failure cannot publish a positive receipt" test_copyCommitFailure
+             , testCase "a write promise cannot settle while its commit is blocked" test_receiptCommitBarrier
              , testCase "a deferred commit failure returns no positive receipt" test_receiptCommitFailure
              ]
          , testGroup
@@ -236,6 +250,17 @@ forEachImplementation mkTests =
 mkTestGroups :: DbImpl -> [TestTree]
 mkTestGroups impl =
   [ testGroup
+      "local copies"
+      [ testCase "guarded reordered/duplicate and already-held copies" $ withFreshDb impl test_localCopies
+      , testCase "R12 missing source, source alias and bad target are distinct" $
+          withFreshDb impl test_localCopyFailures
+      , testCase "R12 same-hash wrong-size target preserves valid source" $
+          withFreshDb impl test_localCopySize
+      , testCase "actual source payload hash is checked" $ withFreshDb impl test_localCopyHash
+      , testCase "source copy falls back to immutable after GC" $ test_localCopyImmutable impl
+      , testCase "R10 a pruned source cannot create target presence" $ test_localCopyPruned impl
+      ]
+  , testGroup
       "points"
       [ testProperty "a body write records its point" $ prop_pointsInsertThenScan impl
       , testProperty "the points of multiple body writes accumulate" $ prop_pointsAccumulate impl
@@ -1198,3 +1223,137 @@ withSettle volDbPath action =
 sqlBackgroundWork :: T.Text
 sqlBackgroundWork =
   T.pack "SELECT COUNT(*) FROM ebs WHERE status = 1 OR (status IN (0, 2) AND ebSlot < ?1)"
+
+-- Whole-TX fixtures use actual wire-byte hashes; existing storage tests can
+-- deliberately rely on the write API's caller-verified-input assumption.
+localPayload :: BS.ByteString
+localPayload = BS.replicate 100 37
+
+localHash :: TxHash
+localHash = hashLeiosTx (MkLeiosTx localPayload)
+
+localBody :: EndorserBlock
+localBody = mkEndorserBlock [(localHash, 100)]
+
+localPoint :: SlotNo -> LeiosPoint
+localPoint slot = MkLeiosPoint slot (endorserBlockHash localBody)
+
+localFill :: SlotNo -> LocalFill
+localFill slot = LocalFill 0 localHash 100 (MkTxLocation (localPoint slot) 0)
+
+setupLocalSource :: RW -> IO ()
+setupLocalSource rw = do
+  rwInsertEbBody rw (localPoint 5) localBody
+  rwInsertTxs rw (localPoint 5) [(0, localPayload)]
+  rwInsertEbBody rw (localPoint 10) localBody
+
+copyReceipt :: RW -> [LocalFill] -> IO TxCopyReceipt
+copyReceipt rw fills = await =<< copyTxs (rwWriter rw) (localPoint 10) fills
+
+oneCopied :: TxCopyReceipt
+oneCopied = TxCopyReceipt (TxWriteReceipt (IntSet.singleton 0) IntSet.empty []) IntMap.empty
+
+oneFailed :: CopyFailure -> TxCopyReceipt
+oneFailed why = TxCopyReceipt (TxWriteReceipt IntSet.empty (IntSet.singleton 0) []) (IntMap.singleton 0 why)
+
+test_localCopies :: LeiosDbHandle IO -> IO ()
+test_localCopies db = withRW db $ \rw -> do
+  setupLocalSource rw
+  copyReceipt rw [localFill 5, localFill 5] >>= (@?= oneCopied)
+  -- Existing confirmed target data does not require a source to remain live.
+  copyReceipt rw [localFill 99] >>= (@?= oneCopied)
+  rwBatchRetrieveTxs rw (localPoint 10) [0] >>= (@?= [(0, localHash, Just localPayload)])
+
+test_localCopyFailures :: LeiosDbHandle IO -> IO ()
+test_localCopyFailures db = withRW db $ \rw -> do
+  setupLocalSource rw
+  copyReceipt rw [localFill 99] >>= (@?= oneFailed CopySourceUnavailable)
+  let aliased = mkEndorserBlock [(hashLeiosTx (MkLeiosTx (BS.replicate 100 38)), 100)]
+      alias = MkLeiosPoint 7 (endorserBlockHash aliased)
+  rwInsertEbBody rw alias aliased
+  rwInsertTxs rw alias [(0, BS.replicate 100 38)]
+  copyReceipt rw [(localFill 5){fillSource = MkTxLocation alias 0}]
+    >>= (@?= oneFailed CopySourceMismatch)
+  missingTarget <- await =<< copyTxs (rwWriter rw) (localPoint 99) [localFill 5]
+  missingTarget @?= oneFailed CopyTargetUnavailable
+  copyReceipt rw [(localFill 5){fillExpectedSize = 1}]
+    >>= (@?= oneFailed CopyTargetMismatch)
+  rwBatchRetrieveTxs rw (localPoint 10) [0] >>= (@?= [(0, localHash, Nothing)])
+
+test_localCopySize :: LeiosDbHandle IO -> IO ()
+test_localCopySize db = withRW db $ \rw -> do
+  setupLocalSource rw
+  let bad = mkEndorserBlock [(localHash, 1)]
+      target = MkLeiosPoint 11 (endorserBlockHash bad)
+  rwInsertEbBody rw target bad
+  receipt <- await =<< copyTxs (rwWriter rw) target [(localFill 5){fillExpectedSize = 1}]
+  receipt @?= oneFailed CopyTargetMismatch
+  rwBatchRetrieveTxs rw (localPoint 5) [0] >>= (@?= [(0, localHash, Just localPayload)])
+
+test_localCopyHash :: LeiosDbHandle IO -> IO ()
+test_localCopyHash db = withRW db $ \rw -> do
+  rwInsertEbBody rw (localPoint 5) localBody
+  -- Deliberately violate the ordinary write API's verified-input assumption.
+  rwInsertTxs rw (localPoint 5) [(0, BS.replicate 100 99)]
+  rwInsertEbBody rw (localPoint 10) localBody
+  copyReceipt rw [localFill 5] >>= (@?= oneFailed CopySourceMismatch)
+
+test_localCopyImmutable :: DbImpl -> IO ()
+test_localCopyImmutable impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  setupLocalSource rw
+  leiosDbPromoteToImmutable db [localPoint 5]
+  settle 0
+  garbageCollect db 6
+  settle 6
+  copyReceipt rw [localFill 5] >>= (@?= oneCopied)
+  -- A late duplicate body recreates empty volatile placeholders. They must not
+  -- hide a complete immutable source (or an already-held immutable target).
+  rwInsertEbBody rw (localPoint 12) localBody
+  rwInsertEbBody rw (localPoint 5) localBody
+  receipt <- await =<< copyTxs (rwWriter rw) (localPoint 12) [localFill 5]
+  receipt @?= oneCopied
+  -- The same fallback also confirms an immutable target without needing its
+  -- advertised source to remain available.
+  already <- await =<< copyTxs (rwWriter rw) (localPoint 5) [localFill 99]
+  already @?= oneCopied
+
+test_localCopyPruned :: DbImpl -> IO ()
+test_localCopyPruned impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  setupLocalSource rw
+  garbageCollect db 6
+  settle 6
+  copyReceipt rw [localFill 5] >>= (@?= oneFailed CopySourceUnavailable)
+
+test_copyCommitBarrier :: IO ()
+test_copyCommitBarrier = withFreshSQLiteFile $ \volPath _ db -> withRW db $ \rw -> do
+  setupLocalSource rw
+  promise <- bracket (openRawConnection volPath) closeChecked $ \blocker ->
+    bracket_ (dbExec blocker (fromString "BEGIN IMMEDIATE")) (dbExec blocker (fromString "ROLLBACK")) $ do
+      pending <- copyTxs (rwWriter rw) (localPoint 10) [localFill 5]
+      SI.timeout 0.02 (await pending) >>= (@?= Nothing)
+      pure pending
+  await promise >>= (@?= oneCopied)
+
+test_copyCommitFailure :: IO ()
+test_copyCommitFailure = withTempLeiosDbPaths $ \volPath immPath -> do
+  initialiseLeiosDbFiles volPath immPath
+  stats <- Strict.newTVarIO (LeiosDbStats 0 0 0)
+  bracket (openRawConnection volPath) closeChecked $ \vol ->
+    bracket (openRawConnection immPath) closeChecked $ \imm ->
+      bracket (mkConn nullTracer stats vol imm) finalizeConnStmts $ \conn -> do
+        _ <- sqlInsertEbBody nullTracer conn (localPoint 5) localBody
+        _ <- sqlInsertTxs nullTracer conn (localPoint 5) [(0, localPayload)]
+        _ <- sqlInsertEbBody nullTracer conn (localPoint 10) localBody
+        let exec = dbExec vol . fromString
+        exec "PRAGMA foreign_keys = ON"
+        exec "CREATE TABLE copy_parent (id INTEGER PRIMARY KEY)"
+        exec "CREATE TABLE copy_child (id INTEGER REFERENCES copy_parent(id) DEFERRABLE INITIALLY DEFERRED)"
+        exec
+          "CREATE TRIGGER fail_copy_commit AFTER UPDATE OF filled ON ebTxBytes BEGIN INSERT INTO copy_child VALUES (1); END"
+        result <- try (sqlCopyTxs nullTracer conn (localPoint 10) [localFill 5])
+        case result :: Either LeiosDbException TxCopyReceipt of
+          Left _ -> pure ()
+          Right receipt -> assertFailure ("failed copy commit returned receipt: " <> show receipt)
+        exec "ROLLBACK"
+        rows <- sqlBatchRetrieveTxs conn (localPoint 10) [0]
+        [bytes | (_, _, bytes) <- rows] @?= [Nothing]

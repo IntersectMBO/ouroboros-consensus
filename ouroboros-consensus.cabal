@@ -207,7 +207,13 @@ library
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
+    Ouroboros.Consensus.Leios.LocalStore
+    Ouroboros.Consensus.Leios.TxCache
+    Ouroboros.Consensus.Leios.TxCache.API
+    Ouroboros.Consensus.Leios.TxCache.Internal
+    Ouroboros.Consensus.Leios.TxCache.Optimized
     Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable
+    Ouroboros.Consensus.Leios.TxCache.Reference
     Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Leios.VoteState
     Ouroboros.Consensus.Mempool
@@ -849,6 +855,7 @@ test-suite consensus-test
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.LocalReuse
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
@@ -1351,6 +1358,7 @@ library diffusion
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.LocalReuse
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Codec
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
@@ -1552,6 +1560,8 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Committee
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.Forge
+    Test.Consensus.Leios.TxCache
+    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Test.Consensus.Leios.LeiosFetch
     Test.Consensus.Leios.LeiosFetch.Admission
     Test.Consensus.Leios.LeiosFetch.Acquisition
@@ -1565,6 +1575,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Handoff
+    Test.Consensus.Leios.LeiosFetch.LocalReuse
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosFetch.Pilots
     Test.Consensus.Leios.LeiosFetch.Replies
@@ -1577,7 +1588,6 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
-    Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
@@ -1713,6 +1723,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
     Ouroboros.Consensus.Shelley.Ledger.Mempool
+    Ouroboros.Consensus.Shelley.Ledger.TxBytes
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol

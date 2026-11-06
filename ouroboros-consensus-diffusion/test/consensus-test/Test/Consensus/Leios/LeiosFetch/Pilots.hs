@@ -298,7 +298,7 @@ consumeTrace !m trace = case trace of
 
 config :: Pilot -> AtomicNodeConfig
 config p =
-  AtomicNodeConfig
+  defaultAtomicNodeConfig
     { nodeStorageLimits = H.StorageLimits 2097152 4096 64 8 20000
     , nodeResponseBytes = 1048576
     , nodeCheckpointLimits = must (Q.mkCheckpointLimits 20000 500000 20000 550000)

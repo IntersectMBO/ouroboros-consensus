@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -49,6 +50,7 @@ import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -70,6 +72,9 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , notifyLogPruner
   )
+import qualified Ouroboros.Consensus.Leios.Protocol as LeiosProtocol
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
+import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -92,10 +97,13 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , leiosFetchDecisionLoop
   , leiosFetchPruner
-  , newLeiosFetchKernel
+  , newLeiosFetchKernelWithAnnouncements
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( LeiosAnnouncementAgeLimits
+  ( AnnouncingHeader (..)
+  , LeiosAnnouncementAgeLimits
+  , ValidAnnouncement (..)
+  , announcingRbHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
@@ -192,6 +200,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The 'ChainDB' of the node
   , getLeiosDB :: LeiosDbHandle m
   -- ^ The node's LeiosDB
+  , getLeiosTxCache :: Maybe (Cache.LeiosTxCache m)
+  -- ^ Optional memory-only index shared by all observed writers.
   , getMempool :: Mempool m blk
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
@@ -265,6 +275,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , leiosDB :: LeiosDbHandle m
+  , leiosTxCache :: Maybe (Cache.LeiosTxCache m)
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node emits what it acquires.
@@ -316,6 +327,7 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosTxCache
     , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
@@ -469,16 +481,29 @@ initNodeKernel
 
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
-        MkLeiosFetchClientContext
-          { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
-          , lfcOutstanding = outstanding
-          , lfcReady = ready
-          , lfcWriter = leiosWriter
-          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
-          , lfcSystemTime = systemTime
-          , lfcTracer = leiosFetchClientTracer tracers
-          }
+      newLeiosFetchKernelWithAnnouncements
+        ( \valid -> forM_ leiosTxCache $ \cache ->
+            let anc = announcingHeader valid
+                election = ancElectionId anc
+             in Cache.recordAnnouncement
+                  cache
+                  (Leios.electionSlot election)
+                  (announcingRbHash anc)
+                  (LeiosProtocol.announcementEbHash (ancAnnouncement anc))
+        )
+        chainDB
+        leiosDB
+        leiosFetchRng
+        $ \outstanding ready ->
+          MkLeiosFetchClientContext
+            { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
+            , lfcOutstanding = outstanding
+            , lfcReady = ready
+            , lfcWriter = leiosWriter
+            , lfcNotify = emitLeiosAcquisition leiosAcquisitions
+            , lfcSystemTime = systemTime
+            , lfcTracer = leiosFetchClientTracer tracers
+            }
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
         leiosFetchDecisionLoop cfg chainDB btime leiosFetchKernel
@@ -503,6 +528,7 @@ initNodeKernel
       NodeKernel
         { getChainDB = chainDB
         , getLeiosDB = leiosDB
+        , getLeiosTxCache = leiosTxCache
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
@@ -547,7 +573,8 @@ initNodeKernel
 
 castTraceFetchDecision ::
   forall remotePeer blk.
-  TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
+  TraceDecisionEvent remotePeer (HeaderWithTime blk) ->
+  TraceDecisionEvent remotePeer (Header blk)
 castTraceFetchDecision = \case
   PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs)
   PeerStarvedUs peer -> PeerStarvedUs peer
@@ -555,7 +582,8 @@ castTraceFetchDecision = \case
 castTraceFetchClientState ::
   forall blk.
   HasHeader (Header blk) =>
-  TraceFetchClientState (HeaderWithTime blk) -> TraceFetchClientState (Header blk)
+  TraceFetchClientState (HeaderWithTime blk) ->
+  TraceFetchClientState (Header blk)
 castTraceFetchClientState = mapTraceFetchClientState hwtHeader
 
 {-------------------------------------------------------------------------------
@@ -569,6 +597,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
   , leiosDB :: LeiosDbHandle m
+  , leiosTxCache :: Maybe (Cache.LeiosTxCache m)
   , blockFetchInterface ::
       BlockFetchConsensusInterface
         (ConnectionId addrNTN)
@@ -605,6 +634,7 @@ initInternalState
     { tracers
     , chainDB
     , leiosDB
+    , leiosTxCache
     , registry
     , cfg
     , blockFetchSize
@@ -627,7 +657,8 @@ initInternalState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool <-
-      openMempool
+      openMempoolWithLocalReuse
+        (isJust leiosTxCache)
         registry
         (chainDBLedgerInterface chainDB)
         (configLedger cfg)
@@ -695,7 +726,15 @@ forkBlockForging IS{..} emitAcquisition (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (storeForgedEb emitAcquisition leiosDbWriter . blockSlot)
+              ( \header forged -> do
+                  forM_ leiosTxCache $ \cache ->
+                    Cache.recordAnnouncement
+                      cache
+                      (blockSlot header)
+                      (Leios.toRankingBlockHash (Proxy @blk) (headerHash header))
+                      (Leios.endorserBlockHash (Leios.forgedEbBody forged))
+                  storeForgedEb emitAcquisition leiosDbWriter (blockSlot header) forged
+              )
               currentSlot
     )
  where

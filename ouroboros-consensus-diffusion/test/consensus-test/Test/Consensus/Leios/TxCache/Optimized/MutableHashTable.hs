@@ -15,15 +15,9 @@
 -- least one slot always stays free — which open-addressing linear probing needs
 -- to terminate, and which the production sizing guarantees anyway.
 --
--- The load-factor 'Config' generator and the salt are also used by the handle
--- equivalence test "Test.Consensus.Leios.TxCache.Optimized", so they are
--- exported here (they are hash-table concepts — capacity, occupancy, SipHash
--- salt) rather than duplicated.
---
--- This source file is compiled into two different test-suites:
--- consensus-diffusion-test and leios-txcache-bounds-checked. The latter adds the @-fcheck-prim-bounds@
--- compiler flag, so that out-of-bounds errors raise an error instead of cause
--- silent corruption. It's therefore important to run both test suites.
+-- The original donor also used these fixtures in separate handle/bounds test
+-- suites. Here the table tests run in consensus-diffusion-test; an independent
+-- -fcheck-prim-bounds build is recorded in the E22 validation note.
 module Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   ( tests
 
@@ -87,7 +81,7 @@ tests =
 -- the backward-shift 'HT.delete' loops forever on a completely full table (the
 -- lone hole gets chased around with no gap to stop at). So the sweep reaches one
 -- slot shy of full — the densest /supported/ occupancy — never a literally
--- 100%-full table, which production never reaches either (it sizes for ~46%).
+-- 100%-full table, which production never reaches either (the default integration bound is about 52.3%).
 data Config = Config
   { cfgShift :: !Int
   , cfgDomain :: !Int

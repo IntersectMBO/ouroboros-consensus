@@ -38,6 +38,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeOver
   , withNodeOverConfig
   , withAtomicNodeOver
+  , withAtomicLocalNodeOver
   , withNodeOverDBs
   , withNodeUnderTest
   ) where
@@ -93,7 +94,9 @@ import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.LocalStore (observeLeiosDB)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
+import Ouroboros.Consensus.Leios.TxCache (LeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -284,7 +287,17 @@ withNodeUnderTest ::
   LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
+withNodeUnderTest = withNodeUnderTestWithLocal Nothing
+
+withNodeUnderTestWithLocal ::
+  Maybe (LeiosTxCache (IOSim s)) ->
+  NodeUnderTestConfig ->
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeUnderTestWithLocal localCache cfg tracers nodeDBs leiosDB body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = configSeeds cfg
@@ -314,7 +327,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
         kernelArgs <-
-          nodeKernelArgsEnforceInvariants
+          (\args -> nodeKernelArgsEnforceInvariants args{leiosTxCache = localCache})
             <$> mkNodeKernelArgs
               kernelRegistry
               (mkUnsafeSalt (fst (random (seedBlockFetchSalt seeds))))
@@ -545,3 +558,21 @@ mountedIn mockFS (ChainDB.RelativeMountPoint path) =
 -- | The node's wall clock, from its block's system start, as a running node's.
 nodeSystemTime :: SystemTime (IOSim s)
 nodeSystemTime = defaultSystemTime (getSystemStart LeiosTestBlockConfig) nullTracer
+
+-- | E22 fixture: pass the same observed handle to ChainDB and node kernel,
+-- preserving old fixtures as no-local-reuse controls.
+withAtomicLocalNodeOver ::
+  AtomicNodeConfig ->
+  LeiosTxCache (IOSim s) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withAtomicLocalNodeOver config cache raw body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTestWithLocal
+    (Just cache)
+    ((forecastingOnly testCommittee testQuorumStakeThreshold 100000){nodeConfigAtomicFetch = Just config})
+    nullTracers
+    nodeDBs
+    (observeLeiosDB cache raw)
+    body

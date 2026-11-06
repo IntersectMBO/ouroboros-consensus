@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   ( sqlInsertEbBody
   , sqlInsertTxs
+  , sqlCopyTxs
   ) where
 
 import Control.Monad (foldM, forM_, when)
@@ -15,16 +16,26 @@ import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import Data.Word (Word64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
+  , LeiosTx (..)
+  , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
   , endorserBlockReferences
+  , hashLeiosTx
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (TxWriteReceipt (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( CopyFailure (..)
+  , LocalFill (..)
+  , TxCopyReceipt (..)
+  , TxWriteReceipt (..)
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -32,6 +43,10 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (bumpVolatileStats)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
+  ( immBatchRetrieveTxs
+  , sqlBatchRetrieveTxs
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
 
@@ -188,3 +203,75 @@ sqlInsertTxs _tracer conn point txBytesWithOffsets = do
                   offset <- fromIntegral <$> DB.columnInt64 stmt 0
                   loop (IntSet.insert offset found)
         loop IntSet.empty
+
+-- | A bounded local-copy job on the existing writer connection. No other
+-- volatile writer/GC job can interleave these guards and commit. Immutable
+-- sources are append-only; read them using this connection's own statements.
+-- Check metadata before fetching blobs, then hash the actual bytes. The existing
+-- insert operation supplies the real commit boundary and presence receipt.
+sqlCopyTxs :: Tracer IO TraceLeiosDb -> Conn -> LeiosPoint -> [LocalFill] -> IO TxCopyReceipt
+sqlCopyTxs tracer conn target fills = do
+  (payloads, already, failures) <- foldM prepare ([], IntSet.empty, IntMap.empty) fills
+  written <- sqlInsertTxs tracer conn target (reverse payloads)
+  let confirmed = IntSet.union already (txWriteConfirmed written)
+      submitted = IntSet.fromList (map fillTargetOffset fills)
+      receipt =
+        written{txWriteConfirmed = confirmed, txWriteUnconfirmed = submitted `IntSet.difference` confirmed}
+  pure (TxCopyReceipt receipt (IntMap.withoutKeys failures confirmed))
+ where
+  reference point off = do
+    vol <-
+      dbWithTransaction (conVolDb conn) $ readReference (stTxReference (connVolStmts conn)) point off
+    case vol of
+      Just (_, _, True) -> pure vol
+      _ -> do
+        imm <- readReference (immStTxReference (connImmStmts conn)) point off
+        -- A late body may recreate unfilled volatile rows after promotion/GC.
+        -- Those placeholders must not shadow complete immutable presence.
+        pure $ case imm of
+          Just (_, _, True) -> imm
+          _ -> case vol of
+            Nothing -> imm
+            Just _ -> vol
+  readReference stmt point off = useStmt stmt $ do
+    dbBindPoint stmt point
+    dbBindInt64 stmt 3 (fromIntegral off)
+    dbStep stmt >>= \case
+      DB.Done -> pure Nothing
+      DB.Row -> do
+        h <- dbColumnHash stmt 0
+        n <- DB.columnInt64 stmt 1
+        present <- DB.columnInt64 stmt 2
+        pure (Just (h, n, present == 1))
+  sourcePayload point off = do
+    rows <- sqlBatchRetrieveTxs conn point [off]
+    case rows of
+      [(_, _, Just _)] -> pure rows
+      -- The metadata guard may have selected the immutable partition while a
+      -- late volatile placeholder still exists. Read the same durable source.
+      _ -> immBatchRetrieveTxs conn point [off]
+  matches fill (h, n, _) = h == fillExpectedHash fill && n == fromIntegral (fillExpectedSize fill)
+  prepare (bytes, held, failed) fill = do
+    let off = fillTargetOffset fill
+        miss reason = pure (bytes, held, IntMap.insert off reason failed)
+    targetRef <- reference target off
+    case targetRef of
+      Nothing -> miss CopyTargetUnavailable
+      Just r | not (matches fill r) -> miss CopyTargetMismatch
+      Just (_, _, True) -> pure (bytes, IntSet.insert off held, IntMap.delete off failed)
+      Just _ -> do
+        let MkTxLocation source sourceOff = fillSource fill
+        sourceRef <- reference source sourceOff
+        case sourceRef of
+          Nothing -> miss CopySourceUnavailable
+          Just (h, _, _) | h /= fillExpectedHash fill -> miss CopySourceMismatch
+          Just (_, n, _) | n /= fromIntegral (fillExpectedSize fill) -> miss CopyTargetMismatch
+          Just (_, _, False) -> miss CopySourceUnavailable
+          Just _ ->
+            sourcePayload source sourceOff >>= \case
+              [(_, h, Just payload)]
+                | h == fillExpectedHash fill
+                , (fromIntegral (BS.length payload) :: Word64) == fromIntegral (fillExpectedSize fill)
+                , hashLeiosTx (MkLeiosTx payload) == fillExpectedHash fill ->
+                    pure ((off, payload) : bytes, held, IntMap.delete off failed)
+              _ -> miss CopySourceMismatch

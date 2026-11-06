@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , legacyClientContext
   , LeiosPeerLifetimeId (..)
   , newLeiosFetchKernel
+  , newLeiosFetchKernelWithAnnouncements
   , withLeiosFetchPeer
   , recordLeiosOffer
   , onNewLeiosAnnouncement
@@ -114,6 +115,8 @@ import System.Random (StdGen)
 -- | The node's LeiosFetch state, which all its LeiosFetch clients share.
 data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   { lfkContext :: !(LeiosFetchClientContext m (LeiosPeerLifetimeId peer))
+  , lfkOnAcceptedAnnouncement :: !(ValidAnnouncement blk -> m ())
+  -- ^ Memory-only observation after focus acceptance, outside the outstanding lock.
   , lfkPeers :: !(StrictTVar m (Map.Map (LeiosPeerLifetimeId peer) (LeiosFetchPeer m blk)))
   -- ^ The upstream peers the decision loop assigns requests to, each
   -- registered at most once at a time; see 'withLeiosFetchPeer'.
@@ -202,7 +205,22 @@ newLeiosFetchKernel ::
     LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
   ) ->
   m (LeiosFetchKernel m peer blk)
-newLeiosFetchKernel chainDB leiosDb prng mkContext = do
+newLeiosFetchKernel = newLeiosFetchKernelWithAnnouncements (const (pure ()))
+
+newLeiosFetchKernelWithAnnouncements ::
+  (IOLike m, LedgerSupportsProtocol blk) =>
+  (ValidAnnouncement blk -> m ()) ->
+  ChainDB m blk ->
+  LeiosDbHandle m ->
+  -- | Seeds the decision loop's PRNG.
+  StdGen ->
+  -- | Everything of the clients' context but the state this creates.
+  ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
+    W.Readiness m ->
+    LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
+  ) ->
+  m (LeiosFetchKernel m peer blk)
+newLeiosFetchKernelWithAnnouncements onAnnouncement chainDB leiosDb prng mkContext = do
   immTipSlot <-
     atomically $
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
@@ -216,7 +234,8 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   lfkExtension <- uncheckedNewTVarM Nothing
   pure
     MkLeiosFetchKernel
-      { lfkContext = mkContext outstanding ready
+      { lfkOnAcceptedAnnouncement = onAnnouncement
+      , lfkContext = mkContext outstanding ready
       , lfkPeers
       , lfkNextLifetimeId
       , lfkPrunedSlot
@@ -330,7 +349,9 @@ onNewLeiosAnnouncement kernel valid = do
           if tooOld || not introducesFocus
             then (outstanding, False)
             else (outstanding', True)
-  when changed $ atomically $ W.notifyReadiness lfcReady
+  when changed $ do
+    lfkOnAcceptedAnnouncement kernel valid
+    atomically $ W.notifyReadiness lfcReady
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
   MkValidAnnouncement{announcingHeader = anc, announcementOnset} = valid

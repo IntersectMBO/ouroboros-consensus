@@ -41,7 +41,12 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..), TxWriteReceipt)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LocalFill
+  , Promise (..)
+  , TxCopyReceipt
+  , TxWriteReceipt
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -73,6 +78,13 @@ data WriteJob
       ![(TxOffset, ByteString)]
       -- | where the worker publishes durable presence and size diagnostics
       !(WriteResult TxWriteReceipt)
+  | CopyTxs
+      -- | Target point whose durable body defines the required references.
+      !LeiosPoint
+      -- | Admission-bounded guarded source descriptors.
+      ![LocalFill]
+      -- | Actual committed target confirmation and local miss reasons.
+      !(WriteResult TxCopyReceipt)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -168,6 +180,7 @@ describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
+  CopyTxs point fills _ -> "CopyTxs " <> show point <> " (" <> show (length fills) <> " txs)"
   Flush _ -> "Flush"
   PinEb points _ -> "PinEb (" <> show (length points) <> " points)"
   MarkCopied points _ -> "MarkCopied (" <> show (length points) <> " points)"

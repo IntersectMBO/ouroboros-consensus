@@ -38,17 +38,23 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
+  , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
   , endorserBlockReferences
+  , hashLeiosTx
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( CopyFailure (..)
+  , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
+  , LocalFill (..)
   , Promise (..)
+  , TxCopyReceipt (..)
   , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -203,6 +209,8 @@ openInMemoryWriter stateVar =
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
             (imInsertTxs stateVar point txs)
+      , copyTxs = \point fills ->
+          resolved ("CopyTxs " <> show point) (imCopyTxs stateVar point fills)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -323,6 +331,52 @@ imInsertTxs stateVar point offBytes = atomically $
   matchesSize entry bytes =
     (fromIntegral (BS.length bytes) :: Word64) == fromIntegral (eteTxBytesSize entry)
 
+-- | Validate and copy under one STM state transition, matching the SQLite
+-- single-writer sequencing. Only materialize sources of the reserved size.
+imCopyTxs ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> [LocalFill] -> m TxCopyReceipt
+imCopyTxs stateVar target fills = atomically $ stateTVar stateVar $ \initial ->
+  let entry s p off =
+        (Map.lookup p (imEbBodies s) >>= IntMap.lookup off)
+          <|> (Map.lookup p (imImmutableEbBodies s) >>= IntMap.lookup off)
+      payload s p off =
+        (Map.lookup p (imEbTxBytes s) >>= IntMap.lookup off)
+          <|> (Map.lookup p (imImmutableEbTxBytes s) >>= IntMap.lookup off)
+      matches fill e = eteTxHash e == fillExpectedHash fill && eteTxBytesSize e == fillExpectedSize fill
+      valid fill bytes =
+        fromIntegral (BS.length bytes) == (fromIntegral (fillExpectedSize fill) :: Word64)
+          && hashLeiosTx (MkLeiosTx bytes) == fillExpectedHash fill
+      apply (s, confirmed, failed) fill =
+        let off = fillTargetOffset fill
+            miss reason = (s, confirmed, IntMap.insert off reason failed)
+            success next = (next, IntSet.insert off confirmed, IntMap.delete off failed)
+         in case entry s target off of
+              Nothing -> miss CopyTargetUnavailable
+              Just e | not (matches fill e) -> miss CopyTargetMismatch
+              Just _ -> case payload s target off of
+                Just bytes | valid fill bytes -> success s
+                _ ->
+                  let MkTxLocation source sourceOff = fillSource fill
+                   in case entry s source sourceOff of
+                        Nothing -> miss CopySourceUnavailable
+                        Just e | eteTxHash e /= fillExpectedHash fill -> miss CopySourceMismatch
+                        Just e | eteTxBytesSize e /= fillExpectedSize fill -> miss CopyTargetMismatch
+                        Just _ -> case payload s source sourceOff of
+                          Nothing -> miss CopySourceUnavailable
+                          Just bytes | not (valid fill bytes) -> miss CopySourceMismatch
+                          Just bytes ->
+                            -- Immutable targets are complete already. A missing
+                            -- volatile body must not create new orphan rows.
+                            if Map.member target (imEbBodies s)
+                              then
+                                success
+                                  s{imEbTxBytes = Map.insertWith IntMap.union target (IntMap.singleton off bytes) (imEbTxBytes s)}
+                              else miss CopyTargetUnavailable
+      (finalState, finalConfirmed, finalFailed) = foldl apply (initial, IntSet.empty, IntMap.empty) fills
+      submitted = IntSet.fromList (map fillTargetOffset fills)
+      receipt = TxWriteReceipt finalConfirmed (submitted `IntSet.difference` finalConfirmed) []
+   in (TxCopyReceipt receipt (IntMap.withoutKeys finalFailed finalConfirmed), finalState)
+
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete, as in the SQLite backend.
 imScanCompleteEbClosuresSince ::
@@ -358,7 +412,9 @@ imBatchRetrieveTxs stateVar point offsets = atomically $ do
 
 imLookupEbClosure ::
   IOLike m =>
-  StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
+  StrictTVar m InMemoryLeiosDb ->
+  LeiosPoint ->
+  m (Maybe [(TxHash, ByteString)])
 imLookupEbClosure stateVar point = atomically $ do
   state <- readTVar stateVar
   pure $ case Map.lookup point (imEbBodies state) >>= closureWith (volatileTxBytes state point) of

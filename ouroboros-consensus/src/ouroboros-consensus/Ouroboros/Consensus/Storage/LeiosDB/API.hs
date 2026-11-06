@@ -16,6 +16,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
     -- * Writing
   , LeiosDbWriter (..)
   , TxWriteReceipt (..)
+  , LocalFill (..)
+  , TxCopyReceipt (..)
+  , CopyFailure (..)
   , Promise (..)
   , awaitAll
   , withWriter
@@ -29,17 +32,20 @@ import Control.Monad (when)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (toList, traverse_)
+import Data.IntMap.Strict (IntMap)
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlock
+  ( BytesSize
+  , EndorserBlock
   , EndorserBlockHash
   , ForgedEndorserBlock
   , LeiosPoint (..)
   , TxHash
+  , TxLocation
   , TxOffset
   , encodeEndorserBlockSize
   , endorserBlockHash
@@ -94,7 +100,9 @@ data LeiosDbReader m = LeiosDbReader
   -- if it is not complete there.
   , batchRetrieveTxs ::
       HasCallStack =>
-      LeiosPoint -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+      LeiosPoint ->
+      [Int] ->
+      m [(Int, TxHash, Maybe ByteString)]
   -- ^ Tx bytes for a batch of offsets into the EB at one point.
   , testScanEbPoints :: HasCallStack => m [(SlotNo, EndorserBlockHash)]
   -- ^ Every point a body was written at.
@@ -103,7 +111,8 @@ data LeiosDbReader m = LeiosDbReader
   -- writes and truncation.
   , scanCompleteEbClosuresNotOlderThanSlot ::
       HasCallStack =>
-      SlotNo -> m [LeiosPoint]
+      SlotNo ->
+      m [LeiosPoint]
   -- ^ EBs whose closure is complete and whose announcer is no older than the
   -- given slot. Seeds the ChainDB's acquired-closures set at startup.
   }
@@ -119,7 +128,9 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> m (Promise m [TxOffset])
+      LeiosPoint ->
+      EndorserBlock ->
+      m (Promise m [TxOffset])
   -- ^ Persist an EB body at this point, recording the point. Every point stores
   -- its own body and txs, even when another point names the same EB.
   --
@@ -127,7 +138,9 @@ data LeiosDbWriter m = LeiosDbWriter
   -- done: those written since an earlier delivery of the same body.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m TxWriteReceipt)
+      LeiosPoint ->
+      [(TxOffset, ByteString)] ->
+      m (Promise m TxWriteReceipt)
   -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
@@ -147,8 +160,51 @@ data LeiosDbWriter m = LeiosDbWriter
   -- offsets unconfirmed; callers must not infer presence from promise success.
   -- Wrong-size diagnostics retain the existing write path's meaning.
   -- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+  , copyTxs ::
+      HasCallStack =>
+      LeiosPoint ->
+      [LocalFill] ->
+      m (Promise m TxCopyReceipt)
+  -- ^ Copy a bounded batch of whole transactions from durable source points.
+  -- The target body must already be registered. Check source/target references,
+  -- actual source payload hash/size and existing target presence under writer
+  -- sequencing. An absent source is a miss, not a storage error; commit errors
+  -- retain the ordinary fatal promise semantics. Only confirmed offsets are held.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
+
+-- | Reserved local copy work. Expected size is charged before dispatch even
+-- though the descriptor itself retains no payload.
+-- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
+data LocalFill = LocalFill
+  { fillTargetOffset :: !TxOffset
+  -- ^ Offset in the target EB's durable body.
+  , fillExpectedHash :: !TxHash
+  -- ^ Exact hash required by that target reference.
+  , fillExpectedSize :: !BytesSize
+  -- ^ Actual serialized size to check before materializing source bytes.
+  , fillSource :: !TxLocation
+  -- ^ Optimistic source; its validity is checked by the storage worker.
+  }
+  deriving (Eq, Show)
+
+-- | A normal local-copy miss, distinguished so a bad target cannot invalidate
+-- a valid cached source. Backend/commit exceptions are not represented here.
+data CopyFailure
+  = CopySourceUnavailable
+  | CopySourceMismatch
+  | CopyTargetUnavailable
+  | CopyTargetMismatch
+  deriving (Eq, Show)
+
+-- | Actual target confirmation and bounded per-offset miss reasons.
+data TxCopyReceipt = TxCopyReceipt
+  { txCopyWriteReceipt :: !TxWriteReceipt
+  -- ^ Presence after commit; unconfirmed offsets remain fetchable.
+  , txCopyFailures :: !(IntMap CopyFailure)
+  -- ^ Causes for unconfirmed submitted offsets, without retaining descriptors.
+  }
+  deriving (Eq, Show)
 
 -- | Point-in-time durable confirmation for one transaction write. Presence sets
 -- partition its distinct submitted offsets. The API's verified-input assumption

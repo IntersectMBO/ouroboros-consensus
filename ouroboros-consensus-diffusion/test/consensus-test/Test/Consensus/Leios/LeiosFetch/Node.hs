@@ -10,7 +10,7 @@
 -- against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Hash (Hash (UnsafeHash), castHash)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version
   ( NodeToNodeVersion (..)
@@ -71,14 +71,18 @@ import Ouroboros.Consensus.Leios.Acquisitions
   , LeiosEbNotification (..)
   )
 import Ouroboros.Consensus.Leios.AnnounceState (newAnnounceState)
+import Ouroboros.Consensus.Leios.LocalStore (observeLeiosDB)
 import qualified Ouroboros.Consensus.Leios.NotifyLog as NotifyLog
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
   , LeiosVote
+  , RankingBlockHash (..)
   , TxHash
+  , TxLocation (..)
   , decodeEndorserBlock
   , decodeLeiosPoint
   , decodeLeiosTx
@@ -289,7 +293,15 @@ tests =
         prop_listenerReach
     , testGroup
         "atomic node integration"
-        [ testCase "normal default assembly negotiates atomic fetch with its matching mux budget" $
+        [ testCase "E22 R07 legacy commit publishes after its caller disconnects" $
+            runSimFinishing atomicLegacyCacheAfterExit >>= (@?= True)
+        , testCase "E22 all durable-cache hits finish after a body-only offer" $
+            runSimFinishing (atomicLocalCache 3) >>= (@?= (1, 0))
+        , testCase "E22 partial cache hits remove exactly those TX requests" $
+            runSimFinishing (atomicLocalCache 1) >>= (@?= (1, 2))
+        , testCase "E22 no-hit resolver preserves honest wire fetching" $
+            runSimFinishing (atomicLocalCache 0) >>= (@?= (1, 3))
+        , testCase "normal default assembly negotiates atomic fetch with its matching mux budget" $
             runSimFinishing (atomicDefaultActivation False) >>= (@?= True)
         , testCase "a response-budget override also resizes the negotiated atomic mux" $
             runSimFinishing (atomicDefaultActivation True) >>= (@?= True)
@@ -1132,7 +1144,9 @@ relayedOf = \case
 -- | Serve the endorser block and its transactions.
 serveEb ::
   Monad m =>
-  EndorserBlock -> V.Vector LeiosTx -> LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
+  EndorserBlock ->
+  V.Vector LeiosTx ->
+  LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
 serveEb eb txs = MkLeiosFetchRequestHandler $ \case
   MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock eb)
   MsgLeiosBlockTxsRequest _point bitmaps ->
@@ -1496,7 +1510,7 @@ nodeLeiosFetchServer conn =
 -- changing normal node defaults or tying service checkpoints to publication.
 atomicNodeConfig :: AtomicNodeConfig
 atomicNodeConfig =
-  AtomicNodeConfig
+  defaultAtomicNodeConfig
     { nodeStorageLimits = Handoff.StorageLimits 2097152 2048 16 2 100
     , nodeClosureRetryConfig = Retry.defaultRetryConfig
     , nodeResponseBytes = 1048576
@@ -3050,3 +3064,82 @@ atomicPreservesActive waitingStorage = do
           awaitAcquired next (AcquiredClosure refocusedPoint)
           checkStored node refocusedPoint fetchedEb fetchedTxs
           pure True
+
+-- A different EB point holds a confirmed prefix. Only the independently fetched
+-- target body tells the receiver which TX hashes it can reuse. In the all-hit
+-- case the upstream never offers a closure at all, and no TX request is allowed.
+atomicLocalCache :: Int -> IOSim s (Word64, Word64)
+atomicLocalCache cached = do
+  raw <- newLeiosDBInMemory
+  server <- newLeiosDBInMemory
+  cache <- Cache.newReferenceCache (Cache.CacheConfig 2 16)
+  let observed = observeLeiosDB cache raw
+      sourcePoint = fetchedPoint{pointSlotNo = pointSlotNo fetchedPoint + 1}
+  when (cached > 0) $ do
+    Cache.recordAnnouncement
+      cache
+      (pointSlotNo sourcePoint)
+      (MkRankingBlockHash (castHash (hashLeiosTx (V.head fetchedTxs))))
+      (pointEbHash sourcePoint)
+    fillLeiosDb observed sourcePoint fetchedEb (V.take cached fetchedTxs)
+  fillLeiosDb server fetchedPoint fetchedEb fetchedTxs
+  withAtomicLocalNodeOver atomicNodeConfig cache raw $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    notifications <- newTQueueIO
+    atomically $
+      mapM_
+        (writeTQueue notifications)
+        [ MsgLeiosBlockAnnouncement (ltbHeader announcingFetched)
+        , MsgLeiosBlockOffer fetchedPoint (encodeEndorserBlockSize fetchedEb)
+        ]
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (atomicServing server) Nothing
+    withNodeVsEnvConnection node (PeerAddr 1) peer $ \conn -> do
+      ensure (connVersion conn == NodeToNodeV_17) "local reuse fixture negotiated legacy"
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      when (cached < 3) $ do
+        threadDelay 1
+        before <- atomicObservation node
+        ensure (observedCheckpoints before == 0) "local discovery turned a body offer into a closure offer"
+        atomically $ writeTQueue notifications (MsgLeiosBlockTxsOffer fetchedPoint)
+      awaitAcquired next (AcquiredClosure fetchedPoint)
+      checkStored node fetchedPoint fetchedEb fetchedTxs
+      observation <- atomicObservation node
+      pure (observedBodyRequests observation, observedCheckpoints observation)
+
+atomicLegacyCacheAfterExit :: IOSim s Bool
+atomicLegacyCacheAfterExit = do
+  raw <- newLeiosDBInMemory
+  cache <- Cache.newReferenceCache (Cache.CacheConfig 2 16)
+  entered <- newTVarIO False
+  release <- newTVarIO False
+  let held =
+        raw
+          { openWriter = do
+              writer <- openWriter raw
+              pure
+                writer
+                  { writeTxs = \point txs -> do
+                      promise <- writeTxs writer point txs
+                      atomically $ writeTVar entered True
+                      pure $ Promise $ atomically (readTVar release >>= check) >> await promise
+                  }
+          }
+  withAtomicLocalNodeOver atomicNodeConfig cache held $ \node -> do
+    next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    notifications <- newTQueueIO
+    let peer = EnvPeer (feedingLeiosNotifyServer node notifications) Nothing (servingFetched node) Nothing
+    withNodeVsEnvConnectionVersion NodeToNodeV_16 node (PeerAddr 1) peer $ \_ -> do
+      atomically $ mapM_ (writeTQueue notifications) (announcingAndOffering fetchedEb announcingFetched)
+      awaitAcquired next (AcquiredBody fetchedPoint)
+      atomically $ readTVar entered >>= check
+    (_, before) <- Cache.lookupLocations cache [(0, hashLeiosTx (V.head fetchedTxs))]
+    ensure (before == [(0, Nothing)]) "legacy cache publication preceded receipt"
+    atomically $ writeTVar release True
+    awaitAcquired next (AcquiredClosure fetchedPoint)
+    (_, locationsAfter) <-
+      Cache.lookupLocations cache [(i, hashLeiosTx tx) | (i, tx) <- zip [0 ..] (V.toList fetchedTxs)]
+    ensure
+      (locationsAfter == [(i, Just (MkTxLocation fetchedPoint i)) | i <- [0 .. 2]])
+      "dead caller orphaned confirmed cache publication"
+    checkStored node fetchedPoint fetchedEb fetchedTxs
+    pure True

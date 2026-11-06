@@ -85,7 +85,10 @@ tests :: TestTree
 tests =
   testGroup
     "atomic acquisition"
-    [ testCase "target crossing uses whole TXs and exact actual bytes" testOverhang
+    [ testCase
+        "R13 local classification gates ordinary and tail assignment, not legacy truth"
+        testLocalMask
+    , testCase "target crossing uses whole TXs and exact actual bytes" testOverhang
     , testCase "entry, payload and encoded caps stop before a whole TX" testHardLimits
     , testCase "an indivisible TX exceeding a hard cap fails without skipping it" testOversized
     , testCase "default checkpoint is independent of publication geometry" testDefaultTarget
@@ -155,6 +158,10 @@ modelSnapshot sizes =
     , H.snapshotBodyDurable = True
     , H.snapshotHeld = IntSet.empty
     , H.snapshotPending = IntSet.empty
+    , H.snapshotLocalClassified = IntMap.keysSet refs
+    , H.snapshotFetchable = IntMap.keysSet refs
+    , H.snapshotLocalWork = IntSet.empty
+    , H.snapshotLocalRejected = IntSet.empty
     , H.snapshotMissing = IntMap.keysSet refs
     }
  where
@@ -281,9 +288,12 @@ data Fixture = Fixture
   }
 
 withFixture :: [Int] -> [Int] -> (Fixture -> IO a) -> IO a
-withFixture sizes held action = bracket newLeiosDBInMemory closeLeiosDbHandle $ \db -> withWriter db $ \writer -> do
+withFixture = withFixtureLocal Nothing
+
+withFixtureLocal :: Maybe H.LocalStorageLimits -> [Int] -> [Int] -> (Fixture -> IO a) -> IO a
+withFixtureLocal local sizes held action = bracket newLeiosDBInMemory closeLeiosDbHandle $ \db -> withWriter db $ \writer -> do
   let body = sampleBody sizes; point = pointOf body; txs = sampleTxs sizes
-  handoff <- right <$> H.newStorageHandoff (H.StorageLimits 131072 512 16 16 1000)
+  handoff <- right <$> H.newStorageHandoffWithLocal (H.StorageLimits 131072 512 16 16 1000) local
   assignments <- newOrdinaryAssignments
   generation <- right <$> atomically (H.beginAcquisition handoff point)
   events <- newTVarIO []
@@ -746,3 +756,46 @@ testTailTransfer = withFixture [6, 6, 6, 6] [] $ \env -> do
   H.storageRequestPrepared ra @?= immutable
   H.acceptTransaction (handoff env) ra 1 (txs env !! 1) >>= (@?= Right H.Useful)
   atomically (H.readStorageRequestComplete (handoff env) ra) >>= (@?= Right True)
+
+testLocalMask :: Assertion
+testLocalMask = withFixtureLocal (Just H.defaultLocalStorageLimits) [6, 6, 6, 6] [3] $ \env -> do
+  session <- newSession env 1 8
+  tryAssign env session >>= (@?= Right Nothing)
+  let (hash0, size0) = head (endorserBlockReferences (body env))
+  reservation <-
+    right
+      <$> atomically
+        (H.reserveLocalTransaction (handoff env) (point env) (generation env) (ExpectedTx 0 hash0 size0))
+  atomically
+    ( H.classifyLocalOffsets
+        (handoff env)
+        (point env)
+        (generation env)
+        (IntSet.fromList [0, 1, 2])
+        (IntSet.singleton 2)
+    )
+    >>= (@?= Right ())
+  req <- assignedRequest env session
+  offsetsOf (H.storageRequestPrepared req) @?= [2]
+  atomically
+    ( assignCheckpointWithin
+        (assignments env)
+        (handoff env)
+        small
+        session
+        (point env)
+        (generation env)
+        closureOffer
+        (focused env)
+        (Just (IntSet.fromList [0, 1]))
+    )
+    >>= (@?= Right Nothing)
+  snap <- currentSnapshot env
+  H.snapshotHeld snap @?= IntSet.singleton 3
+  -- Local candidates and uncommitted reservations do not erase legacy jobs.
+  let legacy = legacyRequest env snap
+  assertBool
+    "local pending is not closure completion"
+    (not (Jobs.nullLeiosJobPool (poolAt env (project env snap (focused env)))))
+  legacy `seq` pure ()
+  atomically $ H.dropLocalReservation (handoff env) reservation
