@@ -28,8 +28,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Monad (when)
-import Control.ResourceRegistry (ResourceRegistry, allocate)
+import Control.Monad (void, when)
+import Control.ResourceRegistry (ResourceRegistry, allocate, forkLinkedThread)
 import Data.ByteString (ByteString)
 import Data.Foldable (toList, traverse_)
 import Data.IntMap.Strict (IntMap)
@@ -58,10 +58,9 @@ import Ouroboros.Consensus.Util.IOLike
   , MonadThrow
   , NoThunks (..)
   , STM
-  , async
   , atomically
   , bracket
-  , link
+  , mask_
   )
 
 -- | The Leios database. Hands out readers and writers.
@@ -258,23 +257,28 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 -- This function does not await the writes. On SQLite, it blocks while the
 -- write queue is full, and if a write fails, the node stops. Peers can get the
 -- header before the endorser block is stored.
+--
+-- The supplied registry owns the receipt waiter, including observed-cache
+-- publication and notifications after the raw commit. Registry shutdown cancels
+-- and joins it; flushing the raw DB queue alone does not join those callbacks.
+-- Accepted writes still belong to the database if shutdown cancels the waiter.
+-- Call only from a live thread registered with this registry, whose scope must
+-- end before its database closes. Submission-to-waiter transfer is masked.
 storeForgedEb ::
   IOLike m =>
+  ResourceRegistry m ->
   (LeiosEbNotification -> STM m ()) ->
   LeiosDbWriter m ->
   SlotNo ->
   ForgedEndorserBlock ->
   m ()
-storeForgedEb emit writer slot forgedEb = do
+storeForgedEb registry emit writer slot forgedEb = mask_ $ do
   bodyWritten <- writeEbBody writer point body
   txsWritten <- writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
-  link
-    =<< async
-      ( do
-          _ <- await bodyWritten
-          receipt <- await txsWritten
-          atomically $ emitBoth receipt
-      )
+  void $ forkLinkedThread registry "LeiosDB.forgedReceipt" $ do
+    _ <- await bodyWritten
+    receipt <- await txsWritten
+    atomically $ emitBoth receipt
  where
   body = forgedEbBody forgedEb
   point = MkLeiosPoint slot (endorserBlockHash body)

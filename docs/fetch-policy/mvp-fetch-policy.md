@@ -3,7 +3,9 @@
 This is the simulator policy reference copied from `ouroboros-network/smol-world`.
 The [cancellation and checkpoint contract](cancellation-contract.md) specifies
 production wire behavior. Simulator source/document paths below refer to that
-repository and are not paths in ouroboros-consensus.
+repository and are not paths in ouroboros-consensus. For the real node, the
+[implementation review guide](review-guide.md) connects the atomic policy to its
+clients, server, bounded handoff, local sources and storage.
 
 Both policies fetch one verified EB body, identify the transactions still
 missing locally, and request those transactions through ordered per-peer

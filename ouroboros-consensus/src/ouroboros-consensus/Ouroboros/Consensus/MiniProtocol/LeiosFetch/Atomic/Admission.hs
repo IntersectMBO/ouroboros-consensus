@@ -153,6 +153,10 @@ pendingHandoffs = Map.toList . statePending
 
 -- | No data capacity is lent out from the D slots reserved for controls. Each
 -- live data record owns at most its original and one cancel exchange.
+--
+-- Allocate the next consecutive ordinal only on success. Preserve enough unused
+-- numbers for this request's possible cancel and all earlier cancel promises;
+-- reject exhaustion rather than wrapping or admitting data without that headroom.
 admitData ::
   Ord peer =>
   PreparedRequest ->
@@ -182,6 +186,11 @@ admitData prepared s = do
         }
     )
 
+-- | Admit one cancellation with its own next ordinal and independent ACK.
+-- The target must be this session's unfinished data original, not a control or
+-- an already-canceled request. With next ordinal @n@ and target @t@, require
+-- @t < n@ and @n - t < 2D@. Use the ordinal headroom preserved by 'admitData';
+-- rejection changes neither the original's cancel state nor the next ordinal.
 admitCancel ::
   Ord peer =>
   RequestKey peer ->

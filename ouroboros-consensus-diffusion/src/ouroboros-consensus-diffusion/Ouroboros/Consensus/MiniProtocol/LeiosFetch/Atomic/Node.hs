@@ -170,6 +170,7 @@ data NodeObservation = NodeObservation
 data NodeIntegrationError
   = ExtensionAlreadyInstalled
   | PeersAlreadyRunning
+  | IncompleteInitialLegacyState
   | InvalidAcquisition !AcquisitionError
   | InvalidBodyPolicy !B.BodyError
   | InvalidClosurePolicy !L.ClosureError
@@ -220,6 +221,9 @@ readNodeObservation = readTVar . fetchObservation
 
 -- | Install before any connections start. The action owns and joins its
 -- connections before returning; accepted storage then drains at node scope.
+-- Initial legacy state may contain announcements or empty/completed job pools,
+-- but not unfinished body-acquired jobs: this constructor does not reconstruct
+-- their body references from storage. Installation rejects that state atomically.
 -- The legacy writer retains its own admission/validation and supplies only
 -- durable receipts to the shared acquisition, never a new-version reservation.
 withAtomicFetchNode ::
@@ -295,6 +299,12 @@ withAtomicFetchNodeWithLocal config localSources kernel action = do
           forM_ current (const (throwSTM ExtensionAlreadyInstalled))
           peers <- readTVar (lfkPeers kernel)
           unless (Map.null peers) (throwSTM PeersAlreadyRunning)
+          -- A fresh handoff has no body/reference metadata for unfinished
+          -- legacy jobs. Reject before publishing the extension; complete
+          -- startup seeds and announcements-only state need no such metadata.
+          let unfinished (MkEbState _ NoBody) = False
+              unfinished (MkEbState _ (BodyAcquired pool)) = not (Jobs.nullLeiosJobPool pool)
+          when (any unfinished (Map.elems (ebState outstanding))) (throwSTM IncompleteInitialLegacyState)
           writeTVar (lfkExtension kernel) (Just extension)
           wake node
         pure outstanding
@@ -597,10 +607,15 @@ decide node now bounds horizon peers offers outstanding = atomically $ do
             \(client, offer) -> fill shared point gen client offer
   legacy <- readTVar (fetchLegacy node)
   bodyClaims <- readTVar (fetchBodies node)
+  -- The shared handoff owns legacy acquisition notifications. Without a
+  -- live generation its receipt cannot publish them, so capacity rejection
+  -- must defer new legacy dispatch as well as new-version dispatch.
+  livePoints <- Map.keysSet . Map.mapMaybe id <$> readTVar (fetchGenerations node)
   pure
     ( shared
     , Map.map
-        (Map.mapMaybeWithKey (withoutClaimedBody bodyClaims))
+        ( \peerOffers -> Map.mapMaybeWithKey (withoutClaimedBody bodyClaims) (Map.restrictKeys peerOffers livePoints)
+        )
         (Map.restrictKeys offers (if closing then Set.empty else Map.keysSet legacy))
     )
  where
@@ -795,6 +810,10 @@ bridgeContext node = context{lfcWriter = writer, lfcNotify = const (pure ())}
  where
   context = lfkContext (fetchKernel node)
   raw = lfcWriter context
+  -- Legacy jobs carry no generation at request admission. Capture here at
+  -- write submission and pin that receipt to this generation. A response only
+  -- submitted after refocus may serve the new acquisition with verified data;
+  -- an already submitted old receipt must never settle its replacement.
   capture point = atomically $ Map.lookup point <$> readTVar (fetchGenerations node)
   writer =
     raw

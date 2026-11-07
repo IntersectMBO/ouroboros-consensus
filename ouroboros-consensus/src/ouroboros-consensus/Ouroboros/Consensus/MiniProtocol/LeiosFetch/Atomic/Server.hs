@@ -197,9 +197,16 @@ atomicServerPeer server = ServerLookahead $ Effect $ do
               canceled <-
                 atomically $ readTVar (serverState server) >>= either throwSTM pure . cancellationRequested ordinal
               if canceled then pure Nothing else throwIO err
+          -- Joining preparation before the next ticket is essential: the
+          -- provider borrows one reader which must never serve two concurrent
+          -- preparations. Intake stays independent and can request cancel;
+          -- bounded cancellation still assumes the provider can unwind.
           -- race has joined both children, including a canceled DB operation.
           update (finishPreparation ordinal (preparedBytes <$> candidate))
           pure candidate
+    -- Commitment and cancellation choose one winner in shared STM. After
+    -- normal commitment, the complete response drains; a later cancel owes an
+    -- independent FIFO ACK and cannot truncate the already committed bytes.
     choice <- atomically $ do
       state <- readTVar (serverState server)
       (choice, next) <- either throwSTM pure (commitDataReply ordinal state)

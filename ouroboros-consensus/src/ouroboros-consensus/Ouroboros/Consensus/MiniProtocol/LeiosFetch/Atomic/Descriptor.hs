@@ -69,6 +69,9 @@ data BatchDescriptor = BatchDescriptor
   }
   deriving (Eq, Show)
 
+-- | The validation checklist for the original admitted request. Reassignment
+-- changes scheduling interest, never these hashes, positions, sizes or captured
+-- acquisition generation. Late replies must still satisfy this descriptor.
 data RequestDescriptor = BodyRequest !BodyDescriptor | BatchRequest !BatchDescriptor
   deriving (Eq, Show)
 

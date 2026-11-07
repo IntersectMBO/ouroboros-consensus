@@ -6,12 +6,24 @@
 -- LeiosDB, and acquires it as it would one fetched from a peer.
 module Test.Consensus.Leios.Forge (tests) where
 
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( check
+  , modifyTVar
+  , newTVarIO
+  , readTVar
+  , readTVarIO
+  , retry
+  , writeTVar
+  )
+import Control.Monad.Class.MonadThrow (finally)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Control.ResourceRegistry (withRegistry)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract (GetTip (..))
 import Ouroboros.Consensus.Leios.Acquisitions
@@ -23,7 +35,15 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Node (defaultAtomicNodeConfig)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader (..), newLeiosDBInMemory, withReader)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDBInMemory
+  , storeForgedEb
+  , withReader
+  , withWriter
+  )
 import Ouroboros.Consensus.Util.IOLike (atomically, orElse)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.NodeUnderTest
@@ -36,11 +56,44 @@ tests :: TestTree
 tests =
   testGroup
     "Forging"
-    [ testCase "E22 forged receipts publish exact durable source locations" unit_forgedCached
+    [ testCase
+        "a forged receipt waiter cannot outlive its registry, while accepted writes remain durable"
+        unit_forgedReceiptOwnership
+    , testCase "E22 forged receipts publish exact durable source locations" unit_forgedCached
     , testCase
         "the node stores and acquires each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
     ]
+
+-- A raw DB commit and its later observer/notification callback have different
+-- owners. Registry close must join the latter even while its receipt is gated.
+unit_forgedReceiptOwnership :: Assertion
+unit_forgedReceiptOwnership = do
+  let result = runSimOrThrow $ do
+        db <- newLeiosDBInMemory
+        notes <- newTVarIO ([] :: [LeiosEbNotification])
+        entered <- newTVarIO False
+        finished <- newTVarIO False
+        let forged = forgeLeiosEb ("registry-owned transaction" :| [])
+            point = MkLeiosPoint 1 (endorserBlockHash (forgedEbBody forged))
+        withWriter db $ \raw -> do
+          let gated =
+                raw
+                  { writeTxs = \p txs -> do
+                      receipt <- writeTxs raw p txs
+                      pure $
+                        Promise $
+                          (atomically (writeTVar entered True) >> atomically retry >> await receipt)
+                            `finally` atomically (writeTVar finished True)
+                  }
+          withRegistry $ \registry -> do
+            storeForgedEb registry (\event -> modifyTVar notes (event :)) gated 1 forged
+            atomically (readTVar entered >>= check)
+          joined <- readTVarIO finished
+          emitted <- readTVarIO notes
+          held <- withReader db $ \reader -> lookupEbClosure reader point
+          pure (joined, length emitted, fmap (map snd) held == Just (NE.toList (forgedEbTxs forged)))
+  result @?= (True, 0, True)
 
 -- | The node runs 'forkBlockForging' with 'ebForging' for slots 0 to 3. Then
 -- the test reads the chain and the LeiosDB.

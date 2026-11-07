@@ -1,8 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
 
 -- | Observe durable storage, without owning the caller's acquisition or write
--- lifetime. Existing handoff/legacy/forge supervisors must still await every
--- accepted write even when its original peer exits.
+-- lifetime. Handoff/legacy owners supervise accepted receipts beyond peer
+-- exit; forge waiters belong to the node registry. Raw DB draining does not
+-- imply these later observer/notification callbacks have finished.
 -- Rationale: @docs/fetch-policy/cancellation-contract.md#deduplication-and-durable-acquisition@.
 module Ouroboros.Consensus.Leios.LocalStore (observeLeiosDB, withLocalStore) where
 
@@ -18,7 +19,10 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | Supply this handle before ChainDB/kernel consumers receive the database.
--- Pruning advances the cache frontier before invoking actual database GC. Raw
+-- Pruning advances the cache frontier before invoking actual database GC.
+-- Release the cache lock before DB work: writer receipts publish under that
+-- lock too. Late publications below the frontier cannot resurrect evicted hints.
+-- Raw
 -- backends remain usable independently by storage tests.
 observeLeiosDB :: IOLike m => LeiosTxCache m -> LeiosDbHandle m -> LeiosDbHandle m
 observeLeiosDB cache raw =

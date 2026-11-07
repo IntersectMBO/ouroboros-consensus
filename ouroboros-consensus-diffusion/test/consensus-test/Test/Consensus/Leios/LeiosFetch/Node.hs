@@ -118,9 +118,12 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , LeiosFetchClientContext (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosOutstanding (..)
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosOutstanding (..)
   , OfferedHalves (..)
   , PeerOffer (..)
+  , newLeiosJobPool
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Identity (WireOrdinal (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
@@ -293,7 +296,11 @@ tests =
         prop_listenerReach
     , testGroup
         "atomic node integration"
-        [ testCase "E22 R07 legacy commit publishes after its caller disconnects" $
+        [ testCase "installation rejects unfinished legacy jobs without publishing partial state" $
+            runSimFinishing atomicRejectsIncompleteInstall >>= (@?= True)
+        , testCase "installation accepts complete seeds and announcements-only state" $
+            runSimFinishing atomicAcceptsInitialSeeds >>= (@?= True)
+        , testCase "E22 R07 legacy commit publishes after its caller disconnects" $
             runSimFinishing atomicLegacyCacheAfterExit >>= (@?= True)
         , testCase "E22 all durable-cache hits finish after a body-only offer" $
             runSimFinishing (atomicLocalCache 3) >>= (@?= (1, 0))
@@ -311,6 +318,10 @@ tests =
             runSimFinishing atomicPreservesWanted >>= (@?= True)
         , testCase "arena pressure preserves a verified body awaiting its durable receipt" $
             runSimFinishing atomicPreservesAccepted >>= (@?= True)
+        , testCase "legacy requests wait for acquisition capacity held by an in-flight body" $
+            runSimFinishing (atomicPreservesActive False True) >>= (@?= True)
+        , testCase "legacy requests wait for acquisition capacity held by accepted storage" $
+            runSimFinishing (atomicPreservesActive True True) >>= (@?= True)
         , testCase "version 17 fetches the body before any closure offer, then pipelines durable checkpoints" $
             runSimFinishing (atomicHonest 0) >>= (@?= (1, 3))
         , testCase "local durable possession removes only already held TXs" $
@@ -1561,6 +1572,55 @@ atomicServingCounted db counted channel = withReader db $ \reader ->
             Atomic.timeLimitsLeiosFetchAtomic
             channel
             (AtomicServer.atomicServerPeer server)
+
+-- Low-level installation must not promise metadata the fresh handoff lacks.
+atomicRejectsIncompleteInstall :: forall s. IOSim s Bool
+atomicRejectsIncompleteInstall = withNode $ \node -> do
+  let kernel = getLeiosFetchKernel (nodeKernel node)
+      context = lfkContext kernel
+      pool =
+        newLeiosJobPool
+          (lfcStaticEnv context)
+          (IntMap.singleton 0 (hashLeiosTx sharedTx, fromIntegral (BS.length (leiosTxBytes sharedTx))))
+  initial <- IOLike.modifyMVar (lfcOutstanding context) $ \state -> do
+    let seeded = state{ebState = Map.singleton fetchedPoint (MkEbState SNothing (BodyAcquired pool))}
+    pure (seeded, seeded)
+  ran <- newTVarIO False
+  let install :: IOSim s ()
+      install = withAtomicFetchNode atomicNodeConfig kernel $ \(_ :: AtomicFetchNode (IOSim s) PeerAddr (ConnectionId PeerAddr) Blk) ->
+        atomically $ writeTVar ran True
+  outcome <- try install
+  current <- IOLike.readMVar (lfcOutstanding context)
+  installed <- atomically $ IOLike.readTVar (lfkExtension kernel)
+  called <- readTVarIO ran
+  ensure (outcome == Left IncompleteInitialLegacyState) "unfinished legacy state was accepted"
+  ensure
+    (ebState current == ebState initial && maybe True (const False) installed && not called)
+    "rejected installation changed shared state"
+  -- The failed constructor also restored the outstanding MVar. A clean retry
+  -- can install and uninstall, proving it left no extension/resource ownership.
+  IOLike.modifyMVar_ (lfcOutstanding context) $ \state -> pure state{ebState = Map.empty}
+  install
+  readTVarIO ran
+
+atomicAcceptsInitialSeeds :: forall s. IOSim s Bool
+atomicAcceptsInitialSeeds = withNode $ \node -> do
+  let kernel = getLeiosFetchKernel (nodeKernel node)
+      context = lfkContext kernel
+      empty = newLeiosJobPool (lfcStaticEnv context) IntMap.empty
+  IOLike.modifyMVar_ (lfcOutstanding context) $ \state ->
+    pure
+      state
+        { ebState =
+            Map.fromList
+              [ (fetchedPoint, MkEbState SNothing (BodyAcquired empty))
+              , (refocusedPoint, MkEbState SNothing NoBody)
+              ]
+        , numMissingBodies = 1
+        }
+  withAtomicFetchNode atomicNodeConfig kernel $ \(_ :: AtomicFetchNode (IOSim s) PeerAddr (ConnectionId PeerAddr) Blk) -> do
+    installed <- atomically $ IOLike.readTVar (lfkExtension kernel)
+    pure (maybe False (const True) installed)
 
 atomicObservation :: NodeUnderTest (IOSim s) -> IOSim s NodeObservation
 atomicObservation node = case nodeAtomicFetch node of
@@ -3012,13 +3072,13 @@ atomicReclaimsEmpty = do
 
 -- Resource reclamation must not become a second stall/preemption policy.
 atomicPreservesWanted :: IOSim s Bool
-atomicPreservesWanted = atomicPreservesActive False
+atomicPreservesWanted = atomicPreservesActive False False
 
 atomicPreservesAccepted :: IOSim s Bool
-atomicPreservesAccepted = atomicPreservesActive True
+atomicPreservesAccepted = atomicPreservesActive True False
 
-atomicPreservesActive :: Bool -> IOSim s Bool
-atomicPreservesActive waitingStorage = do
+atomicPreservesActive :: Bool -> Bool -> IOSim s Bool
+atomicPreservesActive waitingStorage legacySecond = do
   db <- newLeiosDBInMemory
   serverDb <- newLeiosDBInMemory
   fillLeiosDb serverDb fetchedPoint fetchedEb fetchedTxs
@@ -3032,38 +3092,78 @@ atomicPreservesActive waitingStorage = do
       localDb = if waitingStorage then holdBodyReceipt db submitted release else db
   withAtomicNodeOver config localDb $ \node -> do
     next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+    allNotifications <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
     a <- newTQueueIO
     b <- newTQueueIO
     sends <- newTVarIO 0
+    legacyRequests <- newTVarIO (0 :: Int)
     releaseAck <- newTVarIO True
     let upstream queue adjust = EnvPeer (feedingLeiosNotifyServer node queue) Nothing (atomicServing serverDb . adjust) Nothing
+        legacyServer channel =
+          fst
+            <$> runAnnotatedPeer
+              nullTracer
+              (envLeiosFetchCodec node)
+              channel
+              ( leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \request -> do
+                  atomically $ modifyTVar legacyRequests (+ 1)
+                  case request of
+                    MsgLeiosBlockRequest _ -> pure (MsgLeiosBlock fetchedEb)
+                    MsgLeiosBlockTxsRequest _ bitmaps ->
+                      pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (fetchedTxs V.!?) (bitmapOffsets bitmaps)
+              )
+        secondPeer =
+          if legacySecond
+            then EnvPeer (feedingLeiosNotifyServer node b) Nothing legacyServer Nothing
+            else upstream b id
+        withSecond = if legacySecond then withNodeVsEnvConnectionVersion NodeToNodeV_16 else withNodeVsEnvConnection
     threadDelay 2
     withNodeVsEnvConnection
       node
       (PeerAddr 1)
       (upstream a (if waitingStorage then id else committedBodyChannel sends release releaseAck))
       $ \_ ->
-        withNodeVsEnvConnection node (PeerAddr 2) (upstream b id) $ \_ -> do
-          atomically $ mapM_ (writeTQueue a) (announcingAndOffering fetchedEb announcingFetched)
-          if waitingStorage
-            then atomically (readTVar submitted >>= check)
-            else atomically (readTVar sends >>= check . (>= 1))
-          original <- bodySnapshotOf node
-          atomically $ mapM_ (writeTQueue b) (announcingAndOffering fetchedEb reannouncingFetched)
-          threadDelay 0.1
-          atomically $ case nodeAtomicFetch node of
-            Nothing -> retry
-            Just runtime -> do
-              bodies <- readNodeBodySnapshots runtime
-              let retained = BodyPolicy.bodyGeneration <$> Map.lookup fetchedPoint bodies
-              unless
-                (retained == Just (BodyPolicy.bodyGeneration original) && Map.notMember refocusedPoint bodies)
-                (throwSTM (userError "arena pressure evicted active body service"))
-          atomically $ writeTVar release True
-          awaitAcquired next (AcquiredClosure fetchedPoint)
-          awaitAcquired next (AcquiredClosure refocusedPoint)
-          checkStored node refocusedPoint fetchedEb fetchedTxs
-          pure True
+        withSecond node (PeerAddr 2) secondPeer $ \_ ->
+          flip finally (atomically $ writeTVar release True) $ do
+            atomically $ mapM_ (writeTQueue a) (announcingAndOffering fetchedEb announcingFetched)
+            if waitingStorage
+              then atomically (readTVar submitted >>= check)
+              else atomically (readTVar sends >>= check . (>= 1))
+            original <- bodySnapshotOf node
+            atomically $ mapM_ (writeTQueue b) (announcingAndOffering fetchedEb reannouncingFetched)
+            threadDelay (if legacySecond then 1 else 0.1)
+            when legacySecond $ do
+              earlyRequests <- atomically $ readTVar legacyRequests
+              ensure (earlyRequests == 0) "legacy work dispatched without a tracked acquisition"
+            atomically $ case nodeAtomicFetch node of
+              Nothing -> retry
+              Just runtime -> do
+                bodies <- readNodeBodySnapshots runtime
+                let retained = BodyPolicy.bodyGeneration <$> Map.lookup fetchedPoint bodies
+                unless
+                  (retained == Just (BodyPolicy.bodyGeneration original) && Map.notMember refocusedPoint bodies)
+                  (throwSTM (userError "arena pressure evicted active body service"))
+            atomically $ writeTVar release True
+            awaitAcquired next (AcquiredClosure fetchedPoint)
+            awaitAcquired next (AcquiredClosure refocusedPoint)
+            checkStored node refocusedPoint fetchedEb fetchedTxs
+            acquired <- replicateM 4 (acquiredOf <$> atomically allNotifications)
+            ensure
+              ( List.sortOn show acquired
+                  == List.sortOn
+                    show
+                    [ AcquiredBody fetchedPoint
+                    , AcquiredClosure fetchedPoint
+                    , AcquiredBody refocusedPoint
+                    , AcquiredClosure refocusedPoint
+                    ]
+              )
+              "capacity recovery lost or duplicated acquisition notifications"
+            duplicate <- timeout 0.1 (atomically allNotifications)
+            ensure
+              (case duplicate of Nothing -> True; _ -> False)
+              "capacity recovery emitted an extra notification"
+            pure True
 
 -- A different EB point holds a confirmed prefix. Only the independently fetched
 -- target body tells the receiver which TX hashes it can reuse. In the all-hit

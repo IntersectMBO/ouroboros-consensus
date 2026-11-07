@@ -63,8 +63,19 @@ incomingHistorySize :: InboundState -> Word32
 incomingHistorySize = fromIntegral . Map.size . inboundRecent
 
 -- | Validate a complete decoded client message before allocating server work.
--- The codec checks field widths; this checks sequence and cross-message targets.
--- Reply commitment, FIFO sending and the D active slots belong to the server.
+-- The codec checks field widths; this enforces session-wide invariants:
+--
+-- * Each reply-bearing command uses the exact next ordinal, starting at zero.
+--   Duplicates, gaps and attempts to continue after exhaustion are rejected.
+-- * A cancel with ordinal @n@ targets an earlier data request @t@ satisfying
+--   @t < n@ and @n - t < W@, where @W = 2D@. A control request or a data request
+--   already canceled cannot be targeted.
+-- * At most @W@ recent target classifications are retained, independently of
+--   ordinal values. The local counter can represent exhaustion without wrapping.
+--
+-- Rejection leaves the input state unchanged. Reply commitment, FIFO sending
+-- and active request/control resource limits belong to the server; sequence
+-- validity alone does not bound the rate of otherwise valid commands.
 checkIncomingMessage ::
   Message (LeiosFetchAtomic point eb tx) StIdle to -> InboundState -> Either InboundError InboundState
 checkIncomingMessage message s = do

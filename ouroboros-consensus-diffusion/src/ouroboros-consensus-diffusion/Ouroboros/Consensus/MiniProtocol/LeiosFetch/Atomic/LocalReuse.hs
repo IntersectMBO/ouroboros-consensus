@@ -141,6 +141,9 @@ resolveLocalSlice handoff cache source closing notify point gen bodyDurable reje
         -- the same STM transaction. It can escape without a committed reserve.
         result <- mask $ \restore -> do
           chosen <- atomically $ do
+            -- Check shutdown before a source STM read which may retry.
+            -- Recheck possession and reserve together; materialize TX bytes
+            -- only after that reservation succeeds, outside shared STM.
             stopped <- closing
             if stopped
               then pure (Left H.StorageClosed)
@@ -246,6 +249,8 @@ runLocalResolver config handoff cache source ready closing notify
           `orElse` (W.awaitReadiness ready >> pure False)
           `orElse` (do now <- epochs; fresh <- hasFresh; check (Just now /= seen || fresh); pure False)
     unless stopped $ do
+      -- Remember pass-start epochs, not an end-of-pass resample. A source
+      -- change during this scan must still make the next scan due.
       start <- atomically $ do
         stoppedNow <- closing
         if stoppedNow

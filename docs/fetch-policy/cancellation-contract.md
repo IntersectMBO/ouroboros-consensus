@@ -5,7 +5,8 @@ checkpoint and resource semantics implemented by the source commits that follow
 this document. Initial resource limits remain subject to validation and tuning.
 The high-level [fine-MVP and atomic policy reference](mvp-fetch-policy.md)
 describes the simulator policy; this contract defines production wire ordering,
-request ownership and progress handling.
+request ownership and progress handling. The [implementation review guide](review-guide.md)
+follows acquisition through the source, its component boundaries and regression tests.
 
 Agreed design direction: retain one typed transaction-batch reply and expose
 complete transaction elements incrementally through codec/driver progress hooks.
@@ -545,6 +546,25 @@ Resolve element and terminal offsets to their last required input span; reusing
 trailing bytes does not create a fresh arrival. Distinguish local backpressure
 from upstream service. Reuse annotated codecs/drivers; no mux observer API or
 special runner is required, and optional tracing may precede these observations.
+
+
+Input publication and expiry must coordinate before capturing a fresh read time.
+The progress driver starts a bounded publication step after nonempty input is
+available and before taking its timestamp; the client publishes that step in
+shared timing state. Retained input starts the same protected local decode step.
+Finishing a frame reports whether buffered input remains before typed terminal
+settlement can activate the successor. Its receiver atomically trades that fact
+for its own step. Neither operation moves the original deadline or restamps bytes.
+
+Before waiting for more network input, including after a partial decode, release
+that protection and reconcile the same deadline. Empty reads/EOF create no input
+observation; abort/close clears the original session's protection. These local
+callbacks must remain bounded and must not wait for storage. Known-late input
+still expires. Both direct and validation terminal routes diagnose an older
+timely observation published after expiry handling. If a read occurs after
+expiry handling at the same clock value, event order wins: the failure remains
+charged and the later reply can settle normally. Clock equality cannot establish
+that the read preceded timeout handling.
 
 A fast reply may be observed while the sender has not yet returned from its
 send operation. Register immutable request identity before sending and reconcile

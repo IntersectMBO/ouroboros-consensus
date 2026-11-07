@@ -87,6 +87,9 @@ tests =
         testSessionCap
     , testCase "pruning drops queued data but old descriptors still validate and drain" testQueuedPrune
     , testCase "a receipt after prune/refocus cannot complete the new generation" testOldReceipt
+    , testCase
+        "legacy receipts captured before refocus cannot settle its replacement"
+        testOldLegacyReceipt
     , testCase "unconfirmed writes release claims and leave relevant TXs fetchable" testUnconfirmed
     , testCase
         "coalescing uses ready whole TXs, crosses target once and submits a small remainder immediately"
@@ -386,6 +389,35 @@ testQueuedPrune = withFixture limits [6, 6] $ \env -> do
     >>= (@?= Right ())
   atomically (readAcquisition (handoff env) (point env)) >>= (@?= Nothing)
   withWorker env (writer env) (pure ())
+
+testOldLegacyReceipt :: Assertion
+testOldLegacyReceipt = withFixture limits [6] $ \env -> do
+  atomically $ retireAcquisition (handoff env) (point env) (generation env)
+  gen <- right <$> atomically (beginAcquisition (handoff env) (point env))
+  let newer = env{generation = gen}
+  registerDurableBody (handoff env) (notify env) (point env) gen (body env) IntSet.empty
+    >>= (@?= Right ())
+  notes <- readTVarIO (events env)
+  registerDurableBody
+    (handoff env)
+    (notify env)
+    (point env)
+    (generation env)
+    (body env)
+    (IntSet.singleton 0)
+    >>= (@?= Left StaleAcquisition)
+  atomically
+    ( registerDurableTransactions
+        (handoff env)
+        (notify env)
+        (point env)
+        (generation env)
+        (IntSet.singleton 0)
+    )
+    >>= (@?= Left StaleAcquisition)
+  current <- snapshot newer
+  snapshotHeld current @?= IntSet.empty
+  readTVarIO (events env) >>= (@?= notes)
 
 testOldReceipt :: Assertion
 testOldReceipt = withFixture limits [6] $ \env -> do

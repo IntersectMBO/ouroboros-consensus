@@ -521,6 +521,8 @@ openStorageSession h owner lifetime d responseBytes = transition h $ \s -> do
     )
 
 -- | Close the wire side; accepted data and its budget survive until settlement.
+-- This retires unused receive reservations, not already accepted storage claims.
+-- Reconnecting under a new session cannot erase the stable owner's old usage.
 closeStorageSession ::
   (MonadSTM m, Ord peer) => StorageHandoff m owner peer -> StorageSession peer -> STM m ()
 closeStorageSession h key = do
@@ -1233,6 +1235,9 @@ descriptorIdentity :: RequestDescriptor -> (LeiosPoint, AcquisitionGeneration)
 descriptorIdentity (BodyRequest body) = (bodyPoint body, bodyGeneration body)
 descriptorIdentity (BatchRequest batch) = (batchPoint batch, batchGeneration batch)
 
+-- A generation check fences target acquisition, not global durable storage.
+-- Callers must capture the generation at their ownership boundary: atomic
+-- descriptors at admission, legacy bridge receipts at write submission.
 current ::
   LeiosPoint ->
   AcquisitionGeneration ->
@@ -1348,6 +1353,11 @@ cleanupSessions s =
           (storageSessions s)
     }
 
+-- | Refund the original ticket or local reservation, even after its peer or
+-- acquisition has retired. Only clear pending ownership when its exact claim
+-- ID still matches; an old receipt cannot refund or erase replacement work.
+-- A writing claim remains charged until this settlement, unlike safe queued
+-- work which can be discarded before submission.
 releaseClaim ::
   Ord peer =>
   Natural ->
@@ -1569,6 +1579,11 @@ settleBody h notify claims body held = do
   mapM_ notify events
   notify StorageCapacityAvailable
 
+-- | Confirm only the receipt's exact submitted-position partition. Accepted
+-- pending data suppresses duplicate requests, but does not become held until
+-- this transition. Refund each original charge even if its generation is stale;
+-- only the captured current generation may acquire or emit notifications.
+-- Global cache publication by the observed writer is an independent source fact.
 settleTransactions ::
   (IOLike m, Ord peer) =>
   StorageHandoff m owner peer ->

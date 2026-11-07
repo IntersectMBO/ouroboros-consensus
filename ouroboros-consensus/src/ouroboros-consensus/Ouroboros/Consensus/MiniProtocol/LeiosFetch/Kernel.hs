@@ -288,7 +288,10 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
 
   -- The decision loop reads the registered peers within the same critical
   -- section in which it assigns requests, so it cannot assign this peer
-  -- anything after its requests are cancelled here.
+  -- anything after its requests are cancelled here. Removal and atomic
+  -- admission/publication therefore share this lock, using the captured peer
+  -- lifetime rather than an address lookup which could select a replacement.
+  -- Keep IO and storage waits outside this critical section.
   unregister (lifetimeId, _) = modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
     atomically $ do
       modifyTVar lfkPeers (Map.delete lifetimeId)

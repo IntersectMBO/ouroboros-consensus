@@ -733,7 +733,7 @@ forkBlockForging IS{..} emitAcquisition (MkBlockForging blockForgingM) =
                       (blockSlot header)
                       (Leios.toRankingBlockHash (Proxy @blk) (headerHash header))
                       (Leios.endorserBlockHash (Leios.forgedEbBody forged))
-                  storeForgedEb emitAcquisition leiosDbWriter (blockSlot header) forged
+                  storeForgedEb registry emitAcquisition leiosDbWriter (blockSlot header) forged
               )
               currentSlot
     )
