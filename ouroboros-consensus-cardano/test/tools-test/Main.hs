@@ -5,15 +5,18 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.BaseTypes (StrictMaybe (SJust))
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
+import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
+import Data.List (find, isPrefixOf)
 import Data.String (fromString)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Ledger.Tables (unstowLedgerTables)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbReader (testScanEbPoints)
@@ -23,10 +26,12 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withReader
   , withWriter
   )
+import Test.Consensus.Cardano.Examples (examples)
 import qualified Test.Cardano.Tools.DBAnalyser.NodeConfig
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import Test.Util.TestEnv
 
 nodeConfig, chainDB, bulkCredentials :: FilePath
@@ -97,6 +102,31 @@ testTruncaterConfig =
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
     }
+
+-- | Model the first block of a new era: the block and resulting ledger state
+-- are in Shelley, while the state before applying it is still in Byron. Trace
+-- analysis cannot turn those three values into a same-era
+-- 'HasAnalysis.WithLedgerState', so it must emit no trace markers.
+traceLedgerAcrossEraTransitionTest :: Assertion
+traceLedgerAcrossEraTransitionTest = do
+  block <- exampleForEra "Shelley" $ exampleBlock examples
+  stateBefore <- unstowLedgerTables <$> exampleForEra "Byron" (exampleLedgerState examples)
+  stateAfter <- unstowLedgerTables <$> exampleForEra "Shelley" (exampleLedgerState examples)
+
+  let transition :: HasAnalysis.WithLedgerState (CardanoBlock StandardCrypto)
+      transition =
+        HasAnalysis.WithLedgerState
+          { HasAnalysis.wlsBlk = block
+          , HasAnalysis.wlsStateBefore = stateBefore
+          , HasAnalysis.wlsStateAfter = stateAfter
+          }
+
+  HasAnalysis.emitTraces transition @?= []
+
+exampleForEra :: String -> Labelled a -> IO a
+exampleForEra era =
+  maybe (fail $ "missing " ++ era ++ " example") (pure . snd)
+    . find (maybe False (era `isPrefixOf`) . fst)
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
 testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
@@ -215,6 +245,9 @@ tests =
     , Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
     , testCaseSteps "synthesize, analyse and truncate\n" blockCountTest
     , Test.Cardano.Tools.Headers.tests
+    , testCase
+        "trace-ledger emits no traces at an era transition"
+        traceLedgerAcrossEraTransitionTest
     ]
 
 main :: IO ()
