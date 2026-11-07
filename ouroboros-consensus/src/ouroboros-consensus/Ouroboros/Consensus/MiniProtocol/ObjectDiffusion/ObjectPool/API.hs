@@ -87,6 +87,15 @@ data ObjectPoolWriter objectId object m
   -- 'ObjectIdRequestable', waits at the first 'ObjectIdTooNew', and skips IDs
   -- classified as 'ObjectIdTooOld', acknowledging them in FIFO order without
   -- penalizing the peer.
+  --
+  -- The returned classification function @classify :: objectId ->
+  -- ObjectIdRequestability@ must be monotone with respect to the ordering
+  --
+  -- @
+  -- 'ObjectIdTooOld' < 'ObjectIdRequestable' < 'ObjectIdTooNew'
+  -- @
+  --
+  -- That is, for any @x <= y@, we require @classify x <= classify y@.
   }
 
 -- * Invariants
