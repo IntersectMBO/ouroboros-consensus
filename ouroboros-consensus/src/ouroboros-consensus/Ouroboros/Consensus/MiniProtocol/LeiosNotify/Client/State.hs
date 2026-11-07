@@ -87,9 +87,9 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcemen
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity
   , AnnouncingHeader (ancAnnouncement, ancElectionId)
+  , LeiosAnnouncementAgeLimits (..)
   , announcementValidity
   , announcingRbHash
-  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -296,6 +296,7 @@ onLeiosNotifyAnnouncement ::
   , LedgerSupportsProtocol blk
   , ConvertRawHash blk
   ) =>
+  LeiosAnnouncementAgeLimits ->
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
@@ -305,14 +306,14 @@ onLeiosNotifyAnnouncement ::
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st hdr = do
+onLeiosNotifyAnnouncement ageLimits systemTime futureCheck cfg announceState immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
       liftEither $ Announcements.insert (ancElectionId anc) anc (lnpsAnnouncements st)
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
-    valid <- announcementValidity systemTime futureCheck cfg immLedger anc
+    valid <- announcementValidity ageLimits systemTime futureCheck cfg immLedger anc
     lift $ atomically $ onValidAnnouncement announceState valid
     pure
       st
@@ -409,12 +410,12 @@ data VoteWindow = MkVoteWindow
 -- | When a vote is worth relaying, given its election's ledger view and when
 -- its election slot began: from 3 L_hdr after until 3 L_hdr + L_vote + L_diff
 -- after, or until its announcement is no longer relayed, if sooner.
-leiosVoteWindow :: LeiosLedgerView -> RelativeTime -> VoteWindow
-leiosVoteWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
+leiosVoteWindow :: LeiosAnnouncementAgeLimits -> LeiosLedgerView -> RelativeTime -> VoteWindow
+leiosVoteWindow ageLimits MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
   MkVoteWindow
     (onset `plus` (3 * lHdr))
     -- NOTE: This cap never applies on mainnet, as L_diff is under 20 s.
-    (onset `plus` (min (3 * lHdr + lVote + lDiff) maxAnnouncementAgeSend))
+    (onset `plus` (min (3 * lHdr + lVote + lDiff) (maxAnnouncementAgeSend ageLimits)))
  where
   plus = flip addRelTime
 
@@ -435,6 +436,7 @@ checkLeiosVotes ::
   , HasHardForkHistory blk
   ) =>
   TopLevelConfig blk ->
+  LeiosAnnouncementAgeLimits ->
   -- | the most that an honest peer's clock may differ from ours
   InFutureCheck.ClockSkew ->
   -- | the immutable tip's ledger state
@@ -444,7 +446,7 @@ checkLeiosVotes ::
   NonEmpty LeiosVote ->
   LeiosNotifyPeerState blk ->
   Except ExnLeiosNotifyInvalidVotes (LeiosNotifyPeerState blk, [AcceptedVote])
-checkLeiosVotes cfg skew immLedger now votes st0 =
+checkLeiosVotes cfg ageLimits skew immLedger now votes st0 =
   fmap reverse <$> foldM checkOne (st0, []) votes
  where
   checkOne (st, accepted) vote = do
@@ -472,7 +474,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 =
     leiosView@MkLeiosLedgerView{llvCommittee} <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
-    let window = leiosVoteWindow leiosView onset
+    let window = leiosVoteWindow ageLimits leiosView onset
     when (now < addRelTime (negate (InFutureCheck.unClockSkew skew)) (voteFrom window)) $
       throwError (ExnLeiosVoteTooEarly rbHash slot age)
     when (now > addRelTime voteLateGrace (voteUntil window)) $
