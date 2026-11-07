@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Peras.Params
   ( -- * Protocol parameters
     PerasIgnoranceRounds (..)
   , PerasCooldownRounds (..)
+  , PerasBlockMaxSlots (..)
   , PerasBlockMinSlots (..)
   , PerasCertMaxRounds (..)
   , PerasCertArrivalThreshold (..)
@@ -91,6 +92,14 @@ newtype PerasBlockMinSlots
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
+-- | Maximum age in slots of a block after which it can no longer be voted for
+-- in order to get a boost.
+newtype PerasBlockMaxSlots
+  = PerasBlockMaxSlots {unPerasBlockMaxSlots :: Word64}
+  deriving Show via Quiet PerasBlockMaxSlots
+  deriving stock Generic
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
+
 -- | Maximum age for a certificate to be included in a block, in rounds.
 newtype PerasCertMaxRounds
   = PerasCertMaxRounds {unPerasCertMaxRounds :: Word64}
@@ -153,6 +162,7 @@ data PerasParams blk = PerasParams
   { perasIgnoranceRounds :: !PerasIgnoranceRounds
   , perasCooldownRounds :: !PerasCooldownRounds
   , perasBlockMinSlots :: !PerasBlockMinSlots
+  , perasBlockMaxSlots :: !PerasBlockMaxSlots
   , perasCertMaxRounds :: !PerasCertMaxRounds
   , perasCertArrivalThreshold :: !PerasCertArrivalThreshold
   , perasWeight :: !PerasWeight
@@ -175,6 +185,7 @@ instance Typeable blk => FromCBOR (PerasParams blk) where
       <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
+      <*> fromCBOR
 
 instance Typeable blk => ToCBOR (PerasParams blk) where
   toCBOR params =
@@ -182,6 +193,7 @@ instance Typeable blk => ToCBOR (PerasParams blk) where
       <> toCBOR (perasIgnoranceRounds params)
       <> toCBOR (perasCooldownRounds params)
       <> toCBOR (perasBlockMinSlots params)
+      <> toCBOR (perasBlockMaxSlots params)
       <> toCBOR (perasCertMaxRounds params)
       <> toCBOR (perasCertArrivalThreshold params)
       <> toCBOR (perasWeight params)
@@ -223,6 +235,9 @@ defaultPerasParams =
     , -- must be between 30 and 900 as per the design document
       perasBlockMinSlots =
         PerasBlockMinSlots 90
+    , -- k/f, in order to limit the needed forecast horizon to 4k/f in Genesis
+      perasBlockMaxSlots =
+        PerasBlockMaxSlots 43200
     , -- equal to perasIgnoranceRounds as per the design document
       perasCertMaxRounds =
         PerasCertMaxRounds 487
