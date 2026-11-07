@@ -132,9 +132,11 @@ hooks :: Events -> RequestKey Int -> ReplyHooks IO
 hooks Events{delivered, aborted} key =
   ReplyHooks
     { replyStarted = pure ()
+    , replyInputStarting = pure ()
     , replyInput = const (pure ())
     , replyAwaitInput = pure ()
     , replyTransaction = \event accepted -> atomically $ modifyTVar delivered (++ [(key, event, accepted)])
+    , replyBufferedInput = \_ -> pure ()
     , replyAborted = \_ -> atomically $ modifyTVar aborted (+ 1)
     }
 

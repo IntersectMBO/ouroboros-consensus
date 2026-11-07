@@ -23,7 +23,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Receive
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
-  ( atomically
+  ( STM
+  , atomically
   , newTVarIO
   , readTVar
   , throwSTM
@@ -64,12 +65,17 @@ data ReplyBinding peer
 data ReplyHooks m = ReplyHooks
   { replyStarted :: m ()
   -- ^ This pinned response is about to consume retained or fresh input.
+  , replyInputStarting :: m ()
+  -- ^ Publish a bounded handoff before recording a nonempty fresh read's time.
   , replyInput :: InputObservation -> m ()
   -- ^ Original read observations, including timestamp-preserving trailing input.
   , replyAwaitInput :: m ()
   -- ^ Settle local validation gates before waiting for further channel input.
   , replyTransaction :: ProgressEvent LeiosTx -> Acceptance -> m ()
   -- ^ Authenticated and handed-off whole TX; only 'Useful' earns new service.
+  , replyBufferedInput :: Bool -> STM m ()
+  -- ^ Retained input for the next FIFO reply, published with framing before
+  -- typed settlement can retire this head and examine its successor.
   , replyAborted :: SomeException -> m ()
   -- ^ At most once after a receive/typed-settlement failure. Close the session
   -- at the integrating client, preserving accepted storage claims.
@@ -178,6 +184,13 @@ newReplyReceiver handoff binding hooks = do
                   Acquired -> writeTVar phase (Receiving 0)
                   _ -> throwSTM ReceiveOutOfSequence
               replyStarted hooks
+          , receiveInputStarting = do
+              atomically $ do
+                state <- readTVar phase
+                case state of
+                  Receiving{} -> pure ()
+                  _ -> throwSTM ReceiveOutOfSequence
+              replyInputStarting hooks
           , receiveInput = replyInput hooks
           , receiveAwaitInput = replyAwaitInput hooks
           , receiveProgress = \event -> do
@@ -193,10 +206,12 @@ newReplyReceiver handoff binding hooks = do
                   accepted <- acceptTransaction handoff req index tx >>= storageResult
                   atomically $ writeTVar phase (Receiving (index + 1))
                   replyTransaction hooks event accepted
-          , receiveComplete = \receipt -> atomically $ do
+          , receiveComplete = \receipt buffered -> atomically $ do
               state <- readTVar phase
               case state of
-                Receiving count -> writeTVar phase (Framed count receipt)
+                Receiving count -> do
+                  writeTVar phase (Framed count receipt)
+                  replyBufferedInput hooks buffered
                 _ -> throwSTM ReceiveOutOfSequence
           , receiveAbort = abort
           }

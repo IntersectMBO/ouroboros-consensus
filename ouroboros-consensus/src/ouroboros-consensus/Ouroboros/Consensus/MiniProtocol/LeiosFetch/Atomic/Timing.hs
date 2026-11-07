@@ -21,6 +21,9 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Timing
   , registerTiming
   , recordSend
   , recordTerminal
+  , beginInputObservation
+  , publishInputObservation
+  , recordBufferedInput
   , beginValidation
   , finishValidation
   , withdrawTiming
@@ -65,7 +68,14 @@ data ValidationToken peer = ValidationToken !(RequestKey peer) !Natural deriving
 -- terminal at its input-span timestamp. An incomplete step never renews patience.
 data ValidationOutcome = NeedMoreInput | ValidTerminal !Time deriving (Eq, Show)
 
-data TimerStatus = Armed | AwaitingValidation | Fired deriving (Eq, Show)
+-- The handling time distinguishes a missed older observation from input which
+-- arrives after expiry handling at the same monotonic clock value. The latter
+-- keeps the charged expiry; timestamp equality cannot reverse event order.
+data TimerStatus = Armed | AwaitingValidation | Fired !Time deriving (Eq, Show)
+
+hasFired :: TimerStatus -> Bool
+hasFired Fired{} = True
+hasFired _ = False
 
 -- | Timer state attached to the current FIFO head: its activation token,
 -- absolute monotonic expiry and handling status. Firing or awaiting local
@@ -94,10 +104,11 @@ data Entry peer = Entry
   , entryTerminal :: !(Maybe Time)
   -- ^ Last required input span's monotonic receipt time for a validated wire
   -- terminal. Partial payload progress and durable storage are separate events.
-  , entryValidation :: !(Maybe (ValidationToken peer, Time))
-  -- ^ Token and earliest unprocessed input observation for the current bounded
-  -- decode/validation step. Pre-deadline input defers an expiry decision until
-  -- the step settles, without proving completion or moving the deadline.
+  , entryValidation :: !(Maybe (ValidationToken peer, Maybe Time))
+  -- ^ Token and earliest unprocessed input time for one bounded local step.
+  -- An absent inner time protects publication before the timestamp is taken;
+  -- a known on-time observation protects validation without moving the deadline.
+  -- Clear the step before waiting for more network input.
   , entryWanted :: !Bool
   -- ^ Whether this data attempt still contains needed work. Withdrawal clears
   -- it without retiring the wire exchange or dropping its head timer; ignored
@@ -146,6 +157,9 @@ data TimingState peer = TimingState
   , timingLastReconcile :: !(Maybe Time)
   -- ^ Last coordinator time passed to 'reconcileTiming', used to reject a
   -- backwards local clock. It is not a request's activation time or deadline.
+  , timingBufferedInput :: !(Maybe (ValidationToken peer))
+  -- ^ A completed frame left input for the next FIFO receiver. Keep expiry
+  -- from overlooking that input until its receiver installs its own step.
   , timingClosed :: !Bool
   -- ^ Set on session retirement, which clears timing entries and rejects new
   -- registrations and observations. Wire/storage cleanup belongs to its owners.
@@ -161,6 +175,7 @@ data TimingEventError
   | DuplicateTerminal
   | ValidationAlreadyPending
   | UnknownValidation
+  | MissingInputObservation
   | InvalidObservationTime
   | TimeWentBackwards
   | FutureObservation
@@ -176,7 +191,7 @@ data Expiry peer = Expiry
   deriving (Eq, Show)
 
 newTimingState :: LeiosPeerLifetimeId peer -> FetchSessionToken -> TimingState peer
-newTimingState lifetime session = TimingState lifetime session 0 0 0 Seq.empty Nothing Nothing Nothing False
+newTimingState lifetime session = TimingState lifetime session 0 0 0 Seq.empty Nothing Nothing Nothing Nothing False
 
 -- | Registration mirrors the @Atomic.Admission@ ledger's order; it starts no
 -- clock and consumes no additional capacity. That ledger owns admission
@@ -209,7 +224,7 @@ recordTerminal key at = modifyEntry key $ \e -> do
   when (entryTerminal e /= Nothing) (Left DuplicateTerminal)
   when (entryValidation e /= Nothing) (Left ValidationAlreadyPending)
   case entryActive e of
-    Just (Active _ deadline Fired) | at <= deadline -> Left MissedObservationBoundary
+    Just (Active _ deadline (Fired handledAt)) | at <= deadline && at < handledAt -> Left MissedObservationBoundary
     _ -> pure ()
   pure e{entryTerminal = Just at}
 
@@ -226,6 +241,25 @@ beginValidation ::
   Either TimingEventError (ValidationToken peer, TimingState peer)
 beginValidation key oldestInputAt s = do
   validTime oldestInputAt
+  beginValidationStep key (Just oldestInputAt) s
+
+-- | Protect one bounded input-publication step before taking its timestamp.
+-- Input must already be available, or local decoding must be about to start;
+-- 'finishValidation' with 'NeedMoreInput' must precede a blocking network read.
+beginInputObservation ::
+  Eq peer =>
+  RequestKey peer ->
+  TimingState peer ->
+  Either TimingEventError (ValidationToken peer, TimingState peer)
+beginInputObservation key = beginValidationStep key Nothing
+
+beginValidationStep ::
+  Eq peer =>
+  RequestKey peer ->
+  Maybe Time ->
+  TimingState peer ->
+  Either TimingEventError (ValidationToken peer, TimingState peer)
+beginValidationStep key oldestInputAt s = do
   let token = ValidationToken key (timingNextValidation s)
   s' <-
     modifyEntry
@@ -236,7 +270,50 @@ beginValidation key oldestInputAt s = do
           pure e{entryValidation = Just (token, oldestInputAt)}
       )
       s
-  pure (token, s'{timingNextValidation = timingNextValidation s + 1})
+  pure (token, s'{timingNextValidation = timingNextValidation s + 1, timingBufferedInput = Nothing})
+
+-- | Publish an original input timestamp under its pre-existing protection.
+-- Multiple retained spans in the same decode step keep the first observation.
+publishInputObservation ::
+  Eq peer =>
+  ValidationToken peer ->
+  Time ->
+  TimingState peer ->
+  Either TimingEventError (TimingState peer)
+publishInputObservation token@(ValidationToken key _) at = modifyEntry key $ \e -> do
+  validTime at
+  oldest <- case entryValidation e of
+    Just (current, first) | current == token -> Right first
+    _ -> Left UnknownValidation
+  when (maybe False (> at) oldest) (Left InvalidObservationTime)
+  pure e{entryValidation = Just (token, Just (maybe at id oldest))}
+
+-- | Publish leftover input before the current typed terminal can activate its
+-- successor's timer. Starting the successor consumes this protection atomically
+-- with installation of that receiver's own validation token.
+recordBufferedInput ::
+  Eq peer =>
+  ValidationToken peer ->
+  Bool ->
+  TimingState peer ->
+  Either TimingEventError (TimingState peer)
+recordBufferedInput token@(ValidationToken key _) buffered s = do
+  _ <-
+    modifyEntry
+      key
+      ( \e -> case entryValidation e of
+          Just (current, Just _) | current == token -> Right e
+          Just (current, Nothing) | current == token -> Left MissingInputObservation
+          _ -> Left UnknownValidation
+      )
+      s
+  pure
+    s
+      { timingBufferedInput =
+          if buffered
+            then Just token
+            else if timingBufferedInput s == Just token then Nothing else timingBufferedInput s
+      }
 
 finishValidation ::
   Eq peer =>
@@ -244,17 +321,34 @@ finishValidation ::
   ValidationOutcome ->
   TimingState peer ->
   Either TimingEventError (TimingState peer)
-finishValidation token@(ValidationToken key _) outcome = modifyEntry key $ \e -> do
-  oldest <- case entryValidation e of
-    Just (current, at) | current == token -> Right at
-    _ -> Left UnknownValidation
-  terminal <- case outcome of
-    NeedMoreInput -> Right Nothing
-    ValidTerminal at -> do
-      validTime at
-      when (at < oldest) (Left InvalidObservationTime)
-      pure (Just at)
-  pure e{entryValidation = Nothing, entryTerminal = terminal}
+finishValidation token@(ValidationToken key _) outcome s = do
+  next <-
+    modifyEntry
+      key
+      ( \e -> do
+          oldest <- case entryValidation e of
+            Just (current, at) | current == token -> Right at
+            _ -> Left UnknownValidation
+          terminal <- case outcome of
+            NeedMoreInput -> Right Nothing
+            ValidTerminal at -> do
+              first <- maybe (Left MissingInputObservation) Right oldest
+              validTime at
+              when (at < first) (Left InvalidObservationTime)
+              case entryActive e of
+                Just (Active _ deadline (Fired handledAt)) | at <= deadline && at < handledAt -> Left MissedObservationBoundary
+                _ -> pure ()
+              pure (Just at)
+          pure e{entryValidation = Nothing, entryTerminal = terminal}
+      )
+      s
+  pure $ case outcome of
+    NeedMoreInput ->
+      next
+        { timingBufferedInput =
+            if timingBufferedInput next == Just token then Nothing else timingBufferedInput next
+        }
+    ValidTerminal{} -> next
 
 -- Neither logical withdrawal nor a previous failure retires a wire head or
 -- drops its fixed deadline. Failure handling is monotone for this attempt.
@@ -286,7 +380,7 @@ reconcileTiming now s = do
     concat
       [ maybe [] pure (entrySent e)
           ++ maybe [] pure (entryTerminal e)
-          ++ maybe [] (pure . snd) (entryValidation e)
+          ++ maybe [] (maybe [] pure . snd) (entryValidation e)
       | e <- toList (timingQueue s)
       ]
   go state = case timingQueue state of
@@ -313,13 +407,12 @@ reconcileTiming now s = do
             pure (events ++ laterEvents, final)
           Nothing -> do
             let (events, settled) =
-                  if now < deadline || status == Fired
+                  if now < deadline || hasFired status
                     then ([], activeEntry)
-                    else case entryValidation activeEntry of
-                      Just (_, at)
-                        | at <= deadline ->
-                            ([], activeEntry{entryActive = Just (Active token deadline AwaitingValidation)})
-                      _ -> expire token deadline status True activeEntry
+                    else
+                      if observationPending state activeEntry deadline
+                        then ([], activeEntry{entryActive = Just (Active token deadline AwaitingValidation)})
+                        else expire token deadline status True activeEntry
             pure (events, activated{timingQueue = settled Seq.<| rest})
   activate sent e state = case entryActive e of
     Just active -> (active, state)
@@ -332,14 +425,14 @@ reconcileTiming now s = do
             TrackAck rtt -> ackDeadline rtt sent (timingPreviousTerminal state)
        in (Active token deadline Armed, state{timingNextTimer = timingNextTimer state + 1})
   expire token deadline status due e
-    | not due || status == Fired = ([], e)
+    | not due || hasFired status = ([], e)
     | otherwise =
         let charge = case entryKind e of
               TrackData{} -> entryWanted e && not (entryFailureHandled e)
               TrackAck{} -> False
          in ( [Expiry token deadline charge]
             , e
-                { entryActive = Just (Active token deadline Fired)
+                { entryActive = Just (Active token deadline (Fired now))
                 , entryFailureHandled = entryFailureHandled e || charge
                 }
             )
@@ -365,8 +458,15 @@ activeDeadline s = case timingQueue s of
 -- past. A validation outcome must signal readiness to resume reconciliation.
 nextDeadline :: TimingState peer -> Maybe (TimerToken peer, Time)
 nextDeadline s = case timingQueue s of
-  Entry{entryActive = Just (Active token deadline Armed)} :<| _ -> Just (token, deadline)
+  e@Entry{entryActive = Just (Active token deadline Armed)} :<| _
+    | not (observationPending s e deadline) -> Just (token, deadline)
   _ -> Nothing
+
+observationPending :: TimingState peer -> Entry peer -> Time -> Bool
+observationPending s e deadline = case entryValidation e of
+  Just (_, Nothing) -> True
+  Just (_, Just at) -> at <= deadline
+  Nothing -> maybe False (const True) (timingBufferedInput s)
 
 -- | No unresolved timing exchanges, including unsent data and cancel ACKs.
 -- Pending storage can still own handoff capacity after the wire is idle.
@@ -375,7 +475,7 @@ timingIdle = Seq.null . timingQueue
 
 upstreamBlocked :: TimingState peer -> Bool
 upstreamBlocked s = case timingQueue s of
-  Entry{entryActive = Just (Active _ _ Fired)} :<| _ -> True
+  Entry{entryActive = Just (Active _ _ Fired{})} :<| _ -> True
   _ -> False
 
 -- | Eligibility only: the calling fetch policy must enforce per-EB rescue
@@ -393,7 +493,7 @@ rescuableRequests s
       ]
 
 retireTimingSession :: TimingState peer -> TimingState peer
-retireTimingSession s = s{timingClosed = True, timingQueue = Seq.empty}
+retireTimingSession s = s{timingClosed = True, timingQueue = Seq.empty, timingBufferedInput = Nothing}
 
 checkOpenKey :: Eq peer => RequestKey peer -> TimingState peer -> Either TimingEventError ()
 checkOpenKey (RequestKey lifetime session _) s = do

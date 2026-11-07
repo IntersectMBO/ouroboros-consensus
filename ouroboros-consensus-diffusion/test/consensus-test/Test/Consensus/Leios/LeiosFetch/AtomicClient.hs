@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -30,8 +31,8 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Control.Exception (bracket, fromException, try)
 import Control.Monad (forM_, void, when)
-import Control.Monad.Class.MonadAsync (Async, wait, waitCatch, waitCatchSTM, withAsync)
-import Control.Monad.Class.MonadTime.SI (Time, diffTime, getMonotonicTime)
+import Control.Monad.Class.MonadAsync (Async, cancel, wait, waitCatch, waitCatchSTM, withAsync)
+import Control.Monad.Class.MonadTime.SI (Time, addTime, diffTime, getMonotonicTime)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
@@ -44,7 +45,9 @@ import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
+import Network.Mux.Timeout (withTimeoutSerial)
 import Network.TypedProtocol.Codec (AnnotatedCodec)
+import Network.TypedProtocol.Driver (runPipelinedPeerWithDriver)
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
@@ -64,6 +67,7 @@ import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Acquisition as Q
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Admission as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client as C
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Codec as ProgressCodec
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Deadline as D
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Descriptor
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Handoff as H
@@ -100,7 +104,12 @@ import Ouroboros.Network.BlockFetch.ClientRegistry
   , publishKeepAliveRtt
   )
 import Ouroboros.Network.Channel (Channel (..), createConnectedBufferedChannelsUnbounded)
-import Ouroboros.Network.Driver.Progress (MessageReceipt (..))
+import Ouroboros.Network.Driver.Progress
+  ( MessageReceipt (..)
+  , ReceiveScope (..)
+  , progressDriverWithLimits
+  , progressTrailingBytes
+  )
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -118,6 +127,10 @@ tests =
     , testCase "a valid understated body survives its peer fault and session cleanup" testBodyFault
     , testCase "malformed TX delivery preserves an authenticated prefix after abort" testBadPrefix
     , testCase "coalesced replies retain separate contexts and original receipt times" testCoalesced
+    , testCase "an input timestamp paused before publication cannot incur expiry" testPublicationGap
+    , testCase "buffered successor survives a paused FIFO receiver transition" testBufferedTransition
+    , testCase "aborting a paused publication releases its exact session" testPublicationAbort
+    , testCase "partial input releases observation protection before another read" testPartialInputWait
     , testCase "exact-session cleanup preserves a replacement in the same registration" testSessionCleanup
     , testCase "pre-admission rejection consumes no ordinal or reservation" testRejectedAdmission
     , testCase "concurrent EBs share one peer's byte and data-record budgets" testCrossEbBudget
@@ -294,7 +307,17 @@ withConnection ::
   AdjustChannels ->
   (Running -> IO a) ->
   IO a
-withConnection _env client provider adjust action = do
+withConnection = withConnectionUsing (C.runAtomicClient nullTracer 20000 1048576)
+
+withConnectionUsing ::
+  (Channel IO BL.ByteString -> Client -> IO (Maybe BL.ByteString)) ->
+  Fixture ->
+  Client ->
+  S.AtomicRequestHandler LeiosPoint EndorserBlock LeiosTx IO ->
+  AdjustChannels ->
+  (Running -> IO a) ->
+  IO a
+withConnectionUsing runner _env client provider adjust action = do
   (c0, s0) <- createConnectedBufferedChannelsUnbounded
   (c, s) <- adjust c0 s0
   window <- C.snapshotClientWindow <$> atomically (C.readClientSnapshot client)
@@ -309,8 +332,50 @@ withConnection _env client provider adjust action = do
           (S.atomicServerPeer serverHandle)
       )
       $ \serverTask ->
-        withAsync (C.runAtomicClient nullTracer 20000 1048576 c client) $ \clientTask ->
+        withAsync (runner c client) $ \clientTask ->
           action Running{clientTask, serverTask, serverHandle}
+
+type ScopeHook = IO (ReceiveScope IO LeiosTx) -> IO (ReceiveScope IO LeiosTx)
+
+-- Compose the same public client, codec and driver as the normal runner. Only
+-- callback scheduling is instrumented; no application policy or clock is replaced.
+observedRunner :: ScopeHook -> Channel IO BL.ByteString -> Client -> IO (Maybe BL.ByteString)
+observedRunner adjust channel client = withTimeoutSerial $ \timeoutFn -> do
+  let scope ::
+        forall (st :: W.LeiosFetchAtomic LeiosPoint EndorserBlock LeiosTx).
+        W.SingLeiosFetchAtomic st -> IO (ReceiveScope IO LeiosTx)
+      scope tok = adjust (C.atomicClientReceiveScope client tok)
+      codec' =
+        ProgressCodec.codecLeiosFetchAtomicProgress
+          20000
+          encodeLeiosPoint
+          decodeLeiosPoint
+          encodeEndorserBlock
+          decodeEndorserBlock
+          encodeLeiosTx
+          decodeLeiosTx
+      driver =
+        progressDriverWithLimits
+          nullTracer
+          timeoutFn
+          codec'
+          (W.byteLimitsLeiosFetchAtomic (fromIntegral . BL.length))
+          W.timeLimitsLeiosFetchAtomic
+          1048576
+          scope
+          (C.observeClientSend client)
+          channel
+  ((), trailing) <- runPipelinedPeerWithDriver driver (C.atomicClientPeer client)
+  pure (progressTrailingBytes trailing)
+
+pollAfterHead :: Running -> Client -> IO Time
+pollAfterHead running client = do
+  expiry <- awaitEvent running $ do
+    snap <- C.readClientSnapshot client
+    maybe retry (pure . snd) (T.activeDeadline (C.snapshotClientTiming snap))
+  let later = addTime 5 expiry
+  atomically $ C.pollAtomicClient client later
+  pure later
 
 bounded :: IO a -> IO a
 bounded action = SI.timeout 5 action >>= maybe (assertFailure "client fixture timed out") pure
@@ -593,6 +658,134 @@ testCoalesced = withFixture True $ \env -> withClient env 1 2 Nothing $ \client 
   map fst (replies stats) @?= [H.storageRequestKey a, H.storageRequestKey b]
   map (receiptObservedAt . completedReceipt . snd) (replies stats)
     @?= replicate 2 (receiptObservedAt (completedReceipt (snd (head (replies stats)))))
+
+testPublicationGap :: Assertion
+testPublicationGap = withFixture True $ \env -> withClient env 1 2 Nothing $ \client -> do
+  _ <- admit env client (0 :| [])
+  atomically $ C.stopAtomicClient client
+  entered <- newEmptyTMVarIO
+  release <- newEmptyTMVarIO
+  let pause acquire = do
+        scope <- acquire
+        pure
+          scope
+            { receiveInput = \observation -> do
+                atomically $ putTMVar entered ()
+                atomically $ readTMVar release
+                receiveInput scope observation
+            }
+  withConnectionUsing (observedRunner pause) env client (handler env) unchanged $ \running -> do
+    _ <- awaitEvent running (readTMVar entered)
+    _ <- pollAfterHead running client
+    stats <- snapshotEvents env
+    expiries stats @?= []
+    snap <- atomically $ C.readClientSnapshot client
+    T.nextDeadline (C.snapshotClientTiming snap) @?= Nothing
+    atomically $ putTMVar release ()
+    success running
+    wireEmpty client
+  stats <- snapshotEvents env
+  (replyCount stats, usefulCount stats, abortCount stats) @?= (1, 1, 0)
+  expiries stats @?= []
+
+testBufferedTransition :: Assertion
+testBufferedTransition = withFixture True $ \env -> withClient env 1 2 Nothing $ \client -> do
+  a <- admit env client (0 :| [])
+  b <- admit env client (1 :| [])
+  atomically $ C.stopAtomicClient client
+  count <- newTVarIO (0 :: Int)
+  framed <- newEmptyTMVarIO
+  releaseFrame <- newEmptyTMVarIO
+  successor <- newEmptyTMVarIO
+  releaseSuccessor <- newEmptyTMVarIO
+  first <- newTVarIO True
+  let pause acquire = do
+        index <- atomically $ do n <- readTVar count; writeTVar count (n + 1); pure n
+        when (index == 1) $ do
+          atomically $ putTMVar successor ()
+          atomically $ readTMVar releaseSuccessor
+        scope <- acquire
+        pure
+          scope
+            { receiveComplete = \receipt buffered -> do
+                receiveComplete scope receipt buffered
+                when (index == 0) $ do
+                  assertBool "fixture did not retain the next reply" buffered
+                  atomically $ putTMVar framed ()
+                  atomically $ readTMVar releaseFrame
+            }
+      coalesce c s =
+        pure
+          ( c
+              { recv = do
+                  fresh <- atomically $ do x <- readTVar first; writeTVar first False; pure x
+                  if fresh
+                    then do x <- fromJust <$> recv c; y <- fromJust <$> recv c; pure (Just (x <> y))
+                    else recv c
+              }
+          , s
+          )
+  withConnectionUsing (observedRunner pause) env client (handler env) coalesce $ \running -> do
+    _ <- awaitEvent running (readTMVar framed)
+    later <- pollAfterHead running client
+    atomically $ putTMVar releaseFrame ()
+    _ <- awaitEvent running (readTMVar successor)
+    atomically $ C.pollAtomicClient client (addTime 1 later)
+    stats <- snapshotEvents env
+    expiries stats @?= []
+    snap <- atomically $ C.readClientSnapshot client
+    T.nextDeadline (C.snapshotClientTiming snap) @?= Nothing
+    atomically $ putTMVar releaseSuccessor ()
+    success running
+    wireEmpty client
+  stats <- snapshotEvents env
+  map fst (replies stats) @?= [H.storageRequestKey a, H.storageRequestKey b]
+  let times = map (receiptObservedAt . completedReceipt . snd) (replies stats)
+  times @?= replicate 2 (head times)
+  expiries stats @?= []
+
+testPublicationAbort :: Assertion
+testPublicationAbort = withFixture True $ \env -> withClient env 1 2 Nothing $ \client -> do
+  _ <- admit env client (0 :| [])
+  entered <- newEmptyTMVarIO
+  never <- newEmptyTMVarIO
+  let pause acquire = do
+        scope <- acquire
+        pure scope{receiveInput = \_ -> atomically (putTMVar entered ()) >> atomically (readTMVar never)}
+  withConnectionUsing (observedRunner pause) env client (handler env) unchanged $ \running -> do
+    _ <- awaitEvent running (readTMVar entered)
+    cancel (clientTask running)
+  snap <- atomically $ C.readClientSnapshot client
+  assertBool "aborted publication left the client open" (C.snapshotClientClosed snap)
+  assertBool "aborted publication retained timing work" (T.timingIdle (C.snapshotClientTiming snap))
+  usage <- atomically $ H.readStorageSnapshot (handoff env)
+  H.snapshotSessions usage @?= 0
+  stats <- snapshotEvents env
+  abortCount stats @?= 1
+
+testPartialInputWait :: Assertion
+testPartialInputWait = withFixture True $ \env -> withClient env 1 2 Nothing $ \client -> do
+  _ <- admit env client (0 :| [])
+  waiting <- newEmptyTMVarIO
+  never <- newEmptyTMVarIO
+  first <- newTVarIO True
+  let fragment c s =
+        pure
+          ( c
+              { recv = do
+                  fresh <- atomically $ do x <- readTVar first; writeTVar first False; pure x
+                  if fresh
+                    then Just . BL.take 1 . fromJust <$> recv c
+                    else atomically (putTMVar waiting ()) >> atomically (readTMVar never)
+              }
+          , s
+          )
+  withConnection env client (handler env) fragment $ \running -> do
+    _ <- awaitEvent running (readTMVar waiting)
+    _ <- pollAfterHead running client
+    stats <- snapshotEvents env
+    map T.chargeDataFailure (expiries stats) @?= [True]
+    cancel (clientTask running)
 
 testSessionCleanup :: Assertion
 testSessionCleanup = withFixture True $ \env -> withClient env 1 2 Nothing $ \old -> withClient env 1 2 Nothing $ \fresh -> do

@@ -30,6 +30,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Atomic.Client
   , readClientUsage
   , clientStorageSession
   , atomicClientPeer
+  , atomicClientReceiveScope
+  , observeClientSend
   , runAtomicClient
   ) where
 
@@ -574,22 +576,28 @@ newPinnedReceiver ::
 newPinnedReceiver client binding = do
   validation <- newTVarIO Nothing
   let key = case binding of DataReply req -> H.storageRequestKey req; CancelReply original -> original
+      beginInput = atomically $ do
+        state <- readTVar (clientState client)
+        unless (closed state) $ do
+          pending <- readTVar validation
+          when (pending /= Nothing) (throwSTM ClientQueueInvariant)
+          (token, timing) <- timingResult (T.beginInputObservation key (timingState state))
+          writeTVar validation (Just token)
+          writeTVar (clientState client) state{timingState = timing}
+          clientWakeup (clientHooks client)
       hooks =
         ReplyHooks
-          { replyStarted = atomically (clientWakeup (clientHooks client))
+          { replyStarted = beginInput
+          , replyInputStarting = beginInput
           , replyInput = \observation -> do
               now <- getMonotonicTime
               atomically $ do
                 state <- readTVar (clientState client)
                 unless (closed state) $ do
                   pending <- readTVar validation
-                  timing <- case pending of
-                    Just _ -> pure (timingState state)
-                    Nothing -> do
-                      (token, next) <-
-                        timingResult (T.beginValidation key (inputObservedAt observation) (timingState state))
-                      writeTVar validation (Just token)
-                      pure next
+                  token <- maybe (throwSTM ClientQueueInvariant) pure pending
+                  timing <-
+                    timingResult (T.publishInputObservation token (inputObservedAt observation) (timingState state))
                   writeTVar
                     (clientState client)
                     state{timingState = timing, latestClock = max (inputObservedAt observation) (latestClock state)}
@@ -612,6 +620,14 @@ newPinnedReceiver client binding = do
           , replyTransaction = \event accepted -> atomically $ do
               state <- readTVar (clientState client)
               unless (closed state) (clientTransaction (clientHooks client) key event accepted)
+          , replyBufferedInput = \buffered -> do
+              state <- readTVar (clientState client)
+              unless (closed state) $ do
+                pending <- readTVar validation
+                token <- maybe (throwSTM ClientQueueInvariant) pure pending
+                timing <- timingResult (T.recordBufferedInput token buffered (timingState state))
+                writeTVar (clientState client) state{timingState = timing}
+                clientWakeup (clientHooks client)
           , replyAborted = abortClient client
           }
   pinned <- newReplyReceiver (clientHandoff client) binding hooks
@@ -623,9 +639,11 @@ sameSession client (RequestKey lifetime token _) = (lifetime, token) == H.storag
 requestOrdinal :: RequestKey peer -> WireOrdinal
 requestOrdinal (RequestKey _ _ ordinal) = ordinal
 
-observeSend ::
+-- | Driver integration: publish the original ordinary-send return observation.
+-- Use with 'atomicClientPeer' and 'atomicClientReceiveScope' on the same client.
+observeClientSend ::
   (IOLike m, Ord peer) => AtomicClient m owner peer -> AnyMessage Atomic -> Time -> m ()
-observeSend client (AnyMessage message) at = case message of
+observeClientSend client (AnyMessage message) at = case message of
   MsgDone -> pure ()
   MsgLeiosBlockRequest ordinal _ -> record ordinal
   MsgLeiosBlockTxsRequest ordinal _ _ -> record ordinal
@@ -655,6 +673,18 @@ throwClosed state = maybe (throwSTM ClientClosed) throwSTM (firstFailure state)
 timingResult :: IOLike m => Either T.TimingEventError a -> STM m a
 timingResult = either (throwSTM . ClientTimingEventError) pure
 
+-- | Driver integration: acquire the currently installed immutable reply scope.
+-- Call after the pipelined receiver has installed its context, before decoding.
+atomicClientReceiveScope ::
+  IOLike m =>
+  AtomicClient m owner peer -> SingLeiosFetchAtomic (st :: Atomic) -> m (ReceiveScope m LeiosTx)
+atomicClientReceiveScope client tok = do
+  pinned <- atomically $ do
+    state <- readTVar (clientState client)
+    when (closed state) (throwClosed state)
+    maybe (throwSTM ClientNoReceiver) pure (currentReceiver state)
+  receiveReplyScope pinned tok
+
 -- | Real staged codec and progress driver, using the normal protocol guards.
 -- Input chunk capacity is supplied from the negotiated connection/mux assembly.
 -- This runner does not advertise or select the atomic capability by itself.
@@ -671,14 +701,7 @@ runAtomicClient tracer maxTxs chunkBytes channel client =
   ( do
       when (maxTxs <= 0 || chunkBytes == 0) (throwIO ClientInvalidLimits)
       withTimeoutSerial $ \timeoutFn -> do
-        let scope :: forall (st :: Atomic). SingLeiosFetchAtomic st -> m (ReceiveScope m LeiosTx)
-            scope tok = do
-              pinned <- atomically $ do
-                state <- readTVar (clientState client)
-                when (closed state) (throwClosed state)
-                maybe (throwSTM ClientNoReceiver) pure (currentReceiver state)
-              receiveReplyScope pinned tok
-            codec =
+        let codec =
               codecLeiosFetchAtomicProgress
                 maxTxs
                 encodeLeiosPoint
@@ -695,8 +718,8 @@ runAtomicClient tracer maxTxs chunkBytes channel client =
                 (byteLimitsLeiosFetchAtomic (fromIntegral . BL.length))
                 timeLimitsLeiosFetchAtomic
                 chunkBytes
-                scope
-                (observeSend client)
+                (atomicClientReceiveScope client)
+                (observeClientSend client)
                 channel
         ((), trailing) <- runPipelinedPeerWithDriver driver (atomicClientPeer client)
         pure (progressTrailingBytes trailing)

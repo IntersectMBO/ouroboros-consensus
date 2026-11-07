@@ -56,6 +56,25 @@ tests =
     , testCase "progress, new offers and appends do not renew an active head" testNoRenewal
     , testCase "stale timer/validation tokens cannot affect a new head or session" testStale
     , testCase "invalid event times and lost observation boundaries are explicit errors" testEventErrors
+    , testCase
+        "input arriving after expiry at the same clock value keeps the charged failure"
+        testEqualTimeAfterExpiry
+    , testCase "publication is protected before taking the input timestamp" testInputPublication
+    , testCase
+        "unpublished input cannot prove completion and late input still expires"
+        testInputPublicationLate
+    , testCase "retained input protects the next FIFO head and keeps original span times" testBufferedHead
+    , testCase
+        "partial retained input releases protection before another network wait"
+        testBufferedPartial
+    , testCase "buffered ACK can start before predecessor send-return is published" testBufferedFastAck
+    , testCase "known-late current input expires despite buffered successor input" testBufferedLateHead
+    , testCase
+        "empty local decode and session close release publication protection"
+        testInputPublicationCleanup
+    , testCase
+        "late validation terminal diagnoses a missed publication boundary"
+        testMissedValidationBoundary
     , testProperty "generated sizes preserve transfer floors, startup and hedge bounds" propArithmetic
     , testProperty "notification delivery order does not change chronological outcomes" propEventOrder
     , testProperty "fired timers do not repeat penalties or reschedule past deadlines" propOneShot
@@ -403,6 +422,121 @@ testEventErrors = do
   recordTerminal (key 0) (at 0.45) expired @?= Left MissedObservationBoundary
   let (v, pending) = right (beginValidation (key 0) (at 0.2) t)
   finishValidation v (ValidTerminal (at 0.1)) pending @?= Left InvalidObservationTime
+
+testInputPublication :: Assertion
+testInputPublication = do
+  let armed = noExpiry 0.1 (sent 0 0 (registered 0 standard initial))
+      (v, publishing) = right (beginInputObservation (key 0) armed)
+      paused = noExpiry 1 publishing
+  headAt paused @?= headAt armed
+  nextDeadline publishing @?= Nothing
+  nextDeadline paused @?= Nothing
+  let observed = right (publishInputObservation v (at 0.4) paused)
+      done = noExpiry 1 (right (finishValidation v (ValidTerminal (at 0.4)) observed))
+  assertBool "timely published completion retires normally" (timingIdle done)
+
+testInputPublicationLate :: Assertion
+testInputPublicationLate = do
+  let armed = noExpiry 0.1 (sent 0 0 (registered 0 standard initial))
+      (v, publishing) = right (beginInputObservation (key 0) armed)
+  finishValidation v (ValidTerminal (at 0.4)) publishing @?= Left MissingInputObservation
+  let observed = right (publishInputObservation v (at 0.46) (noExpiry 1 publishing))
+      (event, fired) = oneExpiry 1 observed
+  chargeDataFailure event @?= True
+  expiryAt event @?= headAt armed
+  fst (poll 2 fired) @?= []
+
+bufferedHead :: (ValidationToken Int, State)
+bufferedHead =
+  let (a, receiving) = right (beginValidation (key 0) (at 0.2) two)
+      framed = right (recordBufferedInput a True receiving)
+      completed = right (finishValidation a (ValidTerminal (at 0.2)) framed)
+   in (a, noExpiry 1 completed)
+
+testBufferedHead :: Assertion
+testBufferedHead = do
+  let (old, waiting) = bufferedHead
+  headAt waiting @?= at 0.35
+  nextDeadline waiting @?= Nothing
+  let (b, publishing) = right (beginInputObservation (key 1) waiting)
+  recordBufferedInput old False publishing @?= Left UnknownTimingKey
+  finishValidation old NeedMoreInput publishing @?= Left UnknownTimingKey
+  let first = right (publishInputObservation b (at 0.2) publishing)
+      second = right (publishInputObservation b (at 0.25) first)
+      done = noExpiry 1 (right (finishValidation b (ValidTerminal (at 0.25)) second))
+  assertBool "successor keeps its original on-time input" (timingIdle done)
+
+testBufferedPartial :: Assertion
+testBufferedPartial = do
+  let (_, waiting) = bufferedHead
+      (b, publishing) = right (beginInputObservation (key 1) waiting)
+      observed = right (publishInputObservation b (at 0.2) publishing)
+      partial = right (finishValidation b NeedMoreInput observed)
+      (event, _) = oneExpiry 1 partial
+  expiryAt event @?= at 0.35
+  chargeDataFailure event @?= True
+
+testBufferedFastAck :: Assertion
+testBufferedFastAck = do
+  let start = sent 1 (1 % 20) (registered 1 ack (registered 0 standard initial))
+      (a, receiving) = right (beginValidation (key 0) (at 0.2) start)
+      framed = right (recordBufferedInput a True receiving)
+      completed = noExpiry 1 (right (finishValidation a (ValidTerminal (at 0.2)) framed))
+      (b, publishing) = right (beginInputObservation (key 1) completed)
+      observed = right (publishInputObservation b (at 0.2) publishing)
+      terminalAck = right (finishValidation b (ValidTerminal (at 0.2)) observed)
+      done = noExpiry 1 (sent 0 (3 % 10) terminalAck)
+  assertBool "both fast replies retire after delayed send-return" (timingIdle done)
+
+testBufferedLateHead :: Assertion
+testBufferedLateHead = do
+  let (a, observed) = right (beginValidation (key 0) (at 0.46) two)
+      framed = right (recordBufferedInput a True observed)
+      (event, fired) = oneExpiry 1 framed
+  chargeDataFailure event @?= True
+  let completed = right (finishValidation a (ValidTerminal (at 0.46)) fired)
+      waiting = noExpiry 1 completed
+  nextDeadline waiting @?= Nothing
+  assertBool "late predecessor retired and buffered successor remains" (not (timingIdle waiting))
+
+testInputPublicationCleanup :: Assertion
+testInputPublicationCleanup = do
+  let armed = noExpiry 0.1 (sent 0 0 (registered 0 standard initial))
+      (v, publishing) = right (beginInputObservation (key 0) armed)
+      needMore = right (finishValidation v NeedMoreInput publishing)
+      (event, _) = oneExpiry 1 needMore
+      closed = retireTimingSession publishing
+  chargeDataFailure event @?= True
+  publishInputObservation v (at 0.4) needMore @?= Left UnknownValidation
+  publishInputObservation v (at 0.4) closed @?= Left ClosedTimingSession
+  assertBool "closing removes pending head" (timingIdle closed)
+  nextDeadline closed @?= Nothing
+
+testMissedValidationBoundary :: Assertion
+testMissedValidationBoundary = do
+  let (_, fired) = poll 1 (sent 0 0 (registered 0 standard initial))
+      (v, pending) = right (beginValidation (key 0) (at 0.4) fired)
+  finishValidation v (ValidTerminal (at 0.4)) pending @?= Left MissedObservationBoundary
+  recordTerminal (key 0) (at 0.4) fired @?= Left MissedObservationBoundary
+
+-- Clock equality alone does not prove that input preceded expiry handling.
+-- A publication token established before handling would have deferred it.
+testEqualTimeAfterExpiry :: Assertion
+testEqualTimeAfterExpiry = do
+  let armed = noExpiry 0 (sent 0 0 (registered 0 standard initial))
+      deadline = headAt armed
+      (events, fired) = right (reconcileTiming deadline armed)
+      (v, pending) = right (beginInputObservation (key 0) fired)
+      observed = right (publishInputObservation v deadline pending)
+      settled = right (finishValidation v (ValidTerminal deadline) observed)
+      direct = right (recordTerminal (key 0) deadline fired)
+      (later, final) = right (reconcileTiming deadline settled)
+  map chargeDataFailure events @?= [True]
+  later @?= []
+  assertBool "equal-time reply did not retire" (timingIdle final)
+  assertBool
+    "direct terminal path differs"
+    (timingIdle (snd (right (reconcileTiming deadline direct))))
 
 propArithmetic :: Property
 propArithmetic = forAll
