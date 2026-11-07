@@ -913,6 +913,13 @@ data SnapshotRequest m = SnapshotRequest
 -- merely while it is waiting to be picked up. Hence at most one snapshot
 -- request is alive at any point in time.
 --
+-- Being occupied and holding the request are kept apart, though: the request
+-- waits in 'snapshotQueuePending' until a server takes it out, and from then on
+-- only 'snapshotQueueBusy' records that the queue is occupied. Otherwise the
+-- queue would keep the request reachable while its 'writeSnapshots' runs, and
+-- with it whatever that action evaluates on the way, such as the serialised
+-- snapshot that has already been written to disk.
+--
 -- Bounding it this way is not something the 'SnapshotPolicy' rate limit can do
 -- on its own: 'sscTimeSinceLast' is derived from the last /completed/ request,
 -- so it stays satisfied for the whole of a request's delay, and it can be
@@ -920,22 +927,33 @@ data SnapshotRequest m = SnapshotRequest
 -- advance of the immutable tip
 -- during one delay would start another request, each pinning a ledger state
 -- and each writing a snapshot that 'trimSnapshots' then discards.
-data SnapshotRequestQueue m
-  = SnapshotRequestQueue !SnapshotDelayRange !(StrictMVar m (SnapshotRequest m))
+data SnapshotRequestQueue m = SnapshotRequestQueue
+  { snapshotQueueDelayRange :: !SnapshotDelayRange
+  -- ^ The range to draw the randomised delay before writing the snapshots
+  -- from, see 'onDiskSnapshotDelayRange'.
+  --
+  -- It lives on the queue, and not in every 'SnapshotRequest', because it is
+  -- a property of the 'SnapshotPolicy' the LedgerDB was opened with, hence the
+  -- same for every request.
+  , snapshotQueuePending :: !(StrictTMVar m (SnapshotRequest m))
+  -- ^ The request waiting to be served, if any.
+  , snapshotQueueBusy :: !(StrictTVar m Bool)
+  -- ^ Whether a request is being served.
+  --
+  -- INVARIANT: while this is 'True', 'snapshotQueuePending' is empty.
+  }
   deriving NoThunks via OnlyCheckWhnfNamed "SnapshotRequestQueue" (SnapshotRequestQueue m)
 
-newSnapshotRequestQueue :: MonadMVar m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
-newSnapshotRequestQueue delayRange =
-  SnapshotRequestQueue delayRange <$> uncheckedNewEmptyMVar
-
--- | The range to draw the randomised delay before writing the snapshots from,
--- see 'onDiskSnapshotDelayRange'.
---
--- It lives on the queue, and not in every 'SnapshotRequest', because it is a
--- property of the 'SnapshotPolicy' the LedgerDB was opened with, hence the same
--- for every request.
-snapshotQueueDelayRange :: SnapshotRequestQueue m -> SnapshotDelayRange
-snapshotQueueDelayRange (SnapshotRequestQueue delayRange _) = delayRange
+newSnapshotRequestQueue :: MonadSTM m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
+newSnapshotRequestQueue snapshotQueueDelayRange = do
+  snapshotQueuePending <- newEmptyTMVarIO
+  snapshotQueueBusy <- newTVarIO False
+  pure
+    SnapshotRequestQueue
+      { snapshotQueueDelayRange
+      , snapshotQueuePending
+      , snapshotQueueBusy
+      }
 
 -- | Whether a request is currently queued or being served.
 --
@@ -943,38 +961,64 @@ snapshotQueueDelayRange (SnapshotRequestQueue delayRange _) = delayRange
 -- changed. It is meant to let a would-be producer skip the (not entirely
 -- cheap) work of assembling a request that 'tryEnqueueSnapshotRequest' would
 -- then drop anyway.
-snapshotRequestInFlight :: MonadMVar m => SnapshotRequestQueue m -> m Bool
-snapshotRequestInFlight (SnapshotRequestQueue _ var) = not <$> isEmptyMVar var
+snapshotRequestInFlight :: MonadSTM m => SnapshotRequestQueue m -> m Bool
+snapshotRequestInFlight q = atomically $ do
+  busy <- readTVar (snapshotQueueBusy q)
+  if busy then pure True else not <$> isEmptyTMVar (snapshotQueuePending q)
 
 -- | Enqueue a request, unless one is already queued or being served.
 --
 -- Never blocks. Returns 'False' when the request was dropped, in which case
 -- the caller is responsible for releasing the resources it holds on to.
 tryEnqueueSnapshotRequest ::
-  MonadMVar m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
-tryEnqueueSnapshotRequest (SnapshotRequestQueue _ var) = tryPutMVar var
+  MonadSTM m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
+tryEnqueueSnapshotRequest q req = atomically $ do
+  busy <- readTVar (snapshotQueueBusy q)
+  if busy then pure False else tryPutTMVar (snapshotQueuePending q) req
+
+-- | Take the pending request out of the queue, marking the queue busy.
+acquireSnapshotRequest :: MonadSTM m => SnapshotRequestQueue m -> STM m (SnapshotRequest m)
+acquireSnapshotRequest q = do
+  req <- takeTMVar (snapshotQueuePending q)
+  writeTVar (snapshotQueueBusy q) True
+  pure req
+
+releaseSnapshotRequest :: MonadSTM m => SnapshotRequestQueue m -> m ()
+releaseSnapshotRequest q = atomically $ writeTVar (snapshotQueueBusy q) False
 
 -- | Block until a request is enqueued, then serve it.
 --
 -- The queue is only freed once the given action has returned or thrown, so
--- that no further request is accepted while this one is being served.
+-- that no further request is accepted while this one is being served. It does
+-- not hold on to the request in the meantime, and neither does anything here:
+-- the request stays reachable only for as long as the given action needs it.
 withSnapshotRequest ::
-  (MonadMVar m, MonadThrow m) =>
+  (MonadSTM m, MonadMask m) =>
   SnapshotRequestQueue m ->
   (SnapshotRequest m -> m a) ->
   m a
-withSnapshotRequest (SnapshotRequestQueue _ var) =
-  bracket (readMVar var) (\_ -> takeMVar var)
+withSnapshotRequest q serve =
+  -- Not 'bracket': it keeps the acquired request until the release has run,
+  -- even though the release does not use it, and @m@ being abstract, GHC
+  -- cannot drop it. That would keep the request reachable for the whole of
+  -- 'serve' again.
+  mask $ \restore -> do
+    req <- atomically $ acquireSnapshotRequest q
+    restore (serve req) `finally` releaseSnapshotRequest q
 
 -- | Like 'withSnapshotRequest', but do nothing when no request is queued
 -- instead of waiting for one.
 tryWithSnapshotRequest ::
-  (MonadMVar m, MonadThrow m) =>
+  (MonadSTM m, MonadMask m) =>
   SnapshotRequestQueue m ->
   (SnapshotRequest m -> m ()) ->
   m ()
-tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
-  bracket (tryReadMVar var) (mapM_ (\_ -> takeMVar var)) (mapM_ f)
+tryWithSnapshotRequest q serve =
+  -- Not 'bracket', see 'withSnapshotRequest'.
+  mask $ \restore -> do
+    mreq <- atomically $ (Just <$> acquireSnapshotRequest q) `orElse` pure Nothing
+    forM_ mreq $ \req ->
+      restore (serve req) `finally` releaseSnapshotRequest q
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events
