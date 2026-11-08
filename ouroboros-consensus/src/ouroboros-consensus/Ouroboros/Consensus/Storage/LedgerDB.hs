@@ -55,6 +55,7 @@ openDB ::
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , InspectLedger blk
+  , BlockSupportsLeios blk
   , HasCallStack
   ) =>
   -- | Stateless initializaton arguments
@@ -72,6 +73,8 @@ openDB ::
   IsEBB ->
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
+  -- | How to get the closures of certified endorser blocks from the LeiosDB
+  ResolveLeiosClosure m ->
   GetVolatileSuffix m blk ->
   WithTempRegistry st m (LedgerDB' m blk)
 openDB
@@ -80,6 +83,7 @@ openDB
   replayGoal
   replayGoalIsEBB
   getBlock
+  resolveClosure
   getVolatileSuffix =
     case lgrBackendArgs args of
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
@@ -100,7 +104,7 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 snapTracer
                 (lgrHasFS args)
-        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
+        let initDb = V2.mkInitDb args getBlock resolveClosure snapManager getVolatileSuffix res
         lift $ doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB
        where
         !tr = lgrTracer args

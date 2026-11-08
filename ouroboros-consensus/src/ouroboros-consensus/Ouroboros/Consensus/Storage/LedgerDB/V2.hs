@@ -33,6 +33,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import Data.Tuple (Solo (..))
+import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -52,6 +53,7 @@ import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosClosure, applyWithLeiosClosure)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
@@ -78,16 +80,18 @@ mkInitDb ::
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
+  , BlockSupportsLeios blk
   , Backend m backend blk
   , IOLike m
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
+  ResolveLeiosClosure m ->
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
   Resources m backend ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args getBlock snapManager getVolatileSuffix res = do
+mkInitDb args getBlock resolveClosure snapManager getVolatileSuffix res = do
   InitDB
     { initFromGenesis = do
         genesis <- lgrGenesis
@@ -103,7 +107,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 res
                 ds
           )
-    , initReapplyBlock = reapplyThenPush
+    , initReapplyBlock = reapplyThenPush resolveClosure
     , currentTip = ledgerState . current
     , mkLedgerDb = \lseq -> do
         varDB <- newTVarIO lseq
@@ -128,6 +132,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbCfg = lgrConfig
                 , ldbHasFS = lgrHasFS
                 , ldbResolveBlock = getBlock
+                , ldbResolveLeiosClosure = resolveClosure
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
@@ -175,6 +180,8 @@ implMkLedgerDb ::
     BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , All Top (HardForkIndices blk)
+  , BlockSupportsLeios blk
+  , l ~ ExtLedgerState
   ) =>
   LedgerDBHandle m l blk ->
   SnapshotManager m blk (StateRef m l blk) ->
@@ -201,6 +208,8 @@ mkInternals ::
   forall m l blk.
   ( IOLike m
   , ApplyBlock l blk
+  , l ~ ExtLedgerState
+  , BlockSupportsLeios blk
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
@@ -232,13 +241,20 @@ mkInternals ldb h snapManager =
           ldb
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
-              tables <- forkerReadTables frk (getBlockKeySets blk)
-              let st' =
-                    tickThenReapply
-                      (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
-                      (ledgerDbCfg $ ldbCfg env)
-                      blk
-                      (st `withLedgerTables` tables)
+              st' <-
+                either absurd id
+                  <$> applyWithLeiosClosure
+                    (ledgerDbCfg $ ldbCfg env)
+                    (ldbResolveLeiosClosure env)
+                    (forkerReadTables frk)
+                    ( Right @Void
+                        . tickThenReapply
+                          (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
+                          (ledgerDbCfg $ ldbCfg env)
+                          blk
+                    )
+                    blk
+                    st
               forkerPush frk st' >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env
           )
@@ -315,6 +331,7 @@ implValidate ::
   , StandardHash (l blk)
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , BlockSupportsLeios blk
   , l ~ ExtLedgerState
   ) =>
   LedgerDBHandle m l blk ->
@@ -329,6 +346,7 @@ implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
+      (ldbResolveLeiosClosure ldbEnv)
       (ledgerDbCfg $ ldbCfg ldbEnv)
       ( \l -> do
           prev <- readTVar (ldbPrevApplied ldbEnv)
@@ -487,6 +505,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbCfg :: !(LedgerDbCfg l blk)
   , ldbHasFS :: !(SomeHasFS m)
   , ldbResolveBlock :: !(ResolveBlock m blk)
+  , ldbResolveLeiosClosure :: !(ResolveLeiosClosure m)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbOpenHandlesLock :: !(RAWLock m ())
   -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are

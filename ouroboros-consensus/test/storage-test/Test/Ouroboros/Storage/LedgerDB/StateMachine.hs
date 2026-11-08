@@ -56,6 +56,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosClosureMissing (..))
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
@@ -562,7 +563,15 @@ openLedgerDB flavArgs env cfg fs = do
                   (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
-          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          -- These tests do not use Leios certificates.
+          let initDb =
+                V2.mkInitDb
+                  args
+                  getBlock
+                  (throwIO . LeiosClosureMissing)
+                  snapManager
+                  (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+                  res
           -- These tests do not use EBBs.
           lift $ openDBInternal args initDb snapManager stream replayGoal IsNotEBB
   case NE.nonEmpty volBlocks of

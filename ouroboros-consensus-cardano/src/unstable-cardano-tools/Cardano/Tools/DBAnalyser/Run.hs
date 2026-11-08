@@ -52,6 +52,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosClosureMissing (..))
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -73,6 +74,7 @@ openLedgerDB ::
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , InspectLedger blk
+  , BlockSupportsLeios blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->
@@ -110,6 +112,9 @@ openLedgerDB args immutableDB replayGoal =
                 LedgerDB.V2.mkInitDb
                   args
                   (\_ -> pure (error "no stream"))
+                  -- TODO Resolve closures from the node's LeiosDB, to analyse
+                  -- blocks containing Leios certificates.
+                  (throwIO . LeiosClosureMissing)
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
