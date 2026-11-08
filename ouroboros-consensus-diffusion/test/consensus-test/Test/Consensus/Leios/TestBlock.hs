@@ -893,6 +893,10 @@ instance BlockSupportsLeios LeiosTestBlock where
     NoLeiosTestCert -> Nothing
     HasLeiosTestCert cert -> Just cert
 
+  -- The ledger records no announcement and has no tables: there is nothing to
+  -- apply.
+  applyLeiosClosure _cfg _resolve _readTables = pure . convertMapKind
+
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam
 

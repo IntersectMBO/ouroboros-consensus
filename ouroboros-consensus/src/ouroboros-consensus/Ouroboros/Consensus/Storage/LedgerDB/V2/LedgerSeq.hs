@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | The data structure that holds the cached ledger states.
@@ -50,6 +51,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 
 import Cardano.Ledger.BaseTypes
 import Data.Function (on)
+import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -59,6 +61,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosClosure, applyWithLeiosClosure)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -233,30 +236,48 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk) =>
+  ( IOLike m
+  , ApplyBlock l blk
+  , l ~ ExtLedgerState
+  , HasLedgerTables LedgerState blk
+  , BlockSupportsLeios blk
+  ) =>
+  ResolveLeiosClosure m ->
   LedgerDbCfg l blk ->
   blk ->
   LedgerSeq m l blk ->
   m (LedgerSeq m l blk)
-reapplyThenPush cfg ap db = do
-  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush resolveClosure cfg ap db = do
+  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) resolveClosure ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
 
 reapplyBlock ::
-  (ApplyBlock l blk, IOLike m) =>
+  ( ApplyBlock l blk
+  , l ~ ExtLedgerState
+  , HasLedgerTables LedgerState blk
+  , BlockSupportsLeios blk
+  , IOLike m
+  ) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
+  ResolveLeiosClosure m ->
   blk ->
   LedgerSeq m l blk ->
   m (StateRef m l blk)
-reapplyBlock evs cfg b db = do
-  let ks = getBlockKeySets b
-      StateRef st tbs = currentHandle db
-  vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
-      newst = forgetLedgerTables st'
+reapplyBlock evs cfg resolveClosure b db = do
+  let StateRef st tbs = currentHandle db
+  st' <-
+    either absurd id
+      <$> applyWithLeiosClosure
+        cfg
+        resolveClosure
+        (read tbs st)
+        (Right @Void . tickThenReapply evs cfg b)
+        b
+        st
+  let newst = forgetLedgerTables st'
 
   newtbs <- duplicateWithDiffs tbs st st'
   pure (StateRef newst newtbs)
