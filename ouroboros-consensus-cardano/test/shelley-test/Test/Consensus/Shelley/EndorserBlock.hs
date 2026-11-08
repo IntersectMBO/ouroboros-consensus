@@ -1,16 +1,22 @@
+{-# LANGUAGE TypeApplications #-}
+
 -- | The sizes the mempool charges for an endorser block agree with
 -- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Ledger.Core (TopTx, Tx)
+import Cardano.Ledger.Binary (decodeFullAnnotator)
+import Cardano.Ledger.Core (TopTx, Tx, eraProtVerLow)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Hashes (extractHash, hashAnnotated)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
+import Data.Proxy (Proxy (..))
+import qualified Data.Text as T
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -23,6 +29,7 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
+import Ouroboros.Consensus.Shelley.Eras (LeiosEraDict (..), ShelleyBasedEra (getLeiosEraDict))
 import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
@@ -49,6 +56,9 @@ tests =
     , testProperty
         "a forged endorser block references a Dijkstra transaction by its hashAnnotated"
         (withNumTests 10 prop_dijkstraEbTxHashIsLedgerHash)
+    , testProperty
+        "a voter decodes the Dijkstra transaction a forged endorser block references"
+        (withNumTests 10 prop_dijkstraEbTxRoundtrip)
     ]
 
 genTxHash :: Gen TxHash
@@ -167,3 +177,16 @@ prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
   map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (serializeTxForLeios tx))))
     === [extractHash (hashAnnotated tx)]
+
+-- | 'LeiosEraDict' decodes what 'serializeTxForLeios' encodes. Fails with the
+-- era's 'DecCBOR', which reads the mempool format, without the @is_valid@ flag.
+prop_dijkstraEbTxRoundtrip :: Tx TopTx DijkstraEra -> Property
+prop_dijkstraEbTxRoundtrip tx = case getLeiosEraDict (Proxy @DijkstraEra) of
+  Nothing -> counterexample "Dijkstra has no LeiosEraDict" False
+  Just (LeiosEraDict decodeTx) ->
+    decodeFullAnnotator
+      (eraProtVerLow @DijkstraEra)
+      (T.pack "endorsed transaction")
+      decodeTx
+      (BSL.fromStrict (serializeTxForLeios tx))
+      === Right tx

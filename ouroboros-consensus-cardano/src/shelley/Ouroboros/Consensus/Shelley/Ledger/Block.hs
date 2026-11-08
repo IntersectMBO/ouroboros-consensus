@@ -249,7 +249,7 @@ instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto e
 -- has a certificate field.
 bodyLeiosCert :: forall era. ShelleyBasedEra era => SL.BlockBody era -> StrictMaybe LeiosCert
 bodyLeiosCert blockBody = case getLeiosEraDict (Proxy @era) of
-  Just LeiosEraDict -> blockBody ^. leiosCertBlockBodyL
+  Just (LeiosEraDict _) -> blockBody ^. leiosCertBlockBodyL
   Nothing -> SNothing
 
 mkShelleyHeader ::

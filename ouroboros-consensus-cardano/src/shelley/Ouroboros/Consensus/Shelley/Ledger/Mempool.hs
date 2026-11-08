@@ -235,18 +235,21 @@ instance
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
--- | An endorsed transaction is encoded as in a block of the era.
+-- | An endorsed transaction is encoded as in a block of the era. Only an era
+-- with a 'LeiosEraDict' has endorser blocks.
 instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
   LedgerSupportsEndorserBlocks (ShelleyBlock proto era)
   where
-  decodeEbTx _tlst bytes =
-    bimap (Text.pack . show) mkShelleyTx $
-      decodeFullAnnotator
-        (L.eraProtVerLow @era)
-        (Text.pack "endorsed transaction")
-        decCBOR
-        (BSL.fromStrict bytes)
+  decodeEbTx _tlst bytes = case getLeiosEraDict (Proxy @era) of
+    Nothing -> Left (Text.pack "the era has no endorser blocks")
+    Just (LeiosEraDict decodeTx) ->
+      bimap (Text.pack . show) mkShelleyTx $
+        decodeFullAnnotator
+          (L.eraProtVerLow @era)
+          (Text.pack "endorsed transaction")
+          decodeTx
+          (BSL.fromStrict bytes)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)

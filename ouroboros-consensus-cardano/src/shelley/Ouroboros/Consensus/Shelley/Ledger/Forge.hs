@@ -105,7 +105,7 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe ForgedEndorserBlock)
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
-        Just LeiosEraDict -> forgeLeiosEb . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
+        Just (LeiosEraDict _) -> forgeLeiosEb . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 
     -- TODO Forging does not yet certify endorser blocks.

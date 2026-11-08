@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -39,7 +40,7 @@ import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (Annotator, DecCBOR, Decoder, EncCBOR)
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError), ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
@@ -53,6 +54,7 @@ import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
   )
+import Cardano.Ledger.Dijkstra.Tx (Tx (MkDijkstraTx), decodeDijkstraTopTxInBlock)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -155,7 +157,13 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict ::
+    (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) =>
+    -- | Decode the bytes of a transaction an endorser block references, as
+    -- 'Ouroboros.Consensus.Shelley.Ledger.Forge.serializeTxForLeios' encodes
+    -- them.
+    (forall s. Decoder s (Annotator (Core.Tx TopTx era))) ->
+    LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
@@ -249,7 +257,7 @@ instance ShelleyBasedEra DijkstraEra where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  getLeiosEraDict _ = Just LeiosEraDict
+  getLeiosEraDict _ = Just (LeiosEraDict (fmap MkDijkstraTx <$> decodeDijkstraTopTxInBlock))
 
   -- TODO we'll need to change the mini protocol (backwards-incompatibly?) to
   -- use MempoolFailure type family instead of just PredicateFailure type
