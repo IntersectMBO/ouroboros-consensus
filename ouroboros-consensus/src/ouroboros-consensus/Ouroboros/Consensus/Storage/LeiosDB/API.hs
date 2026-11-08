@@ -95,8 +95,8 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ The points no older than the given slot whose closure is complete. Seeds
   -- the ChainDB's acquired-closures set at startup.
   --
-  -- The LeiosDB does not track completeness, so this hashes the txs of every
-  -- such EB against its body. Startup only.
+  -- A closure is complete once each of its txs is written. The LeiosDB checks
+  -- no hashes: 'writeTxs' requires its caller to. Startup only.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbReader" (LeiosDbReader m)
 

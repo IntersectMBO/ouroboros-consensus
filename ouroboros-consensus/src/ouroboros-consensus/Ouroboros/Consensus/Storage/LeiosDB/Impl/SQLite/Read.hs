@@ -23,14 +23,13 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , encodeTxBounds
   , withBlob
   , splitClosure
-  , closureMatches
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (readTVarIO)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, evaluate)
-import Control.Monad (filterM, forM)
+import Control.Monad (forM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
@@ -46,20 +45,15 @@ import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
-  , LeiosTx (..)
-  , deserialiseEndorserBlock
   , endorserBlockReferences
-  , hashLeiosTx
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
 -- | Each point at or after the slot whose closure is complete in the partition
--- its reads go to ('readPartition'). In the volatile partition, a closure is
--- complete if each of its txs is marked written and hashes to what the body
--- lists; only those whose markers are all set are read and hashed. In the
--- immutable one, every closure is complete, since only complete closures are
--- copied there.
+-- its reads go to ('readPartition'): in the volatile partition, if each of its
+-- txs is marked written; in the immutable one, always, as only complete
+-- closures are copied there.
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbPointsSince conn sinceSlot = do
   gcSlot <- readTVarIO gcSlotVar
@@ -75,7 +69,7 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
                   allWritten <- BS.all (/= 0) <$> DB.columnBlob stmt 2
                   loop (if allWritten then point : acc else acc)
         loop []
-  vol <- filterM matches [point | point <- marked, pointSlotNo point >= gcSlot]
+  let vol = [point | point <- marked, pointSlotNo point >= gcSlot]
   imm <-
     dbWithTransaction immDb $
       withStmt immDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1 AND ebSlot < ?2" $ \stmt -> do
@@ -96,24 +90,6 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
     MkLeiosPoint
       <$> (SlotNo . fromIntegral <$> DB.columnInt64 stmt 0)
       <*> dbColumnHash stmt 1
-
-  matches point = dbWithTransaction volDb $ do
-    mbBody <- lookupBlob volDb point
-    mbTxs <- completeClosureAt volDb point
-    pure $ case (mbBody, mbTxs) of
-      (Just body, Just txs) -> closureMatches body txs
-      _ -> False
-
--- | Whether these txs are the closure of the EB with these body bytes: each
--- hashes to what the body lists at its offset.
-closureMatches :: ByteString -> [ByteString] -> Bool
-closureMatches body txs = case deserialiseEndorserBlock body of
-  Left _ -> False
-  Right eb ->
-    length refs == length txs
-      && and (zipWith (\(txHash, _size) tx -> hashLeiosTx (MkLeiosTx tx) == txHash) refs txs)
-   where
-    refs = endorserBlockReferences eb
 
 -- | Split a closure at its 'encodeTxBounds' into its txs, 'Nothing' where its
 -- marker in @txWritten@ is not set.

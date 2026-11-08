@@ -43,6 +43,7 @@ import Control.ResourceRegistry
   , forkLinkedThread
   )
 import Control.Tracer (Tracer, traceWith)
+import qualified Data.ByteString as BS
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
@@ -56,7 +57,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (closureMatches, splitClosure)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
   , WriteQueue
@@ -93,9 +93,10 @@ closePromoter promoterVar =
 -- partition, at the given points, in one transaction.
 --
 -- The blocks certifying them are on the chain, hence the fetch logic completed
--- the EBs. Still check, by hashing their txs, since the immutable partition is
--- never collected and the startup scan takes any EB there as complete. An EB
--- without its closure fails the whole promotion, and nothing is copied.
+-- the EBs. Still check that each of their txs is marked written, since the
+-- immutable partition is never collected and the startup scan takes any EB
+-- there as complete. An EB without its closure fails the whole promotion, and
+-- nothing is copied.
 sqlPromoteToImmutable ::
   HasCallStack =>
   Tracer IO TraceLeiosDb ->
@@ -133,18 +134,13 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
     complete <-
       withStmt
         db
-        "SELECT body, txWritten, txBounds, txs FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+        "SELECT txWritten FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
         $ \stmt -> do
           dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
           dbBindHash stmt 2 ebHash
           dbStepSafe stmt >>= \case
             DB.Done -> pure False
-            DB.Row -> do
-              body <- DB.columnBlob stmt 0
-              txWritten <- DB.columnBlob stmt 1
-              bounds <- DB.columnBlob stmt 2
-              txs <- DB.columnBlob stmt 3
-              pure $ maybe False (closureMatches body) (sequence (splitClosure txWritten bounds txs))
+            DB.Row -> BS.all (/= 0) <$> DB.columnBlob stmt 0
     unless complete $
       throwLeiosDbException $
         "leiosDbPromoteToImmutable: no complete closure in the volatile partition: " <> show point
