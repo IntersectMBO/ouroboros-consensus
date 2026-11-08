@@ -1209,6 +1209,32 @@ benchmark leios-txcache-bench
     unix,
     vector,
 
+benchmark leios-voting-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus-cardano/bench/leios-voting-bench
+  main-is: Main.hs
+  build-depends:
+    base >=4.14 && <4.23,
+    QuickCheck,
+    bytestring,
+    cardano-ledger-api,
+    cardano-ledger-byron,
+    cardano-ledger-core,
+    cardano-protocol,
+    cardano-strict-containers,
+    containers,
+    deepseq,
+    fs-api,
+    fs-sim,
+    microlens,
+    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib},
+    sop-extras,
+    unstable-byron-testlib,
+    unstable-cardano-testlib,
+    unstable-shelley-testlib,
+    vector,
+
 benchmark txid-eq-ord-instances-bench
   import: common-bench
   type: exitcode-stdio-1.0

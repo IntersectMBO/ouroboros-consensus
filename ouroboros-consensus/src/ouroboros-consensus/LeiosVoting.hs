@@ -45,6 +45,7 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
+  , TxHash
   , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
@@ -76,17 +77,20 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
   , EmptyMK
-  , KeysMK
   , LedgerConfig
   , LedgerState
   , LedgerTables
-  , ValuesMK
+  , TickedLedgerState
   , applyChainTick
+  , ltliftA2
+  , projectLedgerTables
+  , withLedgerTables
   )
 import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
+  , GenTx
   , LedgerSupportsMempool (..)
   , TxLimits (..)
   , TxMeasure (..)
@@ -98,7 +102,13 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , leiosCommitteeOfTip
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.Combinators (ltliftA3)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.MapKind (DiffMK (..), KeysMK (..), ValuesMK (..))
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( forgetLedgerTables
+  , restrictValuesMK
+  )
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -486,7 +496,7 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
           parity = protVerParity $ leiosCurrentProtVer lcfg st0
       -- Determine which txs we can just reapply (the cache hits)
       decided <- withLookupTx txCache $ \look -> mapM (decide parity look) closure
-      goValidate parity st0 decided 0 0 Measure.zero []
+      goValidate parity st0 (projectLedgerTables st0) decided 0 0 Measure.zero []
  where
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
@@ -503,19 +513,46 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
 
   -- Apply or reapply txs, accumulating the ones we newly validated so the cache
   -- is written once for the whole closure rather than once per tx.
-  goValidate parity _ [] !reapplied !applied !appliedMeasure newly = do
+  --
+  -- The closure's input table stays outside the ledger state: each tx runs on
+  -- a state holding its own inputs only, as the mempool runs it, and its diff
+  -- is folded back into the table afterwards. Every step is then proportional
+  -- to the tx, not to the closure. The state's own tables are whatever the
+  -- last rule left (diffs after an apply, values after a reapply); the next
+  -- tx's 'withLedgerTables' replaces them, so they are never forgotten first.
+  goValidate ::
+    forall mk.
+    ProtVerParity ->
+    TickedLedgerState blk mk ->
+    LedgerTables blk ValuesMK ->
+    [(TxHash, Either (GenTx blk) (GenTx blk))] ->
+    Int ->
+    Int ->
+    TxMeasure blk ->
+    [TxHash] ->
+    m (EbClosureVerdict blk)
+  goValidate parity _ _ [] !reapplied !applied !appliedMeasure newly = do
     recordValidated parity newly
     pure $ EbClosureValid reapplied applied appliedMeasure
-  goValidate parity !st ((txh, decision) : rest) !reapplied !applied !appliedMeasure newly =
+  goValidate parity !st !vals ((txh, decision) : rest) !reapplied !applied !appliedMeasure newly =
     case decision of
       Right tx ->
         -- Already validated once, so only the state-dependent checks re-run. A
         -- failure here is state-dependent (a spent input, say) and says nothing
         -- about the static checks, so the tx keeps the tag it already has.
-        let vtx = assumeValidatedClosureTx lcfg slot st tx
-         in case runExcept $ reapplyTx lcfg slot vtx st of
+        let vtx = assumeValidatedClosureTx lcfg slot stTx tx
+         in case runExcept $ reapplyTx lcfg slot vtx stTx of
               Left err -> abandon parity newly err
-              Right st' -> goValidate parity st' rest (reapplied + 1) applied appliedMeasure newly
+              Right st' ->
+                goValidate
+                  parity
+                  st'
+                  (ltliftA3 rebase vals (getTransactionKeySets tx) (projectLedgerTables st'))
+                  rest
+                  (reapplied + 1)
+                  applied
+                  appliedMeasure
+                  newly
       Left tx ->
         -- 'Intervene', despite the mempool's framing of it as a courtesy to
         -- local clients. What it actually selects is whether the era's applyTx
@@ -529,17 +566,48 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
         -- exactly the trust 'applyLeiosClosure' cites the certificate for.
         -- 'Intervene' leaves the flag alone and lets the mismatch escape as an
         -- error, so we fail closed on precisely those txs.
-        case runExcept $ applyTx lcfg Intervene slot tx st of
+        case runExcept $ applyTx lcfg Intervene slot tx stTx of
           Left err -> abandon parity newly err
           Right (st', _vtx) ->
             goValidate
               parity
-              (applyDiffs st st')
+              st'
+              (foldDiffs vals st')
               rest
               reapplied
               (applied + 1)
-              (appliedMeasure `Measure.plus` measureTx st tx)
+              (appliedMeasure `Measure.plus` measureTx stTx tx)
               (txh : newly)
+   where
+    -- The state this tx runs on: the closure's table restricted to its inputs.
+    stTx :: TickedLedgerState blk ValuesMK
+    stTx =
+      st
+        `withLedgerTables` ltliftA2
+          restrictValuesMK
+          vals
+          (getTransactionKeySets (either id id decision))
+
+  -- The tx's diff folded into the closure's table: one update per changed
+  -- key, where 'applyDiffs' would merge over the whole table.
+  foldDiffs ::
+    LedgerTables blk ValuesMK ->
+    TickedLedgerState blk DiffMK ->
+    LedgerTables blk ValuesMK
+  foldDiffs vals d = ltliftA2 applyDelta vals (projectLedgerTables d)
+
+  -- After a reapplied tx: what 'reapplyTx' left of the tx's own entries
+  -- replaces them in the table -- the inputs it consumed are gone, the ones it
+  -- only read stay, its outputs are new.
+  rebase :: Ord k => ValuesMK k v -> KeysMK k v -> ValuesMK k v -> ValuesMK k v
+  rebase (ValuesMK vals) (KeysMK ks) (ValuesMK after) =
+    ValuesMK (Map.union after (Map.withoutKeys vals ks))
+
+  applyDelta :: Ord k => ValuesMK k v -> DiffMK k v -> ValuesMK k v
+  applyDelta (ValuesMK m) (DiffMK (Diff.Diff ds)) = ValuesMK (Map.foldlWithKey' step m ds)
+   where
+    step acc k (Diff.Insert v) = Map.insert k v acc
+    step acc k Diff.Delete = Map.delete k acc
 
   -- Only for the trace, so a tx the measure rejects counts as zero; 'applyTx'
   -- has already judged it valid.
