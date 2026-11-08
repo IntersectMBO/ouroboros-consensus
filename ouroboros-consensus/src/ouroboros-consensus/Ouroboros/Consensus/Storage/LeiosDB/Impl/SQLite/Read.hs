@@ -4,7 +4,8 @@
 
 -- | Read operations of LeiosDB's SQLite backend.
 --
--- Each lookup reads one partition, chosen by the point's slot ('readPartition').
+-- Each lookup reads one partition, chosen by the point's slot, unless a
+-- collection overtook the read ('readPartition').
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   ( sqlScanCompleteEbPointsSince
   , sqlLookupEbBody

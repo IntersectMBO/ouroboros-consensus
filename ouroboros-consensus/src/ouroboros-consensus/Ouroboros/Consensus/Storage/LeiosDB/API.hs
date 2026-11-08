@@ -73,7 +73,7 @@ data LeiosDbHandle m = LeiosDbHandle
 -- The reads of a point older than the latest 'garbageCollect' go to the
 -- immutable partition, which holds an EB at the point it was certified at,
 -- and those of any other point to the volatile one. Neither falls back to the
--- other.
+-- other, unless a collection overtook the read.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
   , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)
