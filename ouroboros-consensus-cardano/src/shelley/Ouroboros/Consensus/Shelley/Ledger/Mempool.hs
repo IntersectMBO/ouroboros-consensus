@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -95,6 +96,7 @@ import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState (esSnapshotsL, nesEsL)
@@ -138,7 +140,7 @@ import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
 import Ouroboros.Network.Tx (HasRawTxId (..))
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(SL.MempoolTx era)
   deriving stock Generic
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -228,31 +230,31 @@ instance
 
   reapplyTx = reapplyShelleyTx
 
-  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractValidatedTx vtx)
+  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.getValidatedMempoolTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
       KeysMK $
         coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
+          (SL.unwrapMempoolTx tx ^. bodyTxL . allInputsTxBodyF)
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
   txLeiosHash (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
-    Just LeiosEraDict -> Just (eraTxLeiosHash tx)
+    Just LeiosEraDict -> Just (eraTxLeiosHash (SL.unwrapMempoolTx tx))
     Nothing -> Nothing
 
   txLeiosBytes (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
-    Just LeiosEraDict -> Just (eraTxLeiosBytes tx)
+    Just LeiosEraDict -> Just (eraTxLeiosBytes (SL.unwrapMempoolTx tx))
     Nothing -> Nothing
 
   tickedLedgerMajorProtocolVersion st =
     L.pvMajor $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
 
 mkShelleyTx ::
-  forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
-mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
+  forall era proto. ShelleyBasedEra era => SL.MempoolTx era -> GenTx (ShelleyBlock proto era)
+mkShelleyTx tx = ShelleyTx (txIdTx (SL.unwrapMempoolTx tx)) tx
 
 mkShelleyValidatedTx ::
   forall era proto.
@@ -289,8 +291,8 @@ instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era)
   getRawTxId = toRawTxIdHash
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
-  extractTxs =
-    map mkShelleyTx
+  extractAsMempoolTxs =
+    map (mkShelleyTx . UnsafeMkMempoolTx)
       . blockBodyToTxList
       . SL.blockBody
       . shelleyBlockRaw
@@ -453,7 +455,7 @@ txInBlockSize ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
-txInBlockSize st (ShelleyTx _txid tx') =
+txInBlockSize st (ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
     Just $ IgnoringOverflow $ ByteSize32 $ txByteSizeWithOverhead tx'
@@ -667,7 +669,7 @@ txMeasureAlonzo ::
   TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
-txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
+txMeasureAlonzo st tx@(ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
   AlonzoMeasure <$> txInBlockSize st tx <*> exunits
  where
   txsz = getTotalExUnits tx'
@@ -787,7 +789,7 @@ txMeasureRefScripts ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) RefScriptSize
-txMeasureRefScripts st (ShelleyTx _txid tx') =
+txMeasureRefScripts st (ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
   RefScriptSize <$> refScriptBytes
  where
   ValuesMK utxo = getLedgerTables $ projectLedgerTables st

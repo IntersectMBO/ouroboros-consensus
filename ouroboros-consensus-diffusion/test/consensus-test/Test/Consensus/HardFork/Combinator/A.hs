@@ -653,7 +653,7 @@ instance SingleEraBlock BlockA where
         (boundEpoch eraStart)
 
 instance HasTxs BlockA where
-  extractTxs = blkA_body
+  extractAsMempoolTxs = blkA_body
 
 {-------------------------------------------------------------------------------
   Condense

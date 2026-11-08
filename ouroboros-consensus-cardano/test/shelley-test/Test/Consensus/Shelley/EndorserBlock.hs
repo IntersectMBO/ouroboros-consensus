@@ -31,8 +31,9 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Shelley.Eras (eraTxLeiosBytes)
 import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx, txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
@@ -191,4 +192,4 @@ prop_dijkstraTxLeiosHashOfBytes tx =
   txLeiosHash genTx === (hashLeiosTx . MkLeiosTx <$> txLeiosBytes genTx)
  where
   genTx :: GenTx StandardDijkstraBlock
-  genTx = mkShelleyTx tx
+  genTx = mkTestShelleyTx tx

@@ -504,7 +504,7 @@ instance SingleEraBlock BlockB where
   singleEraTransition = \_ _ _ _ -> Nothing
 
 instance HasTxs BlockB where
-  extractTxs = const []
+  extractAsMempoolTxs = const []
 
 {-------------------------------------------------------------------------------
   Condense
