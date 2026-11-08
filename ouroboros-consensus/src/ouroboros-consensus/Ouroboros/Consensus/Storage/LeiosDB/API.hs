@@ -123,6 +123,9 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- Returns the offsets at which the point holds its txs once the write is
   -- done: those filled, or written since an earlier delivery of the same body.
+  --
+  -- PREREQ: the EB's body and closure sizes are within the protocol limits.
+  -- The LeiosDB allocates the closure at the size the body declares.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
