@@ -90,6 +90,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
+import Ouroboros.Consensus.Leios.Voting (noLeiosVoterTxCache)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -1066,6 +1067,7 @@ runThreadNetwork
               , leiosDB
               , -- Nothing tells of acquired closures yet, as in 'mkNodeKernelArgs'.
                 subscribeLeiosClosures = pure retry
+              , leiosVoterTxCache = noLeiosVoterTxCache
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck

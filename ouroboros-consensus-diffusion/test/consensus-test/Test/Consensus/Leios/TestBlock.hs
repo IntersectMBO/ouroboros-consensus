@@ -836,6 +836,7 @@ instance LedgerSupportsEndorserBlocks LeiosTestBlock where
   decodeEbTx _st bytes
     | bytes == invalidEbTx = Left "invalid endorsed transaction"
     | otherwise = Right (LeiosTestGenTx bytes)
+  assumeValidatedEbTx _cfg _slot _st = Just . ValidatedLeiosTestGenTx
 
 -- | The bytes of the one endorsed transaction that does not decode.
 invalidEbTx :: BS.ByteString

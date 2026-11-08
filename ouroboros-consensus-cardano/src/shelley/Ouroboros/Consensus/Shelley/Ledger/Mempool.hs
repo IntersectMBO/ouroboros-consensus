@@ -53,6 +53,7 @@ import Cardano.Ledger.Alonzo.Core
   , eraDecoder
   , ppMaxBBSizeL
   , ppMaxBlockExUnitsL
+  , ppProtocolVersionL
   , sizeTxF
   , txIdTx
   , txSeqBlockBodyL
@@ -250,6 +251,24 @@ instance
           (Text.pack "endorsed transaction")
           decodeTx
           (BSL.fromStrict bytes)
+
+  ebTxsProtVerParity st =
+    Leios.protVerParity $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
+
+  -- What 'SL.reapplyValidatedTx' needs of the state, its annotation of the
+  -- transaction, comes from the state the transaction is reapplied to.
+  --
+  -- TODO The ledger documents 'SL.unsafeMakeValidatedTx' as for testing only.
+  -- It should offer this for a transaction validated before.
+  assumeValidatedEbTx cfg slot st (ShelleyTx txid tx) =
+    Just . ShelleyValidatedTx txid $
+      SL.unsafeMakeValidatedTx
+        (shelleyLedgerGlobals cfg)
+        (SL.mkMempoolEnv innerSt slot)
+        (SL.mkMempoolState innerSt)
+        tx
+   where
+    innerSt = tickedShelleyLedgerState (stowLedgerTables st)
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)

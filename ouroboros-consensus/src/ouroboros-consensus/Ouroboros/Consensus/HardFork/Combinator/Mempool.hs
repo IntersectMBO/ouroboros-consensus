@@ -627,6 +627,43 @@ instance
       K (Either Text (GenTx (HardForkBlock xs))) x
     decodeIn index (FlipTickedLedgerState st) = K $ injectGenTx index <$> decodeEbTx st bytes
 
+  ebTxsProtVerParity (TickedHardForkLedgerState _transition hardForkState) =
+    hcollapse $
+      hcmap
+        (Proxy @LedgerSupportsEndorserBlocks)
+        (\(FlipTickedLedgerState st) -> K (ebTxsProtVerParity st))
+        hardForkState
+
+  -- A transaction of another era than the state is none to reapply.
+  assumeValidatedEbTx
+    HardForkLedgerConfig{..}
+    slot
+    (TickedHardForkLedgerState transition hardForkState)
+    (HardForkGenTx (OneEraGenTx tx)) =
+      case matchTx tx hardForkState of
+        Left _mismatch -> Nothing
+        Right matched ->
+          hcollapse $ hcizipWith (Proxy @LedgerSupportsEndorserBlocks) assumeIn cfgs matched
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      assumeIn ::
+        LedgerSupportsEndorserBlocks x =>
+        Index xs x ->
+        WrapLedgerConfig x ->
+        Product (FlipTickedLedgerState ValuesMK) GenTx x ->
+        K (Maybe (Validated (GenTx (HardForkBlock xs)))) x
+      assumeIn index (WrapLedgerConfig cfg) (Pair (FlipTickedLedgerState st) tx') =
+        K $
+          HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx
+            <$> assumeValidatedEbTx cfg slot st tx'
+
 {-------------------------------------------------------------------------------
   Auxiliary
 -------------------------------------------------------------------------------}

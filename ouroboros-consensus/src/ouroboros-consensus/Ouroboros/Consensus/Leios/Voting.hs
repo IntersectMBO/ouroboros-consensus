@@ -20,6 +20,8 @@
 -- the window to the vote.
 module Ouroboros.Consensus.Leios.Voting
   ( LeiosVoterEnv (..)
+  , LeiosVoterTxCache (..)
+  , noLeiosVoterTxCache
   , TraceLeiosVoting (..)
   , NotVotedReason (..)
   , runLeiosVoter
@@ -92,9 +94,11 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledg
 import Ouroboros.Consensus.Ledger.Tables
   ( DiffMK (..)
   , HasLedgerTables (..)
+  , KeysMK (..)
   , LedgerTables
   , ValuesMK (..)
   , ltliftA2
+  , ltliftA3
   )
 import Ouroboros.Consensus.Ledger.Tables.Diff (Delta (..), Diff (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValuesMK)
@@ -111,7 +115,9 @@ import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint (..)
   , LeiosVote (..)
+  , ProtVerParity
   , RankingBlockHash
+  , TxHash
   , deserialiseEndorserBlock
   , endorserBlockReferences
   , milliseconds32ToNominalDiffTime
@@ -153,16 +159,41 @@ data LeiosVoterEnv m blk = MkLeiosVoterEnv
   { voterConfig :: TopLevelConfig blk
   , voterChainDB :: ChainDB m blk
   , voterLeiosDb :: LeiosDbHandle m
+  , voterTxCache :: LeiosVoterTxCache m
   , voterAnnounceState :: AnnounceState m blk
   , voterVoteState :: VoteState m blk
   , voterSystemTime :: SystemTime m
   , voterTracer :: Tracer m TraceLeiosVoting
   }
 
+-- | Which transactions the node validated already, and under which protocol
+-- version parity, as the LeiosTxCache is to tell.
+data LeiosVoterTxCache m = MkLeiosVoterTxCache
+  { lookupValidatedTxs :: [TxHash] -> m [Maybe ProtVerParity]
+  -- ^ For each transaction, the parity it was validated under, if it was.
+  , insertValidatedTxs :: ProtVerParity -> [TxHash] -> m ()
+  -- ^ Record that the node validated these transactions under this parity.
+  }
+
+-- | Knows of no validated transaction, and records none.
+noLeiosVoterTxCache :: Applicative m => LeiosVoterTxCache m
+noLeiosVoterTxCache =
+  MkLeiosVoterTxCache
+    { lookupValidatedTxs = pure . map (const Nothing)
+    , insertValidatedTxs = \_parity _txHashes -> pure ()
+    }
+
 -- | What the voter traces.
 data TraceLeiosVoting
-  = -- | The node applied the closure of an endorser block, and may vote for it.
-    TraceLeiosEbValidated !LeiosPoint
+  = -- | The node applied the closure of an endorser block, and may vote for it:
+    -- it reapplied that many transactions it validated before, and validated
+    -- the others in full.
+    TraceLeiosEbValidated
+      !LeiosPoint
+      -- | reapplied
+      !Int
+      -- | validated in full
+      !Int
   | -- | The node voted for the endorser block of an announcement.
     TraceLeiosVoted !LeiosVote
   | TraceLeiosNotVoted !LeiosPoint !NotVotedReason
@@ -269,8 +300,9 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
   when (age > lHdr) $ throwError (AnnouncedLate age)
   notEquivocated announcing
 
-  ExceptT $ validateEndorserBlock lcfg voterChainDB voterLeiosDb point announcing
-  lift $ traceWith voterTracer (TraceLeiosEbValidated point)
+  (reapplied, applied) <-
+    ExceptT $ validateEndorserBlock lcfg voterChainDB voterLeiosDb voterTxCache point announcing
+  lift $ traceWith voterTracer (TraceLeiosEbValidated point reapplied applied)
 
   lift $ waitUntil (voteFrom window)
   notAfter votingEnds
@@ -299,6 +331,7 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
     { voterConfig
     , voterChainDB
     , voterLeiosDb
+    , voterTxCache
     , voterAnnounceState
     , voterVoteState
     , voterSystemTime
@@ -351,7 +384,8 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
     threadDelay (nominalDelay (diffRelTime at now))
 
 -- | Check an endorser block against what one may hold, then apply its closure
--- to the ledger state of the block that announced it.
+-- to the ledger state of the block that announced it. Yields how many
+-- transactions it reapplied, and how many it validated in full.
 validateEndorserBlock ::
   forall m blk.
   ( IOLike m
@@ -360,10 +394,11 @@ validateEndorserBlock ::
   LedgerConfig blk ->
   ChainDB m blk ->
   LeiosDbHandle m ->
+  LeiosVoterTxCache m ->
   LeiosPoint ->
   AnnouncingHeader blk ->
-  m (Either NotVotedReason ())
-validateEndorserBlock lcfg chainDB leiosDb point@MkLeiosPoint{pointSlotNo = slot} announcing =
+  m (Either NotVotedReason (Int, Int))
+validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotNo = slot} announcing =
   withReader leiosDb $ \reader -> runExceptT $ do
     body <- lift (lookupEbBody reader point) >>= (?>= BodyUnavailable)
     eb <-
@@ -387,8 +422,21 @@ validateEndorserBlock lcfg chainDB leiosDb point@MkLeiosPoint{pointSlotNo = slot
         txs <- liftEither $ first EbInvalid $ traverse (decodeEbTx ticked) closure
 
         let txKeys = foldMap getTransactionKeySets txs
+            txHashes = map fst references
+            parity = ebTxsProtVerParity ticked
         values <- lift $ roforkerReadTables forker txKeys
-        liftEither $ void $ applyClosure lcfg slot capacity (applyMempoolDiffs values txKeys ticked) txs
+        validatedUnder <- lift $ lookupValidatedTxs txCache txHashes
+        let MkClosureOutcome{closureVerdict, closureReapplied, closureApplied} =
+              applyClosure
+                lcfg
+                slot
+                capacity
+                (applyMempoolDiffs values txKeys ticked)
+                (zip3 txHashes (map (== Just parity) validatedUnder) txs)
+        -- Even a closure that fails validated what came before the failure.
+        lift $ insertValidatedTxs txCache parity closureApplied
+        liftEither closureVerdict
+        pure (closureReapplied, length closureApplied)
  where
   withForkerAt at k =
     bracket
@@ -396,14 +444,24 @@ validateEndorserBlock lcfg chainDB leiosDb point@MkLeiosPoint{pointSlotNo = slot
       (either (const (pure ())) roforkerClose)
       (k . either (const Nothing) Just)
 
+-- | What 'applyClosure' made of a closure.
+data ClosureOutcome = MkClosureOutcome
+  { closureVerdict :: !(Either NotVotedReason ())
+  , closureReapplied :: !Int
+  -- ^ How many transactions it reapplied, as the node validated them before.
+  , closureApplied :: ![TxHash]
+  -- ^ The transactions it validated in full, before the verdict.
+  }
+
 -- | Apply the transactions of a closure, one after the other, to the ledger
 -- state of the block that announced it, ticked to its slot, as a certificate
 -- for it would. And sum what they take of an endorser block's capacity, which
--- must hold them all. Returns how many it applied.
+-- must hold them all.
 --
--- It applies with 'Intervene', so that the ledger does not flip a
--- transaction's validity flag, which applying a certified closure would not
--- either.
+-- A transaction the node validated before is reapplied: only the checks that
+-- depend on the ledger state run again. Any other is applied with
+-- 'Intervene', so that the ledger does not flip a transaction's validity
+-- flag, which applying a certified closure would not either.
 --
 -- The closure's ledger table stays outside the state. Each transaction runs on
 -- a state holding only its own inputs, as the mempool runs it, and its effect
@@ -411,37 +469,75 @@ validateEndorserBlock lcfg chainDB leiosDb point@MkLeiosPoint{pointSlotNo = slot
 -- does, not what the closure does.
 applyClosure ::
   forall blk.
-  LedgerSupportsMempool blk =>
+  LedgerSupportsEndorserBlocks blk =>
   LedgerConfig blk ->
   SlotNo ->
   -- | What an endorser block may hold
   TxEbMeasure blk ->
   TickedLedgerState blk ValuesMK ->
-  [GenTx blk] ->
-  Either NotVotedReason Int
-applyClosure cfg slot capacity st0 = go st0 (projectLedgerTables st0) Measure.zero 0
+  -- | Each transaction, with whether the node validated it before
+  [(TxHash, Bool, GenTx blk)] ->
+  ClosureOutcome
+applyClosure cfg slot capacity st0 = go st0 (projectLedgerTables st0) Measure.zero 0 []
  where
   go ::
     TickedLedgerState blk mk ->
     LedgerTables blk ValuesMK ->
     TxEbMeasure blk ->
     Int ->
-    [GenTx blk] ->
-    Either NotVotedReason Int
-  go _ _ _ !applied [] = Right applied
-  go st values measured !applied (tx : txs) = do
-    let stTx = st `withLedgerTables` ltliftA2 restrictValuesMK values (getTransactionKeySets tx)
-    phase1 <- invalid $ txMeasurePhase1 cfg (forgetLedgerTables stTx) tx
-    phase2 <- invalid $ txMeasurePhase2 cfg stTx tx
-    let measured' = measured `Measure.plus` txEbMeasure (Proxy @blk) (TxMeasure phase1 phase2)
-    unless (measured' Measure.<= capacity) $ Left EbOverCapacity
-    (st', _vtx) <- invalid $ applyTx cfg Intervene slot tx stTx
-    go st' (ltliftA2 applyDelta values (projectLedgerTables st')) measured' (applied + 1) txs
+    [TxHash] ->
+    [(TxHash, Bool, GenTx blk)] ->
+    ClosureOutcome
+  go _ _ _ !reapplied applied [] = MkClosureOutcome (Right ()) reapplied applied
+  go st values measured !reapplied applied ((txHash, validated, tx) : txs) =
+    case measure of
+      Left reason -> stop reapplied (Left reason)
+      Right measured' -> case (validated, assumeValidatedEbTx cfg slot stTx tx) of
+        (True, Just vtx) -> case runExcept (reapplyTx cfg slot vtx stTx) of
+          Left err -> stop reapplied (invalid err)
+          Right st' ->
+            go
+              st'
+              (ltliftA3 rebase values txKeys (projectLedgerTables st'))
+              measured'
+              (reapplied + 1)
+              applied
+              txs
+        _ -> case runExcept (applyTx cfg Intervene slot tx stTx) of
+          Left err -> stop reapplied (invalid err)
+          Right (st', _vtx) ->
+            go
+              st'
+              (ltliftA2 applyDelta values (projectLedgerTables st'))
+              measured'
+              reapplied
+              (txHash : applied)
+              txs
+   where
+    stop reapplied' verdict = MkClosureOutcome verdict reapplied' applied
 
-  invalid = first (EbInvalid . Text.pack . show) . runExcept
+    txKeys = getTransactionKeySets tx
 
-  -- One update per key the transaction changed, where 'applyDiffs' would
-  -- merge over the whole table.
+    stTx = st `withLedgerTables` ltliftA2 restrictValuesMK values txKeys
+
+    measure = do
+      phase1 <- first showInvalid . runExcept $ txMeasurePhase1 cfg (forgetLedgerTables stTx) tx
+      phase2 <- first showInvalid . runExcept $ txMeasurePhase2 cfg stTx tx
+      let measured' = measured `Measure.plus` txEbMeasure (Proxy @blk) (TxMeasure phase1 phase2)
+      if measured' Measure.<= capacity then Right measured' else Left EbOverCapacity
+
+  invalid = Left . showInvalid
+
+  showInvalid = EbInvalid . Text.pack . show
+
+  -- After a reapplied transaction: what 'reapplyTx' left of the transaction's
+  -- own entries replaces them in the table. The inputs it consumed are gone,
+  -- the ones it only read stay, and its outputs are new.
+  rebase :: Ord k => ValuesMK k v -> KeysMK k v -> ValuesMK k v -> ValuesMK k v
+  rebase (ValuesMK m) (KeysMK ks) (ValuesMK after) = ValuesMK (Map.union after (Map.withoutKeys m ks))
+
+  -- After an applied transaction: one update per key it changed, where
+  -- 'applyDiffs' would merge over the whole table.
   applyDelta :: Ord k => ValuesMK k v -> DiffMK k v -> ValuesMK k v
   applyDelta (ValuesMK m) (DiffMK (Diff ds)) = ValuesMK (Map.foldlWithKey' step m ds)
    where

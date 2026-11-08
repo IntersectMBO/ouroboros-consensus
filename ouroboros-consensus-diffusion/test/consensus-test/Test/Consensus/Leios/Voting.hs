@@ -13,7 +13,12 @@ import Cardano.Crypto.DSIGN.Class (genKeyDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios (LeiosCert, LeiosSigningKey)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
-import Control.Concurrent.Class.MonadSTM.Strict (atomically, modifyTVar, newTVarIO, readTVarIO)
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( atomically
+  , modifyTVar
+  , newTVarIO
+  , readTVarIO
+  )
 import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -22,6 +27,8 @@ import Control.Tracer (mkTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
 import Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
@@ -31,6 +38,7 @@ import Ouroboros.Consensus.Block.Forging
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlockHash
   , LeiosPoint (..)
+  , ProtVerParity (..)
   , TxHash
   , mkEndorserBlock
   )
@@ -44,6 +52,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , await
   , withWriter
   )
+import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Test.Consensus.Leios.NodeUnderTest
   ( Blk
   , NodeUnderTest (..)
@@ -166,6 +175,18 @@ tests =
                   }
         votes down @?= []
         notVoted @?= [AnnouncedLate 1.5]
+    , testCase "the node reapplies a transaction it validated before" $ do
+        let Outcome{down, validated} =
+              runVoting voting{validatedBefore = Map.singleton (txHashOf 0) EvenProtVer}
+        votes down @?= [voteOf someAnnouncingBlock 0]
+        validated @?= [(1, 0)]
+    , testCase "the node validates in full a transaction validated under another protocol version" $ do
+        let Outcome{validated} =
+              runVoting voting{validatedBefore = Map.singleton (txHashOf 0) OddProtVer}
+        validated @?= [(0, 1)]
+    , testCase "the node records the transactions it validated in full" $ do
+        let Outcome{validatedAfter} = runVoting voting
+        validatedAfter @?= Map.singleton (txHashOf 0) EvenProtVer
     ]
 
 -- | What happens around the node: the announcements its upstream peers send
@@ -179,6 +200,8 @@ data Voting = Voting
   , validating :: SlotNo -> DiffTime
   -- ^ Beyond what validating takes in the simulation, by the slot of the
   -- endorser block.
+  , validatedBefore :: Map TxHash ProtVerParity
+  -- ^ The transactions the node validated before it starts.
   }
 
 -- | The node holds seat 0, an upstream peer announces 'someAnnouncingBlock',
@@ -191,6 +214,7 @@ voting =
     , adopts = [(1.5, someAnnouncingBlock)]
     , closures = [(2, someAnnouncingBlock, validTxs)]
     , validating = const 0
+    , validatedBefore = Map.empty
     }
 
 data Outcome = Outcome
@@ -199,11 +223,16 @@ data Outcome = Outcome
   , notVoted :: [NotVotedReason]
   , certified :: Maybe LeiosCert
   -- ^ The certificate of 'someAnnouncingBlock', if any.
+  , validated :: [(Int, Int)]
+  -- ^ For each closure the node validated, how many transactions it reapplied
+  -- and how many it validated in full.
+  , validatedAfter :: Map TxHash ProtVerParity
+  -- ^ The transactions the node validated, once it stopped.
   }
 
 -- | Run the node with the given keys for 20 s.
 runVoting :: Voting -> Outcome
-runVoting Voting{keys, ups, adopts, closures, validating} = runSimOrThrow $ do
+runVoting Voting{keys, ups, adopts, closures, validating, validatedBefore} = runSimOrThrow $ do
   traced <- newTVarIO []
   nodeDBs <- emptyNodeDBs
   leiosDB <- newLeiosDBInMemory
@@ -211,12 +240,13 @@ runVoting Voting{keys, ups, adopts, closures, validating} = runSimOrThrow $ do
         nullTracers
           { leiosVotingTracer = mkTracer $ \ev -> do
               case ev of
-                TraceLeiosEbValidated MkLeiosPoint{pointSlotNo} ->
+                TraceLeiosEbValidated MkLeiosPoint{pointSlotNo} _reapplied _applied ->
                   threadDelay (validating pointSlotNo)
                 _ -> pure ()
               atomically $ modifyTVar traced (ev :)
           }
   withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) tracers nodeDBs leiosDB $ \node -> do
+    atomically $ IOLike.writeTVar (nodeValidatedTxs node) validatedBefore
     setBlockForging (nodeKernel node) [MkBlockForging (pure (votingOnly keys))]
     withAsync (adopt node) $ \_ -> withAsync (acquire node) $ \_ -> do
       outcomes <-
@@ -226,11 +256,14 @@ runVoting Voting{keys, ups, adopts, closures, validating} = runSimOrThrow $ do
         atomically $
           getCertificate (getLeiosVoteState (nodeKernel node)) (rbHashOf (ltbHeader someAnnouncingBlock))
       evs <- readTVarIO traced
+      validatedAfter <- IOLike.readTVarIO (nodeValidatedTxs node)
       pure
         Outcome
           { down = last outcomes
           , notVoted = reverse [reason | TraceLeiosNotVoted _ reason <- evs]
           , certified
+          , validated = reverse [(reapplied, applied) | TraceLeiosEbValidated _ reapplied applied <- evs]
+          , validatedAfter
           }
  where
   -- Each block extends the one adopted before it.
