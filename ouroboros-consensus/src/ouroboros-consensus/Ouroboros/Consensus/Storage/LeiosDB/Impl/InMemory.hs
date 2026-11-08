@@ -36,9 +36,9 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosTx (..)
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
@@ -270,7 +270,7 @@ imInsertEbBody stateVar point eb fills = do
   refs = Map.fromList (zip [0 ..] (endorserBlockReferences eb))
   newRow =
     EbRow
-      { rowBody = BSL.toStrict (unSerialised (serialiseEndorserBlock eb))
+      { rowBody = endorserBlockBytes eb
       , rowTxSizes = fmap snd refs
       , rowTxs = Map.empty
       }

@@ -15,7 +15,6 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -28,9 +27,9 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosTx (..)
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
@@ -52,7 +51,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , readTxWritten
   , withBlob
   )
-import Ouroboros.Network.Block (Serialised (..))
 
 -- | Persist an EB body at its point, recording the point: the bytes it arrived
 -- in, where each of its txs will be in the closure, and the closure and the
@@ -150,7 +148,7 @@ sqlInsertEbBody conn point eb fills = do
         dbStep1 stmt
         DB.changes db
 
-  bodyBytes = BSL.toStrict (unSerialised (serialiseEndorserBlock eb))
+  bodyBytes = endorserBlockBytes eb
   refs = endorserBlockReferences eb
   Conn{conVolDb = db} = conn
 

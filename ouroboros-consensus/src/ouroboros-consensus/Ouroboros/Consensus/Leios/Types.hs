@@ -54,6 +54,7 @@ module Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , encodeEndorserBlock
   , Serialised (..)
+  , endorserBlockBytes
   , serialiseEndorserBlock
   , deserialiseEndorserBlock
   , hashSerialisedEndorserBlock
@@ -378,11 +379,14 @@ encodeEndorserBlock (MkEndorserBlock references) =
 
 -- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
 -- received in, or the ledger's encoding of one this node built. They are what
--- LeiosFetch sends, CBOR-in-CBOR, and what the LeiosDB stores, so neither a
--- server nor the codec decodes an endorser block.
+-- the LeiosDB stores.
+endorserBlockBytes :: EndorserBlock -> ByteString
+endorserBlockBytes (MkEndorserBlock references) = originalBytes references
+
+-- | The 'endorserBlockBytes', as LeiosFetch sends them CBOR-in-CBOR, so
+-- neither a server nor the codec decodes an endorser block.
 serialiseEndorserBlock :: EndorserBlock -> Serialised EndorserBlock
-serialiseEndorserBlock (MkEndorserBlock references) =
-  Serialised (BSL.fromStrict (originalBytes references))
+serialiseEndorserBlock = Serialised . BSL.fromStrict . endorserBlockBytes
 
 -- | The inverse of 'serialiseEndorserBlock', decoding at the ledger version
 -- of the given era. The bytes carry no version: whoever decodes them knows the
