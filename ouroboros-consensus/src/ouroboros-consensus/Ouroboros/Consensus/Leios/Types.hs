@@ -50,8 +50,11 @@ module Ouroboros.Consensus.Leios.Types
   , forgedEbBody
   , forgedEbTxs
   , forgeLeiosEb
+  , LeiosClosure (..)
+  , ResolveLeiosClosure
   , endorserBlockHash
   , endorserBlockReferences
+  , toLedgerEndorserBlock
   , encodeEndorserBlock
   , Serialised (..)
   , endorserBlockBytes
@@ -94,7 +97,7 @@ import Cardano.Ledger.Binary
   , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
-import Cardano.Ledger.Core (Era, eraProtVerLow)
+import Cardano.Ledger.Core (Era, TopTx, Tx, eraProtVerLow)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Cardano.Ledger.Dijkstra.Block.Endorser as Ledger
 import Cardano.Ledger.Hashes
@@ -124,6 +127,7 @@ import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
+import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Data.Word (Word32)
@@ -342,10 +346,27 @@ forgeLeiosEb txBytes =
     , forgedEbTxs = txBytes
     }
 
+-- | The bytes of an endorser block and of the transactions it references, in
+-- order, as the LeiosDB stores them.
+data LeiosClosure = MkLeiosClosure
+  { closureEb :: !(Serialised EndorserBlock)
+  , closureTxs :: ![LeiosTx]
+  }
+
+-- | Look up the closure of an endorser block. Like a block's resolution, it is
+-- only asked for a closure that is stored, and throws otherwise.
+type ResolveLeiosClosure m = LeiosPoint -> m LeiosClosure
+
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
 endorserBlockHash :: EndorserBlock -> EndorserBlockHash
 endorserBlockHash (MkEndorserBlock references) = extractHash $ hashAnnotated references
+
+-- | The ledger's endorser block, with the transactions this one references.
+toLedgerEndorserBlock ::
+  EndorserBlock -> StrictSeq (Tx TopTx DijkstraEra) -> Ledger.EndorserBlock DijkstraEra
+toLedgerEndorserBlock (MkEndorserBlock references) =
+  Ledger.DijkstraEndorserBlock references . Ledger.EbTransactions
 
 -- | The transactions an endorser block names, in order.
 endorserBlockReferences :: EndorserBlock -> [(TxHash, BytesSize)]

@@ -58,10 +58,13 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
+import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure, strictMaybeToMaybe)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
-  ( decShareCBOR
+  ( DecCBOR (decCBOR)
+  , DecoderError
+  , decShareCBOR
+  , decodeFullAnnotator
   , decodeMap
   , decodeMemPack
   , internsFromMap
@@ -84,10 +87,15 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra (DijkstraEra, applyEndorserBlockNoValidation)
+import Cardano.Ledger.Dijkstra.Block.Endorser (EbTransactions (..), EraEndorserBlock (..))
+import Cardano.Ledger.Hashes (extractHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
+import Cardano.Protocol.Crypto (StandardCrypto)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -98,9 +106,11 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce
 import Data.Functor.Identity
 import Data.MemPack
+import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -123,8 +133,9 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
+import Ouroboros.Consensus.Shelley.Eras (LeiosEraDict (..), ShelleyBasedEra (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -135,6 +146,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   )
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
+import Ouroboros.Consensus.Util.IOLike (throwIO)
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -623,6 +635,65 @@ instance
       . coerceSet
       . Core.neededTxInsForBlock
       . shelleyBlockRaw
+
+{-------------------------------------------------------------------------------
+  Leios
+-------------------------------------------------------------------------------}
+
+instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
+  blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
+    SL.strictMaybeToMaybe (bodyLeiosCert blockBody)
+
+  applyLeiosClosure cfg resolve readTables st = case getLeiosEraDict (Proxy @era) of
+    Nothing -> pure $ st `withLedgerTables` emptyLedgerTables
+    Just LeiosEraDict ->
+      case shelleyLedgerState st ^. SL.nesEsL . SL.esLStateL . SL.lsLastEbAnnouncementL of
+        SL.SNothing -> pure $ st `withLedgerTables` emptyLedgerTables
+        SL.SJust announcement -> do
+          let point = leiosPointOfAnnouncement announcement
+          Leios.MkLeiosClosure ebBytes txsBytes <- resolve point
+          eb <- either (throwIO . ShelleyLeiosClosureUndecodable point) pure $ do
+            body <- Leios.deserialiseEndorserBlock (Proxy @era) ebBytes
+            txs <- traverse decodeClosureTx txsBytes
+            pure $ Leios.toLedgerEndorserBlock body (StrictSeq.fromList txs)
+          values <- readTables (closureKeySets eb)
+          let before = st `withLedgerTables` values
+              stowed = stowLedgerTables before
+              after =
+                applyEndorserBlockNoValidation @(LeiosLedger.Header StandardCrypto)
+                  (shelleyLedgerGlobals cfg)
+                  (shelleyLedgerState stowed)
+                  eb
+          pure $
+            trackingToDiffs $
+              calculateDifference before $
+                unstowLedgerTables stowed{shelleyLedgerState = after}
+   where
+    -- Like the endorser block, its transactions are only ever Dijkstra's.
+    decodeClosureTx :: Leios.LeiosTx -> Either DecoderError (Core.Tx Core.TopTx DijkstraEra)
+    decodeClosureTx (Leios.MkLeiosTx bytes) =
+      decodeFullAnnotator (Core.eraProtVerLow @DijkstraEra) "Tx" decCBOR (Lazy.fromStrict bytes)
+
+    closureKeySets eb =
+      LedgerTables . KeysMK . coerceSet $
+        foldMap
+          (^. Core.bodyTxL . Core.allInputsTxBodyF)
+          (unEbTransactions (eb ^. transactionsEndorserBlockL))
+
+-- | The point of the endorser block an announcement names.
+leiosPointOfAnnouncement :: SL.EbAnnouncement -> Leios.LeiosPoint
+leiosPointOfAnnouncement announcement =
+  Leios.MkLeiosPoint
+    (SL.ebAnnouncementSlotNo announcement)
+    (extractHash (Core.ebReferencesAnnouncementHash (SL.ebAnnouncement announcement)))
+
+-- | A certified endorser block's closure that does not decode, which the voters
+-- who certified it could not have applied.
+data ShelleyLeiosClosureUndecodable
+  = ShelleyLeiosClosureUndecodable Leios.LeiosPoint DecoderError
+  deriving Show
+
+instance Exception.Exception ShelleyLeiosClosureUndecodable
 
 data ShelleyReapplyException
   = forall era.

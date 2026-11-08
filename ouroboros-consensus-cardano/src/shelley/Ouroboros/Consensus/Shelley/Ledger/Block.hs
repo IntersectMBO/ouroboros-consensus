@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
 
     -- * Shelley Compatibility
   , ShelleyCompatible
+  , bodyLeiosCert
   , mkShelleyBlock
   , mkShelleyHeader
 
@@ -68,7 +69,7 @@ import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
-import Data.Maybe.Strict (StrictMaybe (..), isSJust, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), isSJust)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
@@ -240,10 +241,6 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     bodyContainsTxs = not (null (blockBody ^. SL.txSeqBlockBodyL))
 
   headerIsEBB = const Nothing
-
-instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
-  blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
-    strictMaybeToMaybe (bodyLeiosCert blockBody)
 
 -- | The Leios certificate of a block body. Only an era with a 'LeiosEraDict'
 -- has a certificate field.
