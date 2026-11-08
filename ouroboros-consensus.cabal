@@ -1921,6 +1921,7 @@ test-suite shelley-test
     cardano-ledger-shelley,
     cardano-protocol,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,
