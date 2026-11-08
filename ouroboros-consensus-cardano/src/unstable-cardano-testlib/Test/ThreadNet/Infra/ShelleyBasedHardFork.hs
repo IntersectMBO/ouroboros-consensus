@@ -198,7 +198,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
       (TxEbMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
-  , SL.TranslateEra era2 (SL.Tx SL.TopTx)
+  , SL.TranslateEra era2 SL.MempoolTx
   , SL.TranslationError era2 SL.NewEpochState ~ Void
   , -- At the moment, fix the protocols together
     ProtoCrypto proto1 ~ ProtoCrypto proto2
