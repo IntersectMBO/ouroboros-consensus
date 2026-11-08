@@ -122,13 +122,13 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
  where
   copyEbToImmutable db point = do
     let ebHash = pointEbHash point
-    -- The immutable partition is read by hash, so an EB it holds at any point
-    -- is promoted already. Check that first: a crash can lose the volatile
-    -- writes that completed the EB, and nothing fetches them again, since the
-    -- startup scan takes the immutable copy as complete.
+    -- Check for the immutable copy first: a crash can lose the volatile writes
+    -- that completed the EB, and nothing fetches them again, since the startup
+    -- scan takes the immutable copy as complete.
     promoted <-
-      withStmt db "SELECT 1 FROM ebs WHERE ebHashBytes = ?1 LIMIT 1" $ \stmt -> do
-        dbBindHash stmt 1 ebHash
+      withStmt db "SELECT 1 FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+        dbBindHash stmt 2 ebHash
         dbStepSafe stmt >>= \case
           DB.Done -> pure False
           DB.Row -> pure True

@@ -142,20 +142,18 @@ imPromoteToImmutable :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint]
 imPromoteToImmutable stateVar points = do
   incomplete <- atomically $ do
     s <- readTVar stateVar
-    let promoted = Set.fromList (map pointEbHash (Map.keys (imImmutableEbBodies s)))
-        -- The first point given of each EB not promoted yet.
-        closures =
+    let closures =
           Map.fromList
-            [ (pointEbHash point, (point, closureAt point))
-            | point <- reverse points
-            , Set.notMember (pointEbHash point) promoted
+            [ (point, closureAt point)
+            | point <- points
+            , Map.notMember point (imImmutableEbBodies s)
             ]
         closureAt point = do
           body <- Map.lookup (pointEbHash point) (imEbBodies s)
           let txBytes = volatileTxBytes s point
           if closureWritten txBytes body then Just (body, txBytes) else Nothing
-        copied = Map.fromList [(point, closure) | (point, Just closure) <- Map.elems closures]
-        incomplete = [point | (point, Nothing) <- Map.elems closures]
+        copied = Map.mapMaybe id closures
+        incomplete = [point | (point, Nothing) <- Map.toList closures]
     when (null incomplete) $
       writeTVar
         stateVar
