@@ -153,7 +153,7 @@ imPromoteToImmutable stateVar points = do
         closureAt point = do
           body <- Map.lookup (pointEbHash point) (imEbBodies s)
           let txBytes = volatileTxBytes s point
-          if hashesMatch txBytes body then Just (body, txBytes) else Nothing
+          if closureWritten txBytes body then Just (body, txBytes) else Nothing
         copied = Map.fromList [(point, closure) | (point, Just closure) <- Map.elems closures]
         incomplete = [point | (point, Nothing) <- Map.elems closures]
     when (null incomplete) $
@@ -336,9 +336,8 @@ imInsertTxs stateVar point offBytes = atomically $ do
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete where its reads go
--- ('readsImmutable'). A volatile closure is complete if each of its txs hashes
--- to what the body lists, and a promoted one is, since only complete EBs are
--- promoted.
+-- ('readsImmutable'). A volatile closure is complete if each of its txs is
+-- written, and a promoted one is, since only complete EBs are promoted.
 imScanCompleteEbClosuresSince ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
@@ -346,7 +345,7 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   let isComplete p
         | pointSlotNo p < imGcSlot s = Map.member p (imImmutableEbBodies s)
         | otherwise =
-            maybe False (hashesMatch (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
+            maybe False (closureWritten (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
   pure
     [ p
     | p <- Set.toAscList (imEbPoints s <> Map.keysSet (imImmutableEbBodies s))
@@ -400,13 +399,6 @@ writtenTx state point offset = IntMap.lookup offset txs
 volatileTxBytes :: InMemoryLeiosDb -> LeiosPoint -> IntMap ByteString
 volatileTxBytes s point = Map.findWithDefault IntMap.empty point (imEbTxBytes s)
 
--- | Whether each tx of the body is written and hashes to what the body lists.
-hashesMatch :: IntMap ByteString -> StoredBody -> Bool
-hashesMatch txBytesByOffset body =
-  and
-    [ maybe
-        False
-        (\tx -> hashLeiosTx (MkLeiosTx tx) == eteTxHash e)
-        (IntMap.lookup off txBytesByOffset)
-    | (off, e) <- IntMap.toList (sbTxs body)
-    ]
+-- | Whether each tx of the body is written.
+closureWritten :: IntMap ByteString -> StoredBody -> Bool
+closureWritten txBytesByOffset body = all (`IntMap.member` txBytesByOffset) (IntMap.keys (sbTxs body))

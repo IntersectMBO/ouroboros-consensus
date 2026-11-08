@@ -43,7 +43,7 @@ erDiagram
 
 - When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
 - Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
-- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written and hashes to what its body lists, and only the closures whose markers are all set are read, or, for a point read from the immutable partition, if that holds it.
+- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. LeiosDB decodes no body and checks no hash for it: the writers check each transaction against the body before writing it.
 - Reads take the row at the requested point: in the immutable partition if the point is older than the latest garbage collection, else in the volatile one, and never fall back to the other. A read of the volatile partition that a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which the promotion filled before that collection. At startup, that slot is the one after the newest point in the immutable partition.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
@@ -62,7 +62,7 @@ Before the ChainDB appends blocks to the ImmutableDB, it promotes the EBs they c
 An EB the immutable partition holds already is not copied again: a crash can lose the volatile writes that completed it, and nothing fetches them again.
 So every block in the ImmutableDB has the EB it certifies in the immutable partition.
 A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
-An EB whose transactions do not hash to its body fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
+An EB whose closure is incomplete fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
 A garbage collection at a slot deletes the rows before that slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
 It also drops the point and body writes of a point before the latest garbage collection's slot, as that collection would delete it anyway: the ChainDB collects up to the ImmutableDB tip, and the fetch logic ignores announcements older than that.
@@ -71,5 +71,5 @@ The slot is kept in memory only: after a restart, the next garbage collection se
 ## Immutable partition
 
 The immutable partition has the same `ebs` table.
-Promotion copies only EBs whose certificate is on the chain, and only once each of their transactions hashes to what the body lists, and GC never removes EBs from this partition.
+Promotion copies only EBs whose certificate is on the chain, and only once each of their transactions is written, and GC never removes EBs from this partition.
 Thus every row holds its whole EB.

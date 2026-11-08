@@ -260,8 +260,6 @@ mkTestGroups impl =
       "completion"
       [ testCase "a scan finds an EB once each of its txs is written" $
           withFreshDb impl test_completion
-      , testCase "a scan does not find an EB whose txs do not hash to what it lists" $
-          withFreshDb impl test_completionHashes
       , testCase "a tx whose bytes are zeroes counts once written" $
           withFreshDb impl test_completionZeroTx
       , testCase "a scan finds each point of an EB whose closure is complete" $
@@ -287,8 +285,6 @@ mkTestGroups impl =
           withFreshDb impl test_gcKeepsPromotedEb
       , testCase "fails for an EB whose closure is incomplete, copying nothing" $
           withFreshDb impl test_promoteIncompleteFails
-      , testCase "fails for an EB whose txs do not hash to its body, copying nothing" $
-          withFreshDb impl test_promoteChecksHashes
       ]
   , testGroup
       "lookupEbClosure"
@@ -527,17 +523,6 @@ test_completion db = do
     rwScanComplete con 0 >>= (@?= [])
     rwInsertTxs con point (drop 2 (allTxsFor eb))
     rwScanComplete con 0 >>= (@?= [point])
-
--- | Bytes of the declared sizes that do not hash to the declared txs are
--- written, but do not complete the closure.
-test_completionHashes :: LeiosDbHandle IO -> IO ()
-test_completionHashes db = do
-  let point = mkTestPoint (SlotNo 1) 1
-      eb = mkTestEb 2
-  withRW db $ \con -> do
-    rwInsertEbBody con point eb
-    rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
-    rwScanComplete con 0 >>= (@?= [])
 
 -- | A tx whose bytes are zeroes, as the closure holds before any write, counts
 -- as written once it is: its marker, not its bytes, tells.
@@ -887,17 +872,6 @@ test_promoteIncompleteFails db = withRW db $ \con -> do
   assertPromoteFails db [mkTestPoint 4 2, mkTestPoint 5 1]
   garbageCollect db 6
   holdsClosure con (mkTestPoint 4 2) >>= (@?= False)
-
--- | An EB whose txs are written but do not hash to its body, which the scan
--- would take as complete in the immutable partition.
-test_promoteChecksHashes :: LeiosDbHandle IO -> IO ()
-test_promoteChecksHashes db = withRW db $ \con -> do
-  let point = mkTestPoint 5 1
-      eb = mkTestEb 2
-  rwInsertEbBody con point eb
-  rwInsertTxs con point [(off, BS.map (+ 1) bytes) | (off, bytes) <- allTxsFor eb]
-  assertPromoteFails db [point]
-  rwScanComplete con 0 >>= (@?= [])
 
 assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
 assertPromoteFails db points =
