@@ -83,7 +83,11 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (..))
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, LeiosPoint, ProtVerParity, TxHash, protVerParity)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
-import Ouroboros.Consensus.Leios.Voting (LeiosVoterEnv (..), runLeiosVoter)
+import Ouroboros.Consensus.Leios.Voting
+  ( LeiosVoterEnv (..)
+  , LeiosVoterTxCache
+  , runLeiosVoter
+  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -286,6 +290,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , subscribeLeiosClosures :: m (STM m LeiosPoint)
   -- ^ Subscribe to the points whose closure the node acquires from now on,
   -- each once.
+  , leiosVoterTxCache :: LeiosVoterTxCache m
+  -- ^ Which transactions the node validated already, so that its voter only
+  -- reapplies them.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
   , maxClockSkew :: ClockSkew
@@ -332,6 +339,7 @@ initNodeKernel
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
     , subscribeLeiosClosures
+    , leiosVoterTxCache
     , initChainDB
     , blockFetchConfiguration
     , btime
@@ -481,6 +489,7 @@ initNodeKernel
             { voterConfig = cfg
             , voterChainDB = chainDB
             , voterLeiosDb = leiosDB
+            , voterTxCache = leiosVoterTxCache
             , voterAnnounceState = leiosAnnounceState
             , voterVoteState = leiosVoteState
             , voterSystemTime = systemTime

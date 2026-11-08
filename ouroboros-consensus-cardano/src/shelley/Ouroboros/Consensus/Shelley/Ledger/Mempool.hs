@@ -286,6 +286,24 @@ instance
           decCBOR
           (BSL.fromStrict bytes)
 
+  ebTxsProtVerParity st =
+    Leios.protVerParity $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
+
+  -- What 'SL.reapplyValidatedTx' needs of the state, its annotation of the
+  -- transaction, comes from the state the transaction is reapplied to.
+  --
+  -- TODO The ledger documents 'SL.unsafeMakeValidatedTx' as for testing only.
+  -- It should offer this for a transaction validated before.
+  assumeValidatedEbTx cfg slot st (ShelleyTx txid tx) =
+    Just . ShelleyValidatedTx txid $
+      SL.unsafeMakeValidatedTx
+        (shelleyLedgerGlobals cfg)
+        (SL.mkMempoolEnv innerSt slot)
+        (SL.mkMempoolState innerSt)
+        (SL.unwrapMempoolTx tx)
+   where
+    innerSt = tickedShelleyLedgerState (stowLedgerTables st)
+
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => SL.MempoolTx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (txIdTx (SL.unwrapMempoolTx tx)) tx

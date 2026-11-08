@@ -68,6 +68,8 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
@@ -96,7 +98,8 @@ import Ouroboros.Consensus.HeaderValidation (certifiedLeiosAnnouncement)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
+import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint, ProtVerParity, TxHash)
+import Ouroboros.Consensus.Leios.Voting (LeiosVoterTxCache (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -231,6 +234,9 @@ data NodeUnderTest m = NodeUnderTest
   -- ^ The peers the node has a connection to.
   , nodeAcquiredClosure :: LeiosPoint -> STM m ()
   -- ^ Tell the node it acquired the closure at a point, as LeiosFetch will.
+  , nodeValidatedTxs :: StrictTVar m (Map TxHash ProtVerParity)
+  -- ^ The transactions the node validated already, as the LeiosTxCache will
+  -- tell its voter.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -343,8 +349,14 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
         closures <- atomically newBroadcastTChan
+        validatedTxs <- newTVarIO Map.empty
         kernelArgs <-
-          (\args -> args{subscribeLeiosClosures = readTChan <$> atomically (dupTChan closures)})
+          ( \args ->
+              args
+                { subscribeLeiosClosures = readTChan <$> atomically (dupTChan closures)
+                , leiosVoterTxCache = voterTxCacheIn validatedTxs
+                }
+          )
             . nodeKernelArgsEnforceInvariants
             . (\args -> args{leiosAnnouncementAgeLimits = nodeConfigAnnouncementAgeLimits cfg})
             <$> mkNodeKernelArgs
@@ -421,7 +433,19 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             , nodeLeiosAcquisitions = leiosAcquisitions
             , nodeConnectedPeers = connectedPeers
             , nodeAcquiredClosure = writeTChan closures
+            , nodeValidatedTxs = validatedTxs
             }
+
+-- | The voter's view of the transactions in this variable.
+voterTxCacheIn :: IOLike m => StrictTVar m (Map TxHash ProtVerParity) -> LeiosVoterTxCache m
+voterTxCacheIn var =
+  MkLeiosVoterTxCache
+    { lookupValidatedTxs = \txHashes -> do
+        validated <- readTVarIO var
+        pure [Map.lookup txHash validated | txHash <- txHashes]
+    , insertValidatedTxs = \parity txHashes ->
+        atomically $ modifyTVar var (Map.union (Map.fromList [(txHash, parity) | txHash <- txHashes]))
+    }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a

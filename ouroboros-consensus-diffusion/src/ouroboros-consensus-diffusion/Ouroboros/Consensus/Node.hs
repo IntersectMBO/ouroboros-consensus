@@ -117,6 +117,7 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.Voting (noLeiosVoterTxCache)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -1081,6 +1082,10 @@ mkNodeKernelArgs
             -- longer tells what is written to it, so nothing does until LeiosFetch
             -- announces its acquisitions, and the node votes for no endorser block.
             subscribeLeiosClosures = pure retry
+          , -- TODO Look up and record the transactions the node validated in the
+            -- LeiosTxCache, once LeiosFetch keeps one. Until then the voter
+            -- validates every transaction in full.
+            leiosVoterTxCache = noLeiosVoterTxCache
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
