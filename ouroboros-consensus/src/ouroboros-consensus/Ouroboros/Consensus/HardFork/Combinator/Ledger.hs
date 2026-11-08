@@ -48,6 +48,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   ) where
 
 import Control.Monad (guard)
+import Control.Monad.Class.MonadThrow (MonadThrow)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
 import Data.Bifunctor (bimap)
@@ -106,6 +107,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (ResolveLeiosClosure)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
@@ -312,6 +314,54 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLe
     withExcept (injectLedgerError index) $
       fmap (Comp . fmap Flip . embedLedgerResult (injectLedgerEvent index)) $
         applyBlockLedgerResultWithValidation doValidate opts cfg block st
+
+{-------------------------------------------------------------------------------
+  BlockSupportsLeios
+-------------------------------------------------------------------------------}
+
+instance
+  ( CanHardFork xs
+  , HasCanonicalTxIn xs
+  , HasHardForkTxOut xs
+  ) =>
+  BlockSupportsLeios (HardForkBlock xs)
+  where
+  blockLeiosCert =
+    hcollapse
+      . hcmap proxySingle (K . blockLeiosCert . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+  -- The endorser block was announced in the current era of the state, as
+  -- certification never crosses eras.
+  applyLeiosClosure ::
+    forall m.
+    MonadThrow m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ResolveLeiosClosure m ->
+    (LedgerTables (HardForkBlock xs) KeysMK -> m (LedgerTables (HardForkBlock xs) ValuesMK)) ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m (LedgerState (HardForkBlock xs) DiffMK)
+  applyLeiosClosure cfg resolve readTables (HardForkLedgerState st) =
+    fmap HardForkLedgerState . sequenceHardForkState $
+      hcizipWith proxySingle applyOne cfgs st
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    applyOne ::
+      SingleEraBlock x =>
+      Index xs x ->
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      (m :.: Flip LedgerState DiffMK) x
+    applyOne idx (WrapLedgerConfig cfg') (Flip st') =
+      Comp $
+        Flip
+          <$> applyLeiosClosure
+            cfg'
+            resolve
+            (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+            st'
 
 {-------------------------------------------------------------------------------
   UpdateLedger

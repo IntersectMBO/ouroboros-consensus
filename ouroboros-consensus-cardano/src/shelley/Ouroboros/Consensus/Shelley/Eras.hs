@@ -4,6 +4,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -158,7 +159,8 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict ::
+    (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era, era ~ DijkstraEra) => LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
