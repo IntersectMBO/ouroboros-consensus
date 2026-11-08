@@ -41,9 +41,9 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
@@ -305,7 +305,7 @@ imInsertEbBody stateVar point eb fills = do
       [ (offset, EbTxEntry{eteTxHash = txHash, eteTxBytesSize = size})
       | (offset, (txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
       ]
-  body = StoredBody{sbBytes = BSL.toStrict (unSerialised (serialiseEndorserBlock eb)), sbTxs = refs}
+  body = StoredBody{sbBytes = endorserBlockBytes eb, sbTxs = refs}
 
 imInsertTxs ::
   IOLike m =>
