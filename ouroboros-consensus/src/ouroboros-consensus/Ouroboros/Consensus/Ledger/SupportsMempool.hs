@@ -401,13 +401,14 @@ class HasTxId tx => ConvertRawTxId tx where
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)
 
--- | Collect all transactions from a block
+-- | Collect all transactions from a block as the mempool would have received
+-- them.
 --
 -- This is used for tooling only. We don't require it as part of RunNode
 -- (and cannot, because we cannot give an instance for the dual ledger).
 class HasTxs blk where
   -- | Return the transactions part of the given block in no particular order.
-  extractTxs :: blk -> [GenTx blk]
+  extractAsMempoolTxs :: blk -> [GenTx blk]
 
 {-------------------------------------------------------------------------------
   Tx sizes
