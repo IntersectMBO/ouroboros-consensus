@@ -29,7 +29,7 @@ endorser_block = #6.24(bytes .cbor dijkstra.eb_references)
 ; Inspired by roaring bitmaps: 64-tx window index to 64-bit presence bitmaps
 bitmaps = { * uint .size 2 => uint .size 8 }
 
-tx_list = [ *tx.tx ]
+tx_list = [ *tx ]
 
 ; Endorsed transactions as CBOR-in-CBOR to indicate that neither fetch clients
 ; nor servers will decode this. However, consensus components like leios voting
