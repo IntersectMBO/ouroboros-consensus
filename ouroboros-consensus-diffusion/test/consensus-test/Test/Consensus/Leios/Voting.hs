@@ -72,6 +72,8 @@ import Test.Consensus.Leios.Relay
 import Test.Consensus.Leios.TestBlock
   ( Header (..)
   , LeiosTestBlock (..)
+  , heavyEbTx
+  , inapplicableEbTx
   , invalidEbTx
   , setAnnouncement
   , successorLeiosBlock
@@ -119,6 +121,25 @@ tests =
               runVoting voting{closures = [(2, someAnnouncingBlock, [invalidEbTx])]}
         votes down @?= []
         notVoted @?= [EbInvalid "invalid endorsed transaction"]
+    , testCase "the node does not vote for an endorser block with a transaction that does not apply" $ do
+        let Outcome{down, notVoted} =
+              runVoting voting{closures = [(2, someAnnouncingBlock, [inapplicableEbTx])]}
+        votes down @?= []
+        notVoted @?= [EbInvalid "LeiosTestTxRejected"]
+    , testCase "the node does not vote for an endorser block claiming more than one may hold" $ do
+        -- Before it decodes a transaction, so the invalid one makes no difference.
+        let Outcome{down, notVoted} =
+              runVoting
+                voting{closures = [(2, someAnnouncingBlock, [BS.replicate 1000 1, invalidEbTx])]}
+        votes down @?= []
+        notVoted @?= [EbOverCapacity]
+    , testCase
+        "the node does not vote for an endorser block whose transactions take more than one may hold"
+        $ do
+          let Outcome{down, notVoted} =
+                runVoting voting{closures = [(2, someAnnouncingBlock, [heavyEbTx, "a valid transaction"])]}
+          votes down @?= []
+          notVoted @?= [EbOverCapacity]
     , testCase "the node does not vote for an endorser block its tip does not announce" $ do
         let Outcome{down, notVoted} = runVoting voting{adopts = []}
         votes down @?= []
