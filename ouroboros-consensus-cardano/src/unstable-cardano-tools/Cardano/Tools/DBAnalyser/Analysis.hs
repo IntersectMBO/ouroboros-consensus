@@ -955,7 +955,7 @@ reproMempoolForge numBlks env = do
     (\() -> Just blk') <$> do
       -- add this block's transactions to the mempool
       do
-        results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
+        results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractAsMempoolTxs blk'
         let rejs =
               [ (LedgerSupportsMempool.txId tx, rej)
               | rej@(Mempool.MempoolTxRejected tx _) <- results

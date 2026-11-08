@@ -31,6 +31,7 @@ import Test.Cardano.Ledger.Shelley.Generator.EraGen
 import qualified Test.Cardano.Ledger.Shelley.Generator.Presets as Gen.Presets
 import Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
 import qualified Test.Cardano.Ledger.Shelley.Generator.Utxo as Gen
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.ThreadNet.Infra.Shelley
@@ -96,7 +97,7 @@ genTx ::
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =
-  Just . mkShelleyTx
+  Just . mkTestShelleyTx
     <$> Gen.genTx
       genEnv
       ledgerEnv
