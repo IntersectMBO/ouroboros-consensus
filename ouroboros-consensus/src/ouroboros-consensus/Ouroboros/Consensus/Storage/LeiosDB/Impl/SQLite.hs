@@ -276,7 +276,8 @@ startWriter registry tracer statsVar gcSlotVar volPath immPath = do
               resolve =<< if collected then pure [] else sqlInsertEbBody conn point eb fills
               pure Continue
             WriteTxs point txs resolve -> do
-              resolve =<< sqlInsertTxs conn point txs
+              collected <- isCollected point
+              resolve =<< if collected then pure [] else sqlInsertTxs conn point txs
               pure Continue
             Flush resolve -> do
               resolve ()
