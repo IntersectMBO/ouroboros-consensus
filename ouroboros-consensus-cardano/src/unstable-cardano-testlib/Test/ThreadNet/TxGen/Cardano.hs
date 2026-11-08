@@ -63,11 +63,12 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( tickedShelleyLedgerState
   )
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
 
@@ -217,7 +218,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
        in if Map.null picked
             then Nothing
             else
-              (Just . GenTxShelley . mkShelleyTx) $
+              (Just . GenTxShelley . mkTestShelleyTx) $
                 SL.mkBasicTx body
                   & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
