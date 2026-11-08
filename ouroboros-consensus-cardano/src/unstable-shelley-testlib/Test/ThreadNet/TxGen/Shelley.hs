@@ -12,6 +12,7 @@ module Test.ThreadNet.TxGen.Shelley
   , mkGenEnv
   ) where
 
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Control.Monad.Except (runExcept)
 import Ouroboros.Consensus.Block
@@ -96,7 +97,7 @@ genTx ::
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =
-  Just . mkShelleyTx
+  Just . mkShelleyTx . UnsafeMkMempoolTx
     <$> Gen.genTx
       genEnv
       ledgerEnv

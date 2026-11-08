@@ -19,6 +19,7 @@ import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import Cardano.Ledger.Val ((<->))
@@ -217,7 +218,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
        in if Map.null picked
             then Nothing
             else
-              (Just . GenTxShelley . mkShelleyTx) $
+              (Just . GenTxShelley . mkShelleyTx . UnsafeMkMempoolTx) $
                 SL.mkBasicTx body
                   & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit

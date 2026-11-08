@@ -13,6 +13,7 @@ import Cardano.Ledger.Core (bodyTxL, feeTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
 import Cardano.Ledger.Hashes (HASH, originalBytes, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx), unwrapMempoolTx)
 import qualified Cardano.Ledger.Shelley.API as SL
   ( mkMempoolEnv
   , mkMempoolState
@@ -157,7 +158,7 @@ forgeWith coreNode ebTxs = fmap ((,) topLevelConfig) $ do
                 globals
                 (SL.mkMempoolEnv newEpochState slot)
                 (SL.mkMempoolState newEpochState)
-                tx
+                (unwrapMempoolTx tx)
           | ShelleyTx txid tx <- ebTxs
           ]
       , fbIsLeader = PraosIsLeader $ Leios.hbrVrfRes (rawHeaderBody (getHeader exampleDijkstraBlock))
@@ -233,7 +234,7 @@ exampleTx = example Examples.exampleGenTx
 -- different bytes and a reordered endorser block has a different hash.
 distinctTxs :: [GenTx StandardDijkstraBlock]
 distinctTxs =
-  [ mkShelleyTx (tx & bodyTxL . feeTxBodyL .~ Coin fee)
+  [ mkShelleyTx (UnsafeMkMempoolTx (unwrapMempoolTx tx & bodyTxL . feeTxBodyL .~ Coin fee))
   | let ShelleyTx _ tx = exampleTx
   , fee <- [1 ..]
   ]
@@ -249,7 +250,7 @@ reference tx =
 -- | The bytes of a transaction that an endorser block references: the
 -- block-body encoding, which keeps the @is_valid@ flag.
 txBytes :: GenTx StandardDijkstraBlock -> BS.ByteString
-txBytes (ShelleyTx _ tx) = originalBytes tx
+txBytes (ShelleyTx _ tx) = originalBytes (unwrapMempoolTx tx)
 
 exampleDijkstraBlock :: StandardDijkstraBlock
 exampleDijkstraBlock = example Examples.exampleBlock

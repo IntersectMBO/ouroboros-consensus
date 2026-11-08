@@ -281,7 +281,7 @@ type BytesSize = Word32
 --
 -- A compatibility layer over the ledger's 'Ledger.EbReferences': consensus
 -- sees only this module's functions, never the ledger's representation.
-newtype EndorserBlock = MkEndorserBlock Ledger.EbReferences
+newtype EndorserBlock = MkEndorserBlock (Ledger.EbReferences DijkstraEra)
   deriving stock Generic
   deriving newtype (Eq, Show, NFData, NoThunks)
 
@@ -297,7 +297,7 @@ endorserBlockVersion = eraProtVerLow @DijkstraEra
 mkEndorserBlock :: [(TxHash, BytesSize)] -> EndorserBlock
 mkEndorserBlock =
   MkEndorserBlock
-    . Ledger.mkEbReferences endorserBlockVersion
+    . Ledger.EbReferences
     . IsList.fromList
     . map (\(txHash, txSize) -> (unsafeMakeSafeHash txHash, txSize))
 
@@ -349,10 +349,8 @@ endorserBlockHash (MkEndorserBlock references) = extractHash $ hashAnnotated ref
 
 -- | The transactions an endorser block names, in order.
 endorserBlockReferences :: EndorserBlock -> [(TxHash, BytesSize)]
-endorserBlockReferences (MkEndorserBlock references) =
-  map (\(txHash, txSize) -> (extractHash txHash, txSize))
-    . IsList.toList
-    $ Ledger.getEbReferences references
+endorserBlockReferences (MkEndorserBlock (Ledger.EbReferences references)) =
+  map (\(txHash, txSize) -> (extractHash txHash, txSize)) $ IsList.toList references
 
 -- | The bytes one reference occupies for a transaction of the given size: the
 -- hash and the size, exactly as 'encodeEndorserBlock' writes them.
