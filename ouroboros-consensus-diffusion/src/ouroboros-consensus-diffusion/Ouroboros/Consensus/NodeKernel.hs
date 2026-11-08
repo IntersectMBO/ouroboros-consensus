@@ -113,11 +113,9 @@ import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
-  , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , openWriter
   , storeForgedEb
-  , withReader
   )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
@@ -442,7 +440,7 @@ initNodeKernel
           MkLeiosVoterEnv
             { voterConfig = cfg
             , voterChainDB = chainDB
-            , voterClosure = \point -> withReader leiosDB $ \reader -> lookupEbClosure reader point
+            , voterLeiosDb = leiosDB
             , voterAnnounceState = leiosAnnounceState
             , voterVoteState = leiosVoteState
             , voterSystemTime = systemTime

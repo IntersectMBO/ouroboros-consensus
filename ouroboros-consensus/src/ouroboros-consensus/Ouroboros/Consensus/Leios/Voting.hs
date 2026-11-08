@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -32,6 +33,7 @@ import Cardano.Crypto.Leios
   , leiosSignContext
   )
 import Cardano.Ledger.BaseTypes (unboundRational)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (forever, unless, void, when)
 import Control.Monad.Except
   ( ExceptT (..)
@@ -44,8 +46,9 @@ import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (forkLinkedThread, withRegistry)
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
-import Data.ByteString (ByteString)
 import Data.Foldable (for_)
+import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -55,6 +58,7 @@ import Data.Void (Void)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , ConvertRawHash
+  , SlotNo
   , blockSlot
   , headerPoint
   )
@@ -72,10 +76,28 @@ import Ouroboros.Consensus.Ledger.Abstract
   , LedgerConfig
   , applyChainTick
   )
+import Ouroboros.Consensus.Ledger.Basics (TickedLedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , GenTx
+  , LedgerSupportsMempool (..)
+  , TxEbMeasureByteSize (..)
+  , TxLimits (..)
+  , TxMeasure (..)
+  , WhetherToIntervene (Intervene)
+  )
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
+import Ouroboros.Consensus.Ledger.Tables
+  ( DiffMK (..)
+  , HasLedgerTables (..)
+  , LedgerTables
+  , ValuesMK (..)
+  , ltliftA2
+  )
+import Ouroboros.Consensus.Ledger.Tables.Diff (Delta (..), Diff (..))
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValuesMK)
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , acceptedAnnouncementAge
@@ -90,6 +112,8 @@ import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint (..)
   , LeiosVote (..)
   , RankingBlockHash
+  , deserialiseEndorserBlock
+  , endorserBlockReferences
   , milliseconds32ToNominalDiffTime
   )
 import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), VoteState, addVote)
@@ -106,6 +130,11 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ReadOnlyForker (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , withReader
+  )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadAsync (race)
@@ -123,8 +152,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (SpecificPoint))
 data LeiosVoterEnv m blk = MkLeiosVoterEnv
   { voterConfig :: TopLevelConfig blk
   , voterChainDB :: ChainDB m blk
-  , voterClosure :: LeiosPoint -> m (Maybe [ByteString])
-  -- ^ The transactions of the closure at a point, if the node has them all.
+  , voterLeiosDb :: LeiosDbHandle m
   , voterAnnounceState :: AnnounceState m blk
   , voterVoteState :: VoteState m blk
   , voterSystemTime :: SystemTime m
@@ -155,8 +183,13 @@ data NotVotedReason
   | -- | The tip of the node's selection did not announce the block by the end
     -- of the window to vote.
     TipDoesNotAnnounce
+  | -- | The node holds no body of the block after all.
+    BodyUnavailable
   | -- | The node has no complete closure of the block after all.
     ClosureUnavailable
+  | -- | The block references more than an endorser block may hold, by what it
+    -- claims of its transactions or by what they turn out to take.
+    EbOverCapacity
   | -- | The closure does not apply to the tip's ledger state.
     EbInvalid !Text
   | -- | The node saw another announcement of the election.
@@ -236,7 +269,7 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
   when (age > lHdr) $ throwError (AnnouncedLate age)
   notEquivocated announcing
 
-  ExceptT $ validateEndorserBlock lcfg voterChainDB voterClosure point announcing
+  ExceptT $ validateEndorserBlock lcfg voterChainDB voterLeiosDb point announcing
   lift $ traceWith voterTracer (TraceLeiosEbValidated point)
 
   lift $ waitUntil (voteFrom window)
@@ -265,7 +298,7 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
   MkLeiosVoterEnv
     { voterConfig
     , voterChainDB
-    , voterClosure
+    , voterLeiosDb
     , voterAnnounceState
     , voterVoteState
     , voterSystemTime
@@ -317,8 +350,8 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
     now <- systemTimeCurrent voterSystemTime
     threadDelay (nominalDelay (diffRelTime at now))
 
--- | Apply the closure of an endorser block to the ledger state of the block
--- that announced it.
+-- | Check an endorser block against what one may hold, then apply its closure
+-- to the ledger state of the block that announced it.
 validateEndorserBlock ::
   forall m blk.
   ( IOLike m
@@ -326,32 +359,94 @@ validateEndorserBlock ::
   ) =>
   LedgerConfig blk ->
   ChainDB m blk ->
-  -- | The transactions of the closure at a point, if the node has them all
-  (LeiosPoint -> m (Maybe [ByteString])) ->
+  LeiosDbHandle m ->
   LeiosPoint ->
   AnnouncingHeader blk ->
   m (Either NotVotedReason ())
-validateEndorserBlock lcfg chainDB closureAt point@MkLeiosPoint{pointSlotNo = slot} announcing = runExceptT $ do
-  closure <- lift (closureAt point) >>= (?>= ClosureUnavailable)
-  ExceptT $ withForkerAt (headerPoint (ancHeader announcing)) $ \case
-    -- The selection moved off the announcing block meanwhile.
-    Nothing -> pure (Left TipDoesNotAnnounce)
-    Just forker -> runExceptT $ do
-      extLedger <- lift $ atomically $ roforkerGetLedgerState forker
-      let ticked = applyChainTick OmitLedgerEvents lcfg slot (ledgerState extLedger)
-      txs <- liftEither $ first EbInvalid $ traverse (decodeEbTx ticked) closure
-      let txKeys = foldMap getTransactionKeySets txs
-      values <- lift $ roforkerReadTables forker txKeys
+validateEndorserBlock lcfg chainDB leiosDb point@MkLeiosPoint{pointSlotNo = slot} announcing =
+  withReader leiosDb $ \reader -> runExceptT $ do
+    body <- lift (lookupEbBody reader point) >>= (?>= BodyUnavailable)
+    eb <-
       liftEither $
         first (EbInvalid . Text.pack . show) $
-          runExcept $
-            applyEbTxs lcfg slot txs (applyMempoolDiffs values txKeys ticked)
+          deserialiseEndorserBlock (Proxy @DijkstraEra) body
+    let references = endorserBlockReferences eb
+    ExceptT $ withForkerAt (headerPoint (ancHeader announcing)) $ \case
+      -- The selection moved off the announcing block meanwhile.
+      Nothing -> pure (Left TipDoesNotAnnounce)
+      Just forker -> runExceptT $ do
+        extLedger <- lift $ atomically $ roforkerGetLedgerState forker
+        let ticked = applyChainTick OmitLedgerEvents lcfg slot (ledgerState extLedger)
+            capacity = ebCapacityTxMeasure lcfg ticked
+            claimedBytes = sum [toInteger size | (_txHash, size) <- references]
+        when (claimedBytes > toInteger (unByteSize32 (txEbMeasureByteSize capacity))) $
+          throwError EbOverCapacity
+
+        closure <- lift (lookupEbClosure reader point) >>= (?>= ClosureUnavailable)
+        when (length closure /= length references) $ throwError ClosureUnavailable
+        txs <- liftEither $ first EbInvalid $ traverse (decodeEbTx ticked) closure
+
+        let txKeys = foldMap getTransactionKeySets txs
+        values <- lift $ roforkerReadTables forker txKeys
+        liftEither $ void $ applyClosure lcfg slot capacity (applyMempoolDiffs values txKeys ticked) txs
  where
   withForkerAt at k =
     bracket
       (ChainDB.openReadOnlyForkerAtPoint chainDB (SpecificPoint at))
       (either (const (pure ())) roforkerClose)
       (k . either (const Nothing) Just)
+
+-- | Apply the transactions of a closure, one after the other, to the ledger
+-- state of the block that announced it, ticked to its slot, as a certificate
+-- for it would. And sum what they take of an endorser block's capacity, which
+-- must hold them all. Returns how many it applied.
+--
+-- It applies with 'Intervene', so that the ledger does not flip a
+-- transaction's validity flag, which applying a certified closure would not
+-- either.
+--
+-- The closure's ledger table stays outside the state. Each transaction runs on
+-- a state holding only its own inputs, as the mempool runs it, and its effect
+-- is folded back into the table, so each step costs what the transaction
+-- does, not what the closure does.
+applyClosure ::
+  forall blk.
+  LedgerSupportsMempool blk =>
+  LedgerConfig blk ->
+  SlotNo ->
+  -- | What an endorser block may hold
+  TxEbMeasure blk ->
+  TickedLedgerState blk ValuesMK ->
+  [GenTx blk] ->
+  Either NotVotedReason Int
+applyClosure cfg slot capacity st0 = go st0 (projectLedgerTables st0) Measure.zero 0
+ where
+  go ::
+    TickedLedgerState blk mk ->
+    LedgerTables blk ValuesMK ->
+    TxEbMeasure blk ->
+    Int ->
+    [GenTx blk] ->
+    Either NotVotedReason Int
+  go _ _ _ !applied [] = Right applied
+  go st values measured !applied (tx : txs) = do
+    let stTx = st `withLedgerTables` ltliftA2 restrictValuesMK values (getTransactionKeySets tx)
+    phase1 <- invalid $ txMeasurePhase1 cfg (forgetLedgerTables stTx) tx
+    phase2 <- invalid $ txMeasurePhase2 cfg stTx tx
+    let measured' = measured `Measure.plus` txEbMeasure (Proxy @blk) (TxMeasure phase1 phase2)
+    unless (measured' Measure.<= capacity) $ Left EbOverCapacity
+    (st', _vtx) <- invalid $ applyTx cfg Intervene slot tx stTx
+    go st' (ltliftA2 applyDelta values (projectLedgerTables st')) measured' (applied + 1) txs
+
+  invalid = first (EbInvalid . Text.pack . show) . runExcept
+
+  -- One update per key the transaction changed, where 'applyDiffs' would
+  -- merge over the whole table.
+  applyDelta :: Ord k => ValuesMK k v -> DiffMK k v -> ValuesMK k v
+  applyDelta (ValuesMK m) (DiffMK (Diff ds)) = ValuesMK (Map.foldlWithKey' step m ds)
+   where
+    step acc k (Insert v) = Map.insert k v acc
+    step acc k Delete = Map.delete k acc
 
 -- | Sign a vote for an announcement in a seat.
 signVote :: LeiosSigningKey -> LeiosSeatId -> RankingBlockHash -> LeiosVote

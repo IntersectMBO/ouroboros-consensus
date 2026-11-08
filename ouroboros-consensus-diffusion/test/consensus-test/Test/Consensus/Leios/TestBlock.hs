@@ -50,6 +50,8 @@ module Test.Consensus.Leios.TestBlock
 
     -- * Ledger
   , LedgerState (..)
+  , heavyEbTx
+  , inapplicableEbTx
   , invalidEbTx
   , LeiosTestBlockError (..)
   , LeiosTestLedgerConfig (..)
@@ -794,13 +796,14 @@ deriving via
 {-------------------------------------------------------------------------------
   Mempool
 
-  'RunNode' demands a mempool. This one rejects every transaction, so a forged
-  block holds none.
+  'RunNode' demands a mempool. A transaction is the bytes an endorser block
+  references. Each applies, bar 'inapplicableEbTx', and changes nothing, but no
+  test submits one to the mempool, so a forged block holds none.
 -------------------------------------------------------------------------------}
 
-data instance GenTx LeiosTestBlock = LeiosTestGenTx
+newtype instance GenTx LeiosTestBlock = LeiosTestGenTx BS.ByteString
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialise, NoThunks)
+  deriving newtype (Serialise, NoThunks)
 
 newtype instance Validated (GenTx LeiosTestBlock) = ValidatedLeiosTestGenTx
   { forgetValidatedLeiosTestGenTx :: GenTx LeiosTestBlock
@@ -823,28 +826,53 @@ instance ShowProxy (TxId (GenTx LeiosTestBlock))
 instance ShowProxy LeiosTestTxRejected
 
 instance HasTxId (GenTx LeiosTestBlock) where
-  txId LeiosTestGenTx = LeiosTestTxId 0
+  txId _ = LeiosTestTxId 0
 
 instance ConvertRawTxId (GenTx LeiosTestBlock) where
   toRawTxIdHash = SBS.toShort . BL.toStrict . serialise
 
--- | Every endorsed transaction is valid, bar 'invalidEbTx'.
+-- | Every endorsed transaction decodes, bar 'invalidEbTx'.
 instance LedgerSupportsEndorserBlocks LeiosTestBlock where
   decodeEbTx _st bytes
     | bytes == invalidEbTx = Left "invalid endorsed transaction"
-    | otherwise = Right LeiosTestGenTx
-  applyEbTxs _cfg _slot _txs _st = pure ()
+    | otherwise = Right (LeiosTestGenTx bytes)
 
--- | The bytes of the one endorsed transaction that is invalid.
+-- | The bytes of the one endorsed transaction that does not decode.
 invalidEbTx :: BS.ByteString
 invalidEbTx = "invalid"
 
+-- | The bytes of the one endorsed transaction that does not apply.
+inapplicableEbTx :: BS.ByteString
+inapplicableEbTx = "inapplicable"
+
+-- | The bytes of the one endorsed transaction that takes all of an endorser
+-- block's capacity, whatever its size.
+heavyEbTx :: BS.ByteString
+heavyEbTx = "heavy"
+
 instance LedgerSupportsMempool LeiosTestBlock where
-  applyTx _cfg _wti _slot _tx _st = throwError LeiosTestTxRejected
-  reapplyTx _cfg _slot _tx _st = throwError LeiosTestTxRejected
+  applyTx _cfg _wti _slot tx st
+    | tx == LeiosTestGenTx inapplicableEbTx = throwError LeiosTestTxRejected
+    | otherwise = pure (st `withLedgerTables` emptyLedgerTables, ValidatedLeiosTestGenTx tx)
+  reapplyTx _cfg _slot vtx st
+    | forgetValidatedLeiosTestGenTx vtx == LeiosTestGenTx inapplicableEbTx =
+        throwError LeiosTestTxRejected
+    | otherwise = pure st
   txForgetValidated = forgetValidatedLeiosTestGenTx
   getTransactionKeySets _tx = emptyLedgerTables
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
+-- | What a transaction takes of an endorser block: its bytes.
+newtype LeiosTestEbMeasure = LeiosTestEbMeasure (IgnoringOverflow ByteSize32)
+  deriving stock (Eq, Show)
+  deriving newtype (NoThunks, Measure.Measure)
+
+instance TxEbMeasureByteSize LeiosTestEbMeasure where
+  txEbMeasureByteSize (LeiosTestEbMeasure (IgnoringOverflow bytes)) = bytes
+
+-- | What an endorser block may hold.
+leiosTestEbCapacity :: ByteSize32
+leiosTestEbCapacity = ByteSize32 1000
 
 instance TxLimits LeiosTestBlock where
   type TxMeasurePhase1 LeiosTestBlock = IgnoringOverflow ByteSize32
@@ -852,12 +880,14 @@ instance TxLimits LeiosTestBlock where
   txWireSize = const 0
   blockCapacityTxMeasure _cfg _st =
     TxMeasure (IgnoringOverflow (ByteSize32 (100 * 1024))) TrivialTxMeasurePhase2
-  txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasurePhase1 _cfg _st (LeiosTestGenTx bytes)
+    | bytes == heavyEbTx = pure $ IgnoringOverflow leiosTestEbCapacity
+    | otherwise = pure $ IgnoringOverflow $ ByteSize32 $ fromIntegral $ BS.length bytes
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
-  type TxEbMeasure LeiosTestBlock = TxMeasure LeiosTestBlock
-  txEbMeasure _ = id
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  mempoolEbReservation _ = id
+  type TxEbMeasure LeiosTestBlock = LeiosTestEbMeasure
+  txEbMeasure _ (TxMeasure bytes TrivialTxMeasurePhase2) = LeiosTestEbMeasure bytes
+  ebCapacityTxMeasure _cfg _st = LeiosTestEbMeasure (IgnoringOverflow leiosTestEbCapacity)
+  mempoolEbReservation _ (LeiosTestEbMeasure bytes) = TxMeasure bytes TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Queries
