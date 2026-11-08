@@ -115,7 +115,6 @@ import Ouroboros.Consensus.Shelley.Ledger
   , ShelleyBasedEra
   , ShelleyBlock
   , ShelleyCompatible
-  , mkShelleyTx
   )
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -128,6 +127,7 @@ import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   )
 import qualified Test.Cardano.Ledger.Shelley.Generator.Core as Gen
 import Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
@@ -513,7 +513,7 @@ mkSetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock (TPraos c) ShelleyEra)]
 mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkTestShelleyTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction
@@ -634,7 +634,7 @@ mkMASetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock proto era)]
 mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkTestShelleyTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction

@@ -1488,6 +1488,7 @@ instance
 instance
   ( Ledger.Era era
   , Show (PredicateFailure (Ledger.EraRule "LEDGERS" era))
+  , Show (PredicateFailure (Ledger.EraRule "LEIOSCERT" era))
   ) =>
   LogFormatting (Dijkstra.DijkstraBbodyPredFailure era)
   where

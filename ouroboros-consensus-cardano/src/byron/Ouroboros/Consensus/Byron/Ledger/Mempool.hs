@@ -228,7 +228,7 @@ instance HasRawTxId (TxId (GenTx ByronBlock)) where
   getRawTxId = toRawTxIdHash
 
 instance HasTxs ByronBlock where
-  extractTxs blk = case byronBlockRaw blk of
+  extractAsMempoolTxs blk = case byronBlockRaw blk of
     -- EBBs don't contain transactions
     CC.ABOBBoundary _ebb -> []
     CC.ABOBBlock regularBlk ->
@@ -400,4 +400,4 @@ decodeByronApplyTxError = fromByronCBOR
 
 -- | Count all (generalized) transactions in the block
 countByronGenTxs :: ByronBlock -> Word64
-countByronGenTxs = fromIntegral . length . extractTxs
+countByronGenTxs = fromIntegral . length . extractAsMempoolTxs
