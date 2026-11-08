@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , mkEndorserBlock
   )
-import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), getCertificate)
+import Ouroboros.Consensus.Leios.VoteState (getCertificate)
 import Ouroboros.Consensus.Leios.Voting (NotVotedReason (..), TraceLeiosVoting (..))
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
@@ -132,10 +132,19 @@ tests =
         let Outcome{down, notVoted} = runVoting voting{closures = [(8.5, someAnnouncingBlock, validTxs)]}
         votes down @?= []
         notVoted @?= [TooLate]
-    , testCase "the node does not relay its vote for an announcement it did not relay" $ do
+    , testCase "the node does not vote for an announcement it did not accept" $ do
         let Outcome{down, notVoted} = runVoting voting{ups = []}
         votes down @?= []
-        notVoted @?= [VoteNotAdded NotAnnounced]
+        notVoted @?= [NotAccepted]
+    , testCase "the node does not vote for an announcement it accepted later than L_hdr" $ do
+        let Outcome{down, notVoted} =
+              runVoting
+                voting
+                  { ups = [[announceAt 2.5 someAnnouncingBlock]]
+                  , closures = [(3, someAnnouncingBlock, validTxs)]
+                  }
+        votes down @?= []
+        notVoted @?= [AnnouncedLate 1.5]
     ]
 
 -- | What happens around the node: the announcements its upstream peers send
