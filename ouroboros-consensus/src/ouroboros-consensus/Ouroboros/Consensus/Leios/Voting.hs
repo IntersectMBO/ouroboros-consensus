@@ -7,7 +7,8 @@
 -- | Voting for endorser blocks, with the BLS keys of the node's credentials.
 --
 -- The node votes for an endorser block once it has its closure, if the tip
--- of its selection announced it, one of its keys holds a seat in the
+-- of its selection announced it, the node accepted that announcement within
+-- L_hdr and no other of the election, one of its keys holds a seat in the
 -- election, and the closure applies to the tip's ledger state. It votes once
 -- the window to vote opens, if by then it saw no other announcement of the
 -- election, the tip still announces it, and the window has not closed.
@@ -48,6 +49,7 @@ import Data.Foldable (for_)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Time (NominalDiffTime)
 import Data.Traversable (for)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
@@ -74,7 +76,11 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, isEquivocated)
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( AnnounceState
+  , acceptedAnnouncementAge
+  , isEquivocated
+  )
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -140,6 +146,12 @@ data NotVotedReason
     NoLeiosLedgerView
   | -- | None of the node's BLS keys holds a seat in the election.
     NotOnCommittee
+  | -- | The node accepted no announcement of the block from a peer within
+    -- L_hdr after the election slot began.
+    NotAccepted
+  | -- | The node accepted the announcement of the block this long after the
+    -- election slot began, later than L_hdr.
+    AnnouncedLate !NominalDiffTime
   | -- | The tip of the node's selection did not announce the block by the end
     -- of the window to vote.
     TipDoesNotAnnounce
@@ -201,8 +213,9 @@ voteFor ::
 voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
   immLedger <- lift $ atomically $ ChainDB.getImmutableLedger voterChainDB
   (view, onset) <- electionAt immLedger ?>= NoLeiosLedgerView
-  let MkLeiosLedgerView{llvCommittee, llvQuorumStakeThreshold, llvVotePeriod} = view
+  let MkLeiosLedgerView{llvCommittee, llvQuorumStakeThreshold, llvAnnouncementPeriod, llvVotePeriod} = view
       window = leiosVoteWindow view onset
+      lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
       votingEnds = addRelTime (milliseconds32ToNominalDiffTime llvVotePeriod) (voteFrom window)
       seats =
         [ (key, seat)
@@ -214,6 +227,14 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
 
   -- The selection may adopt the announcing block after the closure arrived.
   announcing <- lift (awaitBefore votingEnds tipAnnouncing) >>= (?>= TipDoesNotAnnounce)
+
+  -- The announcing header must have arrived within L_hdr, with no other
+  -- announcement of the election.
+  age <-
+    lift (awaitBefore (addRelTime lHdr onset) (acceptedAnnouncementAge voterAnnounceState announcing))
+      >>= (?>= NotAccepted)
+  when (age > lHdr) $ throwError (AnnouncedLate age)
+  notEquivocated announcing
 
   ExceptT $ validateEndorserBlock lcfg voterChainDB voterClosure point announcing
   lift $ traceWith voterTracer (TraceLeiosEbValidated point)

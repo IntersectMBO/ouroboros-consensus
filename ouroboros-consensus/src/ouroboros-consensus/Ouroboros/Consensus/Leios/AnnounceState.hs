@@ -11,6 +11,7 @@
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState (ageLimits)
+  , acceptedAnnouncementAge
   , hasAnnouncement
   , isEquivocated
   , newAnnounceState
@@ -20,9 +21,21 @@ module Ouroboros.Consensus.Leios.AnnounceState
   ) where
 
 import Control.Monad (when)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Time (NominalDiffTime)
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.Block
+  ( ConvertRawHash
+  , GetHeader
+  , HasHeader
+  , Header
+  , HeaderHash
+  , SlotNo
+  , blockSlot
+  , headerHash
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (addRelTime)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
@@ -52,6 +65,9 @@ import Ouroboros.Consensus.Util.IOLike
 -- | The node's announcements, per election, and the log it relays them in.
 data AnnounceState m blk = MkAnnounceState
   { announced :: !(StrictTVar m (Announcements.State (AnnouncingHeader blk)))
+  , ages :: !(StrictTVar m (Map (SlotNo, HeaderHash blk) NominalDiffTime))
+  -- ^ How long after its election slot began the node accepted each of
+  -- 'announced', by the slot and hash of its announcing block.
   , prunedTo :: !(StrictTVar m SlotNo)
   -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
@@ -60,13 +76,14 @@ data AnnounceState m blk = MkAnnounceState
   }
 
 newAnnounceState ::
-  (IOLike m, NoThunks (Header blk)) =>
+  (IOLike m, NoThunks (Header blk), HasHeader (Header blk)) =>
   LeiosAnnouncementAgeLimits ->
   NotifyLog m blk ->
   m (AnnounceState m blk)
 newAnnounceState limits notifyLog =
   MkAnnounceState
     <$> newTVarIO Announcements.empty
+    <*> newTVarIO Map.empty
     <*> newTVarIO 0
     <*> pure notifyLog
     <*> pure limits
@@ -102,6 +119,7 @@ onValidAnnouncement st valid = do
         Left _repeatedOrThird -> pure NotNewAnnouncement
         Right seen' -> do
           writeTVar announced seen'
+          modifyTVar ages $ Map.insert (announcementKey announcingHeader) announcementAge
           when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
             appendNotifyLog
               relayLog
@@ -111,7 +129,7 @@ onValidAnnouncement st valid = do
  where
   electionId = ancElectionId announcingHeader
 
-  MkAnnounceState{prunedTo, announced, relayLog, ageLimits} = st
+  MkAnnounceState{prunedTo, announced, ages, relayLog, ageLimits} = st
 
   MkValidAnnouncement
     { announcingHeader
@@ -146,6 +164,18 @@ isEquivocated st anc =
     . Announcements.inSlot (electionSlot (ancElectionId anc))
     <$> readTVar (announced st)
 
+-- | How long after its election slot began the node accepted the announcement
+-- of this announcing block, if it did.
+acceptedAnnouncementAge ::
+  (IOLike m, HasHeader (Header blk)) =>
+  AnnounceState m blk ->
+  AnnouncingHeader blk ->
+  STM m (Maybe NominalDiffTime)
+acceptedAnnouncementAge st anc = Map.lookup (announcementKey anc) <$> readTVar (ages st)
+
+announcementKey :: HasHeader (Header blk) => AnnouncingHeader blk -> (SlotNo, HeaderHash blk)
+announcementKey anc = (blockSlot (ancHeader anc), headerHash (ancHeader anc))
+
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::
   IOLike m =>
@@ -154,4 +184,5 @@ pruneAnnounceState ::
   STM m ()
 pruneAnnounceState st immTipSlot = do
   modifyTVar (announced st) (snd . Announcements.prune immTipSlot)
+  modifyTVar (ages st) (snd . Map.spanAntitone ((< immTipSlot) . fst))
   writeTVar (prunedTo st) immTipSlot
