@@ -309,6 +309,8 @@ tests =
                     prunedAt slot = atomically $ pruneCertificates st slot >> certified
                 (,) <$> prunedAt (blockSlot someAnnouncingBlock) <*> prunedAt (blockSlot someAnnouncingBlock + 1)
         runAfter @?= (True, False)
+    , testCase "the node does not keep a certificate of an election slot it pruned already" $
+        certifiedOncePruned @?= False
     , testCase "the node traces an announcement whose votes miss quorum, with their weight" $ do
         let RelayRun{runVoteStateTraces} =
               runRelay
@@ -346,9 +348,6 @@ tests =
   -- Seat 0 votes for 'someAnnouncingBlock' 5 seconds in, a second into its
   -- election's window.
   votedFor0 = [announce someAnnouncingBlock, (5, vote someAnnouncingBlock 0)]
-
-  -- Seats 0 to 2 vote for 'someAnnouncingBlock', which reaches quorum.
-  quorumFor = announce someAnnouncingBlock : [(5, vote someAnnouncingBlock seat) | seat <- [0 .. 2]]
 
   -- Peers that announce 'someAnnouncingBlock' and send what a test expects the
   -- node to hold back, and a last one that sends a valid vote, so that the test
@@ -826,6 +825,16 @@ ledgerConfig =
 topLevelConfig :: TopLevelConfig Blk
 topLevelConfig = singleNodeLeiosTestConfig ledgerConfig k
 
+-- | Whether the node has the certificate of 'someAnnouncingBlock' once its
+-- votes reach quorum, though it pruned the certificates past their election
+-- slot already.
+certifiedOncePruned :: Bool
+certifiedOncePruned = runSimOrThrow $ withNode (VerifyingTime 0) nullTracer $ \node -> do
+  let st = getLeiosVoteState (nodeKernel node)
+  atomically $ pruneCertificates st (blockSlot someAnnouncingBlock + 1)
+  _ <- runPeer node 20 (PeerAddr 1) (PeerSpec 0 quorumFor)
+  atomically $ isJust <$> getCertificate st (rbHashOf (ltbHeader someAnnouncingBlock))
+
 {-------------------------------------------------------------------------------
   The node's announcement state on its own
 -------------------------------------------------------------------------------}
@@ -980,6 +989,10 @@ announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
 
 rbHashOf :: Header Blk -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
+
+-- | Seats 0 to 2 vote for 'someAnnouncingBlock', which reaches quorum.
+quorumFor :: [(DiffTime, Notification)]
+quorumFor = announce someAnnouncingBlock : [(5, vote someAnnouncingBlock seat) | seat <- [0 .. 2]]
 
 -- | Announces an endorser block in slot 1.
 someAnnouncingBlock :: LeiosTestBlock

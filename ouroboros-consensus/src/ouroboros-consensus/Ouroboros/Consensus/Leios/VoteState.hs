@@ -108,9 +108,7 @@ data VoteState m blk = MkVoteState
   -- ^ Which announcements the node relays, as it relays only votes for those.
   , relayLog :: !(NotifyLog m blk)
   -- ^ Where the node relays the votes it adds.
-  , certificates :: !(StrictTVar m (Map RankingBlockHash (SlotNo, LeiosCert)))
-  -- ^ The certificate of each announcement whose votes reached quorum, with
-  -- its election slot; see 'pruneCertificates'.
+  , certificates :: !(StrictTVar m Certificates)
   , tracer :: !(Tracer m TraceLeiosVoteState)
   }
 
@@ -122,7 +120,7 @@ newVoteState tracer' announceState' notifyLog =
     <$> newTVarIO (MkVotes (RelativeTime 0) Map.empty)
     <*> pure announceState'
     <*> pure notifyLog
-    <*> newTVarIO Map.empty
+    <*> newTVarIO (MkCertificates 0 Map.empty)
     <*> pure tracer'
 
 -- | What the node's 'VoteState' traces, for each vote it adds or does not, so
@@ -218,9 +216,14 @@ addVote st systemTime accepted = do
       Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
       Right cert -> do
         inserted <- atomically $ do
-          certified <- readTVar (certificates st)
-          let new = Map.notMember rbHash certified
-          when new $ writeTVar (certificates st) (Map.insert rbHash (voteElectionSlot, cert) certified)
+          certs@MkCertificates{certificatesPrunedAt, certificatesByRbHash} <- readTVar (certificates st)
+          let new =
+                certificatesPrunedAt <= voteElectionSlot
+                  && Map.notMember rbHash certificatesByRbHash
+          when new $
+            writeTVar
+              (certificates st)
+              certs{certificatesByRbHash = Map.insert rbHash (voteElectionSlot, cert) certificatesByRbHash}
           pure new
         when inserted $ traceWith (tracer st) (TraceLeiosCertified rbHash cert)
   pure result
@@ -341,7 +344,7 @@ recordVote ::
   STM m (Either AddVoteResult (Maybe (Map LeiosSeatId LeiosSignature)))
 recordVote st validatedVote = do
   vs <- readTVar (votes st)
-  certified <- Map.member rbHash <$> readTVar (certificates st)
+  certified <- Map.member rbHash . certificatesByRbHash <$> readTVar (certificates st)
   let before = Map.lookup validatedElectionSlot (votesBySlot vs)
       after = maybe slotVotes' (keepFirst slotVotes') before
   if
@@ -409,12 +412,25 @@ pruneVotes st now = do
   Certificates
 -------------------------------------------------------------------------------}
 
+-- | The certificate of each announcement whose votes reached quorum, with its
+-- election slot, for every election slot not before the immutable tip when the
+-- certificates were last pruned.
+data Certificates = MkCertificates
+  { certificatesPrunedAt :: !SlotNo
+  -- ^ The immutable tip's slot when the certificates were last pruned. The node
+  -- keeps no certificate of an election slot before it.
+  , certificatesByRbHash :: !(Map RankingBlockHash (SlotNo, LeiosCert))
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
 -- | The certificate of this announcement, if the votes for it reached quorum by
 -- their deadline.
 getCertificate ::
   IOLike m =>
   VoteState m blk -> RankingBlockHash -> STM m (Maybe LeiosCert)
-getCertificate st rbHash = fmap snd . Map.lookup rbHash <$> readTVar (certificates st)
+getCertificate st rbHash =
+  fmap snd . Map.lookup rbHash . certificatesByRbHash <$> readTVar (certificates st)
 
 -- | Forget the certificates of every election slot before the given slot, the
 -- immutable tip's.
@@ -426,4 +442,6 @@ pruneCertificates ::
   IOLike m =>
   VoteState m blk -> SlotNo -> STM m ()
 pruneCertificates st immTipSlot =
-  modifyTVar (certificates st) (Map.filter ((immTipSlot <=) . fst))
+  modifyTVar (certificates st) $ \MkCertificates{certificatesPrunedAt, certificatesByRbHash} ->
+    let prunedAt = max immTipSlot certificatesPrunedAt
+     in MkCertificates prunedAt (Map.filter ((prunedAt <=) . fst) certificatesByRbHash)
