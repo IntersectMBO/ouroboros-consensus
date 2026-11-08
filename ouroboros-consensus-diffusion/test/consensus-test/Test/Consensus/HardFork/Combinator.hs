@@ -315,7 +315,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
   args =
     PropGeneralArgs
       { pgaBlockProperty = const $ property True
-      , pgaCountTxs = fromIntegral . length . extractTxs
+      , pgaCountTxs = fromIntegral . length . extractAsMempoolTxs
       , pgaExpectedCannotForge = noExpectedCannotForges
       , pgaFirstBlockNo = BlockNo 0
       , pgaFixedMaxForkLength = Nothing
