@@ -44,6 +44,6 @@ ebsTable =
   , "  txs BLOB NOT NULL,"
   , "  PRIMARY KEY (ebSlot, ebHashBytes)"
   , ");"
-  , -- Lookups by hash alone, e.g. local fills and the immutable partition.
+  , -- Lookups by hash alone, for local fills.
     "CREATE INDEX IF NOT EXISTS idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
   ]

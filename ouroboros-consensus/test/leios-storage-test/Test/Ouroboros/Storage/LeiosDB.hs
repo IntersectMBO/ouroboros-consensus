@@ -285,6 +285,8 @@ mkTestGroups impl =
           withFreshDb impl test_gcKeepsPromotedEb
       , testCase "fails for an EB whose closure is incomplete, copying nothing" $
           withFreshDb impl test_promoteIncompleteFails
+      , testCase "promotes an EB promoted at another point" $
+          withFreshDb impl test_promoteAtEachPoint
       ]
   , testGroup
       "lookupEbClosure"
@@ -862,6 +864,18 @@ test_gcKeepsPromotedEb db = withRW db $ \con -> do
   leiosDbPromoteToImmutable db [mkTestPoint 5 1]
   garbageCollect db 6
   holdsClosure con (mkTestPoint 5 1) >>= (@?= True)
+
+-- | An EB promoted at slot 10, and later at slot 20, both collected.
+test_promoteAtEachPoint :: LeiosDbHandle IO -> IO ()
+test_promoteAtEachPoint db = withRW db $ \con -> do
+  let earlier = mkTestPoint 10 1
+      later = mkTestPoint 20 1
+  writeWholeEb con [earlier, later] (mkTestEb 2)
+  leiosDbPromoteToImmutable db [earlier]
+  leiosDbPromoteToImmutable db [later]
+  garbageCollect db 21
+  holdsClosure con earlier >>= (@?= True)
+  holdsClosure con later >>= (@?= True)
 
 -- | A complete EB promoted along with one whose closure lacks a tx.
 test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
