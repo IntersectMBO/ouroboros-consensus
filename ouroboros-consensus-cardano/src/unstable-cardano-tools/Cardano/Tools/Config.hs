@@ -42,7 +42,7 @@ import Cardano.Ledger.BaseTypes
   , boundRational
   , unsafeNonZero
   )
-import Cardano.Ledger.Coin (Coin (..), CoinPerByte (..), CompactForm (..))
+import Cardano.Ledger.Coin (CoinPerByte (..), CompactForm (..))
 import Cardano.Ledger.Core (MaxPledgeLeverage (..))
 import Cardano.Ledger.Dijkstra.PParams
 import Cardano.Ledger.Plutus
@@ -234,7 +234,7 @@ defaultDijkstraGenesis =
           , udppPerasQuorumThresholdSafetyMargin = fromMaybe (error "impossible") $ boundRational 0.05
           , -- No pricing logic uses these yet; a later intra-era hard fork within
             -- the Dijkstra era enables them.
-            udppRefInputsCostPerMultiAssetPolicy = Coin 0
+            udppRefInputsCostPerMultiAssetByte = CoinPerByte (CompactCoin 0)
           , udppRefInputsCostPerDatumByte = CoinPerByte (CompactCoin 0)
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}

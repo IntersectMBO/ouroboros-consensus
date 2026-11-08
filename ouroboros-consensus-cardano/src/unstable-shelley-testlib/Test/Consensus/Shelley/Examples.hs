@@ -81,6 +81,7 @@ import Test.Cardano.Protocol.TPraos.Examples
   , ledgerExamplesShelley
   , ledgerExamplesTPraos
   )
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Examples
   ( Examples (..)
@@ -222,7 +223,7 @@ fromShelleyLedgerExamples
     blk = mkShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = mkSerialised (encodeDisk ccfg) blk
-    tx = mkShelleyTx emptyTx
+    tx = mkTestShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))
@@ -361,7 +362,7 @@ fromShelleyLedgerExamplesPolyPraos
 
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = mkSerialised (encodeDisk ccfg) blk
-    tx = mkShelleyTx emptyTx
+    tx = mkTestShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))
