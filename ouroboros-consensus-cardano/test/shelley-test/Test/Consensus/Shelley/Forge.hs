@@ -9,7 +9,7 @@ import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL (Globals (..), ProtVer (..))
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Core (bodyTxL, feeTxBodyL, ppProtocolVersionL)
+import Cardano.Ledger.Core (bodyTxL, feeTxBodyL, outputsTxBodyL, ppProtocolVersionL)
 import Cardano.Ledger.Dijkstra.PParams (ppMaxEndorserBlockReferencesSizeL)
 import Cardano.Ledger.Hashes (HASH, originalBytes, unsafeMakeSafeHash)
 import Cardano.Ledger.MemoBytes (getMemoRawType)
@@ -19,14 +19,23 @@ import qualified Cardano.Ledger.Shelley.API as SL
   , mkMempoolState
   , unsafeMakeValidatedTx
   )
-import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
+import Cardano.Ledger.Shelley.LedgerState
+  ( curPParamsEpochStateL
+  , esLStateL
+  , lsLastEbAnnouncementL
+  , nesEsL
+  )
+import Cardano.Ledger.State (EbAnnouncement (..))
+import Cardano.Ledger.TxIn (TxIn (..))
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Sequence.Strict as StrictSeq
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
@@ -35,14 +44,26 @@ import Ouroboros.Consensus.Config
   , TopLevelConfig (..)
   , emptyCheckpointsMap
   )
+import Ouroboros.Consensus.Ledger.Tables
+  ( CanStowLedgerTables (..)
+  , HasLedgerTables (..)
+  , LedgerTables (..)
+  )
+import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
+import Ouroboros.Consensus.Ledger.Tables.MapKind (DiffMK (..), EmptyMK, KeysMK, ValuesMK (..))
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
+  , LeiosClosure (..)
+  , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , forgedEbBody
   , forgedEbTxs
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
@@ -58,7 +79,8 @@ import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..))
 import Ouroboros.Consensus.Shelley.Eras (StandardCrypto)
 import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
 import Ouroboros.Consensus.Shelley.Ledger
-  ( GenTx (..)
+  ( BigEndianTxIn (..)
+  , GenTx (..)
   , LedgerState (..)
   , ShelleyLedgerConfig (..)
   , Ticked (..)
@@ -87,6 +109,10 @@ tests =
     "Forge"
     [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
     , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
+    , testProperty
+        "the closure of the announced endorser block applies its transactions"
+        prop_appliesClosure
+    , testProperty "a state that announced nothing applies no closure" prop_noClosure
     ]
 
 prop_announcesEb :: Property
@@ -119,6 +145,85 @@ prop_noEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
     (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
+
+prop_appliesClosure :: Property
+prop_appliesClosure =
+  forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
+    forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
+      let ebTxs = map withExampleOutput $ take numEbTxs distinctTxs
+      (cfg, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
+      forged <- maybe (fail "no endorser block") pure forgedEb
+      ann <- case announcement blk of
+        SJust ann -> pure ann
+        SNothing -> fail "no announcement"
+      let point = MkLeiosPoint (blockSlot blk) (endorserBlockHash (forgedEbBody forged))
+          closure =
+            MkLeiosClosure
+              (serialiseEndorserBlock (forgedEbBody forged))
+              (MkLeiosTx <$> toList (forgedEbTxs forged))
+          resolve requested
+            | requested == point = pure closure
+            | otherwise = fail $ "resolved " <> show requested <> " instead of " <> show point
+          announcing = announcedIn (blockSlot blk) ann exampleLedgerState
+      after <- applyLeiosClosure (topLevelConfigLedger cfg) resolve readExampleTables announcing
+      let utxo = getValuesMK . getLedgerTables . projectLedgerTables $ applyDiffs exampleValues after
+      pure $
+        conjoin
+          [ counterexample ("output of " <> show txid <> " missing") $
+              Map.member (BigEndianTxIn (TxIn txid minBound)) utxo
+          | ShelleyTx txid _ <- ebTxs
+          ]
+
+prop_noClosure :: Property
+prop_noClosure = ioProperty $ do
+  after <-
+    applyLeiosClosure
+      (example Examples.exampleLedgerConfig)
+      (\point -> fail $ "resolved " <> show point)
+      readExampleTables
+      exampleLedgerState
+  let DiffMK (Diff diffs) = getLedgerTables (projectLedgerTables after)
+  pure $ Map.null diffs
+
+-- | The transaction, paying out a copy of the example UTxO's output, so that
+-- applying it changes the UTxO.
+withExampleOutput :: GenTx StandardDijkstraBlock -> GenTx StandardDijkstraBlock
+withExampleOutput (ShelleyTx _ tx) =
+  mkShelleyTx . UnsafeMkMempoolTx $
+    unwrapMempoolTx tx & bodyTxL . outputsTxBodyL .~ StrictSeq.fromList exampleTxOuts
+ where
+  exampleTxOuts = Map.elems . getValuesMK . getLedgerTables $ projectLedgerTables exampleValues
+
+-- | The example ledger state, recording that the block in the given slot
+-- announced this endorser block.
+announcedIn ::
+  SlotNo ->
+  EbReferencesAnnouncement ->
+  LedgerState StandardDijkstraBlock EmptyMK ->
+  LedgerState StandardDijkstraBlock EmptyMK
+announcedIn slot ann st =
+  st
+    { shelleyLedgerState =
+        shelleyLedgerState st
+          & nesEsL . esLStateL . lsLastEbAnnouncementL
+            .~ SJust
+              EbAnnouncement
+                { ebAnnouncement = ann
+                , ebAnnouncementSlotNo = slot
+                , ebAnnouncedInBlockHeader = unsafeMakeSafeHash (Hash.castHash (Hash.hashWith @HASH id BS.empty))
+                }
+    }
+
+exampleLedgerState :: LedgerState StandardDijkstraBlock EmptyMK
+exampleLedgerState = example Examples.exampleLedgerState
+
+-- | The UTxO of the example ledger state.
+exampleValues :: LedgerState StandardDijkstraBlock ValuesMK
+exampleValues = unstowLedgerTables exampleLedgerState
+
+readExampleTables ::
+  LedgerTables StandardDijkstraBlock KeysMK -> IO (LedgerTables StandardDijkstraBlock ValuesMK)
+readExampleTables _keys = pure $ projectLedgerTables exampleValues
 
 -- | A number of endorser-block transactions.
 -- 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes a
