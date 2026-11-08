@@ -593,7 +593,7 @@ instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
 -------------------------------------------------------------------------------}
 
 instance All HasTxs xs => HasTxs (HardForkBlock xs) where
-  extractTxs =
+  extractAsMempoolTxs =
     hcollapse
       . hcimap (Proxy @HasTxs) aux
       . getOneEraBlock
@@ -604,7 +604,7 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
       Index xs blk ->
       I blk ->
       K [GenTx (HardForkBlock xs)] blk
-    aux index = K . map (injectNS' (Proxy @GenTx) index) . extractTxs . unI
+    aux index = K . map (injectNS' (Proxy @GenTx) index) . extractAsMempoolTxs . unI
 
 {-------------------------------------------------------------------------------
   Auxiliary

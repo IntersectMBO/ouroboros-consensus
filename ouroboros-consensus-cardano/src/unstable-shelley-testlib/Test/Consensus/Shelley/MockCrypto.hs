@@ -83,6 +83,7 @@ type CanMock proto era =
   , Arbitrary (Core.Script era)
   , Arbitrary (Core.TxBody Core.TopTx era)
   , Arbitrary (Core.Tx Core.TopTx era)
+  , Arbitrary (SL.MempoolTx era)
   , Arbitrary (Core.TxOut era)
   , Arbitrary (Core.Value era)
   , Arbitrary (PredicateFailure (UTXOW era))
