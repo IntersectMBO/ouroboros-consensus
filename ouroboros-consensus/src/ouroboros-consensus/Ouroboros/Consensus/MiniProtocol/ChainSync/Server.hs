@@ -231,11 +231,11 @@ inlineCertifiedEbTxs ccfg leiosDbReader mPrevAnn pt hdr sblk
 -- | Thrown by 'chainSyncBlocksServer' when it cannot send a CertRB with its
 -- EB's transactions. A correct node never gets here, so this means a bug
 -- elsewhere in the node. It ends the client's connection.
-data CertRbWithoutEbTxs blk
-  = CertRbWithoutEbTxs
-      -- | The CertRB.
-      !(Point blk)
-      !CertRbWithoutEbTxsReason
+data CertRbWithoutEbTxs blk = CertRbWithoutEbTxs
+  { certRbPoint :: !(Point blk)
+  -- ^ The CertRB.
+  , certRbReason :: !CertRbWithoutEbTxsReason
+  }
 
 deriving instance StandardHash blk => Show (CertRbWithoutEbTxs blk)
 
