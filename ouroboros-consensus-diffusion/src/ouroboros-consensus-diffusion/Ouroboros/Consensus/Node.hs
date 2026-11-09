@@ -75,11 +75,10 @@ import Cardano.Network.NodeToClient
 import Cardano.Network.NodeToNode
   ( DiffusionMode (..)
   , ExceptionInHandler (..)
-  , MiniProtocolParameters
+  , MiniProtocolParameters (..)
   , NodeToNodeVersionData (..)
   , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
@@ -601,6 +600,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnTxSubmissionLogicVersion
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -932,6 +932,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionLogicVersion ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -956,10 +957,16 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
+  txLogicVersion
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, _) = splitGen rng'
+          (psRng, rng'') = splitGen rng'
+          (ttRng, _) = splitGen rng''
+          miniProtocolParameters =
+            mkDefaultMiniProtocolParameters
+              txLogicVersion
+              Diffusion.defaultNodeTxSubmissionConfig
       return
         NodeKernelArgs
           { tracers
@@ -975,8 +982,9 @@ mkNodeKernelArgs
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
-          , miniProtocolParameters = defaultMiniProtocolParameters
-          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , miniProtocolParameters
+          , blockFetchConfiguration =
+              Diffusion.mkDefaultBlockFetchConfiguration miniProtocolParameters bfcSalt
           , gsmArgs =
               GsmNodeKernelArgs
                 { gsmAntiThunderingHerd
@@ -988,6 +996,7 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txTierRng = ttRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
@@ -1010,7 +1019,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
             blockFetchPipeliningMax =
               min
                 (blockFetchPipeliningMax miniProtocolParameters)
-                (blockFetchPipeliningMax defaultMiniProtocolParameters)
+                (blockFetchPipeliningMax defaultParameters)
           }
     , blockFetchConfiguration =
         blockFetchConfiguration
@@ -1023,6 +1032,10 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
     }
  where
   NodeKernelArgs{..} = nodeKernelArgs
+  defaultParameters =
+    mkDefaultMiniProtocolParameters
+      (txSubmissionLogicVersion miniProtocolParameters)
+      (nodeTxSubmissionConfig miniProtocolParameters)
 
 {-------------------------------------------------------------------------------
   Arguments for use in the real node

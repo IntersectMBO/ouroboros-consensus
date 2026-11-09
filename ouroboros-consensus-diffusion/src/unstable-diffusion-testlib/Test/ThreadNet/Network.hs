@@ -38,12 +38,13 @@ module Test.ThreadNet.Network
   , TestOutput (..)
   ) where
 
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
 import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
   , ResponderContext (..)
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -1035,7 +1036,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, chainSyncRng) = splitGen rng''
+          (psRng, rng''') = splitGen rng''
+          (ttRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       -- Only recorded: the ChainDB is not given it, so it always delays
       -- snapshots, as by default.
@@ -1060,7 +1062,9 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , miniProtocolParameters = defaultMiniProtocolParameters
+              , txTierRng = ttRng
+              , miniProtocolParameters =
+                  mkDefaultMiniProtocolParameters txLogicVersion defaultNodeTxSubmissionConfig
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1
