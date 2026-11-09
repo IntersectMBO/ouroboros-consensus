@@ -25,8 +25,11 @@ import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
-  ( ConnectionId
+  ( ConnectionId (..)
   , MiniProtocolParameters (..)
+  , NodeToNodeVersion
+  , mkNodeTxDecisionPolicy
+  , txSubmissionConfigForVersion
   )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
@@ -48,6 +51,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -111,7 +115,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
   )
 import Ouroboros.Network.PeerSelection.Governor.Types
-  ( PublicPeerSelectionState
+  ( PublicPeerSelectionState (..)
   )
 import Ouroboros.Network.PeerSharing
   ( PeerSharingAPI
@@ -126,7 +130,10 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
+import Ouroboros.Network.TxSubmission.Inbound.V2
+  ( TxDecisionPolicy
+  , TxSubmissionConfig
+  )
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( PeerTxRegistry
   , SharedTxStateVar
@@ -191,6 +198,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Accumulator for tx-submission counters of disconnected peers.
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
+  , getTxSubmissionConfig :: NodeToNodeVersion -> TxSubmissionConfig
+  -- ^ The tx-submission configuration of a connection, by its negotiated
+  -- version.
   }
 
 -- | Arguments required when initializing a node
@@ -217,6 +227,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txTierRng :: StdGen
+  -- ^ Seeds the inbound tx-submission registry: the coin that draws which
+  -- inbound peers are polled for txids at full speed, and the peers' jitter.
+  -- An independent split of the node generator, like 'peerSharingRng'.
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -246,6 +260,7 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
+    , txTierRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
@@ -335,7 +350,15 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
-    peerTxRegistry <- newPeerTxRegistry
+    txDecisionPolicy <- either throwIO pure (mkNodeTxDecisionPolicy miniProtocolParameters)
+    -- fast by standing: a local root, as the governor's public state says,
+    -- asked by the counters thread once a sweep and by each joining peer
+    peerTxRegistry <-
+      newPeerTxRegistry
+        txTierRng
+        ( (\pss -> (`Set.member` localRootAddrs pss) . remoteAddress)
+            <$> StrictSTM.readTVar publicPeerSelectionStateVar
+        )
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
@@ -377,7 +400,8 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
-          (txDecisionPolicy miniProtocolParameters)
+          txDecisionPolicy
+          (txSubmissionConfigForVersion maxBound miniProtocolParameters)
           (txCountersTracer tracers)
           (txLogicTracer tracers)
           txCountersVar
@@ -405,7 +429,8 @@ initNodeKernel
         , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
-        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getTxDecisionPolicy = txDecisionPolicy
+        , getTxSubmissionConfig = (`txSubmissionConfigForVersion` miniProtocolParameters)
         }
    where
     blockForgingController ::
