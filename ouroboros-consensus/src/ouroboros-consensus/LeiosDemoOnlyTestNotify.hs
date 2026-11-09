@@ -691,7 +691,7 @@ leiosNotifyServerPeerLookahead incr next = do
       StBusy
       m
       ()
-  busy quitVar n =
+  busy quitVar !n =
     AwaitLookahead ReflClientAgency TheSender $ \case
       MsgQuit -> Effect $ do
         atomically (writeTVar quitVar True)
