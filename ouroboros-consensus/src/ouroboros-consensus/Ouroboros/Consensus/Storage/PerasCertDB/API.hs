@@ -19,6 +19,9 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
   , prop_garbageCollectRemovesOldCerts
   , prop_addCertLatestCertSeenMonotonic
   , prop_garbageCollectPreservesLatestCertSeen
+
+  -- * Errors
+  , PerasCertDbError (..)
   ) where
 
 import qualified Data.List as List
@@ -31,8 +34,10 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
-import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
+import Ouroboros.Consensus.Util.CallStack (HasCallStack, PrettyCallStack, prettyCallStack)
+import Ouroboros.Consensus.Util.IOLike
+    ( MonadSTM(STM, atomically), Exception(displayException) )
 
 data PerasCertDB m blk = PerasCertDB
   { addCert ::
@@ -40,8 +45,8 @@ data PerasCertDB m blk = PerasCertDB
       STM m (m AddPerasCertResult)
   -- ^ Add a Peras certificate to the database. The STM transaction adds the
   -- certificate to the in-memory index, and the resulting 'm' action performs
-  -- tracing and might perform side-effects in implementations with on-disk
-  -- storage.
+  -- tracing and perform other side-effects (e.g. the preemptive on-disk
+  -- storage for immutable certificates).
   -- The 'AddPerasCertResult' indicates whether the certificate was actually
   -- added, or if it was already present.
   --
@@ -53,7 +58,7 @@ data PerasCertDB m blk = PerasCertDB
   , getCertsAfter ::
       PerasRoundNo ->
       STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
-  -- ^ Get all certs with a ticket number strictly greater than the given one,
+  -- ^ Get all certs with a round number strictly greater than the given one,
   -- in ascending order.
   -- Unlike 'getVotesAfter' in 'PerasVoteDB', the resulting map contains 'm' actions to
   -- retrieve the certificates, instead of the certificates directly. This is to
@@ -117,6 +122,19 @@ data AddPerasCertResult
   | PerasCertAlreadyInDB
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
+
+-- | Errors thrown by the 'PerasCertDB'.
+--
+-- Failures of individual certificate files are not thrown but quarantined
+-- instead, so these only indicate incorrect usage of the database.
+data PerasCertDbError
+  = -- | An operation other than 'closeDB' was performed on a closed database.
+    ClosedDBError PrettyCallStack
+  deriving stock Show
+
+instance Exception PerasCertDbError where
+  displayException ClosedDBError{} =
+    "PerasImmutableCertDB used after being closed"
 
 -- * Invariants
 

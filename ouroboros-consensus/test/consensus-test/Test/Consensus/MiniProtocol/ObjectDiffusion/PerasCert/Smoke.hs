@@ -54,7 +54,7 @@ newCertDB ::
   [WithArrivalTime (ValidatedPerasCert blk)] ->
   m (PerasCertDB m blk)
 newCertDB certs = do
-  db <- PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
+  db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
     ( \cert -> do
         result <- join $ atomically $ PerasCertDB.addCert db cert

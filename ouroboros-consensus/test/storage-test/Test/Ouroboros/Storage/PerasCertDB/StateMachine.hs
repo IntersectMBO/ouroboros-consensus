@@ -168,7 +168,7 @@ instance HasVariables (Action Model a) where
 instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
   perform _ action _ = case action of
     OpenDB -> do
-      perasCertDB <- lift $ PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs nullTracer)
+      perasCertDB <- lift $ PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs nullTracer)
       put perasCertDB
     AddCert cert -> do
       perasCertDB <- get

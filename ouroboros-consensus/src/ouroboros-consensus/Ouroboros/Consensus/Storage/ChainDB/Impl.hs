@@ -209,7 +209,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
-    perasCertDB <- PerasCertDB.createDB argsPerasCertDB
+    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
     perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
     perasImmutableCertDB <- PerasImmutableCertDB.openDB argsPerasImmutableCertDB
 
