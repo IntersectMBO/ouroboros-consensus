@@ -446,8 +446,9 @@ prop_relay peers =
                        Set.null missed
                    , counterexample ("relayed, though verified only after the log was pruned past it: " <> show extra) $
                        Set.null extra
-                   , counterexample "certified announcements, against those whose relayed votes reach quorum" $
-                       Map.keysSet certified === quorate
+                   , counterexample
+                       "the node has certificates for exactly the announcements for which it relayed a quorum of votes"
+                       (Map.keysSet certified === quorate)
                    , counterexample "each certified announcement traced once" $
                        sort [rbHash | TraceLeiosCertified rbHash _ <- runVoteStateTraces] === Map.keys certified
                    ]
@@ -931,7 +932,8 @@ leiosLedgerView :: LeiosLedgerView
 leiosLedgerView =
   MkLeiosLedgerView
     { llvCommittee = committee
-    , llvQuorumStakeThreshold = fromMaybe (error "leiosLedgerView: a quorum") (boundRational quorum)
+    , llvQuorumStakeThreshold =
+        fromMaybe (error "Test.Consensus.Leios.Relay: bad quorum") (boundRational quorum)
     , llvAnnouncementPeriod = Milliseconds32 1000
     , llvVotePeriod = Milliseconds32 4000
     , llvDiffusionPeriod = Milliseconds32 1000
@@ -942,6 +944,10 @@ leiosLedgerView =
 -- | The votes of three of the five seats with keys certify an announcement.
 quorum :: Weight
 quorum = 3 * seatWeightEach
+
+-- | Seats 0 to 2 vote for 'someAnnouncingBlock', which reaches quorum.
+quorumFor :: [(DiffTime, Notification)]
+quorumFor = announce someAnnouncingBlock : [(5, vote someAnnouncingBlock seat) | seat <- [0 .. 2]]
 
 -- | Five seats with keys, so votes arrive after quorum, and a split between two
 -- announcements can still certify one of them. Then one seat without a key and
@@ -989,10 +995,6 @@ announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
 
 rbHashOf :: Header Blk -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash
-
--- | Seats 0 to 2 vote for 'someAnnouncingBlock', which reaches quorum.
-quorumFor :: [(DiffTime, Notification)]
-quorumFor = announce someAnnouncingBlock : [(5, vote someAnnouncingBlock seat) | seat <- [0 .. 2]]
 
 -- | Announces an endorser block in slot 1.
 someAnnouncingBlock :: LeiosTestBlock
