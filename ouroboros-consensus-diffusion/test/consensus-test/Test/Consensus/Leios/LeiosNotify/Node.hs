@@ -147,8 +147,8 @@ tests =
         runSimOrThrow (timeout 1000 nodeClientTooOld)
           @?= Just (NodeClientDisconnected AnnouncementTooOld)
     , testCase
-        "the node's client disconnects a peer that relays an announcement older than its configured limit" $
-        runSimOrThrow (timeout 1000 nodeClientOlderThanConfigured)
+        "the node's client disconnects a peer that relays an announcement older than its configured limit"
+        $ runSimOrThrow (timeout 1000 nodeClientOlderThanConfigured)
           @?= Just (NodeClientDisconnected AnnouncementTooOld)
     , testCase "the node prunes its clients' state as its immutable tip advances" $
         runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1, 1, 1), (0, 0, 0, 0))
