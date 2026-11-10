@@ -16,13 +16,12 @@
 --
 -- Whoever appends a notification says until when it is worth relaying; the
 -- pruner drops it then, and the log does not take one it was pruned past
--- already. So the node relays none longer than the pruning cadence after
--- that. A peer that connects
--- late starts at the log's oldest notification, so it still receives
--- everything worth relaying, and a notification is never worth relaying longer
--- than the announcement it is about, so a peer always receives the
--- announcement first. A cursor that falls behind pruning merely skips what was
--- pruned.
+-- already. So the node relays none longer than 'leiosDeadlinePrunerInterval'
+-- after that. A peer that connects late starts at the log's oldest
+-- notification, so it still receives everything worth relaying, and a
+-- notification is never worth relaying longer than the announcement it is
+-- about, so a peer always receives the announcement first. A cursor that falls
+-- behind pruning merely skips what was pruned.
 module Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
   , NotifyCursor
