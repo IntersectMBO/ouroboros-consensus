@@ -178,7 +178,7 @@ imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
         { imEbPoints = Set.filter ((>= slot) . pointSlotNo) (imEbPoints s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbTxBytes = Map.filterWithKey (\p _ -> pointSlotNo p >= slot) (imEbTxBytes s)
-        , imGcSlot = max slot (imGcSlot s)
+        , imGcSlot = slot
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.

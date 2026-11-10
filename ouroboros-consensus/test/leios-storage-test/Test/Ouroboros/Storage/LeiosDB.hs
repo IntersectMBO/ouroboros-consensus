@@ -125,6 +125,8 @@ tests =
                  withTempLeiosDbPaths test_promoteAgainAfterLosingVolatileTxs
              , testCase "promotes an EB at the certified point, not at another point of it" $
                  withFreshSQLiteFile test_promoteAtCertifiedSlot
+             , testCase "a collection at the ImmutableDB tip after a crash reads the volatile points past it again" $
+                 withTempLeiosDbPaths test_collectBackToImmutableTip
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -754,6 +756,27 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     leiosDbPromoteToImmutable db [point]
     rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))
+
+-- | A crash after a promotion but before the ImmutableDB appended the blocks
+-- leaves the newest promoted point past the ImmutableDB tip, and the reopened
+-- LeiosDB reads the points up to it from the immutable partition. The ChainDB
+-- collects at its tip when it opens, which reads them from the volatile one
+-- again.
+test_collectBackToImmutableTip :: FilePath -> FilePath -> IO ()
+test_collectBackToImmutableTip volDbPath immDbPath = do
+  let eb = mkTestEb 2
+      unpromoted = mkTestPoint 10 1
+      promoted = mkTestPoint 20 2
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
+    writeWholeEb con [unpromoted] eb
+    writeWholeEb con [promoted] eb
+    leiosDbPromoteToImmutable db [promoted]
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
+    rwLookupEbClosure con unpromoted >>= (@?= Nothing)
+    garbageCollect db 5
+    rwLookupEbClosure con unpromoted >>= (@?= Just (map snd (allTxsFor eb)))
+    rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
+    rwScanComplete con 5 >>= (@?= [unpromoted, promoted])
 
 -- | An EB announced again after the announcement that gets certified: the
 -- immutable copy is at the certified slot.
