@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveFunctor #-}
+
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
@@ -15,14 +17,17 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidReques
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxBitmaps)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
-data TraceLeiosFetchClientEvent
-  = -- | An endorser block arrived, its bytes classified by whether the node
-    -- needed them. One the node writes is traced once the write is durable,
-    -- and was needed only if no other delivery's write settled first.
-    TraceLeiosFetchClientBlockArrived !LeiosPoint !FetchArrivalBytes
-  | -- | Some of an endorser block's transactions arrived, their bytes
-    -- classified by whether the node needed them.
-    TraceLeiosFetchClientTxsArrived !LeiosPoint !FetchArrivalBytes
+-- | What the node's LeiosFetch clients do, naming the peer that sent what
+-- arrived.
+data TraceLeiosFetchClientEvent peer
+  = -- | An endorser block arrived from this peer, its bytes classified by
+    -- whether the node needed them. One the node writes is traced once the
+    -- write is durable, and was needed only if no other delivery's write
+    -- settled first.
+    TraceLeiosFetchClientBlockArrived !peer !LeiosPoint !FetchArrivalBytes
+  | -- | Some of an endorser block's transactions arrived from this peer, their
+    -- bytes classified by whether the node needed them.
+    TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
   | -- | The node durably holds the endorser block, which arrived this long
     -- after its point's slot began, if that is known.
     TraceLeiosFetchClientBlockAcquired !LeiosPoint !(Maybe NominalDiffTime)
@@ -30,7 +35,7 @@ data TraceLeiosFetchClientEvent
     -- arrival that completed them came this long after its point's slot
     -- began, if that is known.
     TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
-  deriving Show
+  deriving (Show, Functor)
 
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
 -- partitioned by what the node already had of them. The four fields sum to the
