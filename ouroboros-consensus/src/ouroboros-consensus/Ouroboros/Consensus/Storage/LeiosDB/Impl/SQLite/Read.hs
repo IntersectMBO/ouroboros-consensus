@@ -46,11 +46,11 @@ import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
+  , Serialised (..)
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Network.Block (Serialised (..))
 
 -- | Each point at or after the slot whose closure is complete in the partition
 -- its reads go to ('readPartition'): in the volatile partition, if each of its

@@ -1,6 +1,6 @@
 ; The messages of the LeiosNotify mini-protocol
 ;
-; TODO Upstream this from ouroboroso-consensus into cardano-blueprint and not
+; TODO Upstream this from ouroboros-consensus into cardano-blueprint and not
 ; only sync it using a GHA workflow
 
 leiosNotifyMessage

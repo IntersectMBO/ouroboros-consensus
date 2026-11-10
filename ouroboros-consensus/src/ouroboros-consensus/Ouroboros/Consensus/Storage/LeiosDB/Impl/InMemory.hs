@@ -38,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
@@ -66,7 +67,6 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
-import Ouroboros.Network.Block (Serialised (..))
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
