@@ -117,7 +117,7 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   -- ^ Emit an acquisition to the rest of the node.
   , lfcSystemTime :: !(SystemTime m)
   -- ^ For reporting how long after its announcement an endorser block arrived.
-  , lfcTracer :: !(Tracer m TraceLeiosFetchClientEvent)
+  , lfcTracer :: !(Tracer m (TraceLeiosFetchClientEvent peer))
   }
 
 -- | A reply an honest peer would not send; the ensuing thread death
@@ -251,7 +251,8 @@ processLeiosBlock ::
 processLeiosBlock ctx peer req eb = do
   now <- systemTimeCurrent lfcSystemTime
   when (endorserBlockHash eb /= ebHash) $ do
-    traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid ebBytesSize)
+    traceWith lfcTracer $
+      TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
     throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
   -- Under the lock, decide what to do with this body. The point lacks the body
   -- until a delivery's write settles, so another delivery meanwhile is written
@@ -275,16 +276,17 @@ processLeiosBlock ctx peer req eb = do
   void $ tryPutMVar lfcReady ()
   case delivery of
     BodyTooBig exn -> do
-      traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid ebBytesSize)
+      traceWith lfcTracer $
+        TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
       throwIO exn
-    BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
+    BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
     BodyToWrite -> do
       bodyWritten <- writeEbBody lfcWriter point eb
       -- A failed write brings the node down, since the LeiosDB's writer is
       -- linked to it. This worker runs off this thread but is linked to it, so
       -- a failure also disconnects the peer, if its client still runs. Like the
       -- worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
-      link =<< async (settleBody ctx point eb now bodyWritten)
+      link =<< async (settleBody ctx peer point eb now bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
@@ -343,13 +345,15 @@ data BodyDelivery
 settleBody ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
+  -- | the peer that delivered it
+  peer ->
   LeiosPoint ->
   EndorserBlock ->
   -- | when the body arrived
   RelativeTime ->
   Promise m [TxOffset] ->
   m ()
-settleBody ctx point eb now bodyWritten = do
+settleBody ctx peer point eb now bodyWritten = do
   heldOffs <- await bodyWritten
   traces <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
@@ -384,7 +388,7 @@ settleBody ctx point eb now bodyWritten = do
     } = ctx
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   arrived bucket =
-    TraceLeiosFetchClientBlockArrived point (bucket (lesBodySize (leiosEbSizes eb)))
+    TraceLeiosFetchClientBlockArrived peer point (bucket (lesBodySize (leiosEbSizes eb)))
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
@@ -435,7 +439,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   let arrival =
         fetchArrivalGood $
           sum [fromIntegral (BS.length bytes) | (_off, _txHash, bytes) <- toIngest]
-  traceWith lfcTracer $ TraceLeiosFetchClientTxsArrived point (arrival <> discarded)
+  traceWith lfcTracer $ TraceLeiosFetchClientTxsArrived peer point (arrival <> discarded)
   modifyMVar_ lfcOutstanding (pure . refundTxRequest peer (fromIntegral batchBytes))
   void $ tryPutMVar lfcReady ()
   -- Retiring the jobs waits for the write: retiring them drops them from the
@@ -469,7 +473,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   invalidReply :: ExnLeiosFetchInvalidReply -> m a
   invalidReply exn = do
     traceWith lfcTracer $
-      TraceLeiosFetchClientTxsArrived point (fetchArrivalInvalid (fromIntegral batchBytes))
+      TraceLeiosFetchClientTxsArrived peer point (fetchArrivalInvalid (fromIntegral batchBytes))
     throwIO exn
 
 -- | Retire the jobs of the request, now that the write of their txs is durable,
