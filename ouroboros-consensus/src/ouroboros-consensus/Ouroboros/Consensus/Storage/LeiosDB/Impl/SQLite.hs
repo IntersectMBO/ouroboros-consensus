@@ -20,7 +20,6 @@ import Cardano.Prelude (when)
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
-  , modifyTVar
   , newTBQueueIO
   , newTVarIO
   , readTBQueue
@@ -294,7 +293,7 @@ startWriter registry tracer statsVar gcSlotVar volPath immPath = do
           -- Whether rows before the slot are left.
           collect :: SlotNo -> IO Bool
           collect slot = do
-            atomically $ modifyTVar gcSlotVar (max slot)
+            atomically $ writeTVar gcSlotVar slot
             evicted <- deleteEbsBefore volDb gcBatchSize =<< readTVarIO gcSlotVar
             when (evicted > 0) $ do
               bumpVolatileStatsVar statsVar (negate evicted)

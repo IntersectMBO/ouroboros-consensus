@@ -55,7 +55,9 @@ data LeiosDbHandle m = LeiosDbHandle
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
-  -- ^ Delete the volatile EBs announced before the slot, before returning.
+  -- ^ Delete the volatile EBs announced before the slot.
+  --   Reads dispatch by this slot from then on, even if it is lower than the
+  --   previous one.
   --
   --   See 'sqlGarbageCollect' for the SQL backend implementation.
   , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()

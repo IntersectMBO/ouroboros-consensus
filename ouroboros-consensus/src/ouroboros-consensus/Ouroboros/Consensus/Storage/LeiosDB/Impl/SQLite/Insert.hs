@@ -80,7 +80,7 @@ sqlInsertEbBody conn point eb fills = do
     filled <- readLocalFills
     let toWrite = IntMap.toAscList (filled `IntMap.withoutKeys` atPoint)
     dropped <- writeTxBytes conn point toWrite
-    let written = IntSet.fromList [txOffset | (txOffset, _) <- toWrite, txOffset `notElem` dropped]
+    let written = IntSet.fromList (map fst toWrite) `IntSet.difference` IntSet.fromList dropped
     pure (inserted, IntSet.toAscList (atPoint <> written))
   bumpVolatileStats conn inserted
   pure held

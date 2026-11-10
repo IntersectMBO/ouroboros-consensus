@@ -194,9 +194,9 @@ deleteEbsBefore db limit gcSlot =
 -- * Stats
 
 -- | The slot of the latest garbage collection, at startup: the one after the
--- newest point the immutable partition holds. The slot is not on disk, but
--- every point promoted before is older than the ImmutableDB tip, which is what
--- the ChainDB collects up to.
+-- newest point the immutable partition holds. The slot is not on disk, and a
+-- crash between a promotion and the appends of its blocks leaves this ahead of
+-- the ImmutableDB tip, so the ChainDB collects at that tip when it opens.
 initialGcSlot :: HasCallStack => FilePath -> IO SlotNo
 initialGcSlot immPath =
   withReadOnlyConn immPath $ \db ->

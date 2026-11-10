@@ -95,6 +95,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbReader (..)
   , withReader
   )
+import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -197,6 +198,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       unless (isMember (realPointHash tipPoint)) $
         VolatileDB.putBlock volatileDB
           =<< ImmutableDB.getKnownBlockComponent immutableDB API.GetBlock tipPoint
+    LeiosDB.garbageCollect leiosDb (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
     pure
@@ -243,7 +245,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     --
     -- TODO Grow it as the node acquires closures. The LeiosDB no longer tells
     -- what is written to it, so nothing does until LeiosFetch announces its
-    -- acquisitions.
+    -- acquisitions. Then also key 'AcquiredLeiosEbs' by point, as the LeiosDB
+    -- is: a closure acquired at one point of an endorser block is not one at
+    -- another. Promotion copies the certified point's closure only, and fails
+    -- the node if it is incomplete.
     let nextAcquiredLeiosClosure = retry
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
