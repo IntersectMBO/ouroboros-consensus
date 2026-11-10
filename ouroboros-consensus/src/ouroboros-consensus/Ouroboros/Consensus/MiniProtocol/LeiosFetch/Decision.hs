@@ -379,6 +379,11 @@ data EbFetchState
 
 -- | What of a point's acquisition the node had emitted when its own forge
 -- produced the endorser block there.
+--
+-- It may have emitted some already: another node can announce the exact same
+-- point, and if that announcement arrived early but within the clock skew, the
+-- node might process it, and fetch from that node, before its own forge wakes
+-- up or finishes.
 data AlreadyEmitted
   = -- | Neither 'AcquiredEb' nor 'AcquiredEbTxs'
     EmittedNothing
@@ -434,8 +439,9 @@ acquireEbBody point jobPool =
 -- body and closure it is about to write, so that nothing is fetched there,
 -- whatever the point was in.
 --
--- If another forge of this node already produced it, the point stays as that
--- forge marked it, and whichever forge's writes are durable first settle it.
+-- If another forge of this node already produced it (testnet nodes sometimes
+-- run the forges of several stake pools), the point stays as that forge marked
+-- it, and whichever forge's writes are durable first settle it.
 markReceivingFromForge :: LeiosPoint -> LeiosOutstanding peer -> LeiosOutstanding peer
 markReceivingFromForge point =
   alterEbState point $ \case
