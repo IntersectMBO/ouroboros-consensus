@@ -181,7 +181,7 @@ rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
 rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
-rwLookupEbBody rw = lookupEbBody (rwReader rw)
+rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
 rwLookupEbClosure = lookupEbClosure . rwReader
@@ -370,8 +370,6 @@ txBytesFor eb off = testTxBytes off size
 -- | Every tx of the EB, with 'txBytesFor'.
 allTxsFor :: EndorserBlock -> [(TxOffset, BS.ByteString)]
 allTxsFor eb = [(off, txBytesFor eb off) | off <- [0 .. length (endorserBlockReferences eb) - 1]]
-
--- | The bytes the EB arrived in, as 'lookupEbBody' returns them.
 
 -- * Test fixtures for unit tests
 

@@ -38,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , ForgedEndorserBlock
   , LeiosPoint (..)
+  , Serialised
   , TxLocation
   , TxOffset
   , endorserBlockHash
@@ -46,7 +47,6 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
-import Ouroboros.Network.Block (Serialised)
 
 -- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle

@@ -1,6 +1,6 @@
 ; The messages of the LeiosFetch mini-protocol
 ;
-; TODO Upstream this from ouroboroso-consensus into cardano-blueprint and not
+; TODO Upstream this from ouroboros-consensus into cardano-blueprint and not
 ; only sync it using a GHA workflow
 
 leiosFetchMessage
@@ -33,8 +33,8 @@ tx_list = [ *tx ]
 
 ; Endorsed transactions as CBOR-in-CBOR to indicate that neither fetch clients
 ; nor servers will decode this. However, consensus components like leios voting
-; logic or block adoption will need to decode these using the approriate era.
-; Currently only dikjstra is supported.
+; logic or block adoption will need to decode these using the appropriate era.
+; Currently only Dijkstra is supported.
 tx = #6.24(bytes .cbor dijkstra.block_transaction)
 
 ;# include dijkstra as dijkstra

@@ -24,6 +24,7 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.Util.IOLike
   , MonadSTM (..)
   , MonadThrow (..)
   )
-import Ouroboros.Network.Block (Serialised (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)

@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxLocation (..)
   , TxOffset
   , endorserBlockBytes
@@ -62,7 +63,6 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
-import Ouroboros.Network.Block (Serialised (..))
 
 -- | In-memory database state, as the SQLite backend's: a row per point in
 -- each partition, and the promoted slot.
