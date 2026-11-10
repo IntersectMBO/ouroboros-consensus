@@ -1530,6 +1530,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.Forge
     Test.Consensus.Leios.LeiosFetch
+    Test.Consensus.Leios.LeiosFetch.Client
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Node
