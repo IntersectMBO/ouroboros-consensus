@@ -20,12 +20,25 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , TraceLeiosFetchServerEvent (..)
   )
 
-instance LogFormatting TraceLeiosFetchClientEvent where
-  forMachine _dtal = \case
-    TraceLeiosFetchClientBlockArrived point arrival ->
-      mconcat ["kind" .= String "BlockArrived", pointFields point, arrivalFields arrival]
-    TraceLeiosFetchClientTxsArrived point arrival ->
-      mconcat ["kind" .= String "TxsArrived", pointFields point, arrivalFields arrival]
+instance
+  (LogFormatting peer, Show peer) =>
+  LogFormatting (TraceLeiosFetchClientEvent peer)
+  where
+  forMachine dtal = \case
+    TraceLeiosFetchClientBlockArrived peer point arrival ->
+      mconcat
+        [ "kind" .= String "BlockArrived"
+        , "peer" .= forMachine dtal peer
+        , pointFields point
+        , arrivalFields arrival
+        ]
+    TraceLeiosFetchClientTxsArrived peer point arrival ->
+      mconcat
+        [ "kind" .= String "TxsArrived"
+        , "peer" .= forMachine dtal peer
+        , pointFields point
+        , arrivalFields arrival
+        ]
     TraceLeiosFetchClientBlockAcquired point age ->
       mconcat ["kind" .= String "BlockAcquired", pointFields point, "age" .= age]
     TraceLeiosFetchClientBlockTxsAcquired point age ->
@@ -36,15 +49,17 @@ instance LogFormatting TraceLeiosFetchClientEvent where
         ["invalidBytes" .= invalid, "evictedBytes" .= evicted, "goodBytes" .= good, "extraBytes" .= extra]
 
   forHuman = \case
-    TraceLeiosFetchClientBlockArrived point _ -> "Endorser block " <> pretty point <> " arrived"
-    TraceLeiosFetchClientTxsArrived point _ -> "Transactions of endorser block " <> pretty point <> " arrived"
+    TraceLeiosFetchClientBlockArrived peer point _ ->
+      "Endorser block " <> pretty point <> " arrived from " <> showT peer
+    TraceLeiosFetchClientTxsArrived peer point _ ->
+      "Transactions of endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
     TraceLeiosFetchClientBlockTxsAcquired point _ ->
       "Acquired the transactions of endorser block " <> pretty point
    where
     pretty = Text.pack . prettyLeiosPoint
 
-instance MetaTrace TraceLeiosFetchClientEvent where
+instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   namespaceFor = \case
     TraceLeiosFetchClientBlockArrived{} -> Namespace [] ["BlockArrived"]
     TraceLeiosFetchClientTxsArrived{} -> Namespace [] ["TxsArrived"]
