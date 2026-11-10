@@ -88,8 +88,11 @@ prop_nodeCodecMatchesCDDL =
 
   genEb = serialiseEndorserBlock . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 
-  -- As the forge writes it, but without pool registrations, which cuddle
-  -- rejects for the optional bls_key amid their fields.
+  -- As the forge writes it, but without certificates and sub-transactions.
+  --
+  -- FIXME Workaround for a cuddle bug: it rejects an optional entry in a group
+  -- spliced into an array, as the bls_key of the pool registrations, here and
+  -- in the sub-transactions, although they match the CDDL.
   tx =
     MkLeiosTx . serializeTxForLeios $
       exampleDijkstraTx
