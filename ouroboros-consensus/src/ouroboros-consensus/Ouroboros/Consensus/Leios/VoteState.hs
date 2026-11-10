@@ -209,8 +209,14 @@ addVote st systemTime accepted = do
                   Right quorum -> do
                     relayVote
                     pure (Added, quorum)
-  -- Aggregated outside the transaction, so a vote that comes before the
-  -- certificate is in aggregates again, should this thread die first.
+  -- Aggregate outside the STM transaction that recorded a vote. We often
+  -- receive many votes in quick succession, even duplicates via different
+  -- peers. Having it recorded early will not have them validated again. Until
+  -- we have a certificate, every vote recorded above the threshold will result
+  -- in an attempt for certificate aggregation to be resilient against the
+  -- thread dying between recording and aggregating (e.g. due to a connection
+  -- reset). If that also was the last vote, we won't have a certificate, but
+  -- with such a close quorum its for the better to skip this round.
   for_ quorum $ \signatures ->
     case aggregateLeiosCert voteCommittee signatures of
       Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
@@ -304,9 +310,10 @@ data SlotVotes = MkSlotVotes
   { slotRelayUntil :: !RelativeTime
   , slotQuorum :: !Weight
   , slotVotes :: !(Map LeiosSeatId LeiosVote)
+  -- ^ A seat votes once per election slot, whichever announcement it votes
+  -- for.
   , slotTallies :: !(Map RankingBlockHash Weight)
-  -- ^ The weight of the votes for each announcement. A seat votes once per
-  -- election slot, whichever announcement it votes for.
+  -- ^ INVARIANT: The weight of the votes in 'slotVotes' for each announcement.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -346,14 +353,15 @@ recordVote st validatedVote = do
   vs <- readTVar (votes st)
   certified <- Map.member rbHash . certificatesByRbHash <$> readTVar (certificates st)
   let before = Map.lookup validatedElectionSlot (votesBySlot vs)
-      after = maybe slotVotes' (keepFirst slotVotes') before
+      after = maybe slotVotes' (mergeNonEquivocations slotVotes') before
+      weightOfAfter = Map.findWithDefault 0 rbHash (slotTallies after)
   if
     | voteValidUntil < votesPrunedAt vs -> pure (Left ArrivedTooLate)
     | maybe False (Map.member (voteSeatId vote) . slotVotes) before -> pure (Left AlreadyKnown)
     | otherwise -> do
         writeTVar (votes st) vs{votesBySlot = Map.insert validatedElectionSlot after (votesBySlot vs)}
         pure . Right $
-          if not certified && validatedQuorum <= weightOf (Just after)
+          if not certified && validatedQuorum <= weightOfAfter
             then
               Just $
                 Map.fromList
@@ -380,9 +388,8 @@ recordVote st validatedVote = do
       (Map.singleton (voteSeatId vote) vote)
       (Map.singleton rbHash validatedSeatWeight)
 
-  weightOf = maybe 0 (Map.findWithDefault 0 rbHash . slotTallies)
-
-  keepFirst new old =
+  -- The 'AlreadyKnown' guard keeps an equivocation from reaching this.
+  mergeNonEquivocations new old =
     old
       { slotVotes = Map.union (slotVotes old) (slotVotes new)
       , slotTallies = Map.unionWith (+) (slotTallies old) (slotTallies new)
@@ -435,9 +442,10 @@ getCertificate st rbHash =
 -- | Forget the certificates of every election slot before the given slot, the
 -- immutable tip's.
 --
--- The announcing block of such a certificate is immutable, and so is the block
--- after it, which certified the announcement or did not. Until then, a
--- certificate is kept for whichever block comes to certify it, however late.
+-- The announcing block of such a certificate is immutable, and all of its
+-- successors are either also immutable or unreachable from the immutable tip.
+-- Until then, a certificate is kept for whichever block comes to certify it,
+-- however late.
 pruneCertificates ::
   IOLike m =>
   VoteState m blk -> SlotNo -> STM m ()
