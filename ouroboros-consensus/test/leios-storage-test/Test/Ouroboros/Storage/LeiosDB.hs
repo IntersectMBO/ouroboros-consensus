@@ -843,8 +843,8 @@ test_gcDropsOlderPoints db = withRW db $ \con -> do
 test_gcDropsWritesOfCollectedPoint :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_gcDropsWritesOfCollectedPoint volDbPath _immDbPath db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
-  garbageCollect db 6
   garbageCollect db 3
+  garbageCollect db 6
   rwInsertEbBody con (mkTestPoint 5 2) (mkTestEb 2)
   rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
   rwInsertEbBody con (mkTestPoint 4 1) (mkTestEb 2)
