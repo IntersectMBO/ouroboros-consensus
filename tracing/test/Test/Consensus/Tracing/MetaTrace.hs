@@ -133,7 +133,7 @@ tests =
         ]
     , testGroup
         "leios"
-        [ metaTrace @TraceLeiosFetchClientEvent "TraceLeiosFetchClientEvent"
+        [ metaTrace @(TraceLeiosFetchClientEvent Peer) "TraceLeiosFetchClientEvent"
         , metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
         , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]
