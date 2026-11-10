@@ -87,7 +87,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
-  , leiosFetchClientTracer :: f TraceLeiosFetchClientEvent
+  , leiosFetchClientTracer :: f (TraceLeiosFetchClientEvent remotePeer)
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
   , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
   , leiosDbTracer :: f TraceLeiosDb

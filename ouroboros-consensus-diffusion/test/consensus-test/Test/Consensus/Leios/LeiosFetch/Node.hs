@@ -1031,14 +1031,14 @@ evenEbPoint eb = MkLeiosPoint 1 (endorserBlockHash eb)
 
 -- | What the node acquires of the endorser block, and why its LeiosFetch client
 -- fails, if it does. A body the ledger admits, of transactions the ledger
--- admits, it acquires, and then their closure. A body the ledger does not
--- admit, which a peer can only offer at the most the ledger admits, is not the
--- size offered; a closure the ledger does not admit is too big. Either way,
--- the node acquires nothing of it, and disconnects the peer that served it.
+-- admits, it acquires, and then their closure. A body or a closure the ledger
+-- does not admit is too big, though a peer can only offer the body at the most
+-- the ledger admits, so its offer was wrong too. Either way, the node acquires
+-- nothing of it, and disconnects the peer that served it.
 expectedBounded :: EndorserBlock -> ([Acquired], Maybe String)
 expectedBounded eb
   | bodySize > maxEbBodySize =
-      ([], Just (show (ExnLeiosBlockWrongSize point maxEbBodySize bodySize)))
+      ([], Just (show (ExnLeiosBlockTooBig point bodySize maxEbBodySize)))
   | closureSize > fromIntegral maxEbBodySize =
       ([], Just (show (ExnLeiosClosureTooBig point closureSize maxEbBodySize)))
   | otherwise = ([AcquiredBody point, AcquiredClosure point], Nothing)

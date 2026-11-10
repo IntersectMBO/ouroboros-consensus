@@ -97,6 +97,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchCli
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
+  , LeiosPeerLifetimeId (..)
   , leiosFetchDecisionLoop
   , leiosFetchFocuser
   , leiosFetchPruner
@@ -477,7 +478,11 @@ initNodeKernel
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
-          , lfcTracer = leiosFetchClientTracer tracers
+          , -- Each trace names the connection, not which of its registrations.
+            lfcTracer =
+              contramap
+                (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                (leiosFetchClientTracer tracers)
           }
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
