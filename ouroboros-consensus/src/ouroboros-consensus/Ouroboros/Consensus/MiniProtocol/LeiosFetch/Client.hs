@@ -91,7 +91,7 @@ leiosFetchClientPeerPipelined depth tryNext =
             Succ m ->
               pure $
                 Collect
-                  Nothing
+                  (Just $ Effect $ next <&> go2 stop n)
                   (\MkC -> go1 stop m)
         Right x -> pure $ go2 stop n x
 

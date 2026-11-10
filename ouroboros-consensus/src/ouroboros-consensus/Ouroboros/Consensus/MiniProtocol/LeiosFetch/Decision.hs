@@ -362,8 +362,8 @@ data EbFetchState
     --
     -- A body too big for the point's bounds is held with an empty pool too. It
     -- is never written, and nothing more is fetched or emitted for it at this
-    -- point. So is a body whose closure no peer can complete
-    -- ('abandonClosure'), though it is written and emitted.
+    -- point. So is a body whose closure was abandoned ('abandonClosure'),
+    -- though it is written and emitted.
     --
     -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
     -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its

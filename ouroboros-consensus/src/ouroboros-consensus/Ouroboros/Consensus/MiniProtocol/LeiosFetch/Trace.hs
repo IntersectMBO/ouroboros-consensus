@@ -17,16 +17,22 @@ import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
 data TraceLeiosFetchClientEvent
   = -- | An endorser block arrived, its bytes classified by whether the node
-    -- needed them.
+    -- needed them. One the node writes is traced once the write is durable,
+    -- and was needed only if no other delivery's write settled first.
     TraceLeiosFetchClientBlockArrived !LeiosPoint !FetchArrivalBytes
+  | -- | The node took the endorser block at this point from the body the
+    -- LeiosTxCache held for another point, rather than fetching it. Traced once
+    -- the write is durable, if no delivery's write settled first.
+    TraceLeiosFetchClientBlockFromCache !LeiosPoint
   | -- | Some of an endorser block's transactions arrived, their bytes
     -- classified by whether the node needed them.
     TraceLeiosFetchClientTxsArrived !LeiosPoint !FetchArrivalBytes
-  | -- | The node durably holds the endorser block, this long after its
-    -- earliest announcement's slot began, if one was seen.
+  | -- | The node durably holds the endorser block, which arrived this long
+    -- after its point's slot began, if that is known.
     TraceLeiosFetchClientBlockAcquired !LeiosPoint !(Maybe NominalDiffTime)
-  | -- | The node durably holds all of the endorser block's transactions, this
-    -- long after its earliest announcement's slot began, if one was seen.
+  | -- | The node durably holds all of the endorser block's transactions. The
+    -- arrival that completed them came this long after its point's slot
+    -- began, if that is known.
     TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
   deriving Show
 
