@@ -52,7 +52,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancHeader)
-  , LeiosAnnouncementAgeLimits
   , ValidAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -93,7 +92,6 @@ leiosNotifyClient ::
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
-  LeiosAnnouncementAgeLimits ->
   -- | what to do with an announcement new to the node
   (ValidAnnouncement blk -> m ()) ->
   -- | record an offer the peer made
@@ -111,7 +109,6 @@ leiosNotifyClient
   systemTime
   chainSyncFutureCheck
   maxClockSkew
-  ageLimits
   onNewAnnouncement
   recordOffer
   controlMessageSTM
@@ -132,7 +129,6 @@ leiosNotifyClient
               either throwIO pure
                 =<< runExceptT
                   ( onLeiosNotifyAnnouncement
-                      ageLimits
                       systemTime
                       chainSyncFutureCheck
                       cfg
@@ -159,7 +155,7 @@ leiosNotifyClient
             now <- systemTimeCurrent systemTime
             accepted <- atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
-              checkAndUpdate $ checkLeiosVotes cfg ageLimits maxClockSkew immLedger now votes
+              checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
             for_ accepted $ \vote@MkAcceptedVote{acceptedVote} ->
               addVote voteState systemTime vote >>= \case
                 Added ->

@@ -10,7 +10,7 @@
 -- third announcement of an election. So the node decides once, here, whether
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
-  ( AnnounceState
+  ( AnnounceState (ageLimits)
   , hasAnnouncement
   , newAnnounceState
   , onValidAnnouncement
@@ -33,9 +33,10 @@ import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RankingBlockH
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
-  , LeiosAnnouncementAgeLimits (..)
+  , LeiosAnnouncementAgeLimits
   , ValidAnnouncement (..)
   , announcingRbHash
+  , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -54,6 +55,7 @@ data AnnounceState m blk = MkAnnounceState
   -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
   , ageLimits :: !LeiosAnnouncementAgeLimits
+  -- ^ how old an announcement the node relays or accepts
   }
 
 newAnnounceState ::

@@ -108,8 +108,9 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   , toLeiosNotifyClientPeerPipelined
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( LeiosAnnouncementAgeLimits (..)
-  , defaultLeiosAnnouncementAgeLimits
+  ( defaultLeiosAnnouncementAgeLimits
+  , maxAnnouncementAgeRecv
+  , maxAnnouncementAgeSend
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidOffer (..)
@@ -1437,7 +1438,6 @@ newListenerWith node immTip offset = do
             try @_ @InFutureCheck.HeaderArrivalException
               ( runExceptT $
                   onLeiosNotifyAnnouncement
-                    defaultLeiosAnnouncementAgeLimits
                     systemTime
                     (InFutureCheck.realHeaderInFutureCheck InFutureCheck.defaultClockSkew systemTime)
                     cfg

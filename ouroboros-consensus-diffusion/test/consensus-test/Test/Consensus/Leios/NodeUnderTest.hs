@@ -34,6 +34,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , maxEbBodySize
   , withJumpingNode
   , withNode
+  , withNodeAgeLimits
   , withNodeCommittee
   , withNodeForecastingOnly
   , withNodeOver
@@ -100,6 +101,10 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( LeiosAnnouncementAgeLimits
+  , defaultLeiosAnnouncementAgeLimits
+  )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node
   ( mkNodeKernelArgs
@@ -163,6 +168,7 @@ data NodeUnderTestConfig = NodeUnderTestConfig
   , nodeConfigLedger :: LeiosTestLedgerConfig
   , nodeConfigRandomness :: StdGen
   -- ^ The root of all the test's randomness; see 'Seeds'.
+  , nodeConfigAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   , nodeConfigCsj :: CSJConfig
   }
 
@@ -172,6 +178,7 @@ defaultNodeUnderTestConfig nodeConfigSecurityParam nodeConfigLedger =
     { nodeConfigSecurityParam
     , nodeConfigLedger
     , nodeConfigRandomness = mkStdGen 0
+    , nodeConfigAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
     , nodeConfigCsj = CSJDisabled
     }
 
@@ -327,6 +334,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
         kernelArgs <-
           nodeKernelArgsEnforceInvariants
+            . (\args -> args{leiosAnnouncementAgeLimits = nodeConfigAnnouncementAgeLimits cfg})
             <$> mkNodeKernelArgs
               kernelRegistry
               (mkUnsafeSalt (fst (random (seedBlockFetchSalt seeds))))
@@ -427,6 +435,21 @@ withNodeForecastingOnly range body = do
   leiosDB <- newLeiosDBInMemory
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold range)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
+
+-- | 'withNode', but with these announcement age limits.
+withNodeAgeLimits ::
+  LeiosAnnouncementAgeLimits -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeAgeLimits limits body = do
+  nodeDBs <- emptyNodeDBs
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+      { nodeConfigAnnouncementAgeLimits = limits
+      }
     nullTracers
     nodeDBs
     leiosDB

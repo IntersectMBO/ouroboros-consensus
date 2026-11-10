@@ -253,8 +253,6 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ What the node relays to its downstream peers over LeiosNotify.
   , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
-  , getLeiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
-  -- ^ How old an announcement the node relays or accepts.
   }
 
 -- | Arguments required when initializing a node
@@ -546,7 +544,6 @@ initNodeKernel
         , getLeiosVoteState = leiosVoteState
         , getLeiosNotifyLog = leiosNotifyLog
         , getLeiosFetchKernel = leiosFetchKernel
-        , getLeiosAnnouncementAgeLimits = leiosAnnouncementAgeLimits
         }
    where
     blockForgingController ::

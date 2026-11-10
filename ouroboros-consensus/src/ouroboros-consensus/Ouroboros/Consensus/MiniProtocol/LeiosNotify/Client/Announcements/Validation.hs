@@ -26,9 +26,13 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , announcementValidity
   , announcingRbHash
   , validHeaderAnnouncement
-  , LeiosAnnouncementAgeLimits (..)
+  , InvalidLeiosAnnouncementAgeLimits (..)
+  , LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
+  , maxAnnouncementAgeRecv
+  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
+  , mkLeiosAnnouncementAgeLimits
   , validateAnnouncementHeader
   ) where
 
@@ -136,11 +140,11 @@ data AnnouncementInvalidity blk
     -- precondition. For a caught-up node a slot so stale is as bogus as one in
     -- the far-future.
     --
-    -- The 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.ErrTooOld' bound rejects any
-    -- announcement older than 'maxAnnouncementAgeRecv' (minutes), which is
-    -- always far younger than the immutable tip (hours), so this case should
-    -- never actually fire. It is kept as a distinct error to throw in case that
-    -- branch is somehow reached, eg on an oddly-configured testnet.
+    -- An honest peer relays only announcements younger than its
+    -- 'maxAnnouncementAgeSend', which the configuration keeps below every
+    -- downstream peer's immutable tip's age, by a margin (see
+    -- 'LeiosAnnouncementAgeLimits'). So this fires only for a dishonest peer
+    -- or a misconfigured network.
     SlotBeforeImmutableTip
   | -- | The header failed the relaxed, out-of-context protocol-level validation
     -- (election proof and signature). See 'validateLeiosAnnouncement'
@@ -410,24 +414,58 @@ data ValidAnnouncement blk = MkValidAnnouncement
 -- hours old. One whose immutable tip is only minutes old, such as a test
 -- network, needs smaller limits, and since each node's receive limit must
 -- exceed its upstream peers' send limits, all of its nodes need them.
+-- 'mkLeiosAnnouncementAgeLimits' checks only what a node can check alone: that
+-- its own receive limit exceeds its own send limit.
+--
+-- It is nonsensical for 'maxAnnouncementAgeSend' to be less than the vote
+-- window, 3 L_hdr + L_vote + L_diff
+-- ('Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State.leiosVoteWindow'):
+-- the node relays a vote until its window ends, so a peer that connects after
+-- its announcement expired would receive the vote without the announcement, and
+-- disconnect the node. But that is awkward to enforce, since the vote window
+-- comes from the ledger, and so unusual that it does not seem worth
+-- complicating the code to enforce or check it.
 --
 -- TODO No test relays a notification at the end of that margin: just before
 -- its expiry, read from the log just before a prune, delivered late to a peer
 -- whose clock is ahead, and whose immutable tip advances meanwhile.
-data LeiosAnnouncementAgeLimits = MkLeiosAnnouncementAgeLimits
-  { maxAnnouncementAgeSend :: !NominalDiffTime
-  -- ^ Do not relay an announcement older than this, nor offer at its point.
-  , maxAnnouncementAgeRecv :: !NominalDiffTime
-  -- ^ Disconnect an upstream peer that relays an announcement older than this.
-  -- See
-  -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.ErrTooOld'.
-  }
+data LeiosAnnouncementAgeLimits
+  = -- | INVARIANT: the send limit, first, is not negative, and the receive
+    -- limit exceeds it
+    UnsafeMkLeiosAnnouncementAgeLimits !NominalDiffTime !NominalDiffTime
+  deriving stock (Eq, Show)
+
+-- | Do not relay an announcement older than this, nor offer at its point.
+maxAnnouncementAgeSend :: LeiosAnnouncementAgeLimits -> NominalDiffTime
+maxAnnouncementAgeSend (UnsafeMkLeiosAnnouncementAgeLimits send _recv) = send
+
+-- | Disconnect an upstream peer that relays an announcement older than this.
+-- See
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.ErrTooOld'.
+maxAnnouncementAgeRecv :: LeiosAnnouncementAgeLimits -> NominalDiffTime
+maxAnnouncementAgeRecv (UnsafeMkLeiosAnnouncementAgeLimits _send recv) = recv
+
+-- | The limits, unless the send limit is negative or the receive limit does not
+-- exceed it.
+mkLeiosAnnouncementAgeLimits ::
+  -- | 'maxAnnouncementAgeSend'
+  NominalDiffTime ->
+  -- | 'maxAnnouncementAgeRecv'
+  NominalDiffTime ->
+  Either InvalidLeiosAnnouncementAgeLimits LeiosAnnouncementAgeLimits
+mkLeiosAnnouncementAgeLimits send recv
+  | send < 0 = Left $ NegativeAnnouncementAgeSend send
+  | recv <= send = Left $ AnnouncementAgeRecvNotAboveSend send recv
+  | otherwise = Right $ UnsafeMkLeiosAnnouncementAgeLimits send recv
+
+-- | Why 'mkLeiosAnnouncementAgeLimits' rejects a pair of limits.
+data InvalidLeiosAnnouncementAgeLimits
+  = -- | The send limit is negative.
+    NegativeAnnouncementAgeSend !NominalDiffTime
+  | -- | The receive limit, given second, does not exceed the send limit.
+    AnnouncementAgeRecvNotAboveSend !NominalDiffTime !NominalDiffTime
   deriving stock (Eq, Show)
 
 -- | Five minutes to relay an announcement, and ten to accept one.
 defaultLeiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
-defaultLeiosAnnouncementAgeLimits =
-  MkLeiosAnnouncementAgeLimits
-    { maxAnnouncementAgeSend = 300
-    , maxAnnouncementAgeRecv = 600
-    }
+defaultLeiosAnnouncementAgeLimits = UnsafeMkLeiosAnnouncementAgeLimits 300 600

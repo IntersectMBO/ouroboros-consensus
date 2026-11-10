@@ -413,7 +413,6 @@ mkHandlers
     , getLeiosVoteState
     , getLeiosNotifyLog
     , getLeiosFetchKernel
-    , getLeiosAnnouncementAgeLimits
     }
   txSubmissionLogicVersion =
     Handlers
@@ -547,7 +546,6 @@ mkHandlers
             systemTime
             chainSyncFutureCheck
             maxClockSkew
-            getLeiosAnnouncementAgeLimits
             (onNewLeiosAnnouncement getLeiosFetchKernel)
             (recordLeiosOffer getLeiosFetchKernel peerVars)
             controlMessageSTM
