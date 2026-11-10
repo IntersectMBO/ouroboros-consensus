@@ -22,12 +22,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (SomeException, try)
-import Control.Tracer (nullTracer)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
+  , LeiosEbBounds (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , encodeEndorserBlockSize
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
+  , JobMismatch (..)
   , LeiosFetchClientContext (..)
   , processLeiosBlock
   , processLeiosBlockTxs
@@ -71,6 +73,13 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , recordReferencedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullLeiosJobPool)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( FetchArrivalBytes
+  , TraceLeiosFetchClientEvent (..)
+  , fetchArrivalEvicted
+  , fetchArrivalExtra
+  , fetchArrivalGood
+  )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , newLeiosDBInMemory
@@ -103,6 +112,30 @@ tests =
     , testCase
         "the client acquires no closure whose transactions are not the sizes its endorser block declares, fetches no more of it, and disconnects the peer that served them"
         test_wrongSizedTxs
+    , testCase
+        "the client takes a body of the right hash but not the offered size, emits its acquisition, and then disconnects the peer"
+        test_wrongOfferedSize
+    , testCase
+        "the client disconnects a peer whose body is bigger than its point allows, without writing it, even if the peer also misreported its size"
+        test_bodyTooBig
+    , testCase
+        "the client disconnects a peer whose body references more transaction bytes than its point allows, without writing it"
+        test_closureTooBig
+    , testCase "the client disconnects a peer that sends fewer transactions than requested" $
+        test_wrongTxCount
+    , testCase
+        "the client disconnects a peer whose transactions for a job do not add up to that job's size"
+        test_jobBytesSizeMismatch
+    , testCase
+        "the client disconnects a peer whose transactions for a job do not hash to that job's commitment"
+        test_jobCommitmentMismatch
+    , testCase
+        "of two deliveries of a body whose writes overlap, the client counts the bytes as needed only for the one that settles first"
+        test_overlappingDeliveries
+    , testCase "the client counts a body that arrives once its point holds it as redundant" $
+        test_deliveryAfterSettle
+    , testCase "the client counts transactions for a point pruned meanwhile as evicted" $
+        test_txsForPrunedPoint
     ]
 
 -- | What a notification says, comparably.
@@ -120,6 +153,9 @@ fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, txs)
 
 peer :: Int
 peer = 0
+
+otherPeer :: Int
+otherPeer = 1
 
 -- | Whom every election in these tests elects.
 electee :: KeyHash BlockIssuer
@@ -323,3 +359,156 @@ assertNoJobLeft point outstanding = case Map.lookup point (ebState outstanding) 
     assertBool "the point has jobs left" (nullLeiosJobPool jobPool)
   Just (MkEbState _onset NoBody) -> assertFailure "the point holds no body"
   Nothing -> assertFailure "the point has no entry"
+
+test_wrongOfferedSize :: Assertion
+test_wrongOfferedSize = do
+  let (point, eb, _txs) = fixture
+      size = encodeEndorserBlockSize eb
+  (ctx, notes) <- newContext
+  result <- try $ processLeiosBlock ctx peer (MkLeiosBlockRequest point (size + 1) maxBound) eb
+  case result of
+    Left (ExnLeiosBlockWrongSize p offered actual) -> (p, offered, actual) @?= (point, size + 1, size)
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client kept a peer that misreported the body's size"
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+
+test_bodyTooBig :: Assertion
+test_bodyTooBig = do
+  let (point, eb, _txs) = fixture
+      size = encodeEndorserBlockSize eb
+      bounds = MkLeiosEbBounds{lebMaxBodySize = size - 1, lebMaxTxsSize = maxBound}
+  (ctx, notes) <- newContext
+  result <- try $ processLeiosBlock ctx peer (MkLeiosBlockRequest point (size + 1) bounds) eb
+  case result of
+    Left (ExnLeiosBlockTooBig p actual most) -> (p, actual, most) @?= (point, size, size - 1)
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client kept a peer that sent a body too big"
+  readTVarIO notes >>= (@?= [])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
+
+test_closureTooBig :: Assertion
+test_closureTooBig = do
+  let (point, eb, txs) = fixture
+      closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+      bounds = MkLeiosEbBounds{lebMaxBodySize = maxBound, lebMaxTxsSize = closure - 1}
+  (ctx, notes) <- newContext
+  result <-
+    try $ processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) bounds) eb
+  case result of
+    Left (ExnLeiosClosureTooBig p actual most) ->
+      (p, actual, most) @?= (point, fromIntegral closure, closure - 1)
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client kept a peer that sent a body referencing too many bytes"
+  readTVarIO notes >>= (@?= [])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
+
+test_wrongTxCount :: Assertion
+test_wrongTxCount = do
+  let (point, _eb, txs) = fixture
+  replyToClosure (take 1 txs) >>= \case
+    Left (ExnLeiosBlockTxsWrongCount p requested arrived) -> (p, requested, arrived) @?= (point, 2, 1)
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client took too few transactions"
+
+test_jobBytesSizeMismatch :: Assertion
+test_jobBytesSizeMismatch = do
+  let (point, _eb, txs) = fixture
+  replyToClosure (take 1 txs <> [MkLeiosTx (BS8.pack "tx one!")]) >>= \case
+    Left (ExnLeiosBlockTxsJobMismatch p _job JobBytesSizeMismatch) -> p @?= point
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client took transactions of the wrong size"
+
+test_jobCommitmentMismatch :: Assertion
+test_jobCommitmentMismatch = do
+  let (point, _eb, txs) = fixture
+  replyToClosure (take 1 txs <> [MkLeiosTx (BS8.pack "tx onf")]) >>= \case
+    Left (ExnLeiosBlockTxsJobMismatch p _job JobCommitmentMismatch) -> p @?= point
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client took transactions other than the endorser block's"
+
+-- | What the client makes of these transactions as the reply to its request
+-- for the 'fixture''s closure.
+replyToClosure :: [LeiosTx] -> IO (Either ExnLeiosFetchInvalidReply ())
+replyToClosure txs = do
+  let (point, eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  try $ processLeiosBlockTxs ctx peer req (V.fromList txs)
+
+-- | Two peers deliver the 'fixture''s body before either write settles.
+test_overlappingDeliveries :: Assertion
+test_overlappingDeliveries = do
+  let (point, eb, _txs) = fixture
+      size = encodeEndorserBlockSize eb
+      req = MkLeiosBlockRequest point size maxBound
+  written <- newEmptyTMVarIO
+  (ctx, notes, traces) <- withTraces $ newContextHolding (atomically (readTMVar written))
+  processLeiosBlock ctx peer req eb
+  processLeiosBlock ctx otherPeer req eb
+  atomically $ putTMVar written ()
+  arrivals <- awaitBlockArrivals traces 2
+  [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
+  let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
+      needed = fetchArrivalGood size
+      redundant = fetchArrivalExtra size
+  assertBool
+    ("the bytes were not needed once and redundant once: " <> show byPeer)
+    (byPeer == [needed, redundant] || byPeer == [redundant, needed])
+  readTVarIO notes >>= (@?= [AcquiredBody point])
+
+test_deliveryAfterSettle :: Assertion
+test_deliveryAfterSettle = do
+  let (point, eb, _txs) = fixture
+      size = encodeEndorserBlockSize eb
+      req = MkLeiosBlockRequest point size maxBound
+  (ctx, notes, traces) <- withTraces newContext
+  processLeiosBlock ctx peer req eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  processLeiosBlock ctx otherPeer req eb
+  awaitBlockArrivals traces 2
+    >>= (@?= [(peer, point, fetchArrivalGood size), (otherPeer, point, fetchArrivalExtra size)])
+
+test_txsForPrunedPoint :: Assertion
+test_txsForPrunedPoint = do
+  let (point, eb, txs) = fixture
+      closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+  (ctx, notes, traces) <- withTraces newContext
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  modifyMVar_ (lfcOutstanding ctx) $ pure . snd . pruneOutstandingToImmTip (SlotNo 6)
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  events <- readTVarIO traces
+  [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
+    @?= [(peer, point, fetchArrivalEvicted closure)]
+
+-- | The context, its notifications, and its traces, newest first.
+withTraces ::
+  IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired]) ->
+  IO
+    ( LeiosFetchClientContext IO Int
+    , StrictTVar IO [Acquired]
+    , StrictTVar IO [TraceLeiosFetchClientEvent Int]
+    )
+withTraces mk = do
+  (ctx, notes) <- mk
+  traces <- newTVarIO []
+  pure (ctx{lfcTracer = mkTracer $ atomically . modifyTVar traces . (:)}, notes, traces)
+
+-- | Wait until this many endorser block arrivals are traced, and return them,
+-- ordered by peer.
+awaitBlockArrivals ::
+  StrictTVar IO [TraceLeiosFetchClientEvent Int] ->
+  Int ->
+  IO [(Int, LeiosPoint, FetchArrivalBytes)]
+awaitBlockArrivals traces n =
+  Timeout.timeout
+    5000000
+    ( atomically $ do
+        events <- readTVar traces
+        let arrivals = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
+        sortOn (\(p, _pt, _bytes) -> p) arrivals <$ check (length arrivals >= n)
+    )
+    >>= maybe (assertFailure "timed out waiting for arrivals") pure
