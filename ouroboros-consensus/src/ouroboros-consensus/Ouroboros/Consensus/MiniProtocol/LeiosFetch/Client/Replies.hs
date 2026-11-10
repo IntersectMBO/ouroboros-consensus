@@ -73,7 +73,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
-  ( TraceLeiosFetchClientEvent (..)
+  ( FetchArrivalBytes
+  , TraceLeiosFetchClientEvent (..)
   , fetchArrivalEvicted
   , fetchArrivalExtra
   , fetchArrivalGood
@@ -251,31 +252,32 @@ processLeiosBlock ctx peer req eb = do
   when (endorserBlockHash eb /= ebHash) $ do
     traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid ebBytesSize)
     throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
-  -- Under the lock, decide whether the node still wants this body: 'Nothing' if
-  -- so, else how to trace its bytes. The point lacks the body until a
-  -- delivery's write settles, so another delivery meanwhile is written too.
-  discarded <- modifyMVar lfcOutstanding $ \outstanding -> do
+  -- Under the lock, decide what to do with this body. The point lacks the body
+  -- until a delivery's write settles, so another delivery meanwhile is written
+  -- too.
+  delivery <- modifyMVar lfcOutstanding $ \outstanding -> do
     -- Answered, so this request is no longer in flight.
     let cleaned = refundEbRequest peer point (lbrOfferedSize req) outstanding
     case Map.lookup point (ebState outstanding) of
       _
-        | tooBig ->
+        | Just exn <- tooBig ->
             -- Held with nothing to fetch, so that neither its closure nor a
             -- re-send of the same bytes costs us anything more at this point.
             -- It is not written, so it is never emitted as acquired.
-            pure
-              ( acquireEbBody point Jobs.emptyJobPool cleaned
-              , Just (fetchArrivalInvalid ebBytesSize)
-              )
+            pure (acquireEbBody point Jobs.emptyJobPool cleaned, BodyTooBig exn)
       -- Pruned meanwhile.
-      Nothing -> pure (cleaned, Just (fetchArrivalEvicted ebBytesSize))
+      Nothing -> pure (cleaned, BodyDiscarded (fetchArrivalEvicted ebBytesSize))
       -- Another delivery's write settled first.
-      Just (MkEbState _onset BodyAcquired{}) -> pure (cleaned, Just (fetchArrivalExtra ebBytesSize))
-      Just (MkEbState _onset NoBody) -> pure (cleaned, Nothing)
+      Just (MkEbState _onset BodyAcquired{}) ->
+        pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
+      Just (MkEbState _onset NoBody) -> pure (cleaned, BodyToWrite)
   void $ tryPutMVar lfcReady ()
-  case discarded of
-    Just arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
-    Nothing -> do
+  case delivery of
+    BodyTooBig exn -> do
+      traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point (fetchArrivalInvalid ebBytesSize)
+      throwIO exn
+    BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived point arrival
+    BodyToWrite -> do
       bodyWritten <- writeEbBody lfcWriter point eb
       -- A failed write brings the node down, since the LeiosDB's writer is
       -- linked to it. This worker runs off this thread but is linked to it, so
@@ -285,12 +287,6 @@ processLeiosBlock ctx peer req eb = do
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
-  when bodyTooBig $
-    throwIO $
-      ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
-  when closureTooBig $
-    throwIO $
-      ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
  where
   MkLeiosFetchClientContext
     { lfcOutstanding
@@ -309,9 +305,21 @@ processLeiosBlock ctx peer req eb = do
   -- against the limits of the election it votes in: these are the limits of
   -- whichever election the request was made for.
   MkLeiosEbByteSizeBounds{lebMaxBodySize, lebMaxTxsSize} = lbrEbBounds req
-  bodyTooBig = ebBytesSize > lebMaxBodySize
-  closureTooBig = closureBytesSize > fromIntegral lebMaxTxsSize
-  tooBig = bodyTooBig || closureTooBig
+  tooBig
+    | ebBytesSize > lebMaxBodySize =
+        Just $ ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
+    | closureBytesSize > fromIntegral lebMaxTxsSize =
+        Just $ ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
+    | otherwise = Nothing
+
+-- | What 'processLeiosBlock' does with a body, decided under the lock.
+data BodyDelivery
+  = -- | Beyond its point's bounds, so never written.
+    BodyTooBig !ExnLeiosFetchInvalidReply
+  | -- | No longer wanted, its bytes classified so.
+    BodyDiscarded !FetchArrivalBytes
+  | -- | Wanted, so written, and traced once that settles.
+    BodyToWrite
 
 -- | Record the body as acquired at its point, now that its write is durable,
 -- with jobs for the txs the point does not hold yet, and emit what is acquired.
