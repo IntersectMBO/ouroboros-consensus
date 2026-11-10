@@ -10,7 +10,7 @@
 -- third announcement of an election. So the node decides once, here, whether
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
-  ( AnnounceState
+  ( AnnounceState (ageLimits)
   , hasAnnouncement
   , newAnnounceState
   , onValidAnnouncement
@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RankingBlockH
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
+  , LeiosAnnouncementAgeLimits
   , ValidAnnouncement (..)
   , announcingRbHash
   , maxAnnouncementAgeSend
@@ -52,14 +53,21 @@ data AnnounceState m blk = MkAnnounceState
   , prunedTo :: !(StrictTVar m SlotNo)
   -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
+  , ageLimits :: !LeiosAnnouncementAgeLimits
+  -- ^ how old an announcement the node relays or accepts
   }
 
 newAnnounceState ::
   (IOLike m, NoThunks (Header blk)) =>
+  LeiosAnnouncementAgeLimits ->
   NotifyLog m blk ->
   m (AnnounceState m blk)
-newAnnounceState notifyLog =
-  MkAnnounceState <$> newTVarIO Announcements.empty <*> newTVarIO 0 <*> pure notifyLog
+newAnnounceState limits notifyLog =
+  MkAnnounceState
+    <$> newTVarIO Announcements.empty
+    <*> newTVarIO 0
+    <*> pure notifyLog
+    <*> pure limits
 
 -- | Accept a valid announcement, and relay it if it is new and fresh enough,
 -- until 'maxAnnouncementAgeSend' after its election slot began.
@@ -79,15 +87,15 @@ onValidAnnouncement st valid = do
       Left _repeatedOrThird -> pure ()
       Right seen' -> do
         writeTVar announced seen'
-        when (announcementAge <= maxAnnouncementAgeSend) $
+        when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
           appendNotifyLog
             relayLog
             (NotifyAnnouncement announcingHeader)
-            (addRelTime maxAnnouncementAgeSend announcementOnset)
+            (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
  where
   electionId = ancElectionId announcingHeader
 
-  MkAnnounceState{prunedTo, announced, relayLog} = st
+  MkAnnounceState{prunedTo, announced, relayLog, ageLimits} = st
 
   MkValidAnnouncement
     { announcingHeader

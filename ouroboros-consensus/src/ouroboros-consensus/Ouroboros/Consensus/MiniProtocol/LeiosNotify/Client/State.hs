@@ -69,7 +69,7 @@ import Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, onValidAnnouncement)
+import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState (ageLimits), onValidAnnouncement)
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -89,7 +89,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , AnnouncingHeader (ancAnnouncement, ancElectionId)
   , announcementValidity
   , announcingRbHash
-  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -312,7 +311,8 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st 
       liftEither $ Announcements.insert (ancElectionId anc) anc (lnpsAnnouncements st)
     -- The expensive validation comes after the trivial counting checks. Even a
     -- 'StaleOCIN' announcement counts against the peer.
-    valid <- announcementValidity systemTime futureCheck cfg immLedger anc
+    valid <-
+      announcementValidity (ageLimits announceState) systemTime futureCheck cfg immLedger anc
     lift $ atomically $ onValidAnnouncement announceState valid
     pure
       st
@@ -408,13 +408,12 @@ data VoteWindow = MkVoteWindow
 
 -- | When a vote is worth relaying, given its election's ledger view and when
 -- its election slot began: from 3 L_hdr after until 3 L_hdr + L_vote + L_diff
--- after, or until its announcement is no longer relayed, if sooner.
+-- after.
 leiosVoteWindow :: LeiosLedgerView -> RelativeTime -> VoteWindow
 leiosVoteWindow MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod, llvDiffusionPeriod} onset =
   MkVoteWindow
     (onset `plus` (3 * lHdr))
-    -- NOTE: This cap never applies on mainnet, as L_diff is under 20 s.
-    (onset `plus` (min (3 * lHdr + lVote + lDiff) maxAnnouncementAgeSend))
+    (onset `plus` (3 * lHdr + lVote + lDiff))
  where
   plus = flip addRelTime
 
