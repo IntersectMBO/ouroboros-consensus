@@ -33,14 +33,14 @@
 --     outage): the first GC tick after downtime or during sync, where
 --     everything that aged out meanwhile is collected at once.
 --
--- A phase takes the next N EBs of the schedule, so the GC frontier passed to
--- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
--- order:
+-- A phase takes the next N EBs of the schedule, so the frontier the promotion
+-- advances to makes exactly N EBs collectable. Per phase, in order:
 --
 --   1. insert 5 fresh full EBs (announcement + body + txs) at the current
 --      load, reporting the median wall time (@insertEbSeconds@);
---   2. promote half of the N EBs, which copies them (@promoteSeconds@) ---
---      the rest are evicted un-copied, as un-certified EBs are on a real node;
+--   2. promote half of the N EBs, which copies them and advances to the
+--      frontier (@promoteSeconds@) --- the rest are evicted un-copied, as
+--      un-certified EBs are on a real node;
 --   3. call 'garbageCollect', which deletes the rows before the frontier
 --      (@gcSeconds@).
 --
@@ -491,9 +491,10 @@ runPhases opts db flushEvents latRef schedule =
             timed $
               leiosDbPromoteToImmutable
                 db
+                (SlotNo frontier)
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
           -- 3. GC
-          (_, gcWall) <- timed $ garbageCollect db (SlotNo frontier)
+          (_, gcWall) <- timed $ garbageCollect db
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents
           let stats = List.foldl' addEvent emptyCycleStats evs

@@ -111,12 +111,12 @@ tests =
                  withFreshSQLiteFile test_gcCollectsManyPoints
              , testCase "keeps only the newest point of an EB announced again in each round" $
                  withFreshSQLiteFile test_gcBoundsPointsOfReannouncedEb
-             , testCase "drops the writes of a point older than the latest collection" $
+             , testCase "drops the writes of a point older than the promoted slot" $
                  withFreshSQLiteFile test_gcDropsWritesOfCollectedPoint
              ]
          , testGroup
              "reads (SQLite)"
-             [ testCase "a read a collection overtook reads the immutable partition" $
+             [ testCase "a read a promotion overtook reads the immutable partition" $
                  withFreshSQLiteFile test_readOvertakenByCollection
              ]
          , testGroup
@@ -125,8 +125,9 @@ tests =
                  withTempLeiosDbPaths test_promoteAgainAfterLosingVolatileTxs
              , testCase "promotes an EB at the certified point, not at another point of it" $
                  withFreshSQLiteFile test_promoteAtCertifiedSlot
-             , testCase "a collection at the ImmutableDB tip after a crash reads the volatile points past it again" $
-                 withTempLeiosDbPaths test_collectBackToImmutableTip
+             , testCase
+                 "a truncated and reopened database keeps reading a promoted EB from the immutable partition" $
+                 withTempLeiosDbPaths test_truncateKeepsPromotedEb
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -244,7 +245,7 @@ mkTestGroups impl =
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
       , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
-      , testCase "reads a point older than the latest collection from the immutable partition only" $
+      , testCase "reads a point older than the promoted slot from the immutable partition only" $
           test_readsDispatchBySlot impl
       ]
   , testGroup
@@ -718,7 +719,7 @@ writeWholeEb con points eb = do
   forM_ points $ \point -> rwInsertEbBody con point eb
   forM_ points $ \point -> rwInsertTxs con point (allTxsFor eb)
 
--- | An EB promoted at slot 5, collected at slot 6, and fetched again at slot
+-- | An EB promoted at slot 5 up to slot 6, collected, and fetched again at slot
 -- 10, so far one of its txs. The reads of slot 5 go to the immutable
 -- partition, those of slot 10 to the volatile one, and neither falls back to
 -- the other.
@@ -728,8 +729,8 @@ test_readsDispatchBySlot impl = withFreshDb impl $ \db -> withRW db $ \con -> do
       promoted = mkTestPoint 5 1
       again = mkTestPoint 10 1
   writeWholeEb con [promoted] eb
-  leiosDbPromoteToImmutable db [promoted]
-  garbageCollect db 6
+  leiosDbPromoteToImmutable db 6 [promoted]
+  garbageCollect db
   rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
   rwBatchRetrieveTxs con again [0, 1] >>= (@?= [(0, Just (txBytesFor eb 0)), (1, Nothing)])
@@ -747,36 +748,36 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
       point = mkTestPoint 5 1
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     writeWholeEb con [point] eb
-    leiosDbPromoteToImmutable db [point]
+    leiosDbPromoteToImmutable db 6 [point]
   -- What the crash leaves of the volatile partition: the body, but no txs.
   withSqlFile volDbPath $ \sql ->
     SQL.exec
       sql
       (T.pack "UPDATE ebs SET txWritten = zeroblob(length(txWritten)), txs = zeroblob(length(txs))")
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    leiosDbPromoteToImmutable db [point]
+    leiosDbPromoteToImmutable db 6 [point]
     rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))
 
--- | A crash after a promotion but before the ImmutableDB appended the blocks
--- leaves the newest promoted point past the ImmutableDB tip, and the reopened
--- LeiosDB reads the points up to it from the immutable partition. The ChainDB
--- collects at its tip when it opens, which reads them from the volatile one
--- again.
-test_collectBackToImmutableTip :: FilePath -> FilePath -> IO ()
-test_collectBackToImmutableTip volDbPath immDbPath = do
+-- | An EB promoted at slot 100 up to slot 110 and collected, before the
+-- ImmutableDB is truncated back to slot 100, and the LeiosDB with it. Reopened,
+-- the promoted slot is the one after the EB's, so its reads still go to the
+-- immutable partition, and a point after it can be written again.
+test_truncateKeepsPromotedEb :: FilePath -> FilePath -> IO ()
+test_truncateKeepsPromotedEb volDbPath immDbPath = do
   let eb = mkTestEb 2
-      unpromoted = mkTestPoint 10 1
-      promoted = mkTestPoint 20 2
+      promoted = mkTestPoint 100 1
+      after = mkTestPoint 105 2
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    writeWholeEb con [unpromoted] eb
     writeWholeEb con [promoted] eb
-    leiosDbPromoteToImmutable db [promoted]
+    leiosDbPromoteToImmutable db 110 [promoted]
+    garbageCollect db
+  truncateLeiosDbAfterSlot volDbPath 100
+  truncateLeiosDbAfterSlot immDbPath 100
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    rwLookupEbClosure con unpromoted >>= (@?= Nothing)
-    garbageCollect db 5
-    rwLookupEbClosure con unpromoted >>= (@?= Just (map snd (allTxsFor eb)))
     rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
-    rwScanComplete con 5 >>= (@?= [unpromoted, promoted])
+    rwScanComplete con 100 >>= (@?= [promoted])
+    writeWholeEb con [after] eb
+    rwLookupEbClosure con after >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | An EB announced again after the announcement that gets certified: the
 -- immutable copy is at the certified slot.
@@ -784,29 +785,29 @@ test_promoteAtCertifiedSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_promoteAtCertifiedSlot _volDbPath immDbPath db = do
   let certified = mkTestPoint 10 1
   withRW db $ \con -> writeWholeEb con [certified, mkTestPoint 20 1] (mkTestEb 2)
-  leiosDbPromoteToImmutable db [certified]
+  leiosDbPromoteToImmutable db 11 [certified]
   ebSlotIn immDbPath (mkTestEbHash 1) >>= (@?= 10)
 
--- | An EB promoted at slot 5 and collected at slot 6, read by a reader that
--- chose the volatile partition before that collection: as of its choice, the
--- latest collection was at slot 0. It finds no row there, and reads the
--- immutable partition only if the collection has overtaken it.
+-- | An EB promoted at slot 5 up to slot 6 and collected, read by a reader that
+-- chose the volatile partition before that promotion: as of its choice, the
+-- promoted slot was 0. It finds no row there, and reads the immutable partition
+-- only if the promotion has overtaken it.
 test_readOvertakenByCollection :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_readOvertakenByCollection volDbPath immDbPath db = do
   let eb = mkTestEb 2
       point = mkTestPoint 5 1
   withRW db $ \con -> writeWholeEb con [point] eb
-  leiosDbPromoteToImmutable db [point]
-  garbageCollect db 6
+  leiosDbPromoteToImmutable db 6 [point]
+  garbageCollect db
   statsVar <- newTVarIO =<< initialStats volDbPath immDbPath
-  gcSlotVar <- newTVarIO 0
+  promotedSlotVar <- newTVarIO 0
   bracket (openRawConnection volDbPath) closeChecked $ \volDb ->
     bracket (openRawConnection immDbPath) closeChecked $ \immDb -> do
-      let conn = mkConn nullTracer statsVar gcSlotVar volDb immDb
+      let conn = mkConn nullTracer statsVar promotedSlotVar volDb immDb
       readPartition conn point (`lookupBlob` point) >>= (@?= Nothing)
-      -- The collection completes while the read runs.
+      -- The promotion completes while the read runs.
       let overtaken readDb = do
-            atomically $ writeTVar gcSlotVar 6
+            atomically $ writeTVar promotedSlotVar 6
             lookupBlob readDb point
       readPartition conn point overtaken >>= (@?= Just (bodyBytes eb))
 
@@ -814,12 +815,19 @@ test_readOvertakenByCollection volDbPath immDbPath db = do
 holdsClosure :: RW -> LeiosPoint -> IO Bool
 holdsClosure con point = isJust <$> rwLookupEbClosure con point
 
+-- | Advance the promoted slot without promoting anything, as for blocks that
+-- certify nothing, then collect.
+collectBefore :: LeiosDbHandle IO -> SlotNo -> IO ()
+collectBefore db slot = do
+  leiosDbPromoteToImmutable db slot []
+  garbageCollect db
+
 test_gcEvictsOldEb :: LeiosDbHandle IO -> IO ()
 test_gcEvictsOldEb db = withRW db $ \con -> do
   -- The old EB references transactions 0, 1 and 2, and the other only 0 and 1.
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
   writeWholeEb con [mkTestPoint 10 2] (mkTestEb 2)
-  garbageCollect db 6
+  collectBefore db 6
   rwLookupEbBody con (mkTestPoint 5 1) >>= (@?= Nothing)
   holdsClosure con (mkTestPoint 5 1) >>= (@?= False)
   rwScanComplete con 0 >>= (@?= [mkTestPoint 10 2])
@@ -834,17 +842,17 @@ test_gcDropsOlderPoints db = withRW db $ \con -> do
   let eb = mkTestEb 2
       again = mkTestPoint 10 1
   writeWholeEb con [mkTestPoint 5 1, again] eb
-  garbageCollect db 6
+  collectBefore db 6
   rwScanComplete con 0 >>= (@?= [again])
 
--- | After a collection at slot 6, a point at slot 5 and a body for another
--- point at slot 5 are written, and one at slot 4 that an earlier collection at
--- slot 3 would not collect.
+-- | After a promotion up to slot 6, a point at slot 5 and a body for another
+-- point at slot 5 are written, and one at slot 4 that a later promotion up to
+-- slot 3 does not bring back.
 test_gcDropsWritesOfCollectedPoint :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_gcDropsWritesOfCollectedPoint volDbPath _immDbPath db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
-  garbageCollect db 3
-  garbageCollect db 6
+  collectBefore db 6
+  collectBefore db 3
   rwInsertEbBody con (mkTestPoint 5 2) (mkTestEb 2)
   rwInsertEbBody con (mkTestPoint 5 3) (mkTestEb 3)
   rwInsertEbBody con (mkTestPoint 4 1) (mkTestEb 2)
@@ -859,14 +867,14 @@ test_gcBoundsPointsOfReannouncedEb volDbPath _immDbPath db = withRW db $ \con ->
   writeWholeEb con [mkTestPoint 10 1] eb
   forM_ [2 .. 10] $ \n -> do
     rwInsertEbBody con (mkTestPoint (10 * n) 1) eb
-    garbageCollect db (10 * n)
+    collectBefore db (10 * n)
   ebRows volDbPath >>= (@?= 1)
   rwLookupEbBody con (mkTestPoint 100 1) >>= (@?= Just (bodyBytes eb))
 
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
-  garbageCollect db 6
+  collectBefore db 6
   holdsClosure con (mkTestPoint 6 1) >>= (@?= True)
 
 -- | More points before the slot than the SQLite implementation deletes in one
@@ -877,15 +885,15 @@ test_gcCollectsManyPoints volDbPath _immDbPath db = withRW db $ \con -> do
       n = 2 * gcBatchSize + 1
   forM_ [1 .. n] $ \slot ->
     rwInsertEbBody con (mkTestPoint (fromIntegral slot) 1) eb
-  garbageCollect db (fromIntegral n)
+  collectBefore db (fromIntegral n)
   ebRows volDbPath >>= (@?= 1)
   rwLookupEbBody con (mkTestPoint (fromIntegral n) 1) >>= (@?= Just (bodyBytes eb))
 
 test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
 test_gcKeepsPromotedEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
-  leiosDbPromoteToImmutable db [mkTestPoint 5 1]
-  garbageCollect db 6
+  leiosDbPromoteToImmutable db 6 [mkTestPoint 5 1]
+  garbageCollect db
   holdsClosure con (mkTestPoint 5 1) >>= (@?= True)
 
 -- | An EB promoted at slot 10, and later at slot 20, both collected.
@@ -894,25 +902,26 @@ test_promoteAtEachPoint db = withRW db $ \con -> do
   let earlier = mkTestPoint 10 1
       later = mkTestPoint 20 1
   writeWholeEb con [earlier, later] (mkTestEb 2)
-  leiosDbPromoteToImmutable db [earlier]
-  leiosDbPromoteToImmutable db [later]
-  garbageCollect db 21
+  leiosDbPromoteToImmutable db 11 [earlier]
+  leiosDbPromoteToImmutable db 21 [later]
+  garbageCollect db
   holdsClosure con earlier >>= (@?= True)
   holdsClosure con later >>= (@?= True)
 
--- | A complete EB promoted along with one whose closure lacks a tx.
+-- | A complete EB promoted along with one whose closure lacks a tx, up to slot 6.
 test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
 test_promoteIncompleteFails db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 4 2] (mkTestEb 3)
   rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
   rwInsertTxs con (mkTestPoint 5 1) (take 1 (allTxsFor (mkTestEb 2)))
   assertPromoteFails db [mkTestPoint 4 2, mkTestPoint 5 1]
-  garbageCollect db 6
+  collectBefore db 6
   holdsClosure con (mkTestPoint 4 2) >>= (@?= False)
 
+-- | Promoting the points up to slot 6 fails.
 assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
 assertPromoteFails db points =
-  tryDb (leiosDbPromoteToImmutable db points) >>= \case
+  tryDb (leiosDbPromoteToImmutable db 6 points) >>= \case
     Left _ -> pure ()
     Right () -> assertFailure "promoting an EB whose closure is incomplete succeeded"
  where
@@ -1209,7 +1218,7 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- bodies the garbage collection evicts: those of every endorser block all of
 -- whose points are older than its slot, promoted or not, since a promoted one
 -- has been copied; and every other point older than its slot. A point older
--- than the latest garbage collection is not written at all.
+-- than the promoted slot is not written at all.
 --
 -- An endorser block is also promoted at most once: the node promotes only what
 -- the immutable chain certifies, and a chain cannot certify the same endorser
@@ -1243,14 +1252,14 @@ observe db bodies ops = withRW db $ \rw -> do
   complete <- rwScanComplete rw 0
   pure (counts, (held, (seen, complete)))
  where
-  go _rw _gcSlot _points _bodied promoted nEvicted [] = pure ((length promoted, nEvicted), [])
-  go rw gcSlot points bodied promoted nEvicted (op : rest) = case op of
+  go _rw _promotedSlot _points _bodied promoted nEvicted [] = pure ((length promoted, nEvicted), [])
+  go rw promotedSlot points bodied promoted nEvicted (op : rest) = case op of
     OpBody point fills
       | point `notElem` bodied -> do
           held <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
           let bodied' = if collected point then bodied else point : bodied
-          fmap (held :) <$> go rw gcSlot (written point points) bodied' promoted nEvicted rest
-      | otherwise -> go rw gcSlot points bodied promoted nEvicted rest
+          fmap (held :) <$> go rw promotedSlot (written point points) bodied' promoted nEvicted rest
+      | otherwise -> go rw promotedSlot points bodied promoted nEvicted rest
     OpTxs point offsets -> do
       let indices = snd (bodies Map.! pointEbHash point)
       rwInsertTxs
@@ -1259,32 +1268,33 @@ observe db bodies ops = withRW db $ \rw -> do
         [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
         | offset <- offsets
         ]
-      go rw gcSlot points bodied promoted nEvicted rest
+      go rw promotedSlot points bodied promoted nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
         complete <- holdsClosure rw point
         if complete
           then do
-            leiosDbPromoteToImmutable db [point]
-            go rw gcSlot points bodied (nub (ebHash : promoted)) nEvicted rest
-          else go rw gcSlot points bodied promoted nEvicted rest
-      [] -> go rw gcSlot points bodied promoted nEvicted rest
+            leiosDbPromoteToImmutable db promotedSlot [point]
+            go rw promotedSlot points bodied (nub (ebHash : promoted)) nEvicted rest
+          else go rw promotedSlot points bodied promoted nEvicted rest
+      [] -> go rw promotedSlot points bodied promoted nEvicted rest
     OpGc slot -> do
-      garbageCollect db slot
-      let newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
+      collectBefore db slot
+      let slot' = max slot promotedSlot
+          newest ebHash = maximum [pointSlotNo p | p <- points, pointEbHash p == ebHash]
           evicted =
-            nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot]
-          kept p = pointSlotNo p >= slot
+            nub [ebHash | p <- points, let ebHash = pointEbHash p, newest ebHash < slot']
+          kept p = pointSlotNo p >= slot'
       go
         rw
-        (max slot gcSlot)
+        slot'
         (filter kept points)
         (filter kept bodied)
         promoted
         (nEvicted + length evicted)
         rest
    where
-    collected point = pointSlotNo point < gcSlot
+    collected point = pointSlotNo point < promotedSlot
     written point ps
       | collected point || point `elem` ps = ps
       | otherwise = point : ps

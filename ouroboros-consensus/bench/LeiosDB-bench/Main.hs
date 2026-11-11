@@ -258,8 +258,9 @@ runBench mLoad BenchEnv{beDb, beVoter, bePeers, beApplier} = do
     -- Returns its point.
     fetchEb eb onDone = do
       slot <- atomicModifyIORef' slotVar $ \n -> (n + 1, n)
-      when (slot `mod` gcEvery == 0) $
-        garbageCollect beDb (SlotNo (fromIntegral (slot + 1 - numVolatileEbs)))
+      when (slot `mod` gcEvery == 0) $ do
+        leiosDbPromoteToImmutable beDb (SlotNo (fromIntegral (slot + 1 - numVolatileEbs))) []
+        garbageCollect beDb
       let point = MkLeiosPoint (SlotNo (fromIntegral slot)) (beHash eb)
       started <- getMonotonicTime
       withWriter beDb $ \w -> writeBody w point eb record
