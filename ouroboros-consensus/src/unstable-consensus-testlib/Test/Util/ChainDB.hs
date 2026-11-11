@@ -32,10 +32,9 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
-import Ouroboros.Consensus.Storage.PerasImmutableCertDB
-  ( PerasImmutableCertDbArgs (..)
-  , PerasImmutableCertDbIntegrityCheckPolicy (..)
-  )
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasImmutableCertDB (PerasImmutableCertDbArgs (..))
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as PerasImmutableCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -58,6 +57,7 @@ data NodeDBs db = NodeDBs
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
   , nodeDBsGsm :: db
+  , nodeDBsPerasCert :: db
   , nodeDBsPerasImmutableCert :: db
   }
   deriving (Functor, Foldable, Traversable)
@@ -67,6 +67,7 @@ emptyNodeDBs =
   atomically $
     NodeDBs
       <$> newTMVar Mock.empty
+      <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
@@ -140,14 +141,17 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
-          { pcdbaTracer = nullTracer
+          { pcdbaCodecConfig = configCodec mcdbTopLevelConfig
+          , pcdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasCert mcdbNodeDBs)
+          , pcdbaTracer = nullTracer
+          , pcdbaIntegrityCheckPolicy = PerasCertDB.CheckOnRead
           }
     , cdbPerasImmutableCertDbArgs =
         PerasImmutableCertDbArgs
           { picdbaCodecConfig = configCodec mcdbTopLevelConfig
           , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmutableCert mcdbNodeDBs)
           , picdbaTracer = nullTracer
-          , picdbaIntegrityCheckPolicy = CheckOnRead
+          , picdbaIntegrityCheckPolicy = PerasImmutableCertDB.CheckOnRead
           }
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs

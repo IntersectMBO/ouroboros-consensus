@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
   , prop_addCertLatestCertSeenMonotonic
   , prop_garbageCollectPreservesLatestCertSeen
 
-  -- * Errors
+    -- * Errors
   , PerasCertDbError (..)
   ) where
 
@@ -34,10 +34,9 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
+import Ouroboros.Consensus.Util.CallStack (PrettyCallStack)
+import Ouroboros.Consensus.Util.IOLike (Exception (displayException), MonadSTM (STM, atomically))
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
-import Ouroboros.Consensus.Util.CallStack (HasCallStack, PrettyCallStack, prettyCallStack)
-import Ouroboros.Consensus.Util.IOLike
-    ( MonadSTM(STM, atomically), Exception(displayException) )
 
 data PerasCertDB m blk = PerasCertDB
   { addCert ::

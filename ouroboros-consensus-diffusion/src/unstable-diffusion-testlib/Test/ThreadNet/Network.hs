@@ -1613,9 +1613,10 @@ newNodeInfo = do
     (v3, m3) <- mk
     (v4, m4) <- mk
     (v5, m5) <- mk
+    (v6, m6) <- mk
     pure
-      ( NodeDBs v1 v2 v3 v4 v5
-      , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4 <*> m5
+      ( NodeDBs v1 v2 v3 v4 v5 v6
+      , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4 <*> m5 <*> m6
       )
 
   pure

@@ -225,8 +225,9 @@ completeChainDbArgs
             , LedgerDB.lgrBackendArgs = flavorArgs
             }
       , cdbPerasCertDbArgs =
-          PerasCertDB.PerasCertDbArgs
-            { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
+          (cdbPerasCertDbArgs defArgs)
+            { PerasCertDB.pcdbaCodecConfig = configCodec cdbsTopLevelConfig
+            , PerasCertDB.pcdbaHasFS = mkImmFS $ RelativeMountPoint "perascert"
             }
       , cdbPerasImmutableCertDbArgs =
           (cdbPerasImmutableCertDbArgs defArgs)

@@ -15,6 +15,7 @@
 module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ( -- * Opening
     PerasCertDbArgs (..)
+  , PerasCertDbIntegrityCheckPolicy (..)
   , defaultArgs
   , openDB
 
@@ -26,7 +27,7 @@ where
 import Cardano.Binary
 import qualified Codec.CBOR.Read as CBOR
 import Control.Applicative ((<|>))
-import Control.Monad (foldM, forM, forM_, guard, unless, void, when)
+import Control.Monad (foldM, forM_, guard, unless, void, when)
 import Control.Monad.State.Strict (StateT, get, lift, put)
 import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
@@ -36,12 +37,12 @@ import Data.Kind (Type)
 import Data.List (stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (pack)
-import Data.Word (Word32, Word64)
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block

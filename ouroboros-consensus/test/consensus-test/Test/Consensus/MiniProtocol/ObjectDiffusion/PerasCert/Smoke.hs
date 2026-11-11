@@ -1,13 +1,12 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
   ( tests
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
-import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
@@ -30,6 +29,9 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( genProtocolConstants
   , prop_smoke_object_diffusion
@@ -48,13 +50,19 @@ tests =
     ]
 
 newCertDB ::
-  ( IOLike m
-  , BlockSupportsPeras blk
-  ) =>
-  [WithArrivalTime (ValidatedPerasCert blk)] ->
-  m (PerasCertDB m blk)
+  IOLike m =>
+  [WithArrivalTime (ValidatedPerasCert TestBlock)] ->
+  m (PerasCertDB m TestBlock)
 newCertDB certs = do
-  db <- PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
+  fs <- atomically $ newTMVar Mock.empty
+  db <-
+    PerasCertDB.openDB
+      PerasCertDB.PerasCertDbArgs
+        { PerasCertDB.pcdbaTracer = nullTracer
+        , PerasCertDB.pcdbaCodecConfig = TestBlockCodecConfig
+        , PerasCertDB.pcdbaHasFS = SomeHasFS $ simHasFS fs
+        , PerasCertDB.pcdbaIntegrityCheckPolicy = PerasCertDB.CheckOnRead
+        }
   mapM_
     ( \cert -> do
         result <- join $ atomically $ PerasCertDB.addCert db cert
