@@ -32,7 +32,6 @@ import Cardano.Crypto.Leios
   ( LeiosSeatId
   , LeiosSigningKey
   , getLeiosSeatId
-  , leiosSignContext
   )
 import Cardano.Ledger.BaseTypes (unboundRational)
 import Control.Monad (forever, unless, void, when)
@@ -410,7 +409,7 @@ signVote key seat rbHash =
   MkLeiosVote
     { voteAnnouncingRbHash = rbHash
     , voteSeatId = seat
-    , voteSignature = signDSIGN leiosSignContext rbHash key
+    , voteSignature = signDSIGN () rbHash key
     }
 
 -- | The value, or stop with the reason.
