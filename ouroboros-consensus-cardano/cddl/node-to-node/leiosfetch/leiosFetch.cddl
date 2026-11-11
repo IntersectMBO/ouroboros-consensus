@@ -19,12 +19,8 @@ msgLeiosBlockTxs        = [4, tx_list]
 point = [base.slotno, eb_hash]
 eb_hash = base.hash
 
-; The endorser block as CBOR-in-CBOR to indicate what bytes are hashed and that
-; servers may serve them without decoding. Was introduced with Dijkstra era and
-; currently only one format exists. When the structure changes, fetch clients
-; and other consensus components will know which era this is from; endorser
-; blocks are not allowed to be used across era boundaries.
-endorser_block = #6.24(bytes .cbor dijkstra.eb_references)
+; The endorser block as the Leios prototype sends it, not CBOR-in-CBOR.
+endorser_block = dijkstra.eb_references
 
 ; Inspired by roaring bitmaps: 64-tx window index to 64-bit presence bitmaps
 bitmaps = { * uint .size 2 => uint .size 8 }

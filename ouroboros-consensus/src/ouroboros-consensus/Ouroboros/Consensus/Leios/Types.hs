@@ -119,8 +119,9 @@ import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
-import Codec.CBOR.Write (toStrictByteString)
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Term (decodeTerm, encodeTerm)
+import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -470,17 +471,17 @@ deserialiseEndorserBlock _ (Serialised bytes)
 hashSerialisedEndorserBlock :: Serialised EndorserBlock -> EndorserBlockHash
 hashSerialisedEndorserBlock (Serialised bytes) = castHash $ hashWith @HASH id (BSL.toStrict bytes)
 
--- | An endorser block's bytes as LeiosFetch sends them:
--- @#6.24(bytes .cbor eb_references)@.
+-- | An endorser block's bytes as LeiosFetch sends them: plain
+-- @eb_references@, as the Leios prototype does.
 encodeSerialisedEndorserBlock :: Serialised EndorserBlock -> Encoding
-encodeSerialisedEndorserBlock (Serialised bytes) = encodeNestedCborBytes bytes
+encodeSerialisedEndorserBlock (Serialised bytes) = CBOR.encodePreEncoded (BSL.toStrict bytes)
 
--- | The inverse of 'encodeSerialisedEndorserBlock'. It rejects bytes exceeding
--- 'maxEndorserBlockBytesSize', which the byte string's header tells before
--- they are read, and decodes nothing within them.
+-- | The inverse of 'encodeSerialisedEndorserBlock'. It re-encodes the term it
+-- reads, which gives back the bytes of the prototype's encoding, and rejects
+-- those exceeding 'maxEndorserBlockBytesSize'.
 decodeSerialisedEndorserBlock :: Decoder s (Serialised EndorserBlock)
 decodeSerialisedEndorserBlock = do
-  bytes <- decodeNestedCborBytes
+  bytes <- toStrictByteString . encodeTerm <$> decodeTerm
   when (BS.length bytes > fromIntegral maxEndorserBlockBytesSize) $
     fail $
       "endorser block of "
