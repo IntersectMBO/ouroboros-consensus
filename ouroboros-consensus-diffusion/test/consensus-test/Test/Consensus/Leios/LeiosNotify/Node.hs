@@ -10,7 +10,7 @@ module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 
 import Cardano.Crypto.DSIGN.Class (signDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId (..), LeiosSigningKey, leiosSignContext)
+import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId (..), LeiosSigningKey)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -572,7 +572,7 @@ voteFor blk seat =
   MkLeiosVote
     rbHash
     (LeiosSeatId seat)
-    (signDSIGN leiosSignContext rbHash (seatKeys !! fromIntegral seat))
+    (signDSIGN () rbHash (seatKeys !! fromIntegral seat))
  where
   rbHash = toRankingBlockHash (Proxy @LeiosTestBlock) (blockHash blk)
 

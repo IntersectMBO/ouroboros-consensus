@@ -40,7 +40,6 @@ import Cardano.Crypto.Leios
   ( LeiosCommittee
   , LeiosSeat (..)
   , LeiosSeatId
-  , leiosSignContext
   , resolveLeiosSeat
   )
 import Control.Monad (forever, when)
@@ -200,7 +199,7 @@ validateVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignatu
   case resolveLeiosSeat committee voteSeatId of
     Just LeiosSeat{seatVKey = SJust vk} ->
       first (BadSignature . Text.pack) $
-        verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
+        verifyDSIGN () vk voteAnnouncingRbHash voteSignature
     Just LeiosSeat{seatVKey = SNothing} -> Left SeatHasNoKey
     Nothing -> Left SeatNotResolvable
 
