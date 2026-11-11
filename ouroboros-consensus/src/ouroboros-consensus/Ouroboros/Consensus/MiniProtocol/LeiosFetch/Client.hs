@@ -83,7 +83,8 @@ data WhetherDraining = AlreadyDraining | NotYetDraining
 
 -- | A client that sends each job's request as soon as it has one, leaving at
 -- most @depth@ outstanding, and hands each reply to its job. Once told to
--- stop, it ignores the replies still outstanding, then sends 'MsgDone'.
+-- stop, it ignores the replies that arrive afterwards, but one already being
+-- handled is not interrupted. Then it sends 'MsgDone'.
 leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
   PrimMonad m =>
