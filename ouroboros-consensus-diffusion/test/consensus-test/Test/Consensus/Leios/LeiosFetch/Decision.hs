@@ -51,6 +51,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
   , newLeiosJobPool
+  , peerBudget
   , pruneOffers
   , pruneOutstandingToImmTip
   , recordReferencedPoint
@@ -103,6 +104,9 @@ tests =
             test_noRefetchOversized
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
+        , testCase
+            "a body that does not fit a peer's remaining budget is not requested, nor is any offer after it"
+            test_perPeerByteBudgetHard
         ]
     , testGroup
         "EB closure fetch"
@@ -280,6 +284,27 @@ test_perPeerByteBudget =
     & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
+
+-- | A peer is asked for a body only if it fits in what remains of the peer's
+-- cap, and the first body that does not fit ends the peer's walk, so a smaller
+-- one offered after it is not asked for either.
+test_perPeerByteBudgetHard :: IO ()
+test_perPeerByteBudgetHard = do
+  bodiesRequested (cap - 1024) @?= [point 1 'a']
+  bodiesRequested (cap - 1023) @?= []
+ where
+  cap = maxRequestedBytesSizePerPeer env
+  bodiesRequested used =
+    let reqs =
+          empty
+            & withMissingBody (point 1 'a') 1024
+            & withMissingBody (point 2 'b') 100
+            & withRequestedBytesPerPeer peerA used
+            & offersBody peerA [point 1 'a', point 2 'b']
+            -- Both points are in the high-priority tier, which is walked
+            -- oldest first.
+            & runIterationAt (SlotNo 2)
+     in [r.lbrPoint | LeiosBlockRequest r <- maybe [] toList (Map.lookup peerA reqs)]
 
 test_focusCertifiedPruned :: IO ()
 test_focusCertifiedPruned =
@@ -634,6 +659,9 @@ violations sim =
           owed = sum (map requestBytes (inFlight peer))
     , charged /= owed
     ]
+      <> [ "peer " <> show peer <> " is charged past its cap"
+         | peerBudget propEnv (Map.findWithDefault IsNotBigLedgerPeer peer propBigLedgerPeers) o peer < 0
+         ]
       <> [ "peer "
              <> show peer
              <> " is tracked with bodies "
