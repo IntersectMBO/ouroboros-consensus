@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 -- | Tests of the LeiosFetch decision logic, on scenarios built directly from
@@ -9,9 +10,12 @@ import Cardano.Ledger.Keys (KeyHash (..))
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
+import qualified Data.Foldable as F
 import Data.Function ((&))
+import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SNothing))
@@ -28,7 +32,9 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( LeiosBlockRequest (..)
+  ( EbFetchState (..)
+  , EbState (..)
+  , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosEbByteSizeBounds (..)
   , LeiosFetchRequest (..)
@@ -37,21 +43,40 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , OfferedHalves (..)
   , PeerOffer (MkPeerOffer)
   , acquireEbBody
+  , completeTxRequest
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , fetchPriorityTiers
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
+  , newLeiosJobPool
   , pruneOffers
+  , pruneOutstandingToImmTip
   , recordReferencedPoint
   , refundEbRequest
+  , refundTxRequest
+  , removePeerFromOutstanding
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
+import Test.QuickCheck
+  ( Gen
+  , Property
+  , arbitrary
+  , choose
+  , counterexample
+  , forAll
+  , frequency
+  , property
+  , sublistOf
+  , tabulate
+  , vectorOf
+  )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
@@ -91,6 +116,15 @@ tests =
         "focus"
         [ testCase "a verified certificate for an election older than the pruned slot changes nothing" $
             test_focusCertifiedPruned
+        , testCase
+            "a verified certificate moves its election onto an endorser block that lost the announcement race"
+            test_focusCertifiedEb
+        ]
+    , testGroup
+        "bookkeeping"
+        [ testProperty
+            "the outstanding state agrees with the requests in flight, whatever settles them"
+            prop_bookkeeping
         ]
     , testGroup
         "fetch priority"
@@ -255,6 +289,40 @@ test_focusCertifiedPruned =
     focusCertifiedEb (ElectionId (SlotNo 10) fixtureElectee) (eb 'a') $
       emptyLeiosOutstanding (mkStdGen 0) (SlotNo 20)
 
+-- | An announcement focuses an election on its endorser block, and a second
+-- announcement for that election does not move the focus. A verified
+-- certificate for the second does, and tracks its point, so a peer offering
+-- both is asked only for the certified one. Its offer of the other is kept, in
+-- case some election fetches that later.
+test_focusCertifiedEb :: IO ()
+test_focusCertifiedEb = do
+  Map.lookup elId (elFocus announced) @?= Just (eb 'a')
+  Map.lookup elId (elFocus certified) @?= Just (eb 'b')
+  Map.member pB (ebState certified) @?= True
+  [r.lbrPoint | LeiosBlockRequest r <- maybe [] toList (Map.lookup peerA reqs)] @?= [pB]
+  maybe [] (toList . NEMap.keys) (Map.lookup peerA prunes) @?= [pB]
+ where
+  elId = ElectionId (SlotNo 10) fixtureElectee
+  pA = point 10 'a'
+  pB = point 10 'b'
+  -- The first announcement takes the election's focus and tracks its point;
+  -- the second changes nothing.
+  announced =
+    focusElectionIfUnfocused elId (eb 'b')
+      . focusElectionIfUnfocused elId (eb 'a')
+      . recordReferencedPoint pA SNothing
+      $ emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
+  certified = focusCertifiedEb elId (eb 'b') announced
+  offers = Map.fromList [(p, MkPeerOffer SNothing (OfferedBody 1024)) | p <- [pA, pB]]
+  (_, reqs, prunes) =
+    leiosFetchLogicIteration
+      env
+      anyBounds
+      (Just (SlotNo 11, priorityWindow))
+      (Map.singleton peerA offers)
+      Map.empty
+      certified
+
 test_bigLedgerPeerBudget :: IO ()
 test_bigLedgerPeerBudget = do
   -- past the ordinary cap, an ordinary peer is asked for nothing ...
@@ -325,6 +393,291 @@ test_pickJobs = do
     case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
       Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
       Nothing -> Nothing
+
+{-------------------------------------------------------------------------------
+  Bookkeeping
+-------------------------------------------------------------------------------}
+
+-- | Decide, and settle what was decided, in any order: after every step, the
+-- outstanding state's accounting of each peer's requests must agree with the
+-- requests actually in flight.
+prop_bookkeeping :: Property
+prop_bookkeeping =
+  forAll genSetup $ \setup ->
+    forAll (vectorOf 100 genStep) $ \steps ->
+      let sims = scanl (simulate setup) (initialSim setup) steps
+          settled = [req | sim <- sims, (_peer, req) <- simSettled sim]
+       in tabulate "body requests settled" [bucket (filter isBodyRequest settled)] $
+            tabulate "txs requests settled" [bucket (filter (not . isBodyRequest) settled)] $
+              case [(n, vs) | (n, sim) <- zip [0 :: Int ..] sims, let vs = violations sim, not (null vs)] of
+                [] -> property True
+                (n, vs) : _ -> counterexample (unlines (("after " <> show n <> " steps:") : vs)) False
+ where
+  bucket reqs = case length reqs of
+    0 -> "none"
+    n
+      | n < 10 -> "fewer than 10"
+      | otherwise -> "10 or more"
+
+-- | The peers, the endorser blocks they offer, and what the closures lack.
+data Setup = MkSetup
+  { setupSeed :: !Int
+  , setupOffers :: !(Map.Map Peer (Map.Map LeiosPoint PeerOffer))
+  , setupMisses :: !(Map.Map LeiosPoint (IntMap.IntMap (TxHash, BytesSize)))
+  -- ^ The transactions each point lacks once its body is held
+  }
+  deriving Show
+
+-- | One step of the decision loop or of what settles its requests.
+data Step
+  = -- | Decide, and send the requests.
+    Decide
+  | -- | One of the body requests in flight is answered, and its write settles.
+    BodyReply Int
+  | -- | One of the txs requests in flight is answered, and its write settles.
+    TxsReply Int
+  | -- | A peer disconnects.
+    Disconnect Int
+  | -- | A request of a disconnected peer settles.
+    LateReply Int
+  | -- | The immutable tip reaches this slot.
+    Prune Word64
+  deriving Show
+
+data Sim = MkSim
+  { simOutstanding :: !(LeiosOutstanding Peer)
+  , simOffers :: !(Map.Map Peer (Map.Map LeiosPoint PeerOffer))
+  -- ^ The offers of each connected peer
+  , simInFlight :: !(Map.Map Peer [LeiosFetchRequest])
+  -- ^ The requests in flight from each connected peer
+  , simLate :: ![(Peer, LeiosFetchRequest)]
+  -- ^ The requests that were in flight when their peer disconnected
+  , simSettled :: ![(Peer, LeiosFetchRequest)]
+  -- ^ What the last step settled
+  }
+
+-- | Small enough that the per-peer budgets and the job and request sizes bind.
+propEnv :: LeiosFetchStaticEnv
+propEnv =
+  MkLeiosFetchStaticEnv
+    { maxRequestedBytesSizePerPeer = 3000
+    , maxRequestedBytesSizePerBigLedgerPeer = 6000
+    , maxRequestBytesSize = 1000
+    , maxJobBytesSize = 500
+    , maxJobTxCount = 4
+    }
+
+propPeers :: [Peer]
+propPeers = [0, 1, 2]
+
+propBigLedgerPeers :: Map.Map Peer IsBigLedgerPeer
+propBigLedgerPeers = Map.singleton 2 IsBigLedgerPeer
+
+-- | Each in its own slot, so each is its own election's.
+propPoints :: [LeiosPoint]
+propPoints = zipWith point [1 ..] "abcdef"
+
+genSetup :: Gen Setup
+genSetup =
+  MkSetup
+    <$> arbitrary
+    <*> (Map.fromList <$> traverse (\peer -> (,) peer <$> genOffers) propPeers)
+    <*> (Map.fromList <$> traverse (\p -> (,) p <$> genMisses) propPoints)
+ where
+  genOffers = do
+    points <- sublistOf propPoints
+    Map.fromList <$> traverse (\p -> (,) p . MkPeerOffer SNothing <$> genHalves) points
+  genHalves =
+    frequency
+      [ (1, OfferedBody <$> choose (100, 2000))
+      , (1, pure OfferedClosure)
+      , (3, OfferedBodyAndClosure <$> choose (100, 2000))
+      ]
+  genMisses = do
+    n <- choose (1, 12)
+    sizes <- vectorOf n (choose (50, 400))
+    pure $ IntMap.fromList [(off, (txHashOf off, sz)) | (off, sz) <- zip [0 ..] sizes]
+
+genStep :: Gen Step
+genStep =
+  frequency
+    [ (10, pure Decide)
+    , (8, BodyReply <$> arbitrary)
+    , (8, TxsReply <$> arbitrary)
+    , (1, Disconnect <$> arbitrary)
+    , (1, LateReply <$> arbitrary)
+    , -- Never past the last two points.
+      (1, Prune <$> choose (0, 5))
+    ]
+
+-- | Every point announced, each focusing its own election.
+initialSim :: Setup -> Sim
+initialSim setup =
+  MkSim
+    { simOutstanding =
+        F.foldl' (flip announce) (emptyLeiosOutstanding (mkStdGen (setupSeed setup)) (SlotNo 0)) propPoints
+    , simOffers = setupOffers setup
+    , simInFlight = Map.empty
+    , simLate = []
+    , simSettled = []
+    }
+ where
+  announce p@(MkLeiosPoint slot ebHash) =
+    focusElectionIfUnfocused (ElectionId slot fixtureElectee) ebHash
+      . recordReferencedPoint p SNothing
+
+simulate :: Setup -> Sim -> Step -> Sim
+simulate setup sim0 = \case
+  Decide ->
+    let (outstanding', reqs, prunes) =
+          leiosFetchLogicIteration
+            propEnv
+            anyBounds
+            (Just (SlotNo 0, priorityWindow))
+            (simOffers sim)
+            propBigLedgerPeers
+            (simOutstanding sim)
+     in sim
+          { simOutstanding = outstanding'
+          , simInFlight = Map.unionWith (<>) (simInFlight sim) (Map.map toList reqs)
+          , simOffers =
+              Map.mapWithKey
+                (\peer -> pruneOffers (maybe Map.empty NEMap.toMap (Map.lookup peer prunes)))
+                (simOffers sim)
+          }
+  BodyReply i -> reply i isBodyRequest
+  TxsReply i -> reply i (not . isBodyRequest)
+  Disconnect i -> case pickIndex i (Map.keys (simOffers sim)) of
+    Nothing -> sim
+    Just (peer, _rest) ->
+      sim
+        { simOutstanding = removePeerFromOutstanding peer (simOutstanding sim)
+        , simOffers = Map.delete peer (simOffers sim)
+        , simInFlight = Map.delete peer (simInFlight sim)
+        , simLate = [(peer, req) | req <- Map.findWithDefault [] peer (simInFlight sim)] <> simLate sim
+        }
+  LateReply i -> case pickIndex i (simLate sim) of
+    Nothing -> sim
+    Just ((peer, req), rest) -> settle peer req sim{simLate = rest}
+  Prune slot -> sim{simOutstanding = pruneOutstandingToImmTip (SlotNo slot) (simOutstanding sim)}
+ where
+  sim = sim0{simSettled = []}
+
+  reply i isKind =
+    case pickIndex
+      i
+      [ (peer, k)
+      | (peer, reqs) <- Map.toList (simInFlight sim)
+      , (k, req) <- zip [0 ..] reqs
+      , isKind req
+      ] of
+      Nothing -> sim
+      Just ((peer, k), _rest) -> case pickIndex k (Map.findWithDefault [] peer (simInFlight sim)) of
+        Nothing -> sim
+        Just (req, rest) -> settle peer req sim{simInFlight = Map.insert peer rest (simInFlight sim)}
+
+  -- As the reply handlers do: refund on arrival, then record what the write
+  -- settled.
+  settle peer req s =
+    s
+      { simOutstanding = case req of
+          LeiosBlockRequest r ->
+            acquireEbBody
+              r.lbrPoint
+              (newLeiosJobPool propEnv (Map.findWithDefault IntMap.empty r.lbrPoint (setupMisses setup)))
+              (refundEbRequest peer r.lbrPoint r.lbrOfferedSize (simOutstanding s))
+          LeiosBlockTxsRequest r ->
+            completeTxRequest peer r (refundTxRequest peer (requestBytes req) (simOutstanding s))
+      , simSettled = (peer, req) : simSettled s
+      }
+
+isBodyRequest :: LeiosFetchRequest -> Bool
+isBodyRequest = \case
+  LeiosBlockRequest{} -> True
+  LeiosBlockTxsRequest{} -> False
+
+-- | The bytes a request was charged to its peer's budget.
+requestBytes :: LeiosFetchRequest -> BytesSize
+requestBytes = \case
+  LeiosBlockRequest r -> r.lbrOfferedSize
+  LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _point jobs) ->
+    sum [bytes | Jobs.MkLeiosJob _offsets bytes _commitment <- toList jobs]
+
+-- | The element at this index, modulo the list's length, and the others.
+pickIndex :: Int -> [a] -> Maybe (a, [a])
+pickIndex i xs = go (i `mod` max 1 (length xs)) xs
+ where
+  go _ [] = Nothing
+  go 0 (x : rest) = Just (x, rest)
+  go n (x : rest) = fmap (x :) <$> go (n - 1) rest
+
+-- | How the outstanding state disagrees with the requests in flight.
+violations :: Sim -> [String]
+violations sim =
+  concatMap peerViolations propPeers
+    <> [ "requestedEbPeers is not the inverse of requestedEbsPerPeer"
+       | requestedEbPeers o
+           /= Map.fromListWith
+             Set.union
+             [(p, Set.singleton peer) | (peer, ps) <- Map.toList (requestedEbsPerPeer o), p <- toList ps]
+       ]
+    <> concatMap poolViolations (Map.toList (ebState o))
+ where
+  o = simOutstanding sim
+  inFlight peer = Map.findWithDefault [] peer (simInFlight sim)
+  jobsHeld peer =
+    Map.map NEIntSet.toSet (Map.findWithDefault Map.empty peer (requestedJobsPerPeer o))
+
+  peerViolations peer =
+    [ "peer " <> show peer <> " is charged " <> show charged <> " bytes for " <> show owed <> " in flight"
+    | let charged = Map.findWithDefault 0 peer (requestedBytesSizePerPeer o)
+          owed = sum (map requestBytes (inFlight peer))
+    , charged /= owed
+    ]
+      <> [ "peer "
+             <> show peer
+             <> " is tracked with bodies "
+             <> show tracked
+             <> " for "
+             <> show bodies
+             <> " in flight"
+         | let tracked = maybe Set.empty NESet.toSet (Map.lookup peer (requestedEbsPerPeer o))
+               bodies = Set.fromList [r.lbrPoint | LeiosBlockRequest r <- inFlight peer]
+         , tracked /= bodies
+         ]
+      <> [ "peer "
+             <> show peer
+             <> " is tracked with jobs "
+             <> show tracked
+             <> " for "
+             <> show jobs
+             <> " in flight"
+         | let tracked = jobsHeld peer
+               jobs =
+                 Map.fromListWith
+                   IntSet.union
+                   [ (p, NEIntSet.toSet (NEIntMap.keysSet js))
+                   | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest p js) <- inFlight peer
+                   ]
+         , tracked /= jobs
+         ]
+
+  poolViolations (p, MkEbState _onset fetchState) = case fetchState of
+    NoBody -> []
+    BodyAcquired pool ->
+      [show p <> "'s job pool has an inexact reverse index" | not (Jobs.hasExactReverseIndex pool)]
+        <> [ show p
+               <> "'s job "
+               <> show jid
+               <> " counts "
+               <> show m
+               <> " requests for "
+               <> show n
+               <> " in flight"
+           | (jid, m) <- IntMap.toList (Jobs.jobMultiplicities pool)
+           , let n = length [() | peer <- propPeers, maybe False (IntSet.member jid) (Map.lookup p (jobsHeld peer))]
+           , m /= n
+           ]
 
 {-------------------------------------------------------------------------------
   Scenario DSL
