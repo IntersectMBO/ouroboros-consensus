@@ -459,10 +459,16 @@ checkLeiosVotes ::
 checkLeiosVotes cfg skew immLedger now votes st0 =
   fmap reverse <$> foldM checkOne (st0, []) votes
  where
-  checkOne (st, accepted) vote = do
-    slot <-
-      maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
-        Map.lookup rbHash (lnpsAnnouncedRbHashes st)
+  -- COMPAT: The prototype may relay votes without announcing their election
+  -- on LeiosNotify, so ignore such votes instead of disconnecting the peer.
+  checkOne (st, accepted) vote =
+    case Map.lookup rbHash (lnpsAnnouncedRbHashes st) of
+      Nothing -> pure (st, accepted)
+      Just slot -> checkAnnounced (st, accepted) vote slot
+   where
+    rbHash = voteAnnouncingRbHash vote
+
+  checkAnnounced (st, accepted) vote slot = do
     when (Set.member (slot, seat) (lnpsVotes st)) $
       throwError (ExnLeiosRepeatedVote slot seat)
     (onset, _slotLength) <-
