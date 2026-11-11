@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbBounds (..)
+  , LeiosEbByteSizeBounds (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -184,7 +184,7 @@ test_bodyAskedOnceOfBothOfferer = do
   outstanding2 = refundEbRequest peerA p 1024 outstanding1
   (_, reqs2, _) = decide outstanding2 offers1
   jobPool =
-    Jobs.mkLeiosJobPool
+    Jobs.mkJobPool
       (maxJobBytesSize env)
       (maxJobTxCount env)
       (IntMap.singleton 0 (txHashOf 0, 100))
@@ -201,7 +201,7 @@ test_closureOfferedMeanwhile = do
   p = point 1 'a'
   missing = scOutstanding (empty & withMissingBody p 1024)
   jobPool =
-    Jobs.mkLeiosJobPool
+    Jobs.mkJobPool
       (maxJobBytesSize env)
       (maxJobTxCount env)
       (IntMap.singleton 0 (txHashOf 0, 100))
@@ -224,21 +224,18 @@ test_closureOfferedMeanwhile = do
         (Map.insertWith (<>) p closureOffered bodyOffered)
     (_, reqs, _) = decide (acquireEbBody p jobPool (refundEbRequest peerA p 1024 outstanding1)) offers
 
--- | An endorser block rejected as too big, then offered at the same point at
--- bounds that admit its closure but not its body, at bounds that admit its body
--- but not its closure, and at bounds that admit both.
+-- | An endorser block rejected as too big, then offered again at the same point,
+-- under bounds that admit it. The decision logic does not consult the bounds
+-- for a body it holds, so this guards against it starting to.
 test_noRefetchOversized :: IO ()
-test_noRefetchOversized = do
-  let sc =
-        empty
-          & withMissingBody (point 1 'a') 1024
-          & onOutstanding
-            (acquireEbBody (point 1 'a') Jobs.emptyLeiosJobPool)
-          & offersBody peerA [point 1 'a']
-      within maxBody maxTxs _slot = Right (MkLeiosEbBounds maxBody maxTxs)
-  runIterationWith (within 1023 5000) sc & assertNoRequests
-  runIterationWith (within 1024 4999) sc & assertNoRequests
-  runIterationWith (within 1024 5000) sc & assertNoRequests
+test_noRefetchOversized =
+  empty
+    & withMissingBody (point 1 'a') 1024
+    & onOutstanding
+      (acquireEbBody (point 1 'a') Jobs.emptyJobPool)
+    & offersBody peerA [point 1 'a']
+    & runIterationWith (\_slot -> Right (MkLeiosEbByteSizeBounds 1024 5000))
+    & assertNoRequests
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
@@ -270,7 +267,7 @@ test_bigLedgerPeerBudget = do
   offsets = [0 .. 4]
   p = point 10 'a'
   misses = IntMap.fromList [(off, (txHashOf off, 100)) | off <- offsets]
-  jobPool = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env) misses
+  jobPool = Jobs.mkJobPool (maxJobBytesSize env) (maxJobTxCount env) misses
   -- The body is already held in these runs, so the offer names no size; only
   -- its closure half is consulted.
   offers = Map.singleton peerA $ Map.singleton p (MkPeerOffer SNothing OfferedClosure)
@@ -323,7 +320,7 @@ test_pickJobs = do
   misses = IntMap.fromList [(off, (txHashOf off, 100)) | off <- [0 .. 5]]
   -- 'maxJobTxCount' 1 makes each tx its own job, so job ids 0..5 all start at
   -- multiplicity 0 (one bucket).
-  pool0 = Jobs.mkLeiosJobPool 1000000 1 misses
+  pool0 = Jobs.mkJobPool 1000000 1 misses
   pickId pool excluded s =
     case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
       Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
@@ -434,14 +431,14 @@ runIterationAt = runIterationWithAt anyBounds
 
 -- | 'runIteration', with the ledger's bounds forecast thus.
 runIterationWith ::
-  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   Scenario ->
   Map.Map Peer (NESeq LeiosFetchRequest)
 runIterationWith forecastEbBounds = runIterationWithAt forecastEbBounds minBound
 
 -- | 'runIterationAt', with the ledger's bounds forecast thus.
 runIterationWithAt ::
-  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   SlotNo ->
   Scenario ->
   Map.Map Peer (NESeq LeiosFetchRequest)
@@ -525,5 +522,5 @@ eb c = UnsafeHash $ SBS.pack $ replicate 32 (fromIntegral (fromEnum c))
 
 -- | The bounds these scenarios forecast: large enough that nothing here trips
 -- them.
-anyBounds :: SlotNo -> Either OutsideForecastRange LeiosEbBounds
+anyBounds :: SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds
 anyBounds _slot = Right maxBound
