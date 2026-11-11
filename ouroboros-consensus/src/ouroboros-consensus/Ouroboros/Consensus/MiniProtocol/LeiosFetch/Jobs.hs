@@ -101,7 +101,7 @@ data LeiosJobState = MkLeiosJobState !LeiosJob !LeiosJobMultiplicity
 -- INVARIANT: 'jobsByMultiplicity' is the exact inverse of the multiplicities in
 -- 'jobs' -- every job id in 'jobs' sits in exactly the bucket named by its
 -- 'LeiosJobState' multiplicity.
-data LeiosJobPool = MkLeiosJobPool
+data LeiosJobPool = UnsafeLeiosJobPool
   { jobs :: !(IntMap LeiosJobState)
   -- ^ keyed by 'LeiosJobId'
   , jobsByMultiplicity :: !(IntMap NEIntSet)
@@ -121,7 +121,7 @@ data LeiosJobPool = MkLeiosJobPool
 -- The jobs are numbered from 0.
 mkJobPool :: Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
 mkJobPool maxJobBytes maxJobTxCount misses =
-  MkLeiosJobPool
+  UnsafeLeiosJobPool
     { jobs =
         IntMap.fromList
           [ (jid, MkLeiosJobState job (MkLeiosJobMultiplicity 0))
@@ -162,7 +162,7 @@ restrictToPending m pool = m `IntMap.intersection` jobs pool
 
 -- | The pool with no jobs -- nothing left to fetch.
 emptyJobPool :: LeiosJobPool
-emptyJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
+emptyJobPool = UnsafeLeiosJobPool IntMap.empty IntMap.empty
 
 -- | Select a least-requested unfinished job (fewest in-flight requests; ties
 -- broken uniformly at random via the supplied PRNG) whose id is /not/ in
@@ -190,7 +190,7 @@ pickLeastRequestedJobExcept prng excluded pool =
               Just
                 ( MkLeiosJobId jid
                 , job
-                , MkLeiosJobPool
+                , UnsafeLeiosJobPool
                     { jobs = jobs'
                     , jobsByMultiplicity =
                         bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
@@ -228,7 +228,7 @@ unpickJob (MkLeiosJobId jid) pool =
   case IntMap.alterF decrement1 jid (jobs pool) of
     (Nothing, _) -> pool
     (Just (m, m'), jobs') ->
-      MkLeiosJobPool
+      UnsafeLeiosJobPool
         { jobs = jobs'
         , -- Move the job from its old bucket to the decremented one. When the
           -- count was already floored at 0, @m' == m@ and this deletes then
@@ -254,7 +254,7 @@ completeJob (MkLeiosJobId jid) pool =
   case IntMap.alterF delete1 jid (jobs pool) of
     (Nothing, _) -> pool
     (Just m, jobs') ->
-      MkLeiosJobPool
+      UnsafeLeiosJobPool
         { jobs = jobs'
         , jobsByMultiplicity = bucketDelete m jid (jobsByMultiplicity pool)
         }
