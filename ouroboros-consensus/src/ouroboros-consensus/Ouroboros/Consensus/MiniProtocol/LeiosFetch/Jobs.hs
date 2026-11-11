@@ -21,9 +21,9 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
 
     -- * Pools
   , LeiosJobPool
-  , mkLeiosJobPool
-  , emptyLeiosJobPool
-  , nullLeiosJobPool
+  , mkJobPool
+  , emptyJobPool
+  , nullJobPool
   , lookupJob
   , restrictToPending
   , pickLeastRequestedJobExcept
@@ -61,15 +61,20 @@ jobCommitmentOfTxHashes =
     . BS.concat
     . map Hash.hashToBytes
 
--- | A unit of tx-fetch work: the EB-body offsets fetched by one
--- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), the total
--- on-the-wire byte size of those txs (for the fetch byte budget), and the
--- 'JobCommitment' used to validate the response.
+-- | A unit of tx-fetch work: some of an EB's txs, fetched by one
+-- @MsgLeiosBlockTxsRequest@.
 data LeiosJob
-  = -- TODO the offset set is immutable and only ever fully traversed, so a packed
-    -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
-    -- compact than the 'IntSet' Patricia tree.
-    MkLeiosJob !IntSet !Word32 !JobCommitment
+  = MkLeiosJob
+      -- | The txs' offsets in the EB body's tx vector
+      --
+      -- TODO the offset set is immutable and only ever fully traversed, so a
+      -- packed bitfield (a strict ByteString or unboxed Word64 vector) would be
+      -- more compact than the 'IntSet' Patricia tree.
+      !IntSet
+      -- | The txs' total on-the-wire byte size, for the fetch byte budget
+      !Word32
+      -- | What the response is validated against
+      !JobCommitment
   deriving (Eq, Show)
 
 -- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
@@ -86,8 +91,8 @@ newtype LeiosJobMultiplicity = MkLeiosJobMultiplicity Int
 data LeiosJobState = MkLeiosJobState !LeiosJob !LeiosJobMultiplicity
   deriving (Eq, Show)
 
--- | The not-yet-requested jobs for one acquired EB, plus a reverse index by
--- multiplicity so a least-requested job is one 'IntMap.minView' away.
+-- | The unfinished jobs for one acquired EB, requested or not, plus a reverse
+-- index by multiplicity so a least-requested job is one 'IntMap.minView' away.
 --
 -- INVARIANT: 'jobsByMultiplicity' is the exact inverse of the multiplicities in
 -- 'jobs' -- every job id in 'jobs' sits in exactly the bucket named by its
@@ -110,8 +115,8 @@ data LeiosJobPool = MkLeiosJobPool
 -- 'jobCommitmentOfTxHashes' over its covered tx hashes.
 --
 -- The jobs are numbered from 0.
-mkLeiosJobPool :: Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
-mkLeiosJobPool maxJobBytes maxJobTxCount misses =
+mkJobPool :: Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
+mkJobPool maxJobBytes maxJobTxCount misses =
   MkLeiosJobPool
     { jobs =
         IntMap.fromList
@@ -136,8 +141,8 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
     | otherwise = flush cur bytes hashesRev : grow (IntSet.singleton off) sz 1 [h] rest
 
 -- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
-nullLeiosJobPool :: LeiosJobPool -> Bool
-nullLeiosJobPool = IntMap.null . jobs
+nullJobPool :: LeiosJobPool -> Bool
+nullJobPool = IntMap.null . jobs
 
 -- | The bitfield of an unfinished job, if it is still in the pool.
 lookupJob :: LeiosJobId -> LeiosJobPool -> Maybe LeiosJob
@@ -152,8 +157,8 @@ restrictToPending :: IntMap a -> LeiosJobPool -> IntMap a
 restrictToPending m pool = m `IntMap.intersection` jobs pool
 
 -- | The pool with no jobs -- nothing left to fetch.
-emptyLeiosJobPool :: LeiosJobPool
-emptyLeiosJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
+emptyJobPool :: LeiosJobPool
+emptyJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
 
 -- | Select a least-requested unfinished job (fewest in-flight requests; ties
 -- broken uniformly at random via the supplied PRNG) whose id is /not/ in

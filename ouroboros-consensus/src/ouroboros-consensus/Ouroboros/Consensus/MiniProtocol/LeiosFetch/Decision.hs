@@ -8,8 +8,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     LeiosFetchRequest (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbBounds (..)
-  , offsetsToBitmap
+  , LeiosEbByteSizeBounds (..)
 
     -- * Offers
   , OfferedHalves (..)
@@ -49,7 +48,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import qualified Data.Bits as Bits
 import qualified Data.Foldable as F
 import Data.IntMap.NonEmpty (NEIntMap)
 import qualified Data.IntMap.NonEmpty as NEIntMap
@@ -63,7 +61,6 @@ import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
 import Data.Sequence (Seq)
@@ -81,15 +78,12 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
   , EndorserBlockHash
-  , LeiosEbBounds (..)
+  , LeiosEbByteSizeBounds (..)
   , LeiosPoint (..)
   , TxHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
-  ( TxBitmaps
-  , maxLeiosTxsRequestBytesSize
-  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (StdGen)
 
@@ -107,35 +101,24 @@ data LeiosBlockRequest = MkLeiosBlockRequest
   , lbrOfferedSize :: !BytesSize
   -- ^ The size the peer offered this endorser block at; not sent, but used by
   -- the reply handler.
-  , lbrEbBounds :: !LeiosEbBounds
+  , lbrEbBounds :: !LeiosEbByteSizeBounds
   -- ^ The ledger's bounds on this block; not sent, but used by the reply
   -- handler.
   }
 
+-- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
+-- covers, keyed by job id (so a request can't list a job twice), each with its
+-- full commitment. Everything needed to validate the response is carried here,
+-- so the reply handler needs no lookup into the (body-less) job pool -- and a
+-- redundant response for a job that has since completed still validates. On
+-- the wire only the offset bitmap goes to the peer; it is derived from the
+-- union of the jobs' offsets (see
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.offsetsToBitmap'), not
+-- stored.
 data LeiosBlockTxsRequest
-  = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
-    -- covers, keyed by job id (so a request can't list a job twice), each with its
-    -- full commitment. Everything needed to validate the response is carried here,
-    -- so the reply handler needs no lookup into the (body-less) job pool -- and a
-    -- redundant response for a job that has since completed still validates. On
-    -- the wire only the offset bitmap goes to the peer; it is derived from the
-    -- union of the jobs' offsets (see 'offsetsToBitmap'), not stored.
-    MkLeiosBlockTxsRequest
+  = MkLeiosBlockTxsRequest
       !LeiosPoint
       !(NEIntMap Jobs.LeiosJob)
-
--- | The offset set as the wire bitmap (chunk index, 64-bit mask).
-offsetsToBitmap :: IntSet.IntSet -> TxBitmaps
-offsetsToBitmap offsets =
-  [ (fromIntegral q, bm)
-  | (q, bm) <- IntMap.toAscList chunks
-  ]
- where
-  chunks =
-    IntSet.foldr
-      (\off -> let (q, r) = off `divMod` 64 in IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)))
-      IntMap.empty
-      offsets
 
 {-------------------------------------------------------------------------------
   Offers
@@ -179,17 +162,19 @@ data OfferedHalves
 -- 'Map.insertWith' is the newer offer's, and a peer that makes that choice
 -- matter has already lost our trust.
 instance Semigroup OfferedHalves where
-  x <> y = case (x, y) of
-    (OfferedBody size, OfferedBody _) -> OfferedBody size
-    (OfferedBody size, _) -> OfferedBodyAndClosure size
-    (OfferedBodyAndClosure size, _) -> OfferedBodyAndClosure size
-    (OfferedClosure, OfferedClosure) -> OfferedClosure
-    (OfferedClosure, OfferedBody size) -> OfferedBodyAndClosure size
-    (OfferedClosure, OfferedBodyAndClosure size) -> OfferedBodyAndClosure size
+  OfferedBody size <> OfferedBody _ = OfferedBody size
+  OfferedBody size <> OfferedClosure = OfferedBodyAndClosure size
+  OfferedBody size <> OfferedBodyAndClosure _ = OfferedBodyAndClosure size
+  OfferedClosure <> OfferedBody size = OfferedBodyAndClosure size
+  OfferedClosure <> OfferedClosure = OfferedClosure
+  OfferedClosure <> OfferedBodyAndClosure size = OfferedBodyAndClosure size
+  OfferedBodyAndClosure size <> OfferedBody _ = OfferedBodyAndClosure size
+  OfferedBodyAndClosure size <> OfferedClosure = OfferedBodyAndClosure size
+  OfferedBodyAndClosure size <> OfferedBodyAndClosure _ = OfferedBodyAndClosure size
 
 -- | What one peer has offered for one endorser block point.
 data PeerOffer = MkPeerOffer
-  { poEbBounds :: !(StrictMaybe LeiosEbBounds)
+  { poEbBounds :: !(StrictMaybe LeiosEbByteSizeBounds)
   -- ^ The ledger's bounds on this offered EB. It's 'SNothing' if
   -- the offer arrived via LeiosNotify, and 'SJust' if it arrived via ChainSync.
   --
@@ -248,15 +233,13 @@ instance Semigroup PeerOffer where
 -- (what TXs we need for each EB), along with request tracking for bandwidth
 -- management.
 data LeiosOutstanding peer = MkLeiosOutstanding
-  { -- EB-level tracking
-    ebState :: !(Map LeiosPoint EbState)
+  { ebState :: !(Map LeiosPoint EbState)
   -- ^ Per-point state for every endorser block point this node is tracking.
   -- Three things add an entry: the announcement that takes an election's
   -- focus, a verified certificate ('trackCertifiedEb'), and the start-up
   -- seeding ('initializeLeiosOutstanding') of the endorser blocks whose
   -- closures the LeiosDb already holds (merely to avoid refetching them). An
-  -- offer never does, and is only ever
-  -- acted on for a point already here.
+  -- offer never does, and is only ever acted on for a point already here.
   --
   -- Each point is fetched on its own, even when another point names the same
   -- endorser block, so the ledger's bounds an entry is held to never change:
@@ -266,9 +249,9 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   --
   -- Two activities decide it. Processing an announcement focuses an election
   -- that has no focus yet, and nothing more ('focusElectionIfUnfocused').
-  -- Processing a certificate
-  -- overrides whatever is there ('focusElection') --- the CertRB itself, when
-  -- its certificate is verified, not its header, which only records an offer.
+  -- Processing a certificate overrides whatever is there ('focusCertifiedEb')
+  -- --- the CertRB itself, when its certificate is verified, not its header,
+  -- which only records an offer.
   -- Pruning is the only other writer, and it just drops the elections below
   -- the immutable tip.
   --
@@ -284,13 +267,7 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   -- 'ebState' and 'elFocus' in, so it says how far both of them have got.
   --
   -- Used to robustly prevent re-inserting what has already been pruned out.
-  , numMissingBodies :: !Int
-  -- ^ How many 'ebState' entries have no body: the body-fetch backlog,
-  -- maintained as 'ebState' changes rather than counted, so reading it stays
-  -- O(1) however often the fetch loop runs. 'wantsBody' is the per-entry
-  -- contribution.
-  , -- Request tracking
-    requestedEbPeers :: !(Map LeiosPoint (Set peer))
+  , requestedEbPeers :: !(Map LeiosPoint (Set peer))
   -- ^ Which peers we've requested each point's body from
   , requestedEbsPerPeer :: !(Map peer (NESet LeiosPoint))
   -- ^ The inverse of 'requestedEbPeers': the points whose body each peer has
@@ -320,7 +297,6 @@ emptyLeiosOutstanding prng prunedSlot =
     { ebState = Map.empty
     , elFocus = Map.empty
     , outstandingPrunedSlot = prunedSlot
-    , numMissingBodies = 0
     , requestedEbPeers = Map.empty
     , requestedEbsPerPeer = Map.empty
     , requestedBytesSizePerPeer = Map.empty
@@ -330,14 +306,15 @@ emptyLeiosOutstanding prng prunedSlot =
 
 -- | Per-point state tracked in 'ebState'
 data EbState
-  = -- | The wall-clock onset of the point's slot, if known, and the current
-    -- progress of fetching it.
-    --
-    -- The acquisition traces subtract that onset from the arrival time, so
-    -- they say how long after this point was announced we got it. It is
-    -- 'SNothing' when nothing supplied an onset, as for a verified certificate
-    -- or the start-up seeding.
-    MkEbState !(StrictMaybe RelativeTime) !EbFetchState
+  = MkEbState
+      -- | The wall-clock onset of the point's slot, if known. The acquisition
+      -- traces subtract it from the arrival time, so they say how long after
+      -- this point was announced we got it. It is 'SNothing' when nothing
+      -- supplied an onset, as for a verified certificate or the start-up
+      -- seeding.
+      !(StrictMaybe RelativeTime)
+      -- | The current progress of fetching it
+      !EbFetchState
   deriving (Eq, Show)
 
 -- | Whether we hold an EB's body.
@@ -367,23 +344,21 @@ ebStateOnset :: EbState -> StrictMaybe RelativeTime
 ebStateOnset (MkEbState onset _fetchState) = onset
 
 -- | A pool of jobs to fetch these missing txs of an EB's closure, given as in
--- 'Jobs.mkLeiosJobPool'.
+-- 'Jobs.mkJobPool'.
 newLeiosJobPool ::
   LeiosFetchStaticEnv ->
   IntMap.IntMap (TxHash, BytesSize) ->
   Jobs.LeiosJobPool
-newLeiosJobPool env = Jobs.mkLeiosJobPool (maxJobBytesSize env) (maxJobTxCount env)
+newLeiosJobPool env = Jobs.mkJobPool (maxJobBytesSize env) (maxJobTxCount env)
 
 -- | The body's LeiosDb write is durable, so record 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.
 --
 -- There is no intermediate "write in flight" state. During the (brief, async)
--- write window the entry is still 'NoBody', so a
--- concurrent offer may redundantly re-fetch the body -- cheaper than tracking an
--- in-flight state and reverting it on a lost write, which with the single writer
--- cannot happen without bringing the node down anyway. The body write is only
--- enqueued before this is reached, and the enqueue only parks on a free queue
--- slot, so a cancellation there leaves no claim to strand.
+-- write window the entry is still 'NoBody', so a concurrent offer may
+-- redundantly re-fetch the body -- cheaper than tracking an in-flight state and
+-- reverting it on a lost write, which with the single writer cannot happen
+-- without bringing the node down anyway.
 acquireEbBody ::
   LeiosPoint ->
   Jobs.LeiosJobPool ->
@@ -394,11 +369,11 @@ acquireEbBody point jobPool =
     -- Pruned before the write landed (we could not have requested it
     -- without an announcement, and that was since evicted): ignore.
     Nothing -> Nothing
-    Just (MkEbState onset fetchState) -> case fetchState of
+    Just st@(MkEbState onset fetchState) -> case fetchState of
       NoBody -> Just $ MkEbState onset (BodyAcquired jobPool)
       -- Already acquired -- e.g. a concurrent redundant delivery landed
       -- first; keep the existing pool rather than clobbering it.
-      BodyAcquired{} -> Nothing
+      BodyAcquired{} -> Just st
 
 -- | Record that this point is referenced --- announced, or named by a verified
 -- certificate --- along with its slot's wall-clock onset if known. A
@@ -413,11 +388,11 @@ recordReferencedPoint point onset =
   alterEbState point $ \case
     Nothing -> Just $ MkEbState onset NoBody
     Just (MkEbState SNothing fetchState) | SJust{} <- onset -> Just $ MkEbState onset fetchState
-    Just MkEbState{} -> Nothing
+    Just st@MkEbState{} -> Just st
 
 -- | Initialize the outstanding state
 --
--- Its contents are only @'BodyAcquired' 'Jobs.emptyLeiosJobPool'@ for the EBs
+-- Its contents are only @'BodyAcquired' 'Jobs.emptyJobPool'@ for the EBs
 -- the LeiosDb already holds /in full/: a complete tx closure whose announcer is
 -- no older than the immutable tip. Each is marked 'BodyAcquired' with an empty
 -- job pool so we neither re-fetch nor re-process (eg emit 'AcquiredEb') an EB
@@ -454,14 +429,14 @@ initializeLeiosOutstanding prng points immTipSlot =
   -- These points were read back out of the LeiosDb, so the body is durable
   -- already: settle it at once.
   seed1 point =
-    acquireEbBody point Jobs.emptyLeiosJobPool
+    acquireEbBody point Jobs.emptyJobPool
       . recordReferencedPoint point SNothing
 
 -- | Make this endorser block the one this election is fetching, unless the
 -- election is already fetching one.
 --
 -- The first announcement we see for an election wins, which is what an honest
--- electee's single announcement gives; only a certificate ('focusElection')
+-- electee's single announcement gives; only a certificate ('focusCertifiedEb')
 -- overrules it.
 focusElectionIfUnfocused ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
@@ -514,7 +489,7 @@ trackCertifiedEb point outstanding
 -- keep the body if we acquired it, and we still take whatever was already
 -- requested for it, since those bytes are paid for either way.
 --
--- TODO One election, one certified endorser block --- which holds only while
+-- NOTE One election, one certified endorser block --- which holds only while
 -- enough of the committee's weight is honest, since two valid certificates for
 -- one election means the committee equivocated. Should that ever happen, this
 -- is last-claim-wins: the focus lands on whichever certificate we validated
@@ -544,55 +519,28 @@ isFocusedPoint (MkLeiosPoint slot ebHash) =
     . Map.dropWhileAntitone ((< slot) . electionSlot)
     . elFocus
 
--- | Whether this EB's body is one we are still trying to fetch: the per-entry
--- contribution to 'numMissingBodies'.
-wantsBody :: EbState -> Int
-wantsBody (MkEbState _onset fetchState) = case fetchState of
-  NoBody -> 1
-  BodyAcquired{} -> 0
-
--- | Upsert a point's 'ebState' entry, keeping 'numMissingBodies' in step. The
--- supplied function returns 'Nothing' to leave the entry as it is.
+-- | 'Map.alter' a point's 'ebState' entry.
 alterEbState ::
   LeiosPoint ->
   (Maybe EbState -> Maybe EbState) ->
   LeiosOutstanding peer ->
   LeiosOutstanding peer
 alterEbState point f outstanding =
-  case Map.alterF upsert1 point (ebState outstanding) of
-    (Nothing, _) -> outstanding
-    (Just deltaMissing, ebState') ->
-      outstanding
-        { ebState = ebState'
-        , numMissingBodies = numMissingBodies outstanding + deltaMissing
-        }
- where
-  -- One traversal of 'ebState': the pair functor carries whether the entry
-  -- changed at all and, if so, its change to 'numMissingBodies'.
-  upsert1 mbOld = case f mbOld of
-    Nothing -> (Nothing, mbOld)
-    Just new -> (Just (wantsBody new - maybe 0 wantsBody mbOld), Just new)
+  outstanding{ebState = Map.alter f point (ebState outstanding)}
 
--- | Prune 'LeiosOutstanding' to the immutable tip, returning the points it
--- dropped.
+-- | Prune 'LeiosOutstanding' to the immutable tip.
 --
 -- 'LeiosPoint' and 'ElectionId' both order slot-first, so what is below the tip
--- is a prefix of each map, dropped with @spanAntitone@.
+-- is a prefix of each map, dropped with @dropWhileAntitone@.
 --
 -- TODO still more it could prune (e.g. abandoned in-flight EB requests).
-pruneOutstandingToImmTip ::
-  SlotNo -> LeiosOutstanding peer -> (Set LeiosPoint, LeiosOutstanding peer)
+pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding peer -> LeiosOutstanding peer
 pruneOutstandingToImmTip immTipSlot outstanding =
-  ( Map.keysSet below
-  , outstanding
-      { ebState = atOrAbove
-      , elFocus = Map.dropWhileAntitone ((< immTipSlot) . electionSlot) (elFocus outstanding)
-      , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
-      , numMissingBodies = numMissingBodies outstanding - F.foldl' (\n st -> n + wantsBody st) 0 below
-      }
-  )
- where
-  (below, atOrAbove) = Map.spanAntitone ((< immTipSlot) . pointSlotNo) (ebState outstanding)
+  outstanding
+    { ebState = Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo) (ebState outstanding)
+    , elFocus = Map.dropWhileAntitone ((< immTipSlot) . electionSlot) (elFocus outstanding)
+    , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
+    }
 
 {-------------------------------------------------------------------------------
   Settled requests
@@ -648,7 +596,7 @@ removePeerFromOutstanding peer o =
 -- double-subtract 'requestedBytesSizePerPeer' and underflow. So we gate on the peer
 -- still being present. The membership check, the refund, and the bulk
 -- cancellation all run within the same critical section, so whichever happens
--- first claims the refund and the other no-ops.
+-- first refunds and the other does nothing.
 refundEbRequest ::
   Ord peer =>
   peer ->
@@ -780,7 +728,7 @@ leiosFetchLogicIteration ::
   -- cannot fail: the announcement backing such an offer was accepted by
   -- forecasting from the immutable tip to that same slot. See
   -- 'poEbBounds'.
-  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   -- | The current slot, and how many slots before it a point is still worth
   -- voting on, as of the ledger there (see 'fetchPriorityTiers'); or 'Nothing'
   -- when either is not yet known (i.e. we are syncing), in which case we fetch
@@ -882,7 +830,7 @@ fetchPriorityTiers mbHorizon offers =
 assignPeer ::
   Ord peer =>
   LeiosFetchStaticEnv ->
-  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   Maybe (SlotNo, Word64) ->
   IsBigLedgerPeer ->
   peer ->
@@ -922,9 +870,8 @@ assignPeer env forecastEbBounds mbHorizon isBig peer offers acc =
         pruneThisOffer
       Just (MkEbState _onset fetchState) -> case (fetchState, poOffered offerKind) of
         (NoBody, OfferedBody size) ->
-          -- Body-only offer: request the body, and prune it.
-          let (acc2, dec2) = fromMaybe (acc1, dec1) $ requestBody size
-           in (acc2, dec2, Map.insert point PruneOfferedBody drops)
+          -- Body-only offer: request the body, and prune the offer.
+          requestBodyAndPrune size
         (NoBody, OfferedClosure) ->
           -- Nothing to request until we hold the body.
           (acc1, dec1, drops)
@@ -932,9 +879,7 @@ assignPeer env forecastEbBounds mbHorizon isBig peer offers acc =
           -- Request the body now, and prune only the body half of the offer:
           -- we will request the closure from this peer once we hold the body,
           -- but never ask it for the body again.
-          case requestBody size of
-            Nothing -> (acc1, dec1, drops)
-            Just (acc2, dec2) -> (acc2, dec2, Map.insert point PruneOfferedBody drops)
+          requestBodyAndPrune size
         (BodyAcquired _jobPool, OfferedBody _size) ->
           -- We hold the body, and the peer offered only the body.
           (acc1, dec1, Map.insert point PruneOfferedBody drops)
@@ -943,11 +888,15 @@ assignPeer env forecastEbBounds mbHorizon isBig peer offers acc =
    where
     pruneThisOffer = (acc1, dec1, Map.insert point PruneOffer drops)
 
-    requestBody size =
-      assignBody forecastEbBounds peer point (poEbBounds offerKind) size (acc1, dec1)
+    -- Prune the offer's body half only once the body is requested, so that an
+    -- offer not acted on now is still there for a later iteration.
+    requestBodyAndPrune size =
+      case assignBody forecastEbBounds peer point (poEbBounds offerKind) size (acc1, dec1) of
+        Nothing -> (acc1, dec1, drops)
+        Just (acc2, dec2) -> (acc2, dec2, Map.insert point PruneOfferedBody drops)
 
     requestClosure jobPool
-      | Jobs.nullLeiosJobPool jobPool =
+      | Jobs.nullJobPool jobPool =
           -- Nothing left to fetch --- the whole datum is in hand, or we
           -- rejected the endorser block on arrival --- so the closure offer
           -- is useless now too.
@@ -976,11 +925,11 @@ assignPeer env forecastEbBounds mbHorizon isBig peer offers acc =
 assignBody ::
   Ord peer =>
   -- | The ledger's bounds on an EB, forecast for a slot. See 'poEbBounds'.
-  (SlotNo -> Either OutsideForecastRange LeiosEbBounds) ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   peer ->
   LeiosPoint ->
   -- | The offer's own bounds, if any
-  StrictMaybe LeiosEbBounds ->
+  StrictMaybe LeiosEbByteSizeBounds ->
   -- | The size the peer offered the body at
   BytesSize ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest) ->
