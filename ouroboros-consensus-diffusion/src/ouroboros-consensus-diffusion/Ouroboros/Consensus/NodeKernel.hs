@@ -18,6 +18,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , leiosDeadlinePruner
   , leiosDeadlinePrunerInterval
   , toConsensusMode
   ) where
