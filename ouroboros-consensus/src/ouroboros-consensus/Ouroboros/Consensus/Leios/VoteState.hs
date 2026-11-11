@@ -56,7 +56,6 @@ import Cardano.Crypto.Leios
   , LeiosSignature
   , Weight
   , aggregateLeiosCert
-  , leiosSignContext
   , resolveLeiosSeat
   )
 import Cardano.Prelude (isJust, unlessM)
@@ -321,7 +320,7 @@ validateVote acceptedVote =
     Nothing -> Left SeatNotResolvable
     Just LeiosSeat{seatVKey = SNothing} -> Left SeatHasNoKey
     Just LeiosSeat{seatVKey = SJust vk, seatWeight} ->
-      case verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature of
+      case verifyDSIGN () vk voteAnnouncingRbHash voteSignature of
         Left err -> Left . BadSignature $ Text.pack err
         Right () -> Right $ mkValidated seatWeight
  where

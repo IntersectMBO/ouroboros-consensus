@@ -18,7 +18,6 @@ import Cardano.Crypto.Leios
   , LeiosSeatId (..)
   , LeiosSigningKey
   , aggregateLeiosCert
-  , leiosSignContext
   , mkLeiosCommittee
   )
 import Cardano.Crypto.Seed (mkSeedFromBytes)
@@ -38,7 +37,7 @@ testCommittee :: LeiosCommittee
 testCommittee =
   mkLeiosCommittee $
     V.fromList
-      [ (SJust (deriveVerKeyDSIGN sk, createPossessionProofDSIGN leiosSignContext sk), 1 / 4)
+      [ (SJust (deriveVerKeyDSIGN sk, createPossessionProofDSIGN sk), 1 / 4)
       | sk <- signingKeys
       ]
 
@@ -52,7 +51,7 @@ certOf rbHash seats =
   either (error . show) id $
     aggregateLeiosCert testCommittee $
       Map.fromList
-        [ (LeiosSeatId seat, signDSIGN leiosSignContext rbHash sk)
+        [ (LeiosSeatId seat, signDSIGN () rbHash sk)
         | (seat, sk) <- zip [0 ..] signingKeys
         , seat `elem` seats
         ]
