@@ -52,7 +52,7 @@ module Ouroboros.Consensus.Leios.Types
   , TemporaryEndorserBlockOnlyForEncode
   , temporaryEndorserBlockFromBytes
   , unsafeEndorserBlockForEncodeOnly
-  , LeiosEbBounds (..)
+  , LeiosEbByteSizeBounds (..)
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -472,8 +472,14 @@ temporaryEndorserBlockFromBytes bytes =
 unsafeEndorserBlockForEncodeOnly :: TemporaryEndorserBlockOnlyForEncode -> EndorserBlock
 unsafeEndorserBlockForEncodeOnly (MkTemporaryEndorserBlockOnlyForEncode eb) = eb
 
--- | The ledger's bounds on an endorser block, as of its slot.
-data LeiosEbBounds = MkLeiosEbBounds
+-- | The ledger's bounds on the byte sizes of an endorser block, as of its
+-- slot: what LeiosFetch holds the block's body and transactions to.
+--
+-- The ledger bounds an endorser block in other ways too, such as the most
+-- execution units its transactions may take (@maxEndorserBlockExUnits@). Those
+-- are not LeiosFetch's to enforce: they concern what the transactions do, which
+-- is judged once they are applied, after LeiosFetch has fetched them.
+data LeiosEbByteSizeBounds = MkLeiosEbByteSizeBounds
   { lebMaxBodySize :: !BytesSize
   -- ^ the largest body the ledger admits
   , lebMaxTxsSize :: !BytesSize
