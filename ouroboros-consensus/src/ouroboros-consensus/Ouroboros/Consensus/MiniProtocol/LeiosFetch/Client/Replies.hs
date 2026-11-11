@@ -170,7 +170,7 @@ data ExnLeiosFetchInvalidReply
 instance Exception ExnLeiosFetchInvalidReply
 
 -- | How a job's transactions differ from what it covers.
-data JobMismatch = JobTxCountMismatch | JobBytesSizeMismatch | JobCommitmentMismatch
+data JobMismatch = JobBytesSizeMismatch | JobCommitmentMismatch
   deriving Show
 
 -----
@@ -281,10 +281,10 @@ processLeiosBlock ctx peer req eb = do
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
     BodyToWrite -> do
       bodyWritten <- writeEbBody lfcWriter point eb
-      -- A failed write brings the node down, since the LeiosDB's writer is
-      -- linked to it. This worker runs off this thread but is linked to it, so
-      -- a failure also disconnects the peer, if its client still runs. Like the
-      -- worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
+      -- A failed write brings the node down, since the SQLite LeiosDB's writer
+      -- is linked to it. This worker runs off this thread but is linked to it,
+      -- so a failure also disconnects the peer, if its client still runs. Like
+      -- the worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
       link =<< async (settleBody ctx peer point eb now bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
@@ -544,8 +544,10 @@ ageAt now = \case
   SNothing -> Nothing
 
 -- | Cheap validation of one covered job against the commitment the request
--- carries for it: its arriving txs match its offset count and its total byte
--- size.
+-- carries for it: its arriving txs have its total byte size.
+--
+-- Assumes the reply has as many txs as its request has offsets (see
+-- 'ExnLeiosBlockTxsWrongCount'), so every offset of the job has a tx.
 --
 -- Does /no/ hashing so that redundant\/"hedge" requests don't contend for
 -- CPU. A peer that over-sends to create extra work is punished even if we
@@ -558,8 +560,6 @@ checkJobSize ::
   Jobs.LeiosJob ->
   Either ExnLeiosFetchInvalidReply ()
 checkJobSize point aligned jid (Jobs.MkLeiosJob offs expectedBytes _commitment)
-  | IntMap.size sub /= IntSet.size offs =
-      Left $ ExnLeiosBlockTxsJobMismatch point jid JobTxCountMismatch
   | fromIntegral (sum [BS.length (leiosTxBytes tx) | tx <- IntMap.elems sub]) /= expectedBytes =
       Left $ ExnLeiosBlockTxsJobMismatch point jid JobBytesSizeMismatch
   | otherwise = Right ()
