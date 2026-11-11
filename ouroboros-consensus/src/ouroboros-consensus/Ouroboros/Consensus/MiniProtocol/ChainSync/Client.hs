@@ -87,6 +87,7 @@ import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
+import Data.List (zipWith4)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -114,7 +115,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (getLeiosLedgerView))
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricalChainSyncMessage (..)
   , HistoricityCheck
@@ -784,6 +785,18 @@ data ConfigEnv m blk = ConfigEnv
   , chainDbView :: ChainDbView m blk
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
+  , leiosMsgRollForwardCallback ::
+      Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> HeaderStateWithTime blk -> m ()
+  -- ^ Invoked on each valid 'MsgRollForward', with the header, the onset of its
+  -- slot, the Leios part of the ledger view at that slot, and the state as of
+  -- its predecessor.
+  , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
+  -- ^ Invoked when this peer accepts a jump, with the dynamo's fragment that the
+  -- jump carries.
+  --
+  -- A jumper does not roll forward the headers it jumps over, so this is how
+  -- the node learns that the peer has them: agreeing to the jump asserts that
+  -- it would have sent them.
   }
 
 -- | Arguments determined dynamically
@@ -1130,7 +1143,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
           -- required by 'withTime' once when finding
           -- an intersection with a peer, so this
           -- should not impact the performance.
-          (ourFrag `withTime` ourHeaderStateHistory, ourHeaderStateHistory) of
+          (withTime (configBlock cfg) ourFrag ourHeaderStateHistory, ourHeaderStateHistory) of
           Just (c, d, _oldestRewound) -> return (c, d)
           Nothing ->
             -- The @intersection@ is not on our fragment, even
@@ -1158,16 +1171,18 @@ findIntersectionTop cfgEnv dynEnv intEnv =
       continueWithState kis $
         knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
 
--- | Augment the given fragment of headers with the times and Leios ledger views
--- specified in the given state history.
+-- | Augment the given fragment of headers with the times, Leios ledger views
+-- and certified announcements specified in the given state history.
 --
 -- PRECONDITION: the fragment must be a prefix of the state history.
 withTime ::
-  (Typeable blk, HasHeader (Header blk)) =>
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
   AnchoredFragment (Header blk) ->
   HeaderStateHistory blk ->
   AnchoredFragment (HeaderWithTime blk)
-withTime fragment (HeaderStateHistory history) =
+withTime bcfg fragment (HeaderStateHistory history) =
   assertWithMsg
     ( if AF.length fragment == AF.length history
         then Right ()
@@ -1181,16 +1196,22 @@ withTime fragment (HeaderStateHistory history) =
     )
     $ AF.fromOldestFirst
       (AF.castAnchor $ AF.anchor fragment)
-    $ zipWith3 addTimeToHeader hdrs predecessorSlots (AF.toOldestFirst history)
+    $ zipWith4 addTimeToHeader hdrs predecessorSlots predecessorStates (AF.toOldestFirst history)
  where
   hdrs = AF.toOldestFirst fragment
+
+  predecessorStates = AF.anchor history : AF.toOldestFirst history
 
   predecessorSlots =
     AF.anchorToSlotNo (AF.anchor fragment) : map (NotOrigin . blockSlot) hdrs
 
   addTimeToHeader ::
-    Header blk -> WithOrigin SlotNo -> HeaderStateWithTime blk -> HeaderWithTime blk
-  addTimeToHeader hdr predecessorSlot hsWt =
+    Header blk ->
+    WithOrigin SlotNo ->
+    HeaderStateWithTime blk ->
+    HeaderStateWithTime blk ->
+    HeaderWithTime blk
+  addTimeToHeader hdr predecessorSlot predHsWt hsWt =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
@@ -1198,6 +1219,9 @@ withTime fragment (HeaderStateHistory history) =
       , -- The state the header's block produced gives the view at the header's
         -- slot; see 'hwtLeiosLedgerView'.
         hwtLeiosLedgerView = hswtLeiosLedgerView hsWt
+      , hwtCertifiedAnnouncement =
+          certifiedLeiosAnnouncement bcfg hdr $
+            headerStateChainDep (hswtHeaderState predHsWt)
       }
 
 {-------------------------------------------------------------------------------
@@ -1230,6 +1254,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     { mkPipelineDecision0
     , tracer
     , historicityCheck
+    , leiosMsgRollForwardCallback
+    , leiosJumpAcceptedCallback
     } = cfgEnv
 
   DynamicEnv
@@ -1339,6 +1365,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               if
                 | pt == dynamoTipPt -> do
                     Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    leiosJumpAcceptedCallback jumpInfo
                     traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                     let kis' = case jump of
                           -- Since the updated kis is needed to validate headers,
@@ -1532,6 +1559,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             setCandidate (theirFrag kis''')
           atomically $
             traceWith headerMetricsTracer (slotNo, arrivalTime)
+
+          -- The history of the state before validating the header still ends
+          -- at its predecessor; the one after ends at the header.
+          leiosMsgRollForwardCallback
+            hdr
+            hdrSlotTime
+            (hswtLeiosLedgerView (HeaderStateHistory.current (theirHeaderStateHistory kis'')))
+            (HeaderStateHistory.current (theirHeaderStateHistory kis'))
 
           continueWithState kis''' $
             nextStep mkPipelineDecision n theirTip
@@ -1950,6 +1985,9 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
         , hwtLeiosLedgerView =
             maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
+        , hwtCertifiedAnnouncement =
+            certifiedLeiosAnnouncement (configBlock cfg) hdr $
+              headerStateChainDep (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory))
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same

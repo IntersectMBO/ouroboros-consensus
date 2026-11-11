@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
   , Serialised
   , TxHash
   , TxLocation (..)
@@ -1106,7 +1107,7 @@ prop_storeForgedEbThenLookup impl =
   forAll genSlotNo $ \slot ->
     forAll genDistinctTxBytes $ \txs ->
       ioProperty $ withFreshDb impl $ \db -> do
-        let forged = forgeLeiosEb txs
+        let forged = forgeLeiosEb EvenProtVer txs
             body = forgedEbBody forged
             ebHash = endorserBlockHash body
         withWriter db $ \writer -> storeForgedEb writer slot forged

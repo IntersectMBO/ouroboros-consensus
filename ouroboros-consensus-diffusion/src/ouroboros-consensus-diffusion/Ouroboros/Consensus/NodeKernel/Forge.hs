@@ -22,11 +22,15 @@ import qualified Data.Measure as Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
+  , certifiedLeiosAnnouncement
   , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract
@@ -34,7 +38,11 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement
+  , LeiosLedgerView
+  , LeiosProtocol (getLeiosLedgerView)
+  )
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
@@ -72,8 +80,9 @@ forge ::
   BlockForging m blk ->
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
-  -- block and the endorser block that it announces.
-  (Header blk -> ForgedEndorserBlock -> m ()) ->
+  -- block, the wall-clock onset of its slot, the Leios part of the ledger view
+  -- at its slot, and the endorser block that it announces.
+  (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
 forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
@@ -94,7 +103,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, predChainDep, slotOnset) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -105,6 +114,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
         trace $ TraceLedgerState currentSlot bcPrevPoint
 
         ledgerView <- getLedgerView trace cfg currentSlot unticked
+        slotOnset <- getSlotOnset cfg currentSlot unticked
 
         let tickedChainDepState = getTickedChainDepState cfg currentSlot unticked ledgerView
 
@@ -146,6 +156,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
+          , headerStateChainDep (headerState unticked)
+          , slotOnset
           )
 
   -- Actually produce the block
@@ -154,7 +166,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   lift $
     whenJust
       (Block.endorserBlock forgeRes)
-      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)))
+      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)) slotOnset leiosView)
 
   trace $
     TraceForgedBlock
@@ -180,6 +192,11 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     (fbTxs fbArgs)
     (pointSlot forgingOnTopOf)
     leiosView
+    ( certifiedLeiosAnnouncement
+        (configBlock cfg)
+        (getHeader (Block.rankingBlock forgeRes))
+        predChainDep
+    )
     (Block.rankingBlock forgeRes)
 
 -- | Context required to forge a block
@@ -307,9 +324,11 @@ addBlockToChainDB ::
   WithOrigin SlotNo ->
   -- | The Leios part of the ledger view at the block's slot
   StrictMaybe LeiosLedgerView ->
+  -- | The announcement the block's Leios certificate certifies
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosView newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosView certified newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -319,7 +338,7 @@ addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosVie
   -- 'uninterruptibleMask_' to make sure that async exceptions do not
   -- interrupt it.
   uninterruptibleMask_ $ do
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessorSlot leiosView newBlock
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessorSlot leiosView certified newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
@@ -392,6 +411,27 @@ getLedgerView trace cfg currentSlot unticked = do
 
   trace $ TraceLedgerView currentSlot
   pure ledgerView
+
+-- | The wall-clock onset of the slot we're producing a block for, from which
+-- the announcement of an endorser block forged in it is aged.
+--
+-- 'getLedgerView' already forecast this slot from the same ledger state, and an
+-- era's hard fork summary reaches at least as far as its ledger view forecasts
+-- whenever its safe zone is no shorter than that forecast's range, as for the
+-- Shelley eras. Were it not to, we give up on the slot, as when there is no
+-- ledger view.
+getSlotOnset ::
+  (Monad m, RunNode blk) =>
+  TopLevelConfig blk ->
+  SlotNo ->
+  ExtLedgerState blk EmptyMK ->
+  WithEarlyExit m RelativeTime
+getSlotOnset cfg currentSlot unticked =
+  case HardFork.runQuery
+    (HardFork.slotToWallclock currentSlot)
+    (hardForkSummary (configLedger cfg) (ledgerState unticked)) of
+    Left _pastHorizon -> exitEarly
+    Right (onset, _slotLength) -> pure onset
 
 -- | Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
 -- only need the ticked 'ChainDepState' to check whether we're a leader.

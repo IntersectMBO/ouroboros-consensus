@@ -242,16 +242,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    -- The seed is every closure the LeiosDB holds that a block the initial
-    -- chain selection could select may certify.
-    --
-    -- TODO Grow it as the node acquires closures. The LeiosDB no longer tells
-    -- what is written to it, so nothing does until LeiosFetch announces its
-    -- acquisitions. Then also key 'AcquiredLeiosEbs' by point, as the LeiosDB
-    -- is: a closure acquired at one point of an endorser block is not one at
-    -- another. Promotion copies the certified point's closure only, and fails
-    -- the node if it is incomplete.
-    let nextAcquiredLeiosClosure = retry
+    -- Subscribe before seeding, so that no closure acquired in between is
+    -- missed. The seed is every closure the LeiosDB holds that a block the
+    -- initial chain selection could select may certify.
+    nextLeiosEbNotification <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
     initialAcquiredLeiosEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
@@ -332,9 +326,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = \punish predecessorSlot leiosView blk ->
+            { addBlockAsync = \punish predecessorSlot leiosView certified blk ->
                 getEnv h $ \cdb ->
-                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView blk
+                  ChainSel.addBlockAsync cdb punish predecessorSlot leiosView certified blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
@@ -360,6 +354,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+            , getLeiosCertifiedEbs = getEnvSTM h Query.getLeiosCertifiedEbs
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
             , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter
@@ -417,7 +412,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env nextAcquiredLeiosClosure
+    when launchBgTasks $ Background.launchBgTasks env nextLeiosEbNotification
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually

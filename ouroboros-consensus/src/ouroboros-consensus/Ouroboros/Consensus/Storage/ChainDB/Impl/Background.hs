@@ -67,6 +67,7 @@ import Ouroboros.Consensus.Config (configBlock)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosProtocol (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -117,16 +118,11 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | The point of the next closure the node acquires, subscribed to before
-  -- seeding 'cdbAcquiredLeiosEbs', so that none is missed in between. It names
-  -- every point of the EB that is its election's focus and not older than the
-  -- ImmutableDB tip, even one that becomes the focus after the closure was
-  -- acquired. An election's focus is the first announcement in it that the
-  -- node accepts, until a verified certificate names another, so every point
-  -- that a block certifies is among them.
-  STM m LeiosPoint ->
+  -- | The next Leios acquisition, subscribed to before seeding
+  -- 'cdbAcquiredLeiosEbs', so that none is missed in between.
+  STM m LeiosEbNotification ->
   m ()
-launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
+launchBgTasks cdb@CDB{..} nextLeiosEbNotification = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -153,7 +149,7 @@ launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
 
   !leiosAcquiredEbsThread <-
     launch "ChainDB.leiosAcquiredEbsRunner" $
-      leiosAcquiredEbsRunner cdb nextAcquiredLeiosClosure
+      leiosAcquiredEbsRunner cdb nextLeiosEbNotification
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -169,25 +165,24 @@ launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
 
--- | Grow 'cdbAcquiredLeiosEbs' from the points of the acquired closures, and
--- enqueue a reprocess of the blocks parked on each endorser block the first
--- time its closure is acquired.
---
--- REVIEW: Would the fetch logic rather keep a fingerprinted set of the points
--- it acquired closures at? ChainSel could read that set directly, and this
--- runner would only reprocess what is new since the last fingerprint.
+-- | Grow 'cdbAcquiredLeiosEbs' from the node's Leios acquisitions, and enqueue a
+-- reprocess of the blocks parked on each endorser block once its closure is
+-- acquired.
 leiosAcquiredEbsRunner ::
-  IOLike m => ChainDbEnv m blk -> STM m LeiosPoint -> m Void
-leiosAcquiredEbsRunner CDB{..} nextAcquiredClosure =
-  forever $ do
-    point <- atomically nextAcquiredClosure
-    novel <- atomically $ do
-      acquired <- readTVar cdbAcquiredLeiosEbs
-      writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
-      pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
-    -- The set has already grown, so ChainSel sees the closure even while
-    -- this enqueue blocks on a full queue.
-    when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
+  IOLike m => ChainDbEnv m blk -> STM m LeiosEbNotification -> m Void
+leiosAcquiredEbsRunner CDB{..} nextNotification =
+  forever $
+    atomically nextNotification >>= \case
+      AcquiredEb{} -> pure ()
+      AcquiredEbTxs point -> do
+        recorded <- atomically $ do
+          acquired' <- insertAcquiredLeiosEb point <$> readTVar cdbAcquiredLeiosEbs
+          writeTVar cdbAcquiredLeiosEbs acquired'
+          -- Not if the point is older than what has been pruned.
+          pure $ isAcquiredLeiosEb point acquired'
+        -- The set has already grown, so ChainSel sees the closure even while
+        -- this enqueue blocks on a full queue.
+        when recorded $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
