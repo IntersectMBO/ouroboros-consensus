@@ -203,7 +203,7 @@ experimentalErasEnabled =
 -- the copy of that module these tools used to vendor. The fields that
 -- @cardano-ledger@ added later, which cardano-node does not set, take the values
 -- of the ledger's example Dijkstra genesis (@Test.Cardano.Ledger.Dijkstra.Examples@),
--- which the Leios fields below already match.
+-- except the four endorser-block parameters.
 defaultDijkstraGenesis :: SL.DijkstraGenesis
 defaultDijkstraGenesis =
   let upgradePParamsDef =
@@ -222,10 +222,13 @@ defaultDijkstraGenesis =
           , udppLeiosDiffusionPeriodLength = Milliseconds32 7_000
           , udppLeiosCommitteeSize = 900 :: Word16
           , udppLeiosQuorumStakeThreshold = fromMaybe (error "impossible") $ boundRational 0.75
-          , udppMaxEndorserBlockReferencesSize = 512 * 1024
-          , udppMaxEndorserBlockTxsSize = 12 * 1024 * 1024
-          , udppMaxEndorserBlockExUnits = OrdExUnits $ ExUnits 7_000_000_000 2_000_000_000_000
-          , udppMaxRefScriptSizePerEndorserBlock = 12 * 1024 * 1024
+          , -- Zero, so that a tool run that reaches Dijkstra without a Dijkstra
+            -- genesis file forges no endorser block, and its mempool keeps no
+            -- room for one.
+            udppMaxEndorserBlockReferencesSize = 0
+          , udppMaxEndorserBlockTxsSize = 0
+          , udppMaxEndorserBlockExUnits = OrdExUnits $ ExUnits 0 0
+          , udppMaxRefScriptSizePerEndorserBlock = 0
           , udppPerasMinCandidateBlockAge = SlotInterval 90
           , udppPerasHealingFactor = fromMaybe (error "impossible") $ boundRational 0.5
           , udppPerasCertBoost = 15
