@@ -208,9 +208,10 @@ leiosAcquiredEbsRunner CDB{..} nextAcquiredClosure =
 --
 -- Before copying any of the blocks, this copies the endorser blocks they
 -- certify into the LeiosDB's immutable partition, so every block in the
--- ImmutableDB has its certified endorser block there. A crash in between leaves
--- only the endorser blocks, and copying the same blocks again after the restart
--- copies the same endorser blocks.
+-- ImmutableDB has its certified endorser block there, and advances the
+-- LeiosDB's promoted slot to the slot of the newest block. A crash in between
+-- leaves only the endorser blocks, and copying the same blocks again after the
+-- restart copies the same endorser blocks.
 copyToImmutableDB ::
   forall m blk.
   ( IOLike m
@@ -235,7 +236,8 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
     -- copy.
     then trace NoBlocksToCopyToImmutableDB
     else do
-      leiosDbPromoteToImmutable cdbLeiosDb =<< certifiedEbs toCopy
+      leiosDbPromoteToImmutable cdbLeiosDb (realPointSlot (headerRealPoint (last toCopy)))
+        =<< certifiedEbs toCopy
       forM_ (map headerPoint toCopy) $ \pt -> do
         let hash = case pointHash pt of
               BlockHash h -> h
@@ -531,7 +533,7 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
-  LeiosDB.garbageCollect cdbLeiosDb slotNo
+  LeiosDB.garbageCollect cdbLeiosDb
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo

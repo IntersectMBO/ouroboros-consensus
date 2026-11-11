@@ -5,7 +5,7 @@
 -- | Read operations of LeiosDB's SQLite backend.
 --
 -- Each lookup reads one partition, chosen by the point's slot, unless a
--- collection overtook the read ('readPartition').
+-- promotion overtook the read ('readPartition').
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   ( sqlScanCompleteEbPointsSince
   , sqlLookupEbBody
@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 -- closures are copied there.
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbPointsSince conn sinceSlot = do
-  gcSlot <- readTVarIO gcSlotVar
+  promotedSlot <- readTVarIO promotedSlotVar
   marked <-
     dbWithTransaction volDb $
       withStmt volDb "SELECT ebSlot, ebHashBytes, txWritten FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
@@ -70,12 +70,12 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
                   allWritten <- BS.all (/= 0) <$> DB.columnBlob stmt 2
                   loop (if allWritten then point : acc else acc)
         loop []
-  let vol = [point | point <- marked, pointSlotNo point >= gcSlot]
+  let vol = [point | point <- marked, pointSlotNo point >= promotedSlot]
   imm <-
     dbWithTransaction immDb $
       withStmt immDb "SELECT ebSlot, ebHashBytes FROM ebs WHERE ebSlot >= ?1 AND ebSlot < ?2" $ \stmt -> do
         dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-        dbBindInt64 stmt 2 (fromIntegral $ unSlotNo gcSlot)
+        dbBindInt64 stmt 2 (fromIntegral $ unSlotNo promotedSlot)
         let loop acc =
               dbStep stmt >>= \case
                 DB.Done -> pure (reverse acc)
@@ -85,7 +85,7 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
         loop []
   pure $ Set.toAscList (Set.fromList vol <> Set.fromList imm)
  where
-  Conn{conVolDb = volDb, conImmDb = immDb, connGcSlot = gcSlotVar} = conn
+  Conn{conVolDb = volDb, conImmDb = immDb, connPromotedSlot = promotedSlotVar} = conn
 
   columnPoint stmt =
     MkLeiosPoint
@@ -107,28 +107,28 @@ isWritten :: ByteString -> Int -> Bool
 isWritten txWritten i = BS.index txWritten i /= 0
 
 -- | Read the point in one transaction of the partition its reads go to: the
--- immutable one if the point is older than the latest garbage collection, else
--- the volatile one. 'Nothing' if that holds no row of the point.
+-- immutable one if the point is older than the slot the latest promotion
+-- reached, else the volatile one. 'Nothing' if that holds no row of the point.
 --
--- A collection may overtake a read of the volatile partition, deleting the
--- row after the read chose the partition. If the read finds no row and the
--- point is then older than the latest collection, it reads the immutable
--- partition, which a promotion filled before that collection began.
+-- A promotion and a collection may overtake a read of the volatile partition,
+-- deleting the row after the read chose the partition. If the read finds no
+-- row and the point is then older than the promoted slot, it reads the
+-- immutable partition, which that promotion filled.
 readPartition :: Conn -> LeiosPoint -> (DB.Database -> IO (Maybe a)) -> IO (Maybe a)
 readPartition conn point readRow = do
-  collected <- isCollected
-  if collected
+  promoted <- isPromoted
+  if promoted
     then fromImmutable
     else
       dbWithTransaction volDb (readRow volDb) >>= \case
         Nothing -> do
-          overtaken <- isCollected
+          overtaken <- isPromoted
           if overtaken then fromImmutable else pure Nothing
         found -> pure found
  where
-  Conn{conVolDb = volDb, conImmDb = immDb, connGcSlot = gcSlotVar} = conn
+  Conn{conVolDb = volDb, conImmDb = immDb, connPromotedSlot = promotedSlotVar} = conn
 
-  isCollected = (pointSlotNo point <) <$> readTVarIO gcSlotVar
+  isPromoted = (pointSlotNo point <) <$> readTVarIO promotedSlotVar
 
   fromImmutable = dbWithTransaction immDb (readRow immDb)
 

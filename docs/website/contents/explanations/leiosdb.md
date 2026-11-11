@@ -44,7 +44,7 @@ erDiagram
 - When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
 - Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
 - Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. LeiosDB decodes no body and checks no hash for it: the writers check each transaction against the body before writing it.
-- Reads take the row at the requested point: in the immutable partition if the point is older than the latest garbage collection, else in the volatile one, and never fall back to the other. A read of the volatile partition that a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which the promotion filled before that collection. At startup, that slot is the one after the newest point in the immutable partition.
+- Reads take the row at the requested point: in the immutable partition if the point is older than the promoted slot (see below), else in the volatile one, and never fall back to the other. A read of the volatile partition that a promotion and a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which that promotion filled.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
 
@@ -54,19 +54,27 @@ Indexes:
 |-----------------------|--------------------|---------------------------|
 | `idx_ebs_ebHashBytes` | `ebs(ebHashBytes)` | Looking up an EB by hash  |
 
-The primary key `(ebSlot, ebHashBytes)` serves the lookups by point, and the garbage collection's scan by slot. The blob API opens a row by its implicit rowid.
+The primary key `(ebSlot, ebHashBytes)` serves the lookups by point, the garbage collection's scan by slot, and finding the newest promoted point. The blob API opens a row by its implicit rowid.
 
 ### Promotion and garbage collection
 
 Before the ChainDB appends blocks to the ImmutableDB, it promotes the EBs they certify: it copies each into the immutable partition, at its certified point, in one transaction.
+It then advances the promoted slot to the slot of the newest of those blocks, even if they certify nothing.
+Only reads of a point older than the promoted slot go to the immutable partition, and every point there that the immutable chain certifies is promoted.
 An EB the immutable partition holds already is not copied again: a crash can lose the volatile writes that completed it, and nothing fetches them again.
 So every block in the ImmutableDB has the EB it certifies in the immutable partition.
 A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
 An EB whose closure is incomplete fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
-A garbage collection at a slot deletes the rows before that slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
-It also drops the point and body writes of a point before the latest garbage collection's slot, as that collection would delete it anyway: the ChainDB collects up to the ImmutableDB tip, and the fetch logic ignores announcements older than that.
-The slot is kept in memory only: after a restart, the next garbage collection sets it again.
+A garbage collection deletes the rows before the promoted slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
+So it never deletes a row that reads still go to, nor one that a promotion still needs.
+The point and body writes of a point before the promoted slot are dropped, as a collection would delete them anyway: such a point is promoted or not certified, and the fetch logic ignores announcements older than the ImmutableDB tip.
+
+The promoted slot is kept in memory only, and never goes back while the LeiosDB is open.
+At startup it is the one after the newest point in the immutable partition, which the primary key finds without a scan.
+That may lag the slot the latest promotion reached, but no point at or after it is promoted, so its reads lose nothing by going to the volatile partition.
+It is ahead of the ImmutableDB tip only if a crash came between a promotion and the appends of its blocks; the points in between then were not collected yet, and the next start copies the same blocks again.
+Truncating the immutable partition, as the db-truncater does, lowers it at the next start.
 
 ## Immutable partition
 

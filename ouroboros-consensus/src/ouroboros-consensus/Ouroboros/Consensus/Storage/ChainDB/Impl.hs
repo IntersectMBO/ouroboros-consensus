@@ -95,7 +95,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbReader (..)
   , withReader
   )
-import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -198,7 +197,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       unless (isMember (realPointHash tipPoint)) $
         VolatileDB.putBlock volatileDB
           =<< ImmutableDB.getKnownBlockComponent immutableDB API.GetBlock tipPoint
-    LeiosDB.garbageCollect leiosDb (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
     pure

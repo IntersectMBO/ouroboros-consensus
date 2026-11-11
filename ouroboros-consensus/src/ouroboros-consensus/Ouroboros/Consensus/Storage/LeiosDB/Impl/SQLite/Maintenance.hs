@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 
     -- * Stats
   , initialStats
-  , initialGcSlot
+  , initialPromotedSlot
   , startVolatileStatsSampler
   , bumpVolatileStats
   , bumpVolatileStatsVar
@@ -94,7 +94,8 @@ closePromoter promoterVar =
   withMVar promoterVar $ \(Promoter db) -> closeChecked db
 
 -- | Implements 'leiosDbPromoteToImmutable': copy the EBs into the immutable
--- partition, at the given points, in one transaction.
+-- partition, at the given points, in one transaction, then advance the
+-- promoted slot to the given one.
 --
 -- The blocks certifying them are on the chain, hence the fetch logic completed
 -- the EBs. Still check that each of their txs is marked written, since the
@@ -106,19 +107,26 @@ sqlPromoteToImmutable ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   MVar Promoter ->
+  StrictTVar IO SlotNo ->
+  SlotNo ->
   [LeiosPoint] ->
   IO ()
-sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) $ do
-  copied <- withMVar promoterVar $ \(Promoter db) ->
-    -- Deferred, not 'dbWithWriteTransactionRaw': @BEGIN IMMEDIATE@ takes the
-    -- write lock of every database on the connection, the attached volatile
-    -- partition too, and would hold off the writer for the whole promotion.
-    -- Promotion only reads the volatile partition, and the immutable one has
-    -- no other writer, so taking its lock at the first insert cannot fail.
-    dbWithTransaction db $
-      sum <$> mapM (copyEbToImmutable db) points
-  bumpImmutableStats statsVar copied
-  traceWith tracer $ TraceLeiosDbCopiedToImmutable copied
+sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
+  withMVar promoterVar $ \(Promoter db) -> do
+    unless (null points) $ do
+      -- Deferred, not 'dbWithWriteTransactionRaw': @BEGIN IMMEDIATE@ takes the
+      -- write lock of every database on the connection, the attached volatile
+      -- partition too, and would hold off the writer for the whole promotion.
+      -- Promotion only reads the volatile partition, and the immutable one has
+      -- no other writer, so taking its lock at the first insert cannot fail.
+      copied <-
+        dbWithTransaction db $
+          sum <$> mapM (copyEbToImmutable db) points
+      bumpImmutableStats statsVar copied
+      traceWith tracer $ TraceLeiosDbCopiedToImmutable copied
+    -- Only once the copies are committed, so the reads it sends to the
+    -- immutable partition find them.
+    atomically $ modifyTVar promotedSlotVar (max slot)
  where
   copyEbToImmutable db point = do
     let ebHash = pointEbHash point
@@ -164,13 +172,12 @@ sqlPromoteToImmutable tracer statsVar promoterVar points = unless (null points) 
 
 -- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect', as
 -- 'GarbageCollect' jobs on the writer, each deleting up to 'gcBatchSize' rows
--- before the slot, until none is left. The writes queued meanwhile run in
--- between. The slot is in memory only: after a restart, the next GC sets it
--- again.
-sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
-sqlGarbageCollect writeQueue gcSlot = do
-  more <- await =<< submitJob writeQueue (GarbageCollect gcSlot)
-  when more $ sqlGarbageCollect writeQueue gcSlot
+-- before the promoted slot, until none is left. The writes queued meanwhile run
+-- in between.
+sqlGarbageCollect :: WriteQueue -> IO ()
+sqlGarbageCollect writeQueue = do
+  more <- await =<< submitJob writeQueue GarbageCollect
+  when more $ sqlGarbageCollect writeQueue
 
 -- | How many rows a 'GarbageCollect' job deletes at most, which bounds how
 -- long a write waits behind it.
@@ -180,25 +187,25 @@ gcBatchSize = 16
 -- | Delete up to the given number of rows before the slot, in one
 -- transaction. Returns how many.
 deleteEbsBefore :: HasCallStack => DB.Database -> Int -> SlotNo -> IO Int
-deleteEbsBefore db limit gcSlot =
+deleteEbsBefore db limit slot =
   withStmt
     db
     "DELETE FROM ebs WHERE rowid IN\n\
     \  (SELECT rowid FROM ebs WHERE ebSlot < ?1 LIMIT ?2)"
     $ \stmt -> dbWithWriteTransactionRaw db $ do
-      dbBindInt64 stmt 1 (fromIntegral (unSlotNo gcSlot))
+      dbBindInt64 stmt 1 (fromIntegral (unSlotNo slot))
       dbBindInt64 stmt 2 (fromIntegral limit)
       dbStep1Safe stmt
       DB.changes db
 
 -- * Stats
 
--- | The slot of the latest garbage collection, at startup: the one after the
--- newest point the immutable partition holds. The slot is not on disk, and a
--- crash between a promotion and the appends of its blocks leaves this ahead of
--- the ImmutableDB tip, so the ChainDB collects at that tip when it opens.
-initialGcSlot :: HasCallStack => FilePath -> IO SlotNo
-initialGcSlot immPath =
+-- | The promoted slot at startup: the one after the newest point the immutable
+-- partition holds. It may lag the slot the latest promotion reached, which is
+-- not on disk, but no point at or after it is promoted, so its reads lose
+-- nothing by going to the volatile partition.
+initialPromotedSlot :: HasCallStack => FilePath -> IO SlotNo
+initialPromotedSlot immPath =
   withReadOnlyConn immPath $ \db ->
     SlotNo . fromIntegral <$> queryInt64 db "SELECT COALESCE(MAX(ebSlot) + 1, 0) FROM ebs"
 

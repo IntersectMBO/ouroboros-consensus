@@ -54,17 +54,20 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Get a new reader. No interaction between readers or writers.
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.
-  , garbageCollect :: HasCallStack => SlotNo -> m ()
-  -- ^ Delete the volatile EBs announced before the slot.
-  --   Reads dispatch by this slot from then on, even if it is lower than the
-  --   previous one.
+  , garbageCollect :: HasCallStack => m ()
+  -- ^ Delete the volatile EBs announced before the promoted slot.
   --
   --   See 'sqlGarbageCollect' for the SQL backend implementation.
-  , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()
+  , leiosDbPromoteToImmutable :: HasCallStack => SlotNo -> [LeiosPoint] -> m ()
   -- ^ Copy the given EBs' bodies and tx closures from volatile into immutable
-  --   LeiosDb, before returning. Takes a batch: the caller holds the ImmutableDB
-  --   write lock, so this is one transaction per 'copyToImmutableDB' pass, not
-  --   one per certified EB. Throws if an EB's closure is incomplete.
+  --   LeiosDb, then advance the promoted slot to the given one, the ImmutableDB
+  --   tip's once the blocks certifying them are appended. Takes a batch: the
+  --   caller holds the ImmutableDB write lock, so this is one transaction per
+  --   'copyToImmutableDB' pass, not one per certified EB. Throws if an EB's
+  --   closure is incomplete, advancing nothing.
+  --
+  --   The promoted slot never goes back while the LeiosDB is open. Reopened, it
+  --   is the one after the newest promoted point.
   , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
   -- ^ Sample 'LeiosDbStats' counters.
   }
@@ -72,10 +75,10 @@ data LeiosDbHandle m = LeiosDbHandle
 
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 --
--- The reads of a point older than the latest 'garbageCollect' go to the
--- immutable partition, which holds an EB at the point it was certified at,
--- and those of any other point to the volatile one. Neither falls back to the
--- other, unless a collection overtook the read.
+-- The reads of a point older than the promoted slot go to the immutable
+-- partition, which holds an EB at the point it was certified at, and those of
+-- any other point to the volatile one. Neither falls back to the other, unless
+-- a promotion overtook the read.
 data LeiosDbReader m = LeiosDbReader
   { closeReader :: m ()
   , lookupEbBody :: HasCallStack => LeiosPoint -> m (Maybe ByteString)

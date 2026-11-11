@@ -84,10 +84,10 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- the other fields like any other.
   , imImmutableEbTxBytes :: !(Map LeiosPoint (IntMap {- txOffset -} ByteString))
   -- ^ The tx bytes of the bodies in 'imImmutableEbBodies', by offset.
-  , imGcSlot :: !SlotNo
-  -- ^ The slot of the latest garbage collection. The writes of a point before
-  -- it are dropped, and its reads go to 'imImmutableEbBodies' and
-  -- 'imImmutableEbTxBytes'.
+  , imPromotedSlot :: !SlotNo
+  -- ^ The slot the latest promotion reached. The writes of a point before it
+  -- are dropped, its reads go to 'imImmutableEbBodies' and
+  -- 'imImmutableEbTxBytes', and the garbage collection evicts it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -138,8 +138,9 @@ newLeiosDBInMemoryWith stateVar =
 -- the immutable chain certifies, and only once it holds its closure, so a
 -- closure that is incomplete is a caller's bug: this then fails, changing
 -- nothing.
-imPromoteToImmutable :: IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint] -> m ()
-imPromoteToImmutable stateVar points = do
+imPromoteToImmutable ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> [LeiosPoint] -> m ()
+imPromoteToImmutable stateVar slot points = do
   incomplete <- atomically $ do
     s <- readTVar stateVar
     let closures =
@@ -160,25 +161,27 @@ imPromoteToImmutable stateVar points = do
         s
           { imImmutableEbBodies = imImmutableEbBodies s <> fmap fst copied
           , imImmutableEbTxBytes = imImmutableEbTxBytes s <> fmap snd copied
+          , imPromotedSlot = max slot (imPromotedSlot s)
           }
     pure incomplete
   unless (null incomplete) $
     throwLeiosDbException $
       "leiosDbPromoteToImmutable: incomplete closure (programmer error): " <> show incomplete
 
--- | Evict every EB all of whose points are older than the slot, with its body
--- and tx bytes, and drop the older points of every other EB. A promoted EB
--- keeps its copy in 'imImmutableEbBodies' and 'imImmutableEbTxBytes'.
-imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m ()
-imGarbageCollect stateVar slot = atomically $ modifyTVar stateVar $ \s ->
-  let newestPointSlots =
+-- | Evict every EB all of whose points are older than 'imPromotedSlot', with
+-- its body and tx bytes, and drop the older points of every other EB. A
+-- promoted EB keeps its copy in 'imImmutableEbBodies' and
+-- 'imImmutableEbTxBytes'.
+imGarbageCollect :: IOLike m => StrictTVar m InMemoryLeiosDb -> m ()
+imGarbageCollect stateVar = atomically $ modifyTVar stateVar $ \s ->
+  let slot = imPromotedSlot s
+      newestPointSlots =
         Map.fromListWith max [(pointEbHash p, pointSlotNo p) | p <- Set.toList (imEbPoints s)]
       evicted = Map.keysSet (Map.filter (< slot) newestPointSlots)
    in s
         { imEbPoints = Set.filter ((>= slot) . pointSlotNo) (imEbPoints s)
         , imEbBodies = Map.withoutKeys (imEbBodies s) evicted
         , imEbTxBytes = Map.filterWithKey (\p _ -> pointSlotNo p >= slot) (imEbTxBytes s)
-        , imGcSlot = slot
         }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -232,10 +235,10 @@ openInMemoryWriter stateVar =
 
 -- * Top-level implementations
 
--- | Insert a point, unless the latest garbage collection collects it.
+-- | Insert a point, unless the latest promotion passed it.
 insertPoint :: LeiosPoint -> InMemoryLeiosDb -> InMemoryLeiosDb
 insertPoint point s
-  | pointSlotNo point < imGcSlot s = s
+  | pointSlotNo point < imPromotedSlot s = s
   | otherwise = s{imEbPoints = Set.insert point (imEbPoints s)}
 
 imLookupEbBody ::
@@ -258,7 +261,7 @@ imInsertEbBody stateVar point eb fills = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   atomically $ do
-    collected <- (pointSlotNo point <) . imGcSlot <$> readTVar stateVar
+    collected <- (pointSlotNo point <) . imPromotedSlot <$> readTVar stateVar
     if collected then pure [] else fill
  where
   fill = do
@@ -341,7 +344,7 @@ imScanCompleteEbClosuresSince ::
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
   let isComplete p
-        | pointSlotNo p < imGcSlot s = Map.member p (imImmutableEbBodies s)
+        | pointSlotNo p < imPromotedSlot s = Map.member p (imImmutableEbBodies s)
         | otherwise =
             maybe False (closureWritten (volatileTxBytes s p)) (Map.lookup (pointEbHash p) (imEbBodies s))
   pure
@@ -374,9 +377,9 @@ imLookupEbClosure stateVar point = atomically $ do
     traverse (writtenTx state point) (IntMap.keys (sbTxs body))
 
 -- | Whether reads of the point go to the immutable copies: it is older than
--- the latest garbage collection.
+-- the slot the latest promotion reached.
 readsImmutable :: InMemoryLeiosDb -> LeiosPoint -> Bool
-readsImmutable state point = pointSlotNo point < imGcSlot state
+readsImmutable state point = pointSlotNo point < imPromotedSlot state
 
 -- | The body at the point.
 bodyAt :: InMemoryLeiosDb -> LeiosPoint -> Maybe StoredBody

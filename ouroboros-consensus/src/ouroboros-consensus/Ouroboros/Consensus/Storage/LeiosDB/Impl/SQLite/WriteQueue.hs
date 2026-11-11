@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   , writerQueueDepth
   ) where
 
-import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTBQueue
   , StrictTVar
@@ -78,9 +77,7 @@ data WriteJob
     Flush !(ResolveWriteJob ())
   | -- | Garbage collection; see 'sqlGarbageCollect'.
     GarbageCollect
-      -- | the GC slot
-      !SlotNo
-      -- | where the worker puts whether rows before the slot are left
+      -- | where the worker puts whether rows before the promoted slot are left
       !(ResolveWriteJob Bool)
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
@@ -156,7 +153,7 @@ describeJob = \case
   WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  GarbageCollect slot _ -> "GarbageCollect " <> show slot
+  GarbageCollect _ -> "GarbageCollect"
   Shutdown _ -> "Shutdown"
 
 -- | Depth of the write queue. One slot per producer that can be mid-write --

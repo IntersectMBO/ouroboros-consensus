@@ -138,10 +138,9 @@ data Conn = Conn
   -- ^ Usage stats for this connection.
   , conImmDb :: !DB.Database
   -- ^ The connection to the immutable partition.
-  , connGcSlot :: !(StrictTVar IO SlotNo)
-  -- ^ The slot of the latest garbage collection, which the writer sets. A
-  -- point older than it is read from the immutable partition, any other from
-  -- the volatile one.
+  , connPromotedSlot :: !(StrictTVar IO SlotNo)
+  -- ^ The slot the latest promotion reached. A point older than it is read
+  -- from the immutable partition, any other from the volatile one.
   }
 
 -- | A 'Conn' over two open partition connections; 'closeConn' closes them.
@@ -152,13 +151,13 @@ mkConn ::
   DB.Database ->
   DB.Database ->
   Conn
-mkConn tracer statsVar gcSlotVar volDb immDb =
+mkConn tracer statsVar promotedSlotVar volDb immDb =
   Conn
     { conVolDb = volDb
     , connTracer = tracer
     , connStats = statsVar
     , conImmDb = immDb
-    , connGcSlot = gcSlotVar
+    , connPromotedSlot = promotedSlotVar
     }
 
 -- | Close both connections of a 'Conn'.

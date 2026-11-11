@@ -116,8 +116,8 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
   initialiseLeiosDbFiles volLeiosDbPath immLeiosDbPath
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
-  -- the slot that reads dispatch by, which the writer advances
-  gcSlotVar <- newTVarIO =<< initialGcSlot immLeiosDbPath
+  -- the slot that reads dispatch by, which promotion advances
+  promotedSlotVar <- newTVarIO =<< initialPromotedSlot immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerThread <- startVolatileStatsSampler registry tracer statsVar volLeiosDbPath
   -- the immutable partition's only writer
@@ -129,16 +129,16 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       registry
       tracer
       statsVar
-      gcSlotVar
+      promotedSlotVar
       volLeiosDbPath
       immLeiosDbPath
   pure
     LeiosDbHandle
       { closeLeiosDbHandle = close samplerThread promoterKey writeQueue
-      , openReader = implOpenReader statsVar gcSlotVar
+      , openReader = implOpenReader statsVar promotedSlotVar
       , openWriter = implOpenWriter writeQueue
       , garbageCollect = sqlGarbageCollect writeQueue
-      , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar
+      , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
@@ -162,10 +162,10 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       Left (_writerGone :: LeiosDbException) -> pure ()
       Right promise -> await promise
 
-  implOpenReader statsVar gcSlotVar = do
+  implOpenReader statsVar promotedSlotVar = do
     volDb <- openRawConnection volLeiosDbPath
     immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
-    let conn = mkConn tracer statsVar gcSlotVar volDb immDb
+    let conn = mkConn tracer statsVar promotedSlotVar volDb immDb
     pure
       LeiosDbReader
         { closeReader = closeConn conn
@@ -214,13 +214,13 @@ withWriterConns ::
   FilePath ->
   (WriterConns -> IO a) ->
   IO a
-withWriterConns tracer statsVar gcSlotVar volPath immPath k =
+withWriterConns tracer statsVar promotedSlotVar volPath immPath k =
   bracket (openRawConnection volPath) closeChecked $ \volDb ->
     bracket (openRawConnection immPath) closeChecked $ \immDb ->
       k
         WriterConns
           { wcVolDb = volDb
-          , wcConn = mkConn tracer statsVar gcSlotVar volDb immDb
+          , wcConn = mkConn tracer statsVar promotedSlotVar volDb immDb
           }
 
 -- | Start the worker draining the write queue. The worker opens the write
@@ -238,7 +238,7 @@ startWriter ::
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar gcSlotVar volPath immPath = do
+startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
@@ -271,30 +271,29 @@ startWriter registry tracer statsVar gcSlotVar volPath immPath = do
               writeIORef shutdownVar (Just resolve)
               pure Stop
             WriteEbBody point eb fills resolve -> do
-              collected <- isCollected point
-              resolve =<< if collected then pure [] else sqlInsertEbBody conn point eb fills
+              promoted <- isPromoted point
+              resolve =<< if promoted then pure [] else sqlInsertEbBody conn point eb fills
               pure Continue
             WriteTxs point txs resolve -> do
-              collected <- isCollected point
-              resolve =<< if collected then pure [] else sqlInsertTxs conn point txs
+              promoted <- isPromoted point
+              resolve =<< if promoted then pure [] else sqlInsertTxs conn point txs
               pure Continue
             Flush resolve -> do
               resolve ()
               pure Continue
-            GarbageCollect slot resolve -> do
-              resolve =<< collect slot
+            GarbageCollect resolve -> do
+              resolve =<< collect
               pure Continue
 
-          -- Whether GC collected already past this point, so its writes are
-          -- dropped.
-          isCollected :: LeiosPoint -> IO Bool
-          isCollected point = (pointSlotNo point <) <$> readTVarIO gcSlotVar
+          -- Whether promotion passed this point already, so its writes are
+          -- dropped: it is either promoted or not certified.
+          isPromoted :: LeiosPoint -> IO Bool
+          isPromoted point = (pointSlotNo point <) <$> readTVarIO promotedSlotVar
 
-          -- Whether rows before the slot are left.
-          collect :: SlotNo -> IO Bool
-          collect slot = do
-            atomically $ writeTVar gcSlotVar slot
-            evicted <- deleteEbsBefore volDb gcBatchSize =<< readTVarIO gcSlotVar
+          -- Whether rows before the promoted slot are left.
+          collect :: IO Bool
+          collect = do
+            evicted <- deleteEbsBefore volDb gcBatchSize =<< readTVarIO promotedSlotVar
             when (evicted > 0) $ do
               bumpVolatileStatsVar statsVar (negate evicted)
               dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
@@ -308,7 +307,7 @@ startWriter registry tracer statsVar gcSlotVar volPath immPath = do
   void $ forkLinkedThread registry "leiosdb-writer" $ do
     -- The brackets close the connections on every way out of 'worker': a
     -- served 'Shutdown', a failed write, a cancellation.
-    outcome <- try $ withWriterConns tracer statsVar gcSlotVar volPath immPath worker
+    outcome <- try $ withWriterConns tracer statsVar promotedSlotVar volPath immPath worker
     readIORef shutdownVar >>= \case
       -- Stopped on request: the close outcome, failed or not, is the
       -- awaiter's to report (a failed close through the seal), and the worker
