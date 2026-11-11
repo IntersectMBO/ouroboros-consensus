@@ -431,8 +431,8 @@ data Certificates = MkCertificates
   deriving stock Generic
   deriving anyclass NoThunks
 
--- | The certificate of this announcement, if the votes for it reached quorum by
--- their deadline.
+-- | The certificate of this announcement, if the votes for it reached quorum
+-- before 'pruneVotes' passed their deadline.
 getCertificate ::
   IOLike m =>
   VoteState m blk -> RankingBlockHash -> STM m (Maybe LeiosCert)
