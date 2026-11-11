@@ -29,6 +29,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
   , pickLeastRequestedJobExcept
   , unpickJob
   , completeJob
+
+    -- * Inspecting pools
+  , jobMultiplicities
+  , hasExactReverseIndex
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -259,6 +263,20 @@ completeJob (MkLeiosJobId jid) pool =
   -- reverse-index delete) while deleting the entry.
   delete1 Nothing = (Nothing, Nothing)
   delete1 (Just (MkLeiosJobState _job (MkLeiosJobMultiplicity m))) = (Just m, Nothing)
+
+-- | How many peers have each unfinished job in flight.
+jobMultiplicities :: LeiosJobPool -> IntMap Int
+jobMultiplicities =
+  IntMap.map (\(MkLeiosJobState _job (MkLeiosJobMultiplicity m)) -> m) . jobs
+
+-- | Whether 'jobsByMultiplicity' is the exact inverse of the multiplicities in
+-- 'jobs', as 'LeiosJobPool' requires.
+hasExactReverseIndex :: LeiosJobPool -> Bool
+hasExactReverseIndex pool =
+  IntMap.map NEIntSet.toSet (jobsByMultiplicity pool)
+    == IntMap.fromListWith
+      IntSet.union
+      [(m, IntSet.singleton jid) | (jid, m) <- IntMap.toList (jobMultiplicities pool)]
 
 bucketDelete :: Int -> Int -> IntMap NEIntSet -> IntMap NEIntSet
 bucketDelete m jid = IntMap.update (NEIntSet.nonEmptySet . NEIntSet.delete jid) m
