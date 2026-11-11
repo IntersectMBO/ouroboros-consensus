@@ -18,7 +18,8 @@ module Test.Consensus.Leios.Relay (tests) where
 import Cardano.Crypto.DSIGN.Class (signDSIGN, verifyDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios
-  ( LeiosCert
+  ( AggregationError (..)
+  , LeiosCert
   , LeiosCommittee
   , LeiosSeat (..)
   , LeiosSeatId (..)
@@ -26,6 +27,7 @@ import Cardano.Crypto.Leios
   , Weight
   , leiosCommitteeSize
   , leiosSignContext
+  , maxLeiosCommitteeSize
   , resolveLeiosSeat
   , verifyLeiosCert
   )
@@ -68,7 +70,7 @@ import Data.Void (Void)
 import Data.Word (Word16)
 import Ouroboros.Consensus.Block (Header, SlotNo (..), blockHash, blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Leios.AnnounceState
@@ -95,7 +97,9 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Leios.VoteState
   ( TraceLeiosVoteState (..)
+  , addVote
   , getCertificate
+  , newVoteState
   , pruneCertificates
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
@@ -112,7 +116,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkLeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
-  ( VoteWindow (..)
+  ( AcceptedVote (..)
+  , VoteWindow (..)
   , leiosVoteWindow
   , voteLateGrace
   )
@@ -183,6 +188,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.ChainDB (emptyNodeDBs)
+import Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
 tests =
@@ -323,6 +329,8 @@ tests =
                 []
         [(rbHash, weight) | TraceLeiosQuorumMissed rbHash weight <- runVoteStateTraces]
           @?= [(rbHashOf (ltbHeader someAnnouncingBlock), 2 * seatWeightEach)]
+    , testCase "the node traces votes that reach quorum but do not aggregate into a certificate" $
+        aggregationFailures @?= [TooManySigners (maxLeiosCommitteeSize + 1)]
     , testCase "the node accepts a vote early within the clock skew, but relays it once its window opens" $ do
         -- The window opens 4 s in; the client accepts the vote from 2 s in.
         (ups, downs) <- relay 20 [[announce someAnnouncingBlock, (2.5, vote someAnnouncingBlock 0)]] [0]
@@ -693,12 +701,12 @@ runRelayThen ::
   (forall s. NodeUnderTest (IOSim s) -> IOSim s a) ->
   RelayRun a
 runRelayThen verifying end ups downs after = runSimOrThrow $ do
-  traced <- newTVarIO []
-  withNode verifying (mkTracer $ \ev -> atomically $ modifyTVar traced (ev :)) $ \node -> do
+  (tracer, getTraces) <- recordingTracerTVar
+  withNode verifying tracer $ \node -> do
     outcomes <- forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer node end (PeerAddr i) spec
     a <- after node
     let (ups', downs') = splitAt (length ups) outcomes
-    RelayRun ups' downs' <$> (reverse <$> readTVarIO traced) <*> pure a
+    RelayRun ups' downs' <$> getTraces <*> pure a
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
 
@@ -835,6 +843,43 @@ certifiedOncePruned = runSimOrThrow $ withNode (VerifyingTime 0) nullTracer $ \n
   atomically $ pruneCertificates st (blockSlot someAnnouncingBlock + 1)
   _ <- runPeer node 20 (PeerAddr 1) (PeerSpec 0 quorumFor)
   atomically $ isJust <$> getCertificate st (rbHashOf (ltbHeader someAnnouncingBlock))
+
+-- | Why the node fails to aggregate the votes of seats 0 to 2 for
+-- 'someAnnouncingBlock' into a certificate, in a committee with one seat too
+-- many for a certificate to name.
+aggregationFailures :: [AggregationError]
+aggregationFailures = runSimOrThrow $ do
+  (tracer, getTraces) <- recordingTracerTVar
+  notifyLog <- newNotifyLog
+  announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
+  st <- newVoteState tracer announceState notifyLog
+  atomically $ onValidAnnouncement announceState (someValidAnnouncement 0)
+  for_ [0 .. 2] $ \seat -> addVote st systemTime (accepted seat)
+  traces <- getTraces
+  pure [err | TraceLeiosAggregationFailed _ err <- traces]
+ where
+  window =
+    leiosVoteWindow
+      leiosLedgerView
+      (RelativeTime (fromIntegral (unSlotNo (blockSlot someAnnouncingBlock))))
+
+  systemTime :: Applicative m => SystemTime m
+  systemTime = SystemTime{systemTimeCurrent = pure (voteFrom window), systemTimeWait = pure ()}
+
+  accepted seat =
+    MkAcceptedVote
+      { acceptedVote = voteOf someAnnouncingBlock seat
+      , voteElectionSlot = blockSlot someAnnouncingBlock
+      , voteCommittee = oversized
+      , acceptedQuorum = quorum
+      , voteWindow = window
+      }
+
+  -- The seats of 'committee' with keys, then seats without keys up to one too
+  -- many.
+  (_, oversized) =
+    mkCommitteeFromTestSeats $
+      replicate 5 (WithKey, seatWeightEach) <> replicate (maxLeiosCommitteeSize - 4) (NoKey, 0)
 
 {-------------------------------------------------------------------------------
   The node's announcement state on its own
