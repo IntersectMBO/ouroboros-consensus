@@ -366,9 +366,8 @@ data EbFetchState
     -- though it is written and emitted.
     --
     -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
-    -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its
-    -- response. Retaining up to ~10k bodies (each up to ~600 kB) would cost
-    -- gigabytes.
+    -- carries a 'Jobs.JobCommitment' sufficient to validate its response.
+    -- Retaining up to ~10k bodies (each up to ~600 kB) would cost gigabytes.
     --
     -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
     -- locking, at the cost of an 'm' parameter on
@@ -1200,7 +1199,7 @@ pickJobs prng0 inflightJobs0 jobPool0 budget0 =
     | budget <= 0 = (reverse acc, jobPool, prng, PeerEbNotExhausted)
     | otherwise = case Jobs.pickLeastRequestedJobExcept prng inflightJobs jobPool of
         Nothing -> (reverse acc, jobPool, prng, PeerEbExhausted)
-        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _root), jobPool', prng') ->
+        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _commitment), jobPool', prng') ->
           go
             prng'
             (IntSet.insert i inflightJobs)
@@ -1222,7 +1221,7 @@ batchTxsRequests env point (j0 :| rest0) =
   go j0 [] (jobBytes j0) rest0
  where
   cap = fromIntegral (maxRequestBytesSize env) :: Int
-  jobBytes (_jid, Jobs.MkLeiosJob _offs bytes _root) = fromIntegral bytes :: Int
+  jobBytes (_jid, Jobs.MkLeiosJob _offs bytes _commitment) = fromIntegral bytes :: Int
   -- 'accRev' are the batch's jobs after its seed; a batch is always non-empty.
   -- 'NEIntMap.fromList' keys by the raw job id; the picks are distinct ids, so no
   -- merge.

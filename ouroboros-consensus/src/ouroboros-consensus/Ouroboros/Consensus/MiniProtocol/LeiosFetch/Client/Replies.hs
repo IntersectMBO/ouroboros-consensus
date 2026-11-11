@@ -190,7 +190,7 @@ data ExnLeiosFetchInvalidReply
 instance Exception ExnLeiosFetchInvalidReply
 
 -- | How a job's transactions differ from what it covers.
-data JobMismatch = JobTxCountMismatch | JobBytesSizeMismatch | JobRootHashMismatch
+data JobMismatch = JobTxCountMismatch | JobBytesSizeMismatch | JobCommitmentMismatch
   deriving Show
 
 -----
@@ -596,7 +596,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   toIngest <-
     either invalidReply (pure . fold) $
       IntMap.traverseWithKey
-        (\i job -> checkJobRootHash point aligned (Jobs.MkLeiosJobId i) job)
+        (\i job -> checkJobCommitment point aligned (Jobs.MkLeiosJobId i) job)
         pendingJobs
   txsWritten <- writeTxs lfcWriter point [(off, bytes) | (off, _txHash, bytes) <- toIngest]
   arrival <-
@@ -657,8 +657,8 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
 -- and the job stays, to be asked of each peer that offers the closure until
 -- the point is pruned.
 --
--- TODO Include each tx's declared size in its job's root hash. Then a tx whose
--- size is wrong fails 'checkJobRootHash' on its own, and none reaches the
+-- TODO Include each tx's declared size in its job's commitment. Then a tx whose
+-- size is wrong fails 'checkJobCommitment' on its own, and none reaches the
 -- LeiosDB.
 --
 -- See 'settleBody' on the LeiosDB's GC overtaking the fetch state's pruning.
@@ -734,7 +734,7 @@ checkJobSize ::
   Jobs.LeiosJobId ->
   Jobs.LeiosJob ->
   Either ExnLeiosFetchInvalidReply ()
-checkJobSize point aligned jid (Jobs.MkLeiosJob offs expectedBytes _root)
+checkJobSize point aligned jid (Jobs.MkLeiosJob offs expectedBytes _commitment)
   | IntMap.size sub /= IntSet.size offs =
       Left $ ExnLeiosBlockTxsJobMismatch point jid JobTxCountMismatch
   | fromIntegral (sum [BS.length (leiosTxBytes tx) | tx <- IntMap.elems sub]) /= expectedBytes =
@@ -745,23 +745,23 @@ checkJobSize point aligned jid (Jobs.MkLeiosJob offs expectedBytes _root)
   sub = IntMap.restrictKeys aligned offs
 
 -- | Content validation of one /pending/ job we intend to ingest: hash its
--- arriving txs and check their root hash against the request's commitment.
+-- arriving txs and check their hashes against the job's commitment.
 -- Gives those txs, with their hashes.
 --
 -- Only runs for the first reply for a job, in addition to 'checkJobSize'.
-checkJobRootHash ::
+checkJobCommitment ::
   LeiosPoint ->
   IntMap.IntMap LeiosTx ->
   Jobs.LeiosJobId ->
   Jobs.LeiosJob ->
   Either ExnLeiosFetchInvalidReply [(Int, TxHash, BS.ByteString)]
-checkJobRootHash point aligned jid (Jobs.MkLeiosJob offs _expectedBytes expectedRoot)
-  | Jobs.jobRootHashOfTxHashes [h | (_, h, _) <- hashed] /= expectedRoot =
-      Left $ ExnLeiosBlockTxsJobMismatch point jid JobRootHashMismatch
+checkJobCommitment point aligned jid (Jobs.MkLeiosJob offs _expectedBytes commitment)
+  | Jobs.jobCommitmentOfTxHashes [h | (_, h, _) <- hashed] /= commitment =
+      Left $ ExnLeiosBlockTxsJobMismatch point jid JobCommitmentMismatch
   | otherwise = Right hashed
  where
-  -- Ascending by offset: the order the root hash commits to, and the key the
-  -- LeiosDb stores the bytes under.
+  -- Ascending by offset: the order the commitment hashes them in, and the key
+  -- the LeiosDb stores the bytes under.
   hashed =
     [ (off, hashLeiosTx tx, leiosTxBytes tx)
     | (off, tx) <- IntMap.toAscList (IntMap.restrictKeys aligned offs)

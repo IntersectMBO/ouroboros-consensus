@@ -138,7 +138,7 @@ tests =
         test_jobBytesSizeMismatch
     , testCase
         "the client disconnects a peer whose transactions for a job do not hash to that job's commitment"
-        test_jobRootHashMismatch
+        test_jobCommitmentMismatch
     , testCase
         "of two deliveries of a body whose writes overlap, the client counts the bytes as needed only for the one that settles first"
         test_overlappingDeliveries
@@ -460,11 +460,11 @@ test_jobBytesSizeMismatch = do
     Left exn -> assertFailure $ "unexpected exception: " <> show exn
     Right () -> assertFailure "the client took transactions of the wrong size"
 
-test_jobRootHashMismatch :: Assertion
-test_jobRootHashMismatch = do
+test_jobCommitmentMismatch :: Assertion
+test_jobCommitmentMismatch = do
   let (point, _eb, txs) = fixture
   replyToClosure (take 1 txs <> [MkLeiosTx (BS8.pack "tx onf")]) >>= \case
-    Left (ExnLeiosBlockTxsJobMismatch p _job JobRootHashMismatch) -> p @?= point
+    Left (ExnLeiosBlockTxsJobMismatch p _job JobCommitmentMismatch) -> p @?= point
     Left exn -> assertFailure $ "unexpected exception: " <> show exn
     Right () -> assertFailure "the client took transactions other than the endorser block's"
 

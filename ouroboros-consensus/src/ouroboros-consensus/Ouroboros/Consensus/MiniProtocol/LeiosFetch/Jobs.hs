@@ -7,7 +7,7 @@
 --
 -- The pool's structural operations -- greedy partition, least-requested
 -- selection, multiplicity bookkeeping -- stay together here, along with the
--- 'JobRootHash' commitment a job carries.
+-- 'JobCommitment' a job carries.
 --
 -- The key benefit of jobs is to minimize the bookkeeping footprint and churn.
 --
@@ -16,8 +16,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
   ( -- * Jobs
     LeiosJob (..)
   , LeiosJobId (..)
-  , JobRootHash (..)
-  , jobRootHashOfTxHashes
+  , JobCommitment (..)
+  , jobCommitmentOfTxHashes
 
     -- * Pools
   , LeiosJobPool
@@ -46,16 +46,16 @@ import System.Random (StdGen, uniformR)
 
 -- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
 -- concatenated tx hashes (in ascending offset order), via
--- 'jobRootHashOfTxHashes'. It lets an arriving @MsgLeiosBlockTxs@ be validated
--- against the job /without/ retaining the EB body -- crucial, since up to ~10k
--- EBs (each up to ~600 kB) could have txs in flight at once, far too much to
--- hold in memory.
-newtype JobRootHash = MkJobRootHash ByteString
+-- 'jobCommitmentOfTxHashes'. It lets an arriving @MsgLeiosBlockTxs@ be
+-- validated against the job /without/ retaining the EB body -- crucial, since
+-- up to ~10k EBs (each up to ~600 kB) could have txs in flight at once, far too
+-- much to hold in memory.
+newtype JobCommitment = MkJobCommitment ByteString
   deriving (Eq, Show)
 
-jobRootHashOfTxHashes :: [TxHash] -> JobRootHash
-jobRootHashOfTxHashes =
-  MkJobRootHash
+jobCommitmentOfTxHashes :: [TxHash] -> JobCommitment
+jobCommitmentOfTxHashes =
+  MkJobCommitment
     . Hash.hashToBytes
     . Hash.hashWith @Hash.Blake2b_256 id
     . BS.concat
@@ -64,12 +64,12 @@ jobRootHashOfTxHashes =
 -- | A unit of tx-fetch work: the EB-body offsets fetched by one
 -- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), the total
 -- on-the-wire byte size of those txs (for the fetch byte budget), and the
--- 'JobRootHash' commitment used to validate the response.
+-- 'JobCommitment' used to validate the response.
 data LeiosJob
   = -- TODO the offset set is immutable and only ever fully traversed, so a packed
     -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
     -- compact than the 'IntSet' Patricia tree.
-    MkLeiosJob !IntSet !Word32 !JobRootHash
+    MkLeiosJob !IntSet !Word32 !JobCommitment
   deriving (Eq, Show)
 
 -- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
@@ -106,8 +106,8 @@ data LeiosJobPool = MkLeiosJobPool
 -- the unintended case of max tx size exceeding max job size).
 --
 -- Each miss is its offset within the EB body mapped to its tx hash and its
--- on-the-wire byte size. Each job's 'JobRootHash' commitment is computed here via
--- 'jobRootHashOfTxHashes' over its covered tx hashes.
+-- on-the-wire byte size. Each job's 'JobCommitment' is computed here via
+-- 'jobCommitmentOfTxHashes' over its covered tx hashes.
 --
 -- The jobs are numbered from 0.
 mkLeiosJobPool :: Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
@@ -127,7 +127,7 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
     [] -> []
     ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
 
-  flush !cur !bytes hashesRev = MkLeiosJob cur bytes (jobRootHashOfTxHashes (reverse hashesRev))
+  flush !cur !bytes hashesRev = MkLeiosJob cur bytes (jobCommitmentOfTxHashes (reverse hashesRev))
 
   grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
   grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
