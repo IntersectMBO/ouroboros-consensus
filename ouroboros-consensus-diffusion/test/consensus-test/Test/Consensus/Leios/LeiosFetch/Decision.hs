@@ -768,7 +768,7 @@ data Scenario = Scenario
   }
 
 env :: LeiosFetchStaticEnv
-env = defaultLeiosFetchStaticEnv (60 * 1000 * 1000)
+env = (defaultLeiosFetchStaticEnv (60 * 1000 * 1000)){maxRequestedBytesSizePerBigLedgerPeer = 524288}
 
 empty :: Scenario
 empty =

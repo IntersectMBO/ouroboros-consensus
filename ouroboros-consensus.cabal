@@ -237,6 +237,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
@@ -1584,6 +1585,8 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.PeerPenalty
     Test.Consensus.Leios.LeiosFetch.Timing
     Test.Consensus.Leios.LeiosFetch.RequestState
+    Test.Consensus.Leios.LeiosFetch.Runtime
+    Test.Consensus.Leios.LeiosFetch.Wire
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosFetch.Replies
     Test.Consensus.Leios.LeiosNotify

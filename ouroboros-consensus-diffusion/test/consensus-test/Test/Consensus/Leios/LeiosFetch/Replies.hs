@@ -3,7 +3,7 @@
 
 -- | Tests of how the node's LeiosFetch client takes in replies, against an
 -- in-memory LeiosDB.
-module Test.Consensus.Leios.LeiosFetch.Replies (tests, fixture, newContext, newContextHolding, awaitNotes) where
+module Test.Consensus.Leios.LeiosFetch.Replies (tests, fixture, newContext, newContextHolding, awaitNotes, processLeiosBlock, processLeiosBlockTxs) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
@@ -61,10 +61,10 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
+  , ReplyOwnership (..)
   , acquireForgedEb
-  , processLeiosBlock
-  , processLeiosBlockTxs
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
@@ -85,6 +85,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullJobPool)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalSource (..), newLocalReuse)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , TraceLeiosFetchClientEvent (..)
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , fetchArrivalExtra
   , fetchArrivalGood
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , newLeiosDBInMemory
@@ -100,8 +102,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
   )
-import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar, takeMVar)
-import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, uncheckedNewMVar)
+import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar)
+import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
 import Test.Tasty (TestTree, testGroup)
@@ -219,7 +221,9 @@ newContextGated point gate = do
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
         recordReferencedPoint point SNothing $
           emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
-  ready <- uncheckedNewEmptyMVar
+  ready <- atomically W.newReadiness
+  runtime <-
+    R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (Receipts.receiptClosing receiptTasks)
   notes <- newTVarIO []
   let note = \case
         AcquiredEb p _bodySize -> AcquiredBody p
@@ -229,6 +233,7 @@ newContextGated point gate = do
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
         , lfcOutstanding = outstanding
         , lfcReady = ready
+        , lfcRuntime = runtime
         , lfcTxCache = txCache
         , lfcReceiptTasks = receiptTasks
         , lfcLocalReuse = localReuse
@@ -370,12 +375,12 @@ test_prunedWhileWriting = do
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   -- What 'processLeiosBlock' itself signals, so that what is left to await is
   -- the body's settlement.
-  takeMVar (lfcReady ctx)
+  atomically (W.awaitReadiness (lfcReady ctx))
   modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
   modifyMVar_ (lfcOutstanding ctx) $
     pure . recordReferencedPoint newer SNothing
   atomically $ putTMVar written ()
-  Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
+  Timeout.timeout 5000000 (atomically (W.awaitReadiness (lfcReady ctx)))
     >>= maybe (assertFailure "timed out waiting for the body to settle") pure
   readTVarIO notes >>= (@?= [])
   outstanding <- readMVar (lfcOutstanding ctx)
@@ -596,3 +601,16 @@ test_txsWhileForging = do
   events <- readTVarIO traces
   [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
     @?= [(peer, point, fetchArrivalExtra closure)]
+
+-- Unit fixtures isolate payload validation/storage. Runtime ownership and actual
+-- client/driver interactions are exercised separately by lifecycle tests.
+unitOwnership :: ReplyOwnership IO
+unitOwnership = ReplyOwnership (pure True) (pure ()) (pure ()) (pure ())
+
+processLeiosBlock ::
+  LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
+processLeiosBlock = Replies.processLeiosBlock unitOwnership
+
+processLeiosBlockTxs ::
+  LeiosFetchClientContext IO Int -> Int -> LeiosBlockTxsRequest -> V.Vector LeiosTx -> IO ()
+processLeiosBlockTxs = Replies.processLeiosBlockTxs unitOwnership

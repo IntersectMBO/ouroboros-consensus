@@ -17,7 +17,10 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Strict as V
 import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies hiding
+  ( processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
@@ -25,7 +28,14 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
 import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Util.IOLike
-import Test.Consensus.Leios.LeiosFetch.Replies (awaitNotes, fixture, newContext, newContextHolding)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( awaitNotes
+  , fixture
+  , newContext
+  , newContextHolding
+  , processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 

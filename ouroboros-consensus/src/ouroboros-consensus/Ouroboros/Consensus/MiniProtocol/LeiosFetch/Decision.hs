@@ -47,12 +47,15 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     -- * Deciding
   , LeiosFetchStaticEnv (..)
   , defaultLeiosFetchStaticEnv
+  , assignRequests
+  , workStillNeeded
   , leiosFetchLogicIteration
   , fetchPriorityTiers
   , peerBudget
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Monad (foldM)
 import qualified Data.Foldable as F
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
@@ -89,6 +92,9 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import Ouroboros.Consensus.Util.IOLike (IOLike, Time, atomically, readTVar)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (StdGen)
 
@@ -1199,3 +1205,87 @@ batchTxsRequests env point (j0 :| rest0) =
   go seed accRev curBytes (j : rest)
     | curBytes + jobBytes j > cap = flush seed accRev : go j [] (jobBytes j) rest
     | otherwise = go seed (j : accRev) (curBytes + jobBytes j) rest
+
+-- | Semantic work relevance, separately from its original physical reservation.
+workStillNeeded :: L.Work LeiosPoint -> LeiosOutstanding peer -> Bool
+workStillNeeded work out =
+  isFocusedPoint point out && case (work, Map.lookup point (ebState out)) of
+    (L.Body{}, Just (MkEbState _ NoBody)) -> True
+    (L.Job _ jid, Just (MkEbState _ (BodyAcquired pool))) -> maybe False (const True) (Jobs.lookupJob (Jobs.MkLeiosJobId jid) pool)
+    _ -> False
+ where
+  point = case work of L.Body p -> p; L.Job p _ -> p
+
+-- | Admit and publish whole immutable jobs under the coordinator/removal lock.
+-- STM reservation rechecks progressive eligibility; rejected speculative picks
+-- never enter the shared pool. Physical credit is owned solely by the runtime.
+assignRequests ::
+  (IOLike m, Ord peer) =>
+  R.Runtime m peer ->
+  Time ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  Maybe (SlotNo, Word64) ->
+  Map peer (Map LeiosPoint PeerOffer) ->
+  LeiosOutstanding peer ->
+  m (LeiosOutstanding peer)
+assignRequests rt now forecast horizon offers out0 = do
+  clients <- atomically (R.sessions <$> readTVar (R.runtimeFacts rt))
+  foldM (visitPoint clients) out0 points
+ where
+  (urgent, other) = fetchPriorityTiers horizon [(pointSlotNo point, point) | point <- Map.keys (ebState out0)]
+  points = urgent ++ other
+  visitPoint clients out point
+    | not (isFocusedPoint point out) = pure out
+    | otherwise = foldM (visitSource point) out (Map.toAscList clients)
+  visitSource point out (peer, session) = case Map.lookup peer offers >>= Map.lookup point of
+    Nothing -> pure out
+    Just offer -> do
+      let client = R.Client rt peer (R.invocation session)
+      case Map.lookup point (ebState out) of
+        Just (MkEbState _ NoBody) -> case (bodySize (poOffered offer), bounds point offer) of
+          (Just size, Just trusted) ->
+            atomically
+              (R.enqueueRequest client now (LeiosBlockRequest (MkLeiosBlockRequest point size trusted)))
+              >> pure out
+          _ -> pure out
+        Just (MkEbState onset (BodyAcquired pool))
+          | hasClosure (poOffered offer) ->
+              assignJobs client point onset initialExcluded pool (leiosFetchPrng out) out
+         where
+          initialExcluded =
+            maybe IntSet.empty NEIntSet.toSet (Map.lookup peer (requestedJobsPerPeer out) >>= Map.lookup point)
+        _ -> pure out
+  assignJobs client point onset excluded pool prng out =
+    case Jobs.pickLeastRequestedJobExcept prng excluded pool of
+      Nothing -> pure out{leiosFetchPrng = prng}
+      Just (Jobs.MkLeiosJobId jid, job, picked, nextPrng) -> do
+        let req = LeiosBlockTxsRequest (MkLeiosBlockTxsRequest point (NEIntMap.singleton jid job))
+        admitted <- atomically (R.enqueueRequest client now req)
+        let next = case admitted of
+              Nothing -> out
+              Just _ ->
+                out
+                  { ebState = Map.insert point (MkEbState onset (BodyAcquired picked)) (ebState out)
+                  , requestedJobsPerPeer =
+                      Map.insertWith
+                        (Map.unionWith NEIntSet.union)
+                        (R.clientPeer client)
+                        (Map.singleton point (NEIntSet.singleton jid))
+                        (requestedJobsPerPeer out)
+                  }
+        assignJobs
+          client
+          point
+          onset
+          (IntSet.insert jid excluded)
+          (case admitted of Nothing -> pool; Just _ -> picked)
+          nextPrng
+          next
+  bodySize (OfferedBody n) = Just n
+  bodySize (OfferedBodyAndClosure n) = Just n
+  bodySize OfferedClosure = Nothing
+  hasClosure OfferedBody{} = False
+  hasClosure _ = True
+  bounds point offer = case poEbBounds offer of
+    SJust trusted -> Just trusted
+    SNothing -> either (const Nothing) Just (forecast (pointSlotNo point))

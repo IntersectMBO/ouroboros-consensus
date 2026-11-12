@@ -501,23 +501,30 @@ initNodeKernel
     localReuse <-
       newLocalReuse (Receipts.receiptClosing receiptTasks) (mempoolLocalSource mempool) leiosWriter
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
-        MkLeiosFetchClientContext
-          { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
-          , lfcOutstanding = outstanding
-          , lfcReady = ready
-          , lfcTxCache = leiosTxCache
-          , lfcReceiptTasks = receiptTasks
-          , lfcLocalReuse = localReuse
-          , lfcWriter = leiosWriter
-          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
-          , lfcSystemTime = systemTime
-          , -- Each trace names the connection, not which of its registrations.
-            lfcTracer =
-              contramap
-                (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
-                (leiosFetchClientTracer tracers)
-          }
+      newLeiosFetchKernel
+        chainDB
+        leiosDB
+        (defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes))
+        (Receipts.receiptClosing receiptTasks)
+        leiosFetchPrng
+        $ \outstanding ready runtime ->
+          MkLeiosFetchClientContext
+            { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
+            , lfcOutstanding = outstanding
+            , lfcReady = ready
+            , lfcRuntime = runtime
+            , lfcTxCache = leiosTxCache
+            , lfcReceiptTasks = receiptTasks
+            , lfcLocalReuse = localReuse
+            , lfcWriter = leiosWriter
+            , lfcNotify = emitLeiosAcquisition leiosAcquisitions
+            , lfcSystemTime = systemTime
+            , -- Each trace names the connection, not which of its registrations.
+              lfcTracer =
+                contramap
+                  (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                  (leiosFetchClientTracer tracers)
+            }
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
         leiosFetchDecisionLoop cfg chainDB btime leiosFetchKernel

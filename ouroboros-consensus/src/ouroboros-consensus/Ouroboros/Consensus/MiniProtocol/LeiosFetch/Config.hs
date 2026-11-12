@@ -4,8 +4,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv (
 
 import Control.Monad (unless)
 import Data.Word (Word32, Word64)
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Consensus.Leios.Types (BytesSize)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   { maxRequestedBytesSizePerPeer :: BytesSize
@@ -39,12 +39,13 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   }
   deriving (Eq, Show)
 
--- | The settings the node runs with, given 'maxRequestedBytesSizePerBigLedgerPeer'.
+-- | Conservative initial policy settings. The ingress allowance is validated
+-- separately by the runtime; it does not enlarge a peer's TX credit.
 defaultLeiosFetchStaticEnv :: BytesSize -> LeiosFetchStaticEnv
-defaultLeiosFetchStaticEnv maxPerBigLedgerPeer =
+defaultLeiosFetchStaticEnv _ingress =
   MkLeiosFetchStaticEnv
-    { maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestedBytesSizePerBigLedgerPeer = maxPerBigLedgerPeer
+    { maxRequestedBytesSizePerPeer = 262144
+    , maxRequestedBytesSizePerBigLedgerPeer = 262144
     , maxRequestBytesSize = maxLeiosTxsRequestBytesSize
     , maxJobBytesSize = 64 * thousandBase2
     , maxBodiesPerPeer = 4
@@ -52,8 +53,6 @@ defaultLeiosFetchStaticEnv maxPerBigLedgerPeer =
     , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
     }
  where
-  million :: Num a => a
-  million = 10 ^ (6 :: Int)
   thousandBase2 :: Num a => a
   thousandBase2 = 2 ^ (10 :: Int)
 
@@ -69,20 +68,20 @@ validateLeiosFetchStaticEnv ingress c = do
     ( all
         (>= max 32768 (maxJobBytesSize c))
         [maxRequestedBytesSizePerPeer c, maxRequestedBytesSizePerBigLedgerPeer c]
-    ) $
-    Left "LeiosFetch peer credit must hold the job target and a 32768-byte transaction"
+    )
+    $ Left "LeiosFetch peer credit must hold the job target and a 32768-byte transaction"
   unless
     ( maxRequestBytesSize c >= max 32768 (maxJobBytesSize c)
         && maxRequestBytesSize c <= maxLeiosTxsRequestBytesSize
-    ) $
-    Left "LeiosFetch request bound must hold a legal job and fit the protocol limit"
+    )
+    $ Left "LeiosFetch request bound must hold a legal job and fit the protocol limit"
   unless (maxBodiesPerPeer c > 0 && maxBodiesPerPeer c <= 32767) $
     Left "LeiosFetch body count must be in 1..32767"
   unless (maxJobTxCount c > 0 && maxJobTxCount c <= 20000) $
     Left "LeiosFetch job transaction count must be in 1..20000"
   unless
-    (minimumServiceRate c > 0 && 4800000 / fromIntegral (minimumServiceRate c) + 0.5 < (60 :: Rational)) $
-    Left "LeiosFetch service allowance must fit within the 60-second driver guard"
+    (minimumServiceRate c > 0 && 4800000 / fromIntegral (minimumServiceRate c) + 0.5 < (60 :: Rational))
+    $ Left "LeiosFetch service allowance must fit within the 60-second driver guard"
   let bodyBytes = fromIntegral (maxBodiesPerPeer c) * 600003 :: Word64
       txBytes =
         fromIntegral (max (maxRequestedBytesSizePerPeer c) (maxRequestedBytesSizePerBigLedgerPeer c)) ::
