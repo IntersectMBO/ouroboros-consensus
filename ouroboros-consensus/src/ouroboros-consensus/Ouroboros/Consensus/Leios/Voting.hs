@@ -122,6 +122,7 @@ import Ouroboros.Consensus.Leios.Types
   , deserialiseEndorserBlock
   , endorserBlockReferences
   , milliseconds32ToNominalDiffTime
+  , sizeEndorserBlockReference
   )
 import Ouroboros.Consensus.Leios.VoteState (AddVoteResult (..), VoteState, addVote)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -414,8 +415,14 @@ validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotN
         extLedger <- lift $ atomically $ roforkerGetLedgerState forker
         let ticked = applyChainTick OmitLedgerEvents lcfg slot (ledgerState extLedger)
             capacity = ebCapacityTxMeasure lcfg ticked
-            claimedBytes = sum [toInteger size | (_txHash, size) <- references]
-        when (claimedBytes > toInteger (unByteSize32 (txEbMeasureByteSize capacity))) $
+            -- What the references take, before loading any transaction. What
+            -- the transactions take is checked as they are applied.
+            referencesBytes =
+              sum
+                [ toInteger . unByteSize32 $ sizeEndorserBlockReference (ByteSize32 (fromIntegral size))
+                | (_txHash, size) <- references
+                ]
+        when (referencesBytes > toInteger (unByteSize32 (txEbMeasureByteSize capacity))) $
           throwError EbOverCapacity
 
         closure <- lift (lookupEbClosure reader point) >>= (?>= ClosureUnavailable)
