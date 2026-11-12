@@ -47,10 +47,11 @@ import Ouroboros.Network.Block
   Add transactions
 -------------------------------------------------------------------------------}
 
--- | A GADT that enables the shared implementation of 'addTx' and 'testTryAddTx'.
+-- | Share validation and capacity checks between the admission operations.
 type WhichAddTx :: (Type -> Type) -> Type
 data WhichAddTx f where
   ProductionAddTx :: WhichAddTx Identity
+  TryAddTx :: WhichAddTx (Either MempoolAdmissionError)
   -- | The argument unique to 'testTryAddTx'.
   --
   -- The 'Nothing' result means the tx would not fit in the current mempool;
@@ -65,7 +66,11 @@ data WhichAddTx f where
 --
 -- If there is no space, the 'TestingAddTx' caller will immediately return
 -- 'Nothing'.
+--
+-- 'TryAddTx' does not wait for the admission FIFO or for space. It returns
+-- 'MempoolBusy' or 'MempoolFull', respectively.
 implAddTx ::
+  forall m blk f.
   ( IOLike m
   , MonadTimer m
   , LedgerSupportsMempool blk
@@ -95,19 +100,24 @@ implAddTx mpEnv caller onbehalf tx =
   -- added on behalf of remote peers. We do this by using a pair of mvar
   -- fifos: remote peers must wait on both mvars, while local clients only
   -- need to wait on the second.
-  case onbehalf of
-    AddTxForRemotePeer ->
-      withMVar remoteFifo $ \() ->
+  case caller of
+    TryAddTx ->
+      bracket (tryTakeMVar allFifo) (maybe (pure ()) (putMVar allFifo)) $ \case
+        Nothing -> pure $ Left MempoolBusy
+        Just () -> implAddTx'
+    _ -> case onbehalf of
+      AddTxForRemotePeer ->
+        withMVar remoteFifo $ \() ->
+          withMVar allFifo $ \() ->
+            -- This action can also block. Holding the MVars means
+            -- there is only a single such thread blocking at once.
+            implAddTx'
+      AddTxForLocalClient ->
         withMVar allFifo $ \() ->
-          -- This action can also block. Holding the MVars means
-          -- there is only a single such thread blocking at once.
+          -- As above but skip the first MVar fifo so we will get
+          -- service sooner if there's lots of other remote
+          -- threads waiting.
           implAddTx'
-    AddTxForLocalClient ->
-      withMVar allFifo $ \() ->
-        -- As above but skip the first MVar fifo so we will get
-        -- service sooner if there's lots of other remote
-        -- threads waiting.
-        implAddTx'
  where
   MempoolEnv
     { mpEnvAddTxsRemoteFifo = remoteFifo
@@ -115,12 +125,17 @@ implAddTx mpEnv caller onbehalf tx =
     , mpEnvTracer = trcr
     } = mpEnv
 
+  implAddTx' :: m (f (MempoolAddTxResult blk))
   implAddTx' = do
     x <- doAddTx mpEnv caller wti tx
     case (caller, x) of
       (ProductionAddTx, Identity (TransactionProcessingResult _ result ev)) -> do
         traceWith trcr ev
         return $ Identity result
+      (TryAddTx, Right (TransactionProcessingResult _ result ev)) -> do
+        traceWith trcr ev
+        pure $ Right result
+      (TryAddTx, Left err) -> pure $ Left err
       (TestingAddTx _, Just (TransactionProcessingResult _ result ev)) -> do
         traceWith trcr ev
         return $ Just result
@@ -303,6 +318,7 @@ doAddTx mpEnv caller wti tx = do
                   Just (Processed mkResult) -> do
                     let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
                           ProductionAddTx -> dur
+                          TryAddTx -> dur
                           TestingAddTx testDiffTime ->
                             -- For the sake of an accurate cumulative measure, pretend
                             -- the tx took exactly as long to validate as the test
@@ -316,6 +332,8 @@ doAddTx mpEnv caller wti tx = do
                     pure (Right outcome, fromMaybe is is')
     case (caller, eRes) of
       (ProductionAddTx, _) -> either (doAddTx' . Just) (pure . Identity) eRes
+      (TryAddTx, Left _) -> pure $ Left MempoolFull
+      (TryAddTx, Right x) -> pure $ Right x
       (TestingAddTx _, Left _) -> pure Nothing
       (TestingAddTx _, Right x) -> pure $ Just x
 
