@@ -300,7 +300,7 @@ processLeiosBlock ctx peer req bytes = do
     BodyToWrite eb localFills -> do
       -- The client takes the peer's next reply only once this write lands, so
       -- a slow disk slows the peer down rather than piling up writes.
-      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills
+      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills mempty
       settleBody ctx peer point eb heldOffs
   -- Checked last, so that the body is still taken: throwing it away would let
   -- a peer deny us an endorser block just by lowballing its own offer.
@@ -426,7 +426,7 @@ acquireForgedEb ::
 acquireForgedEb ctx elId forged = do
   _ <-
     insertBody lfcTxCache point (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty
+  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs

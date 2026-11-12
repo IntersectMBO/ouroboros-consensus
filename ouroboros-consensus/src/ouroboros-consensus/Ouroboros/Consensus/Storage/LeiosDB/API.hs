@@ -124,19 +124,30 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> LocalFills -> m (Promise m (Set TxOffset))
+      LeiosPoint ->
+      EndorserBlock ->
+      LocalFills ->
+      Map TxOffset ByteString ->
+      m (Promise m (Set TxOffset))
   -- ^ Persist an EB body at this point, recording the point. Every point holds
   -- its own body and txs, even when another point names the same EB.
   --
-  -- Then fill what it can from the bytes the LeiosDB holds: 'LocalFills' maps
-  -- an offset in this body to the 'TxLocation' of the same tx at another
-  -- point, copied in the same transaction. A fill
-  -- lands only if the source's bytes hash to the tx this body lists at its
-  -- offset, so a stale or wrong location fills nothing, and that tx stays
-  -- fetchable.
+  -- Then fill what it can from local bytes, in the same transaction:
+  --
+  -- * 'LocalFills' maps an offset in this body to the 'TxLocation' of the same
+  --   tx at another point, which is copied. A fill lands only if the source's
+  --   bytes hash to the tx this body lists at its offset, so a stale or wrong
+  --   location fills nothing, and that tx stays fetchable.
+  --
+  -- * Each tx the writer holds, given by offset with its bytes, is written as
+  --   'writeTxs' would write it.
+  --
+  -- ASSUMPTION: each given tx's bytes hash to the tx hash the body lists at its
+  -- offset. The implementations do not check this.
   --
   -- Returns the offsets at which the point holds its txs once the write is
-  -- done: those filled, or written since an earlier delivery of the same body.
+  -- done: those filled or given, or written since an earlier delivery of the
+  -- same body.
   --
   -- PREREQ: the EB's body and closure sizes are within the protocol limits.
   -- The LeiosDB allocates the closure at the size the body declares.
