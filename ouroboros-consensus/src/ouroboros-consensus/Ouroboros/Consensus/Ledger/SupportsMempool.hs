@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -20,6 +21,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , WhatToDoWithTxDiffs (..)
   , InputTxDiffs
+  , LeiosTxMempoolView (..)
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -41,14 +43,20 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Validated
   , VersionWord16 (..)
   , WhetherToIntervene (..)
+  , fixedTickedLedgerMajorProtocolVersionWord16
   , nothingMkMempoolApplyTxError
+  , leiosTxMempoolViewBytes
+  , nothingLeiosTxMempoolView
   , toVersionWord16
   ) where
 
+import Cardano.Crypto.Hash (Hash)
 import Cardano.Ledger.Binary.Version (MaxVersion, Version, getVersion64)
+import Cardano.Ledger.Hashes (EraIndependentTx, HASH)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
@@ -69,6 +77,7 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
+import Ouroboros.Consensus.Util.Unthunkable (Unthunkable)
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -263,10 +272,63 @@ class
     Text ->
     Maybe (ApplyTxErr blk)
 
+  -- | What Leios needs to know about this transaction. 'Nothing' when the
+  -- transaction's era has no endorser blocks.
+  leiosTxMempoolView :: GenTx blk -> Maybe LeiosTxMempoolView
+
+  -- | The major protocol version under which this ledger state validates
+  -- transactions.
+  --
+  -- This is total, so 'VersionWord16' holds every era's major protocol
+  -- version: no part of the Cardano codebase supports one of @2 ^ 16@ or more,
+  -- nor would it be reasonable to. Only Leios uses it so far, and only for eras
+  -- with endorser blocks. If fewer bits would ever benefit Leios, this could
+  -- become partial, for example excluding Byron, whose major protocol version
+  -- is a 'Word16'. Nothing motivates that yet, since the LeiosTxCache's hash
+  -- table has bits to spare.
+  tickedLedgerMajorProtocolVersionWord16 :: TickedLedgerState blk mk -> VersionWord16
+
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
+
+-- | Value of 'leiosTxMempoolView' for a block type without endorser blocks
+nothingLeiosTxMempoolView :: GenTx blk -> Maybe LeiosTxMempoolView
+nothingLeiosTxMempoolView _ = Nothing
+
+-- | What Leios needs the Mempool to know about its txs in eras with Leios.
+data LeiosTxMempoolView = forall i. MkLeiosTxMempoolView
+  { ltmvHash :: !(Hash HASH EraIndependentTx)
+  -- ^ The hash of 'ltmvBytes', by which an endorser block references the
+  -- transaction. The mempool builds the view every time it revalidates the
+  -- transaction, so computing this hash must be cheap after the first time,
+  -- for example by reading a hash the ledger memoizes.
+  , ltmvInput :: !(Unthunkable i)
+  -- ^ What 'ltmvBytes' computes the bytes from.
+  , ltmvBytes :: !(Unthunkable i -> ByteString)
+  -- ^ The transaction's bytes as Leios sends and stores them. An endorser
+  -- block references the transaction by their hash and length. They are
+  -- computed afresh at each use ('leiosTxMempoolViewBytes'), and nothing
+  -- retains them.
+  }
+
+-- | The mempool's index holds views, and their fields are strict. The input is
+-- the transaction the mempool holds anyway, whose thunks it checks there.
+deriving via
+  OnlyCheckWhnfNamed "LeiosTxMempoolView" LeiosTxMempoolView
+  instance
+    NoThunks LeiosTxMempoolView
+
+-- | The transaction's bytes ('ltmvBytes'), computed afresh.
+leiosTxMempoolViewBytes :: LeiosTxMempoolView -> ByteString
+leiosTxMempoolViewBytes (MkLeiosTxMempoolView _ input bytes) = bytes input
+
+-- | Value of 'tickedLedgerMajorProtocolVersionWord16' for a block type whose ledger never changes
+-- its protocol version from the given one
+fixedTickedLedgerMajorProtocolVersionWord16 ::
+  VersionWord16 -> TickedLedgerState blk mk -> VersionWord16
+fixedTickedLedgerMajorProtocolVersionWord16 protVer _ = protVer
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult

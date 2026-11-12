@@ -11,20 +11,29 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , GenTx
+  , LedgerSupportsMempool (..)
+  , LeiosTxMempoolView (..)
+  , leiosTxMempoolViewBytes
+  )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , LeiosTx (..)
   , TxHash
   , encodeEndorserBlock
   , endorserBlockFromTxBytes
   , endorserBlockReferences
+  , hashLeiosTx
   , mkEndorserBlock
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.Eras (LeiosEraTx (..))
+import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx, txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -49,6 +58,9 @@ tests =
     , testProperty
         "a forged endorser block references a Dijkstra transaction by its hashAnnotated"
         (withNumTests 10 prop_dijkstraEbTxHashIsLedgerHash)
+    , testProperty
+        "the hash in a Dijkstra transaction's leiosTxMempoolView is that of its bytes"
+        (withNumTests 10 prop_dijkstraTxLeiosHashOfBytes)
     ]
 
 genTxHash :: Gen TxHash
@@ -143,27 +155,43 @@ prop_referencesCapacityFloorsAtZero =
       , (1, chooseEnum (maxFraming + 1, maxBound))
       ]
 
--- | The length of the 'serializeTxForLeios' bytes of a Dijkstra transaction
+-- | The length of the 'ltmvBytes' of a Dijkstra transaction
 -- never exceeds its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra'
 -- reserves for the reference.
 --
--- The ledger computes 'sizeTxF' from one encoding and 'serializeTxForLeios'
+-- The ledger computes 'sizeTxF' from one encoding and 'ltmvBytes'
 -- uses another, so a ledger change can make the two disagree.
 prop_dijkstraEbTxSizeBounded :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (serializeTxForLeios tx)
+  ebTxSize = BS.length (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
 
 -- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
--- 'serializeTxForLeios' bytes. The Dijkstra ledger defines this reference as the
+-- 'ltmvBytes'. The Dijkstra ledger defines this reference as the
 -- transaction's 'hashAnnotated', which is the hash of its 'originalBytes'.
 -- Thus a node can check fetched bytes against the reference without decoding
--- them. Fails if 'serializeTxForLeios' returns other bytes, for example the
+-- them. Fails if 'ltmvBytes' returns other bytes, for example the
 -- 'EncCBOR' encoding, which drops the @is_valid@ flag.
 prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
-  map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (serializeTxForLeios tx))))
+  map
+    fst
+    ( endorserBlockReferences
+        (endorserBlockFromTxBytes (pure (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))))
+    )
     === [extractHash (hashAnnotated tx)]
+
+-- | A Dijkstra transaction's 'leiosTxMempoolView' gives the hash of the bytes it
+-- gives, the hash by which an endorser block references the transaction. The
+-- mempool indexes its transactions by that hash, which the view reads from the
+-- ledger's memo rather than hashing the bytes.
+prop_dijkstraTxLeiosHashOfBytes :: Tx TopTx DijkstraEra -> Property
+prop_dijkstraTxLeiosHashOfBytes tx = case leiosTxMempoolView genTx of
+  Nothing -> counterexample "no leiosTxMempoolView for a Dijkstra transaction" False
+  Just view -> ltmvHash view === hashLeiosTx (MkLeiosTx (leiosTxMempoolViewBytes view))
+ where
+  genTx :: GenTx StandardDijkstraBlock
+  genTx = mkShelleyTx tx

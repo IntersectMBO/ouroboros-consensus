@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Leios.Types
   , EndorserBlock -- opaque
   , TxOffset
   , TxLocation (..)
+  , LeiosMempoolTxs (..)
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , ForgedEndorserBlock
@@ -129,6 +130,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
@@ -327,6 +329,16 @@ type TxOffset = Int
 -- copied and the transaction is fetched.
 data TxLocation = MkTxLocation !LeiosPoint !TxOffset
   deriving stock (Eq, Show)
+
+-- | Transactions the Mempool holds, by the hash an endorser block references
+-- them by, with the one major protocol version it validated them all under.
+--
+-- Both fields are strict, so that building one evaluates them, rather than
+-- keeping alive what they were computed from.
+data LeiosMempoolTxs a = MkLeiosMempoolTxs
+  { lmtByHash :: !(Map TxHash a)
+  , lmtValidatedUnder :: !VersionWord16
+  }
 
 -- | An endorser block that this node forged, with the bytes of its
 -- transactions. Only 'forgeLeiosEb' builds it, so that the bytes always match
