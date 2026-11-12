@@ -756,11 +756,12 @@ leiosFetchLogicIteration ::
   Ord peer =>
   LeiosFetchStaticEnv ->
   -- | The ledger's bounds on an EB, forecast from the immutable tip to a slot.
+  -- The slot can be older than the immutable tip, for a point not pruned yet.
   --
   -- Only an offer that brought no bound of its own needs this, and for those it
   -- cannot fail: the announcement backing such an offer was accepted by
-  -- forecasting from the immutable tip to that same slot. See
-  -- 'poEbBounds'.
+  -- forecasting to that same slot from an immutable tip no newer than this
+  -- one. See 'poEbBounds'.
   (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
   -- | The current slot, and how many slots before it a point is still worth
   -- voting on, as of the ledger there (see 'fetchPriorityTiers'); or 'Nothing'

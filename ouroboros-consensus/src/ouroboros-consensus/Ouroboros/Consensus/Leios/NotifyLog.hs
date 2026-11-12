@@ -32,11 +32,12 @@ module Ouroboros.Consensus.Leios.NotifyLog
   , nextNotifyLog
   , notifyLogPruneCadence
   , notifyLogPruner
+  , leiosOfferRelay
   , notifyLogStart
   , pruneNotifyLog
   ) where
 
-import Control.Monad (forever, unless)
+import Control.Monad (forM_, forever, unless)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -50,9 +51,16 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
-import Ouroboros.Consensus.Leios.Types (LeiosVote)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , ElectionId (..)
+  , LeiosPoint (..)
+  , LeiosVote
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
-  ( AnnouncingHeader
+  ( AnnouncingHeader (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -70,10 +78,13 @@ import Ouroboros.Consensus.Util.Time (nominalDelay)
 
 -- | A notification the node relays.
 data Notification blk
-  = NotifyAnnouncement !(AnnouncingHeader blk)
+  = -- | An announcement.
+    NotifyAnnouncement !(AnnouncingHeader blk)
   | NotifyVote !LeiosVote
-  -- TODO: add offers, of each endorser block and closure the node acquires,
-  -- once 'Ouroboros.Consensus.Leios.Acquisitions' emits it.
+  | -- | An offer of an endorser block's body, at its size.
+    NotifyBlockOffer !LeiosPoint !BytesSize
+  | -- | An offer of an endorser block's closure.
+    NotifyBlockTxsOffer !LeiosPoint
   deriving stock Generic
 
 deriving anyclass instance NoThunks (Header blk) => NoThunks (Notification blk)
@@ -89,6 +100,9 @@ data NotifyLog m blk = MkNotifyLog
   -- so that pruning visits only what expires.
   , notifyPrunedAt :: !(StrictTVar m RelativeTime)
   -- ^ When the log was last pruned.
+  , notifyAnnouncedUntil :: !(StrictTVar m (Map LeiosPoint RelativeTime))
+  -- ^ Each point the log holds an announcement at, and until when that
+  -- announcement is worth relaying.
   }
 
 -- | A position in the log, which only ever grows.
@@ -108,6 +122,7 @@ newNotifyLog =
     <*> newTVarIO notifyLogStart
     <*> newTVarIO Map.empty
     <*> newTVarIO (RelativeTime 0)
+    <*> newTVarIO Map.empty
 
 -- | Append a notification worth relaying until the given time, unless the log
 -- was pruned past it already.
@@ -125,6 +140,12 @@ appendNotifyLog notifyLog n expires = do
     modifyTVar (notifyEntries notifyLog) (Map.insert end n)
     modifyTVar (notifyExpiry notifyLog) (Map.insertWith (<>) expires [end])
     writeTVar (notifyEnd notifyLog) (succCursor end)
+    case n of
+      NotifyAnnouncement anc ->
+        modifyTVar (notifyAnnouncedUntil notifyLog) (Map.insertWith max (announcedPoint anc) expires)
+      NotifyVote{} -> pure ()
+      NotifyBlockOffer{} -> pure ()
+      NotifyBlockTxsOffer{} -> pure ()
 
 -- | The first notification at or after the cursor, and the cursor just past
 -- it.
@@ -153,6 +174,12 @@ pruneNotifyLog notifyLog now = do
     writeTVar (notifyExpiry notifyLog) unexpired
     modifyTVar (notifyEntries notifyLog) $
       (`Map.withoutKeys` Set.fromList (concat (Map.elems expired)))
+    modifyTVar (notifyAnnouncedUntil notifyLog) (Map.filter (>= now))
+
+-- | The point of the endorser block an announcement announces.
+announcedPoint :: AnnouncingHeader blk -> LeiosPoint
+announcedPoint anc =
+  MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
 
 succCursor :: NotifyCursor -> NotifyCursor
 succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
@@ -169,3 +196,36 @@ notifyLogPruner systemTime notifyLog = forever $ do
 -- grace a downstream peer gives before it rejects one.
 notifyLogPruneCadence :: NominalDiffTime
 notifyLogPruneCadence = 1
+
+-- | Offer each endorser block body and closure the node acquires, at its point,
+-- if the log still holds an announcement at that point, and only then: a
+-- downstream peer that reads the log has then received the announcement before
+-- the offer. Each offer is worth relaying exactly as long as its announcement.
+-- The node acquires a body, and a closure, at most once per point, so this
+-- offers each at a point at most once, as a downstream peer requires.
+--
+-- So the node never offers an endorser block whose closure it held before it
+-- restarted, since it does not acquire those again
+-- ('Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel.newLeiosFetchKernel'),
+-- even if a peer sends its announcement again and the node relays that. This
+-- gap is deliberate and not worth closing: it only affects an announcement
+-- still young enough to relay just after a restart, and downstream peers can
+-- fetch that endorser block from any other node that offers it.
+leiosOfferRelay ::
+  IOLike m =>
+  -- | the next acquisition, from a subscription made before the node could
+  -- acquire anything
+  STM m LeiosEbNotification ->
+  NotifyLog m blk ->
+  m Void
+leiosOfferRelay next notifyLog =
+  forever $ atomically $ do
+    acquired <- next
+    announcedUntil <- readTVar (notifyAnnouncedUntil notifyLog)
+    case acquired of
+      AcquiredEb point bodySize ->
+        forM_ (Map.lookup point announcedUntil) $
+          appendNotifyLog notifyLog (NotifyBlockOffer point bodySize)
+      AcquiredEbTxs point ->
+        forM_ (Map.lookup point announcedUntil) $
+          appendNotifyLog notifyLog (NotifyBlockTxsOffer point)

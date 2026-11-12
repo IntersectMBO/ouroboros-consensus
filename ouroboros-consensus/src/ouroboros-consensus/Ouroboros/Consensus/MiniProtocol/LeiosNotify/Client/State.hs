@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -69,7 +70,11 @@ import Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
-import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState (ageLimits), onValidAnnouncement)
+import Ouroboros.Consensus.Leios.AnnounceState
+  ( AnnounceState (ageLimits)
+  , WhetherNewAnnouncement (..)
+  , onValidAnnouncement
+  )
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -87,12 +92,13 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcemen
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity
   , AnnouncingHeader (ancAnnouncement, ancElectionId)
+  , ValidAnnouncement
   , announcementValidity
   , announcingRbHash
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, atomically)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, MonadMask (..), atomically)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -187,9 +193,10 @@ data ExnLeiosNotifyInvalidOffer
   | -- | An offer below the slot this peer's state has been pruned to, which is
     -- therefore unanswerable on its own terms.
     --
-    -- TODO When the honest server offers endorser blocks, explain why it never
-    -- trips this, eg because it offers one only while it is at least a minimum
-    -- lead younger than its own immutable tip.
+    -- An honest server never trips this: it offers an endorser block only at an
+    -- announcement it relays, and only until shortly after that announcement is
+    -- 'maxAnnouncementAgeSend' old, which must be far younger than any peer's
+    -- immutable tip.
     ExnLeiosOfferTooOld
       !LeiosPoint
       -- | the slot this peer's state has been pruned to
@@ -288,7 +295,8 @@ instance
 
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
--- An accepted announcement goes on to the node's 'AnnounceState'.
+-- An accepted announcement goes on to the node's 'AnnounceState', and, if it
+-- is new there, to the given action. The two happen uninterruptibly.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
@@ -299,12 +307,15 @@ onLeiosNotifyAnnouncement ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
+  -- | what to do with an announcement new to the node; it runs
+  -- uninterruptibly, so it must not block for long
+  (ValidAnnouncement blk -> m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st hdr = do
+onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState onNew immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
@@ -313,7 +324,13 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState immLedger st 
     -- 'StaleOCIN' announcement counts against the peer.
     valid <-
       announcementValidity (ageLimits announceState) systemTime futureCheck cfg immLedger anc
-    lift $ atomically $ onValidAnnouncement announceState valid
+    -- Stay alive until a new announcement is both accepted and acted on: see
+    -- 'onValidAnnouncement'.
+    lift $
+      uninterruptibleMask_ $
+        atomically (onValidAnnouncement announceState valid) >>= \case
+          NewAnnouncement -> onNew valid
+          NotNewAnnouncement -> pure ()
     pure
       st
         { lnpsAnnouncements = announcements

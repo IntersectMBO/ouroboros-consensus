@@ -343,6 +343,10 @@ data BodyDelivery
 --   LeiosDB's GC to that slot, so ChainSel never sees an acquisition of a
 --   collected point. Nor could it act on one: a block certifying that point
 --   would fork off below the immutable tip.
+--
+-- * The LeiosNotify log offers a point only while it holds a live announcement
+--   at that point, and by configuration announcements expire before reaching
+--   the immutable tip (@maxAnnouncementAgeSend@).
 settleBody ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
