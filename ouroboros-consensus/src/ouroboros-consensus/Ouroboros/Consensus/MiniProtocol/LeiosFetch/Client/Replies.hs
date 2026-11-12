@@ -560,14 +560,14 @@ noMempoolTxs _ = pure Map.empty
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
 -- one that arrived with no peer: take its body into the LeiosTxCache, write it
--- and then all its txs, take those into the LeiosTxCache as validated, and
--- settle the point once both writes are durable ('settleForgedEb').
+-- together with all its txs, take those into the LeiosTxCache as validated,
+-- and settle the point once the write is durable ('settleForgedEb').
 --
 -- Its bytes are not checked: the forge built the body from these very txs. No
 -- tx is filled from another point, since all of them are written.
 --
 -- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- to be durable as well as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -578,25 +578,17 @@ acquireForgedEb ctx point forged = do
   now <- systemTimeCurrent lfcSystemTime
   _ <-
     insertBody lfcTxCache (pointEbHash point) (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
-  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  written <- writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
   -- Unmasked, since this may run uninterruptibly ('onValidAnnouncement' says
   -- why), which a plain 'async' would pass on to the worker for its whole
-  -- life, its wait for the writes included.
+  -- life, its wait for the write included.
   link
     =<< asyncWithUnmask
       ( \unmask -> do
           labelThisThread "LeiosFetch.settleForgedEb"
-          unmask $
-            settleForgedEb ctx point eb now $
-              Promise $ do
-                _held <- await bodyWritten
-                dropped <- await txsWritten
-                pure $
-                  IntSet.toList $
-                    IntSet.fromList [0 .. length refs - 1] `IntSet.difference` toIntSet dropped
+          unmask $ settleForgedEb ctx point eb now (Set.toList <$> written)
       )
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
@@ -604,7 +596,7 @@ acquireForgedEb ctx point forged = do
   refs = endorserBlockReferences eb
 
 -- | Record the forge's endorser block as acquired at this point, with no job
--- left, now that its writes are durable, and emit what of its acquisition the
+-- left, now that its write is durable, and emit what of its acquisition the
 -- node had not already emitted there ('settleReceivingFromForge').
 settleForgedEb ::
   IOLike m =>
@@ -613,7 +605,7 @@ settleForgedEb ::
   EndorserBlock ->
   -- | when the forge handed it over
   RelativeTime ->
-  -- | the offsets of the txs the point holds once the writes are durable
+  -- | the offsets of the txs the point holds once the write is durable
   Promise m [TxOffset] ->
   m ()
 settleForgedEb ctx point eb now written = do
