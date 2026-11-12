@@ -27,6 +27,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (isInfixOf, sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
@@ -70,19 +71,16 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
-  , OfferedHalves (..)
-  , PeerOffer (..)
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
-  , leiosFetchLogicIteration
   , markReceivingFromForge
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullJobPool)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalSource (..), newLocalReuse)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
@@ -102,7 +100,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
   )
-import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar)
+import Ouroboros.Consensus.Util.IOLike (modifyMVar_, readMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
@@ -271,24 +269,20 @@ test_acquisitions = do
   closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
 
--- | The one request the decision logic makes of a peer that offers the closure
--- of the endorser block at this point, whose body the client holds.
+-- | Immutable validation context for all pending fixture jobs. The ordinary
+-- client pipelines one job per request; these unit fixtures can combine jobs
+-- to exercise validation of the whole response.
 closureRequest :: LeiosFetchClientContext IO Int -> LeiosPoint -> IO LeiosBlockTxsRequest
 closureRequest ctx point = do
-  reqs <-
-    modifyMVar (lfcOutstanding ctx) $ \outstanding -> do
-      let (outstanding', decisions, _drops) =
-            leiosFetchLogicIteration
-              (lfcStaticEnv ctx)
-              (\_slot -> Right maxBound)
-              (Just (SlotNo 6, 10))
-              (Map.singleton peer (Map.singleton point (MkPeerOffer SNothing OfferedClosure)))
-              Map.empty
-              outstanding
-      pure (outstanding', [r | LeiosBlockTxsRequest r <- foldMap toList decisions])
-  case reqs of
-    [req] -> pure req
-    _ -> assertFailure $ "expected one request, got " <> show (length reqs)
+  out <- readMVar (lfcOutstanding ctx)
+  case Map.lookup point (ebState out) of
+    Just (MkEbState _ (BodyAcquired pool)) -> case [ (jid, job)
+                                                   | jid <- IntMap.keys (Jobs.jobMultiplicities pool)
+                                                   , Just job <- [Jobs.lookupJob (Jobs.MkLeiosJobId jid) pool]
+                                                   ] of
+      first : rest -> pure (MkLeiosBlockTxsRequest point (NEIntMap.fromList (first :| rest)))
+      [] -> assertFailure "no pending fixture jobs" >> fail "unreachable"
+    _ -> assertFailure "fixture body not acquired" >> fail "unreachable"
 
 -- | An endorser block that misstates the sizes of its first two transactions,
 -- by amounts that cancel out, so that their job's count, total size and hashes

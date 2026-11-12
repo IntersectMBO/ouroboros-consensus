@@ -72,7 +72,7 @@ data RequestError
   | SessionExists
   | OrdinalExhausted
   | MissingAttempt
-  | JobBeyondCredit
+  | InvalidRequestGeometry
   | ClientClosed
   deriving Show
 
@@ -225,18 +225,19 @@ enqueueRequest client@(Client rt peer _) now req = do
       Just session -> do
         when (nextOrdinal session == maxBound) (throwSTM OrdinalExhausted)
         let cfg = runtimeConfig rt
-            cap =
-              if bigLedger session
-                then maxRequestedBytesSizePerBigLedgerPeer cfg
-                else maxRequestedBytesSizePerPeer cfg
             work = workOf req
             bytes = bytesOf req
             key = L.AttemptKey peer (invocation session) (nextOrdinal session)
         case req of
           LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) ->
-            when (NEIntMap.size jobs /= 1 || bytes > cap || bytes > 500000) (throwSTM JobBeyondCredit)
+            when (NEIntMap.size jobs /= 1) (throwSTM InvalidRequestGeometry)
           _ -> pure ()
-        if blocked peer st
+        -- Declared job sizes are untrusted. Configuration ensures all legal
+        -- indivisible TXs fit; an oversized invalid declaration is rejected,
+        -- never promoted to a fatal coordinator exception.
+        let beyondProtocol = case req of LeiosBlockTxsRequest{} -> bytes > 500000; _ -> False
+        if beyondProtocol
+          || blocked peer st
           || not (workEligible work st)
           || length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (ledger st)), p == peer] >= 150
           then pure Nothing

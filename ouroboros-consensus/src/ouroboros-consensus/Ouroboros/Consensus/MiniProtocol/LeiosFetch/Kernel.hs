@@ -10,6 +10,8 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , OfferTimes (..)
+  , noteOfferTime
   , LeiosPeerLifetimeId (..)
   , newLeiosFetchKernel
   , withLeiosFetchPeer
@@ -127,6 +129,7 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , StrictMVar
   , StrictTVar
+  , Time
   , atomically
   , bracket
   , getMonotonicTime
@@ -188,6 +191,8 @@ data LeiosFetchPeer m blk = MkLeiosFetchPeer
   -- ^ The peer's current offers, keyed by point. Written only by the
   -- LeiosNotify and ChainSync clients, as the peer offers, and by the decision
   -- loop and the pruner, as offers go dead.
+  , lfpOfferTimes :: !(StrictTVar m (Map.Map LeiosPoint OfferTimes))
+  -- ^ Independent first body/closure observations, pruned with availability.
   , lfpRequestsToSend :: !(StrictTVar m (Seq L.CommandKey))
   -- ^ The requests the decision loop assigned to this peer that its LeiosFetch
   -- client has not sent yet.
@@ -265,6 +270,7 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
     fresh <-
       MkLeiosFetchPeer isBig
         <$> uncheckedNewTVarM Map.empty
+        <*> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM Seq.empty
         <*> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM GenesisPoint
@@ -302,11 +308,13 @@ recordLeiosOffer ::
   LeiosPoint ->
   PeerOffer ->
   m ()
-recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
+recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings, lfpOfferTimes} point offer = do
+  now <- getMonotonicTime
   atomically $ do
     prunedSlot <- readTVar (lfkPrunedSlot kernel)
-    unless (pointSlotNo point < prunedSlot) $
+    unless (pointSlotNo point < prunedSlot) $ do
       modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
+      modifyTVar lfpOfferTimes (Map.alter (Just . noteOfferTime now (poOffered offer)) point)
   atomically $ W.notifyReadiness (lfcReady (lfkContext kernel))
 
 -- | Record the offer a peer makes by rolling forward a header that contains a
@@ -550,10 +558,11 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
     -- assigns nothing to a peer whose unregistering already cancelled its
     -- requests: their replies would never arrive, and the requests would stay
     -- outstanding forever.
-    (offerings, currentSlot, immLedger) <- atomically $ do
+    (offerings, times, currentSlot, immLedger) <- atomically $ do
       peersVars <- readTVar lfkPeers
       offerings <- traverse (readTVar . lfpOfferings) peersVars
-      (,,) offerings <$> getCurrentSlot btime <*> ChainDB.getImmutableLedger chainDB
+      times <- traverse (fmap (Map.mapMaybe closureOfferTime) . readTVar . lfpOfferTimes) peersVars
+      (,,,) offerings times <$> getCurrentSlot btime <*> ChainDB.getImmutableLedger chainDB
     let
       -- One forecast anchor for the whole pass: the immutable tip, which is
       -- also what the announcement validation a LeiosNotify offer rides on
@@ -590,7 +599,7 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
       modifyTVar
         (R.runtimeFacts lfcRuntime)
         (R.expireHeads iterationStart (`workStillNeeded` outstanding))
-    assignRequests lfcRuntime iterationStart forecastEbBounds mbHorizon offerings outstanding
+    assignRequests lfcRuntime iterationStart forecastEbBounds mbHorizon times offerings outstanding
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcRuntime} = lfkContext
@@ -675,7 +684,27 @@ leiosFetchPruner chainDB kernel = go (SlotNo 0)
       peersVars <- readTVar lfkPeers
       forM_ peersVars $ \vars -> do
         modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
+        modifyTVar (lfpOfferTimes vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
         modifyTVar
           (lfpCertificationClaims vars)
           (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
     go immTipSlot
+
+-- | First arrivals are metadata about offers, never EB announcement times.
+data OfferTimes = OfferTimes
+  { bodyOfferTime :: !(Maybe Time)
+  , closureOfferTime :: !(Maybe Time)
+  }
+  deriving (Eq, Show)
+
+-- | Merge first observations independently; repeated/cross-protocol offers do
+-- not renew priority. Taking the minimum also handles observation/STM reordering.
+noteOfferTime :: Time -> OfferedHalves -> Maybe OfferTimes -> OfferTimes
+noteOfferTime now offered previous = OfferTimes (choose body oldBody) (choose closure oldClosure)
+ where
+  OfferTimes oldBody oldClosure = maybe (OfferTimes Nothing Nothing) id previous
+  body = case offered of OfferedClosure -> False; _ -> True
+  closure = case offered of OfferedBody{} -> False; _ -> True
+  choose False old = old
+  choose True Nothing = Just $! now
+  choose True (Just old) = Just $! min old now

@@ -1,3 +1,6 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | Frozen request patience and FIFO head activation. No payload progress or
@@ -23,6 +26,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing
 
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime, diffTime)
 import Data.Word (Word32, Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
 
 -- | Original successful KeepAlive observation from this connection.
@@ -30,11 +35,11 @@ data RttObservation = RttObservation
   { rawRoundTripTime :: !DiffTime
   , measurementCompletedAt :: !Time
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic, NoThunks)
 
 -- | Detached provenance for the allowance selected at admission.
 data RttSource = KeepAliveSample | MissingRtt | StaleRtt | InvalidRtt
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic, NoThunks)
 
 -- | Sparse samples get 50% headroom, capped at 500 ms. Invalid, future or
 -- older-than-30-second samples use the same bounded fallback.
@@ -70,7 +75,7 @@ data Snapshot = Snapshot
   , snapshotRttSource :: !RttSource
   -- ^ Provenance frozen with the chosen allowance, including capped real samples.
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic, NoThunks)
 
 -- | One immutable request's timing observations. A terminal can precede its
 -- send-return callback. Local handling readiness and predecessor boundaries
@@ -86,7 +91,7 @@ data Clock = Clock
   , clockFired :: !Bool
   -- ^ An expiry is reconciled at most once.
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic, NoThunks)
 
 snapshot :: LeiosFetchStaticEnv -> Time -> Maybe RttObservation -> Word32 -> Either String Snapshot
 snapshot cfg now sample bytes = do
@@ -106,17 +111,22 @@ newClock inputs = Clock inputs Nothing Nothing Nothing False
 
 -- | The channel may deliver a reply before this observation arrives.
 sent :: Time -> Bool -> Clock -> Clock
-sent at continuous clock = clock{clockSent = Just (at, continuous)}
+sent at continuous clock =
+  at `seq` continuous `seq` let !stamp = (at, continuous) in clock{clockSent = Just stamp}
 
 -- | Activate only the actual FIFO head when local handling permits reception.
 -- Repeated calls must preserve the original activation inputs.
 activate :: Maybe Time -> Maybe Time -> Clock -> Clock
 activate predecessor ready clock = case clockHead clock of
   Just _ -> clock
-  Nothing -> clock{clockHead = Just (predecessor, ready)}
+  Nothing ->
+    let !prior = detachedTime predecessor
+        !available = detachedTime ready
+        !stamp = (prior, available)
+     in clock{clockHead = Just stamp}
 
 received :: Time -> Clock -> Clock
-received at clock = clock{clockReceipt = Just at}
+received at clock = at `seq` clock{clockReceipt = Just at}
 
 -- | Transit already elapsed behind the previous response is not charged again.
 -- A local handler may move the service start to its own completion, preserving
@@ -141,3 +151,10 @@ lateReply :: Clock -> Bool
 lateReply clock = case (deadline clock, clockReceipt clock) of
   (Just limit, Just at) -> at > limit
   _ -> False
+
+-- Force facts before storing them inside Maybe/tuple constructors. In
+-- particular, a lazy continuous-pipeline predicate can otherwise keep the
+-- entire runtime snapshot from send completion alive behind a queued clock.
+detachedTime :: Maybe Time -> Maybe Time
+detachedTime Nothing = Nothing
+detachedTime (Just at) = at `seq` Just at

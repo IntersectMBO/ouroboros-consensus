@@ -142,6 +142,7 @@ testPipeline = bounded $ do
                   now
                   (const (Right maxBound))
                   Nothing
+                  Map.empty
                   (Map.singleton 0 (Map.singleton point (MkPeerOffer SNothing OfferedClosure)))
             void (awaitNotes notes 2)
             atomically $ do
