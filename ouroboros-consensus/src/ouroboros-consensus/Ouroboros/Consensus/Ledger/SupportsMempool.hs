@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -41,14 +42,19 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Validated
   , VersionWord16 (..)
   , WhetherToIntervene (..)
+  , fixedTickedLedgerMajorProtocolVersionWord16
   , nothingMkMempoolApplyTxError
+  , nothingTxLeiosMemoizedHashAndBytes
   , toVersionWord16
   ) where
 
+import Cardano.Crypto.Hash (Hash)
 import Cardano.Ledger.Binary.Version (MaxVersion, Version, getVersion64)
+import Cardano.Ledger.Hashes (EraIndependentTx, HASH)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Data.Array.Byte (ByteArray)
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
@@ -263,10 +269,49 @@ class
     Text ->
     Maybe (ApplyTxErr blk)
 
+  -- | The transaction's memoized
+  -- @Leios.'Ouroboros.Consensus.Leios.Types.TxHash'@ and its memoized bytes as
+  -- Leios sends and stores them. 'Nothing' when the transaction's era has no
+  -- endorser blocks.
+  --
+  -- WARNING The Mempool uses this method liberally, under the assumption that
+  -- the returned values are memoized rather than a fresh copy, as @'GenTx blk'@
+  -- does starting from the Dijkstra era.
+  --
+  -- TODO that assumption is false for the bytes half even in Dijkstra until PR
+  -- https://github.com/IntersectMBO/cardano-ledger/pull/6307 merges.
+  --
+  -- WARNING The hash returned here is /not/ the hash inside of 'GenTxId'. It is
+  -- the @Leios.'Ouroboros.Consensus.Leios.Types.TxHash'@ instead (inlined here
+  -- only due to an import cycle). See that type for why it's different.
+  txLeiosMemoizedHashAndBytes :: GenTx blk -> Maybe (Hash HASH EraIndependentTx, ByteArray)
+
+  -- | The major protocol version under which this ledger state validates
+  -- transactions.
+  --
+  -- This is total, so 'VersionWord16' holds every era's major protocol
+  -- version: no part of the Cardano codebase supports one of @2 ^ 16@ or more,
+  -- nor would it be reasonable to. Only Leios uses it so far, and only for eras
+  -- with endorser blocks. If fewer bits would ever benefit Leios, this could
+  -- become partial, for example excluding Byron, whose major protocol version
+  -- is a 'Word16'. Nothing motivates that yet, since the LeiosTxCache's hash
+  -- table has bits to spare.
+  tickedLedgerMajorProtocolVersionWord16 :: TickedLedgerState blk mk -> VersionWord16
+
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
+
+-- | Value of 'txLeiosMemoizedHashAndBytes' for a block type without endorser blocks
+nothingTxLeiosMemoizedHashAndBytes :: GenTx blk -> Maybe (Hash HASH EraIndependentTx, ByteArray)
+nothingTxLeiosMemoizedHashAndBytes _ = Nothing
+
+-- | Value of 'tickedLedgerMajorProtocolVersionWord16' for a block type whose ledger never changes
+-- its protocol version from the given one
+fixedTickedLedgerMajorProtocolVersionWord16 ::
+  VersionWord16 -> TickedLedgerState blk mk -> VersionWord16
+fixedTickedLedgerMajorProtocolVersionWord16 protVer _ = protVer
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult

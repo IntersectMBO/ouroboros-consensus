@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
+import Data.Array.Byte (ByteArray)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
@@ -53,6 +54,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -219,6 +221,14 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
+  , getLeiosTxIndex :: STM m (LeiosMempoolTxs ByteArray)
+  -- ^ The bytes of the transactions in the mempool that an endorser block can
+  -- reference, by the hash of those bytes ('hashLeiosTx'), and the major
+  -- protocol version they were all validated under
+  -- ('tickedLedgerMajorProtocolVersionWord16').
+  --
+  -- Restrict the index to the requested hashes before converting the arrays
+  -- to @ByteString@s outside the STM transaction.
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->

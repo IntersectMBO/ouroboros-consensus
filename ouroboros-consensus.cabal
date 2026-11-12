@@ -1960,6 +1960,7 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-base,
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
@@ -1981,6 +1982,7 @@ test-suite shelley-test
     measures,
     mempack,
     microlens,
+    nothunks,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     QuickCheck,
     sop-core,

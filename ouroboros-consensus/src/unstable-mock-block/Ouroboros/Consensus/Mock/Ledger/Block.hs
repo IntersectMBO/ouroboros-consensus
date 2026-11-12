@@ -628,6 +628,8 @@ instance
     LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
+  txLeiosMemoizedHashAndBytes = nothingTxLeiosMemoizedHashAndBytes
+  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
