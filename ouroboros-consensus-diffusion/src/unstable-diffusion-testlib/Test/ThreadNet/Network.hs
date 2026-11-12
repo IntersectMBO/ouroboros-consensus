@@ -1088,6 +1088,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = snd (splitGen chainSyncRng)
               , leiosAcquisitions
               , nextNewLeiosValidClaims = consumeNewLeiosValidClaims newLeiosValidClaims
               , leiosFetchRng = lfRng

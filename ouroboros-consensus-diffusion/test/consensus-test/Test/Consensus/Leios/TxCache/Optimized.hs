@@ -17,7 +17,7 @@ module Test.Consensus.Leios.TxCache.Optimized (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, takeMVar, tryPutMVar, yield)
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Data.Bits (shiftR)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List as List
@@ -29,11 +29,13 @@ import Ouroboros.Consensus.Leios.TxCache
   ( LandedTx (..)
   , LeiosTxCache (..)
   , LeiosTxCacheInsertBodySummary
+  , PackedEndorserBlock
   , ReferencesTxsByHash (..)
   , TxState (..)
   , evictOlderThan
   , insertBody
   , newPureLeiosTxCache
+  , packEndorserBlock
   )
 import Ouroboros.Consensus.Leios.TxCache.Optimized (newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types
@@ -43,6 +45,8 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   , TxLocation
   , TxOffset
+  , endorserBlockReferences
+  , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchArrivalBytes)
 import System.IO.Unsafe (unsafePerformIO)
@@ -53,7 +57,7 @@ import Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   , salt1
   )
 import Test.Tasty (TestTree, adjustOption, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
@@ -85,6 +89,12 @@ tests =
         testProperty "hash-table handle == pure handle" prop_equiv
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "hash-table handle == pure handle, with evictOlderThan" prop_equivEvict
+    , testGroup
+        "packed body reference geometry"
+        [ testCase name (testPackedReferences makeCache)
+        | (name, makeCache) <-
+            [("reference", newPureLeiosTxCache 8), ("optimized", newHashTableLeiosTxCache 8 salt0 salt1)]
+        ]
     , testCase
         "a thread killed while inserting a body leaves no tx behind once the body's point is evicted"
         $ killedInsertLeaks >>= (@?= 0)
@@ -281,3 +291,23 @@ killedInsertLeaks = do
   txhOfInt :: Int -> TxHash
   txhOfInt n =
     UnsafeHash $ SBS.pack ([fromIntegral (n `shiftR` (8 * i)) | i <- [0 .. 3]] ++ replicate 28 0)
+
+-- Exercise the real packed representation, rather than TestBody. These size
+-- boundaries test reference metadata, not the validity of ledger transactions.
+-- The ledger constructor canonicalizes repeated hashes before packing. Compare
+-- against the expected canonical sequence, including its assigned offsets.
+-- Empty and singleton vectors also exercise the ends of the hash blob.
+testPackedReferences :: IO (LeiosTxCache IO () VersionWord16 PackedEndorserBlock) -> Assertion
+testPackedReferences makeCache =
+  forM_ [([], []), (take 1 refs, take 1 refs), (refs ++ take 1 refs, refs)] $ \(input, expected) -> do
+    cache <- makeCache
+    let point = pointAt 1 1
+        body = mkEndorserBlock input
+        packed = packEndorserBlock body
+    endorserBlockReferences body @?= expected
+    reverse (foldTxReferences (\acc h size -> (h, size) : acc) [] packed) @?= expected
+    (_, located) <-
+      insertBodyAndFoldl' cache point packed [] (\acc off h size loc -> (off, h, size, loc) : acc)
+    reverse located @?= [(off, h, size, Nothing) | (off, (h, size)) <- zip [0 ..] expected]
+ where
+  refs = [(txhOf 3, 360), (txhOf 1, 65536), (txhOf 4, maxBound), (txhOf 2, 0)]

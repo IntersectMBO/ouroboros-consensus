@@ -683,6 +683,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                    , Cardano.Diffusion.freshBytes = throwSTM unsupportedEgressScheduling
+                    , Cardano.Diffusion.freshMaxBytes = throwSTM unsupportedEgressScheduling
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
@@ -1081,7 +1083,8 @@ mkNodeKernelArgs
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, lfRng) = splitGen rng'
+          (psRng, rng'') = splitGen rng'
+          (lfRng, txRng) = splitGen rng''
       return
         NodeKernelArgs
           { tracers
@@ -1112,6 +1115,7 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , leiosAcquisitions
           , nextNewLeiosValidClaims
           , leiosFetchRng = lfRng
@@ -1198,7 +1202,16 @@ stdRunDataDiffusion ::
   Cardano.Diffusion.CardanoApplications IO a ->
   IO ()
 stdRunDataDiffusion = \nodeArgs consensusArgs tracers config apps ->
-  void $ Cardano.Diffusion.run nodeArgs consensusArgs tracers config apps
+  case Diffusion.dcEgressScheduling config of
+    Nothing -> void $ Cardano.Diffusion.run nodeArgs consensusArgs tracers config apps
+    Just _ -> throwIO unsupportedEgressScheduling
+
+-- | Optional egress scheduling needs chain-byte accounting which this consensus
+-- integration does not provide. Reject it before diffusion instead of supplying
+-- invented counters; custom runners encounter the same error through the hooks.
+unsupportedEgressScheduling :: IOError
+unsupportedEgressScheduling =
+  userError "Consensus chain-byte accounting for egress scheduling is not installed"
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
