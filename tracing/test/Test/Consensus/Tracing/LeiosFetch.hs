@@ -87,7 +87,7 @@ tests =
         KM.lookup "effectiveBefore" charge @?= Just (Number 0)
     , testCase "production admission captures original RTT and invocation before delayed emission" $ do
         ready <- atomically W.newReadiness
-        rt <- R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (pure False)
+        rt <- R.newRuntime defaultLeiosFetchStaticEnv ready (pure False)
         commands <- uncheckedNewTVarM Seq.empty
         sample <- uncheckedNewTVarM (Just (T.RttObservation 0.1 (Time 10)))
         client <- atomically $ R.openClient rt Peer False commands (readTVar sample)

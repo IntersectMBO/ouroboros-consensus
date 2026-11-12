@@ -272,7 +272,9 @@ data EbFetchState
     --
     -- A body too big for the point's bounds is held with an empty pool too. It
     -- is never written, and nothing more is fetched or emitted for it at this
-    -- point.
+    -- point. A target reported unavailable by
+    -- storage also uses this terminal empty pool, without an acquisition
+    -- notification. No remaining jobs does not itself prove possession.
     --
     -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
     -- carries a 'Jobs.JobCommitment' sufficient to validate its response.
