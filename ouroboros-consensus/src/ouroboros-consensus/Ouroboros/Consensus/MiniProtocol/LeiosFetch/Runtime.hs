@@ -62,6 +62,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttObservation)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchLimit)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 
@@ -113,6 +114,10 @@ data Session m peer = Session
   , receiverReady :: !(Maybe Time)
   , localHandler :: !Bool
   , publishingInput :: !Bool
+  , reportedBlocked :: !Bool
+  -- ^ Last emitted blocked/resumed state, one bit per live invocation.
+  , pressure :: ![FetchLimit]
+  -- ^ At most the three current pressure kinds; no event history.
   , closurePenalty :: !P.Penalty
   -- ^ Last charged closure evidence for this live registration. Pure reads
   -- age it; successful service does not reset it. Removal clears the state.
@@ -156,7 +161,22 @@ openClient rt peer big commands rtt = do
   when (Map.member peer (sessions st)) (throwSTM SessionExists)
   let n = nextInvocation st
       session =
-        Session n big rtt 0 commands Seq.empty Seq.empty Nothing Nothing Nothing False False P.emptyPenalty
+        Session
+          n
+          big
+          rtt
+          0
+          commands
+          Seq.empty
+          Seq.empty
+          Nothing
+          Nothing
+          Nothing
+          False
+          False
+          False
+          []
+          P.emptyPenalty
   writeTVar
     (runtimeFacts rt)
     st{sessions = Map.insert peer session (sessions st), nextInvocation = n + 1}

@@ -19,6 +19,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 import System.Random (mkStdGen)
@@ -30,7 +32,32 @@ tests :: TestTree
 tests =
   testGroup
     "ordinary runtime lifecycle"
-    [ testCase "zero-byte jobs are bounded by the command count despite free byte credit" $ withClient $ \rt client -> do
+    [ testCase "charge and blocked traces replay captured ownership exactly once" $ withTxHeads $ \rt client out _ keys -> do
+        initial <- atomically (readTVar (R.runtimeFacts rt))
+        let (failed, charges) = R.expireHeadsObserved (Time 10) (\work -> case work of L.Job{} -> True; _ -> False) initial
+        case A.penaltyChanges charges of
+          [A.Routine key (FetchPenaltyCharged _ at previous effective following)] -> do
+            key @?= head keys
+            at @?= Time 10
+            previous @?= P.penaltySnapshot P.emptyPenalty
+            effective @?= P.zeroScore
+            following @?= P.penaltySnapshot (P.chargePenalty at P.emptyPenalty)
+          _ -> assertFailure "missing or repeated charge"
+        length (snd (R.expireHeadsObserved (Time 20) (const True) failed)) @?= 0
+        atomically (writeTVar (R.runtimeFacts rt) failed)
+        blocked <- atomically (A.blockedChanges rt)
+        case blocked of
+          [A.Routine _ (FetchUpstreamChanged True)] -> pure ()
+          _ -> assertFailure "missing blocked transition"
+        atomically (A.blockedChanges rt) >>= (\xs -> length xs @?= 0)
+        atomically (R.completeWire client (head keys) (Time 11))
+        resumed <- atomically (A.blockedChanges rt)
+        case resumed of
+          [A.Routine _ (FetchUpstreamChanged False)] -> pure ()
+          _ -> assertFailure "missing resumption"
+        -- The callback is still pending; a terminal already clears wire blockage.
+        void (pure out)
+    , testCase "zero-byte jobs are bounded by the command count despite free byte credit" $ withClient $ \rt client -> do
         let (point, _, _) = fixture
             job = Jobs.MkLeiosJob (IntSet.singleton 0) 0 (Jobs.jobCommitmentOfTxHashes [])
         admitted <- forM [0 .. 199] $ \jid ->

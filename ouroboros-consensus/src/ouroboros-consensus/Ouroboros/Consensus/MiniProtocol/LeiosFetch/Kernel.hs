@@ -99,7 +99,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , OfferedHalves (..)
   , PeerOffer (..)
-  , assignRequests
+  , assignRequestsObserved
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
@@ -111,6 +111,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchRoutine (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
@@ -292,11 +294,23 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
   -- The decision loop reads the registered peers within the same critical
   -- section in which it assigns requests, so it cannot assign this peer
   -- anything after its requests are cancelled here.
-  unregister (lifetimeId, _) = mask_ $ modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
-    atomically $ do
-      modifyTVar lfkPeers (Map.delete lifetimeId)
-      R.closePeer (lfcRuntime lfkContext) lifetimeId
-    pure $! removePeerFromOutstanding lifetimeId outstanding
+  unregister (lifetimeId, _) = do
+    events <- mask_ $ modifyMVar (lfcOutstanding lfkContext) $ \outstanding -> do
+      events <- atomically $ do
+        facts <- readTVar (R.runtimeFacts (lfcRuntime lfkContext))
+        let captured = case Map.lookup lifetimeId (R.sessions facts) of
+              Nothing -> []
+              Just session ->
+                [ A.Routine
+                    (L.AttemptKey lifetimeId (R.invocation session) 0)
+                    (FetchRegistrationRemoved (A.usageSummary (lfcRuntime lfkContext) lifetimeId facts))
+                ]
+        A.forceObservations captured `seq` pure ()
+        modifyTVar lfkPeers (Map.delete lifetimeId)
+        R.closePeer (lfcRuntime lfkContext) lifetimeId
+        pure captured
+      pure (removePeerFromOutstanding lifetimeId outstanding, events)
+    A.emitObservations (lfcTracer lfkContext) (lfcDetailTracer lfkContext) events
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
 -- with, unless the point is older than what has been pruned, and wake the
@@ -553,7 +567,7 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
   due <- atomically (R.nextDeadline <$> readTVar (R.runtimeFacts lfcRuntime))
   _ <- W.waitForWakeup lfcReady due
   iterationStart <- getMonotonicTime
-  mask_ $ modifyMVar_ lfcOutstanding $ \outstanding -> do
+  reports <- mask_ $ modifyMVar lfcOutstanding $ \outstanding -> do
     -- Read the live peers while holding the outstanding state, so that this
     -- assigns nothing to a peer whose unregistering already cancelled its
     -- requests: their replies would never arrive, and the requests would stay
@@ -595,11 +609,25 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
               SlotNo window =
                 minCertificationSlot slotLength llvAnnouncementPeriod llvVotePeriod llvDiffusionPeriod 0
           pure (slot, window)
-    atomically $
-      modifyTVar
-        (R.runtimeFacts lfcRuntime)
-        (R.expireHeads iterationStart (`workStillNeeded` outstanding))
-    assignRequests lfcRuntime iterationStart forecastEbBounds mbHorizon times offerings outstanding
+    transitions <- atomically $ do
+      before <- readTVar (R.runtimeFacts lfcRuntime)
+      let (expired, charges) = R.expireHeadsObserved iterationStart (`workStillNeeded` outstanding) before
+      writeTVar (R.runtimeFacts lfcRuntime) expired
+      blocked <- A.blockedChanges lfcRuntime
+      pure $!
+        A.forceObservations
+          (A.penaltyChanges charges ++ A.expiryChanges lfcRuntime iterationStart before expired ++ blocked)
+    (updated, admitted) <-
+      assignRequestsObserved
+        lfcRuntime
+        iterationStart
+        forecastEbBounds
+        mbHorizon
+        times
+        offerings
+        outstanding
+    pure (updated, A.forceObservations (transitions ++ admitted))
+  A.emitObservations (lfcTracer lfkContext) (lfcDetailTracer lfkContext) reports
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcRuntime} = lfkContext

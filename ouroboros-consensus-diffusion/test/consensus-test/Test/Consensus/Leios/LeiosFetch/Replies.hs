@@ -66,6 +66,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , acquireForgedEb
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage (ClosureSummary (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
@@ -111,7 +112,9 @@ tests :: TestTree
 tests =
   testGroup
     "replies"
-    [ testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
+    [ testCase "closure summaries count confirmed network payload once" test_summary
+    , testCase "forge summaries keep locally produced bytes local" test_forgeSummary
+    , testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
     , testCase "the client disconnects a peer whose body has another hash" $
         test_wrongHash
@@ -238,6 +241,7 @@ newContextGated point gate = do
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
+        , lfcDetailTracer = nullTracer
         , lfcTracer = nullTracer
         }
     , notes
@@ -599,7 +603,7 @@ test_txsWhileForging = do
 -- Unit fixtures isolate payload validation/storage. Runtime ownership and actual
 -- client/driver interactions are exercised separately by lifecycle tests.
 unitOwnership :: ReplyOwnership IO
-unitOwnership = ReplyOwnership (pure True) (pure ()) (pure ()) (pure ())
+unitOwnership = ReplyOwnership (pure True) (\_ _ -> pure (pure ())) (\_ -> pure (pure ())) (pure ())
 
 processLeiosBlock ::
   LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
@@ -608,3 +612,43 @@ processLeiosBlock = Replies.processLeiosBlock unitOwnership
 processLeiosBlockTxs ::
   LeiosFetchClientContext IO Int -> Int -> LeiosBlockTxsRequest -> V.Vector LeiosTx -> IO ()
 processLeiosBlockTxs = Replies.processLeiosBlockTxs unitOwnership
+
+-- Real writer receipts and the normal settlement path, including a duplicate
+-- response after semantic completion. Arrival counters are deliberately unused.
+test_summary :: Assertion
+test_summary = do
+  (base, notes) <- newContext
+  summaries <- newTVarIO []
+  let (point, eb, txs) = fixture
+      ctx =
+        base
+          { lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientClosureSummary p value -> atomically (modifyTVar summaries ((p, value) :))
+              _ -> pure ()
+          }
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    processLeiosBlockTxs ctx peer req (V.fromList txs)
+    _ <- awaitNotes notes 2
+    processLeiosBlockTxs ctx otherPeer req (V.fromList txs)
+  let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
+  readTVarIO summaries >>= (@?= [(point, ClosureSummary total 0 total 2 (Just total) False)])
+
+test_forgeSummary :: Assertion
+test_forgeSummary = do
+  (base, _) <- newContext
+  summaries <- newTVarIO []
+  let (point, _, txs) = fixture
+      ctx =
+        base
+          { lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientClosureSummary _ value -> atomically (modifyTVar summaries (value :))
+              _ -> pure ()
+          }
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+    acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+  let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
+  readTVarIO summaries >>= (@?= [ClosureSummary total total 0 0 Nothing True])

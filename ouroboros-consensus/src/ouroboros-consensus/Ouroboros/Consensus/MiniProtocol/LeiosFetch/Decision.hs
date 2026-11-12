@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 
 -- | What the node's LeiosFetch clients request, decided for all of them at
@@ -43,6 +44,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosFetchStaticEnv (..)
   , defaultLeiosFetchStaticEnv
   , assignRequests
+  , assignRequestsObserved
   , ClosureOfferTimes
   , orderedClosureSources
   , workStillNeeded
@@ -50,7 +52,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (foldM)
+import Control.Monad (foldM, forM)
 import qualified Data.Foldable as F
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
@@ -74,11 +76,15 @@ import Ouroboros.Consensus.Leios.Types
   , TxHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage (Coverage)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import Ouroboros.Consensus.Util.IOLike (IOLike, Time, atomically, readTVar)
 import System.Random (StdGen)
 
@@ -208,6 +214,8 @@ data LeiosOutstanding peer = MkLeiosOutstanding
   , requestedJobsPerPeer :: !(Map peer (Map LeiosPoint NEIntSet))
   -- ^ Per peer, per point, the job ids it currently has in flight -- for
   -- decrementing those multiplicities on disconnect
+  , closureCoverage :: !(Map LeiosPoint Coverage)
+  -- ^ Confirmed acquisition origins, collapsed at completion and retired with the point.
   , leiosFetchPrng :: !StdGen
   -- ^ The LeiosFetch decision loop's own PRNG, threaded through each iteration.
   -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
@@ -227,6 +235,7 @@ emptyLeiosOutstanding prng prunedSlot =
     , elFocus = Map.empty
     , outstandingPrunedSlot = prunedSlot
     , requestedJobsPerPeer = Map.empty
+    , closureCoverage = Map.empty
     , leiosFetchPrng = prng
     }
 
@@ -536,6 +545,7 @@ pruneOutstandingToImmTip immTipSlot outstanding =
   outstanding
     { ebState = Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo) (ebState outstanding)
     , elFocus = Map.dropWhileAntitone ((< immTipSlot) . electionSlot) (elFocus outstanding)
+    , closureCoverage = Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo) (closureCoverage outstanding)
     , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
     }
 
@@ -618,7 +628,10 @@ settleTxRequest peer (MkLeiosBlockTxsRequest point jobs) confirmed o =
 -- so no peer can complete it.
 abandonClosure :: LeiosPoint -> LeiosOutstanding peer -> LeiosOutstanding peer
 abandonClosure point o =
-  o{ebState = Map.adjust abandon point (ebState o)}
+  o
+    { ebState = Map.adjust abandon point (ebState o)
+    , closureCoverage = Map.delete point (closureCoverage o)
+    }
  where
   abandon (MkEbState onset fetchState) =
     MkEbState onset $ case fetchState of
@@ -683,76 +696,212 @@ assignRequests ::
   Map peer (Map LeiosPoint PeerOffer) ->
   LeiosOutstanding peer ->
   m (LeiosOutstanding peer)
-assignRequests rt now forecast horizon times offers out0 = do
+assignRequests rt now forecast horizon times offers out =
+  fst <$> assignRequestsObserved rt now forecast horizon times offers out
+
+assignRequestsObserved ::
+  (IOLike m, Ord peer) =>
+  R.Runtime m peer ->
+  Time ->
+  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  Maybe (SlotNo, Word64) ->
+  ClosureOfferTimes peer ->
+  Map.Map peer (Map.Map LeiosPoint PeerOffer) ->
+  LeiosOutstanding peer ->
+  m (LeiosOutstanding peer, [A.Observation peer])
+assignRequestsObserved rt now forecast horizon times offers outstanding = do
   clients <- atomically (R.sessions <$> readTVar (R.runtimeFacts rt))
-  foldM (visitPoint clients) out0 points
+  (out, backwards, limits) <-
+    foldM
+      (visitPoint clients)
+      (outstanding, [], Map.empty)
+      (orderedOffers horizon (ebState outstanding))
+  -- Aggregate once across all EBs before publishing each peer's pressure state.
+  -- Reporting inside the EB loop would spuriously clear pressure between points.
+  changes <- atomically $ forM (Map.keys clients) $ \peer ->
+    A.pressureChange rt peer (Map.findWithDefault [] peer limits)
+  pure (out, reverse backwards ++ concat changes)
  where
-  (urgent, other) = fetchPriorityTiers horizon [(pointSlotNo point, point) | point <- Map.keys (ebState out0)]
-  points = urgent ++ other
-  visitPoint clients out point
-    | not (isFocusedPoint point out) = pure out
+  visitPoint clients state@(out, _, _) (point, _)
+    | not (isFocusedPoint point out) = pure state
     | otherwise = case Map.lookup point (ebState out) of
+        Just (MkEbState _ NoBody) ->
+          foldM
+            (visitSource point)
+            state
+            [(peer, session, Nothing) | (peer, session) <- Map.toAscList clients]
         Just (MkEbState _ BodyAcquired{}) ->
           foldM
             (visitSource point)
-            out
-            [ (peer, session)
-            | (peer, _) <- orderedClosureSources point (Map.map (R.closureScore now) clients) times offers
+            state
+            [ (peer, session, Just (FetchSelection now score (Map.lookup peer times >>= Map.lookup point)))
+            | (peer, score) <- orderedClosureSources point (Map.map (R.closureScore now) clients) times offers
             , Just session <- [Map.lookup peer clients]
             ]
-        _ -> foldM (visitSource point) out (Map.toAscList clients)
-  visitSource point out (peer, session) = case Map.lookup peer offers >>= Map.lookup point of
-    Nothing -> pure out
-    Just offer -> do
-      let client = R.Client rt peer (R.invocation session)
-      case Map.lookup point (ebState out) of
+        _ -> pure state
+  visitSource point state@(out, reports, limits) (peer, session, selected) =
+    case Map.lookup peer offers >>= Map.lookup point of
+      Nothing -> pure state
+      Just offer -> do
+        let client = R.Client rt peer (R.invocation session)
+        (updated, next, pressure) <- assignPoint client selected (out, reports, []) (point, offer)
+        pure (updated, next, Map.insertWith (++) peer pressure limits)
+  assignPoint client selected state@(out, reports, limits) (point, offer)
+    | not (isFocusedPoint point out) = pure state
+    | otherwise = case Map.lookup point (ebState out) of
         Just (MkEbState _ NoBody) -> case (bodySize (poOffered offer), bounds point offer) of
-          (Just size, Just trusted) ->
-            atomically
-              (R.enqueueRequest client now (LeiosBlockRequest (MkLeiosBlockRequest point size trusted)))
-              >> pure out
-          _ -> pure out
-        Just (MkEbState onset (BodyAcquired pool))
-          | hasClosure (poOffered offer) ->
-              assignJobs client point onset initialExcluded pool (leiosFetchPrng out) out
-         where
-          initialExcluded =
-            maybe IntSet.empty NEIntSet.toSet (Map.lookup peer (requestedJobsPerPeer out) >>= Map.lookup point)
-        _ -> pure out
-  assignJobs client point onset excluded pool prng out =
-    case Jobs.pickLeastRequestedJobExcept prng excluded pool of
-      Nothing -> pure out{leiosFetchPrng = prng}
-      Just (Jobs.MkLeiosJobId jid, job, picked, nextPrng) -> do
-        let req = LeiosBlockTxsRequest (MkLeiosBlockTxsRequest point (NEIntMap.singleton jid job))
-        admitted <- atomically (R.enqueueRequest client now req)
-        let next = case admitted of
-              Nothing -> out
-              Just _ ->
-                out
-                  { ebState = Map.insert point (MkEbState onset (BodyAcquired picked)) (ebState out)
-                  , requestedJobsPerPeer =
-                      Map.insertWith
-                        (Map.unionWith NEIntSet.union)
-                        (R.clientPeer client)
-                        (Map.singleton point (NEIntSet.singleton jid))
-                        (requestedJobsPerPeer out)
-                  }
-        assignJobs
-          client
-          point
-          onset
-          (IntSet.insert jid excluded)
-          (case admitted of Nothing -> pool; Just _ -> picked)
-          nextPrng
-          next
+          (Just size, Just trusted) -> do
+            let req = LeiosBlockRequest (MkLeiosBlockRequest point size trusted)
+            (_, events, pressure) <- admitObserved client now Nothing req
+            pure (out, reverse events ++ reports, pressure ++ limits)
+          _ -> pure state
+        Just (MkEbState _ (BodyAcquired _))
+          | Just evidence <- selected
+          , hasClosure (poOffered offer) -> do
+              (updated, events, pressure) <- assignJobs client now evidence point out
+              pure (updated, reverse events ++ reports, pressure ++ limits)
+        _ -> pure state
+  hasClosure OfferedBody{} = False
+  hasClosure _ = True
   bodySize (OfferedBody n) = Just n
   bodySize (OfferedBodyAndClosure n) = Just n
   bodySize OfferedClosure = Nothing
-  hasClosure OfferedBody{} = False
-  hasClosure _ = True
   bounds point offer = case poEbBounds offer of
     SJust trusted -> Just trusted
     SNothing -> either (const Nothing) Just (forecast (pointSlotNo point))
+
+orderedOffers :: Maybe (SlotNo, Word64) -> Map.Map LeiosPoint v -> [(LeiosPoint, v)]
+orderedOffers horizon offers = high ++ low
+ where
+  (high, low) =
+    fetchPriorityTiers
+      horizon
+      [(pointSlotNo point, (point, offer)) | (point, offer) <- Map.toAscList offers]
+
+-- | A complete candidate is checked again inside the reservation transaction.
+-- Only otherwise-eligible work contributes to the current pressure bits.
+admitObserved ::
+  (IOLike m, Ord peer) =>
+  R.Client m peer ->
+  Time ->
+  Maybe FetchSelection ->
+  LeiosFetchRequest ->
+  m (Maybe (L.AttemptKey peer), [A.Observation peer], [FetchLimit])
+admitObserved client now selected req = atomically $ do
+  let rt = R.clientRuntime client
+      peer = R.clientPeer client
+  before <- readTVar (R.runtimeFacts rt)
+  key <- R.enqueueRequest client now req
+  case key of
+    Just identity -> do
+      events <- A.admitted rt now selected identity
+      after <- readTVar (R.runtimeFacts rt)
+      let owners = R.workOwners (R.workOf req) before
+          -- Any blocked follower makes this a follower rescue; otherwise all
+          -- existing copies expired as heads. This describes the owner set,
+          -- without inventing a timestamped history for the last trigger.
+          cause =
+            if null owners
+              then Nothing
+              else
+                Just $
+                  if all
+                    (\owner -> maybe False (T.clockFired . R.attemptClock) (Map.lookup owner (R.attempts before)))
+                    owners
+                    then FetchOwnHeadExpiry
+                    else FetchBlockedFollower
+          extra = case (cause, Map.lookup identity (R.attempts after)) of
+            (Just why, Just attempt) ->
+              let !summary = A.requestSummary identity attempt
+               in [A.Routine identity (FetchHedgeOpened summary why)]
+            _ -> []
+      let !detached = A.forceObservations (events ++ extra)
+      pure (key, detached, [])
+    Nothing -> pure (Nothing, [], limitPressure rt peer req before)
+
+limitPressure ::
+  Ord peer => R.Runtime m peer -> peer -> LeiosFetchRequest -> R.RuntimeState m peer -> [FetchLimit]
+limitPressure rt peer req state
+  | R.blocked peer state || not (R.workEligible work state) || sameSource = []
+  | otherwise = case work of
+      L.Body{}
+        | L.bodyRequests used >= maxBodiesPerPeer cfg -> [FetchBodyCount]
+      _
+        | length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (R.ledger state)), p == peer] >= 150 ->
+            [FetchCommandCount]
+      L.Job{}
+        | L.transactionBytes used + fromIntegral (R.bytesOf req) > fromIntegral (fetchTxLimit summary) ->
+            [FetchTransactionCredit]
+      _ -> []
+ where
+  work = R.workOf req
+  cfg = R.runtimeConfig rt
+  used = L.usage peer (R.ledger state)
+  summary = A.usageSummary rt peer state
+  sameSource =
+    any
+      (\(L.AttemptKey p _ _, lease) -> p == peer && L.leaseWork lease == work)
+      (Map.toList (L.leases (R.ledger state)))
+
+-- | Preserve least multiplicity within a pool. Unfit/ineligible candidates are
+-- excluded for this pass without persisting their speculative pick increment.
+assignJobs ::
+  (IOLike m, Ord peer) =>
+  R.Client m peer ->
+  Time ->
+  FetchSelection ->
+  LeiosPoint ->
+  LeiosOutstanding peer ->
+  m (LeiosOutstanding peer, [A.Observation peer], [FetchLimit])
+assignJobs client now selected point outstanding = case Map.lookup point (ebState outstanding) of
+  Just (MkEbState onset (BodyAcquired pool)) -> go onset initialExcluded pool (leiosFetchPrng outstanding) outstanding [] []
+  _ -> pure (outstanding, [], [])
+ where
+  rt = R.clientRuntime client
+  peer = R.clientPeer client
+  initialExcluded =
+    maybe IntSet.empty NEIntSet.toSet $
+      Map.lookup peer (requestedJobsPerPeer outstanding) >>= Map.lookup point
+  go onset excluded pool prng out reports limits =
+    case Jobs.pickLeastRequestedJobExcept prng excluded pool of
+      Nothing -> pure (out{leiosFetchPrng = prng}, reverse reports, limits)
+      Just (Jobs.MkLeiosJobId i, job, nextPool, nextPrng) -> do
+        facts <- atomically (readTVar (R.runtimeFacts rt))
+        let work = L.Job point i
+            eligible = R.workEligible work facts
+            req = LeiosBlockTxsRequest (MkLeiosBlockTxsRequest point (NEIntMap.singleton i job))
+        (key, events, pressure) <-
+          if eligible then admitObserved client now (Just selected) req else pure (Nothing, [], [])
+        case key of
+          Nothing ->
+            go
+              onset
+              (IntSet.insert i excluded)
+              pool
+              nextPrng
+              out
+              (reverse events ++ reports)
+              (pressure ++ limits)
+          Just _ ->
+            let updated =
+                  out
+                    { ebState = Map.insert point (MkEbState onset (BodyAcquired nextPool)) (ebState out)
+                    , requestedJobsPerPeer =
+                        Map.insertWith
+                          (Map.unionWith NEIntSet.union)
+                          peer
+                          (Map.singleton point (NEIntSet.singleton i))
+                          (requestedJobsPerPeer out)
+                    , leiosFetchPrng = nextPrng
+                    }
+             in go
+                  onset
+                  (IntSet.insert i excluded)
+                  nextPool
+                  nextPrng
+                  updated
+                  (reverse events ++ reports)
+                  (pressure ++ limits)
 
 -- | First full-closure arrivals, independently scoped to each live registration.
 -- Missing metadata remains eligible and ranks after known times at equal score.

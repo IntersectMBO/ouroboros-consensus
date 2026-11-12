@@ -124,6 +124,7 @@ testPipeline = bounded $ do
               nullTracer
               codec
               (byteLimitsLeiosFetch (fromIntegral . BL.length))
+              ctx
               client
               peer
               channel
@@ -182,12 +183,12 @@ testPendingBody = bounded $ do
                 }
           }
   Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
-    processLeiosBlock (requestReplyOwnership rt keyA) gated 0 req eb
+    processLeiosBlock (requestReplyOwnership gated keyA descriptor) gated 0 req eb
     atomically (readTMVar accepted)
     atomically $ R.closePeer rt 0 >> R.closePeer rt 0
     -- B already physically owes a response, but cannot become another local
     -- writer while A's accepted receipt owns this body.
-    processLeiosBlock (requestReplyOwnership rt keyB) ctx 1 req eb
+    processLeiosBlock (requestReplyOwnership ctx keyB descriptor) ctx 1 req eb
     atomically (Map.size . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= 1)
     atomically (putTMVar gate ())
     void (awaitNotes notes 1)

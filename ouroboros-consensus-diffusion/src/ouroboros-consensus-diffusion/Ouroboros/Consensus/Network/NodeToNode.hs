@@ -1479,6 +1479,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
               (TraceLabelPeer them `contramap` tLeiosFetchTracer)
               (cLeiosFetchCodec (mkCodecs version))
               blLeiosFetch
+              (lfkContext (getLeiosFetchKernel kernel))
               client
               (hLeiosFetchClient version controlMessageSTM client)
               channel

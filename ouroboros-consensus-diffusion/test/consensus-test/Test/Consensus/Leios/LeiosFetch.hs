@@ -5,6 +5,7 @@ module Test.Consensus.Leios.LeiosFetch (tests) where
 import qualified Test.Consensus.Leios.LeiosFetch.Assignment as Assignment
 import qualified Test.Consensus.Leios.LeiosFetch.Client as Client
 import qualified Test.Consensus.Leios.LeiosFetch.Codec as Codec
+import qualified Test.Consensus.Leios.LeiosFetch.Coverage as Coverage
 import qualified Test.Consensus.Leios.LeiosFetch.Decision as Decision
 import qualified Test.Consensus.Leios.LeiosFetch.LocalReuse as LocalReuse
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
@@ -21,7 +22,8 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ Assignment.tests
+    [ Coverage.tests
+    , Assignment.tests
     , Wire.tests
     , Runtime.tests
     , Timing.tests

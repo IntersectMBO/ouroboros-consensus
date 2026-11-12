@@ -21,6 +21,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import Ouroboros.Consensus.Util.IOLike
 import Test.Consensus.Leios.LeiosFetch.Replies (fixture, newContext)
 import Test.Tasty (TestTree, testGroup)
@@ -30,7 +32,26 @@ tests :: TestTree
 tests =
   testGroup
     "ranked progressive assignment"
-    [ testCase "untrusted oversized jobs reject without crashing or consuming another EB's credit" $ withClosureConfig oneJobCredit $ \rt out p -> do
+    [ testCase "admission retains the selected EB offer, invocation and score" $ withClosure $ \rt out p -> do
+        let times = Map.singleton 1 (Map.singleton p (Time 3))
+        (_, reports) <-
+          assignRequestsObserved
+            rt
+            (Time 10)
+            (const (Right maxBound))
+            Nothing
+            times
+            (closureOffers p [0, 1])
+            out
+        let admissions = [(key, selected) | A.Detail key (FetchAdmitted _ _ _ _ selected) <- reports]
+        length admissions @?= 5
+        -- Destroy the session: delayed trace formatting still has original facts.
+        atomically (R.closePeer rt 1)
+        forM_ admissions $ \(L.AttemptKey peer generation _, selected) -> do
+          peer @?= 1
+          generation @?= 1
+          selected @?= Just (FetchSelection (Time 10) P.zeroScore (Just (Time 3)))
+    , testCase "untrusted oversized jobs reject without crashing or consuming another EB's credit" $ withClosureConfig oneJobCredit $ \rt out p -> do
         let badPoint = p{pointSlotNo = SlotNo 4}
             badPool = Jobs.mkJobPool 65536 20000 (IntMap.singleton 0 (hashLeiosTx (MkLeiosTx BS.empty), 100000))
             both = addPoint badPoint (MkEbState SNothing (BodyAcquired badPool)) out

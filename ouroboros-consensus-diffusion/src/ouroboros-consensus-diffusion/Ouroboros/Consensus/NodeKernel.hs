@@ -519,6 +519,10 @@ initNodeKernel
             , lfcWriter = leiosWriter
             , lfcNotify = emitLeiosAcquisition leiosAcquisitions
             , lfcSystemTime = systemTime
+            , lfcDetailTracer =
+                contramap
+                  (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                  (leiosFetchDetailTracer tracers)
             , -- Each trace names the connection, not which of its registrations.
               lfcTracer =
                 contramap
