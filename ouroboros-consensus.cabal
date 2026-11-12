@@ -343,6 +343,7 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.LeiosDB
     Ouroboros.Consensus.Storage.LeiosDB.API
+    Ouroboros.Consensus.Storage.LeiosDB.Cache
     Ouroboros.Consensus.Storage.LeiosDB.Exception
     Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
@@ -1052,7 +1053,7 @@ test-suite leios-storage-test
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:si-timers,
+    io-classes:{si-timers, strict-stm},
     ouroboros-consensus,
     QuickCheck,
     tasty,

@@ -41,6 +41,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , refundEbRequest
   , refundTxRequest
   , completeTxRequest
+  , settleTxRequest
   , abandonClosure
 
     -- * Deciding
@@ -738,6 +739,48 @@ completeTxRequest peer (MkLeiosBlockTxsRequest point jobs) o =
       NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
   dropJobs held =
     NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
+  nonEmptyMap m = if Map.null m then Nothing else Just m
+
+-- | Settle only fully confirmed immutable jobs. Retry unconfirmed jobs only
+-- while this original peer still owns their logical assignment; disconnect may
+-- already have unpicked them. Presence may still complete jobs after disconnect.
+settleTxRequest ::
+  Ord peer =>
+  peer ->
+  LeiosBlockTxsRequest ->
+  IntSet.IntSet ->
+  LeiosOutstanding peer ->
+  LeiosOutstanding peer
+settleTxRequest peer (MkLeiosBlockTxsRequest point jobs) confirmed o =
+  o
+    { ebState = Map.adjust completeInJobPool point (ebState o)
+    , requestedJobsPerPeer =
+        Map.update (nonEmptyMap . Map.update dropJobs point) peer (requestedJobsPerPeer o)
+    }
+ where
+  requested = NEIntMap.toMap jobs
+  jobIds = IntMap.keysSet requested
+  confirmedIds =
+    IntMap.keysSet $
+      IntMap.filter
+        (\(Jobs.MkLeiosJob offsets _ _) -> offsets `IntSet.isSubsetOf` confirmed)
+        requested
+  owned =
+    maybe IntSet.empty NEIntSet.toSet $
+      Map.lookup peer (requestedJobsPerPeer o) >>= Map.lookup point
+  retryIds = IntSet.intersection owned (IntSet.difference jobIds confirmedIds)
+  completeInJobPool (MkEbState onset fetchState) =
+    MkEbState onset $ case fetchState of
+      NoBody -> NoBody
+      imminent@ReceivingFromForge{} -> imminent
+      BodyAcquired jobPool ->
+        BodyAcquired $!
+          IntSet.foldl'
+            (\pool jid -> Jobs.unpickJob (Jobs.MkLeiosJobId jid) pool)
+            (IntSet.foldl' (\pool jid -> Jobs.completeJob (Jobs.MkLeiosJobId jid) pool) jobPool confirmedIds)
+            retryIds
+  dropJobs held =
+    NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) jobIds)
   nonEmptyMap m = if Map.null m then Nothing else Just m
 
 -- | Fetch no more of the closure of the endorser block at this point, though

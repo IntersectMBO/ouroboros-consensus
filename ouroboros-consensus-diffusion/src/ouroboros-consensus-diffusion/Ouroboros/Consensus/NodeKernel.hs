@@ -18,6 +18,8 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , NodeLeiosTxCache
+  , newNodeLeiosTxCache
   , toConsensusMode
   ) where
 
@@ -76,8 +78,13 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogPruner
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
-import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
+import Ouroboros.Consensus.Leios.TxCache
+  ( LeiosTxCache
+  , PackedEndorserBlock
+  , defaultLeiosTxCacheShift
+  , newHashTableLeiosTxCache
+  )
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, ProtVerParity)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -274,7 +281,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
-  -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
+  -- ^ Seeds the LeiosFetch decision loop's PRNG.
+  , leiosTxCache :: NodeLeiosTxCache m
+  -- ^ Allocated before opening ChainDB, with eviction wired before database GC.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -303,6 +312,17 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
 
+-- | Cache shared by forging, fetching, validation and database GC.
+type NodeLeiosTxCache m = LeiosTxCache m () ProtVerParity PackedEndorserBlock
+
+-- | Allocate before opening ChainDB so no background GC can predate cache
+-- retirement. Peers choose the keys, so keep the salted mutable table.
+newNodeLeiosTxCache :: IOLike m => StdGen -> m (NodeLeiosTxCache m)
+newNodeLeiosTxCache rng = do
+  let (salt0, rest) = uniform rng
+      (salt1, _) = uniform rest
+  newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+
 initNodeKernel ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
@@ -321,6 +341,7 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosTxCache
     , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
@@ -472,12 +493,7 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
 
-    -- The LeiosTxCache's keys are chosen by peers, so its hash table is salted
-    -- with a secret of this node's.
-    let (leiosFetchPrng, saltRng) = splitGen leiosFetchRng
-        (salt0, saltRng') = uniform saltRng
-        (salt1, _) = uniform saltRng'
-    leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+    let (leiosFetchPrng, _) = splitGen leiosFetchRng
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->

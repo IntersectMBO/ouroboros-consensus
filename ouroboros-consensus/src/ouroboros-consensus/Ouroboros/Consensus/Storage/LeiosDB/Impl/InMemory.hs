@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbWriter (..)
   , LocalFill
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (LeiosDbWriteException)
@@ -309,7 +310,7 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   [(TxOffset, ByteString)] ->
-  m [TxOffset]
+  m TxWriteReceipt
 imInsertTxs stateVar point offBytes = atomically $
   -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
   -- pre-allocated row, i.e. an offset the body declared, once, at the declared
@@ -318,7 +319,8 @@ imInsertTxs stateVar point offBytes = atomically $
     let declared = Map.findWithDefault IntMap.empty point (imEbBodies s)
         held = volatileTxBytes s point
         accepted =
-          IntMap.fromList
+          IntMap.fromListWith
+            (\_ old -> old)
             [ (off, bytes)
             | (off, bytes) <- offBytes
             , Just e <- [IntMap.lookup off declared]
@@ -331,11 +333,23 @@ imInsertTxs stateVar point offBytes = atomically $
           , Just e <- [IntMap.lookup off declared]
           , fromIntegral (BS.length bytes) /= eteTxBytesSize e
           ]
-     in ( wrongSize
-        , if IntMap.null accepted
+        next =
+          if IntMap.null accepted
             then s
             else s{imEbTxBytes = Map.insertWith IntMap.union point accepted (imEbTxBytes s)}
-        )
+        submitted = IntSet.fromList (map fst offBytes)
+        present bodies payloads =
+          IntSet.fromList
+            [ off
+            | off <- IntSet.toList submitted
+            , Just e <- [Map.lookup point bodies >>= IntMap.lookup off]
+            , Just bytes <- [Map.lookup point payloads >>= IntMap.lookup off]
+            , fromIntegral (BS.length bytes) == eteTxBytesSize e
+            ]
+        confirmed =
+          present (imEbBodies next) (imEbTxBytes next)
+            <> present (imImmutableEbBodies next) (imImmutableEbTxBytes next)
+     in (TxWriteReceipt confirmed wrongSize, next)
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete, as in the SQLite backend.

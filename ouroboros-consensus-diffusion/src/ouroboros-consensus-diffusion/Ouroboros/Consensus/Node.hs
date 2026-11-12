@@ -157,6 +157,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withLeiosDBSQLite)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheGarbageCollection)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -558,6 +559,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           -- Where the node emits what it acquires, to the ChainDB among
           -- others.
+          leiosTxCache <- newNodeLeiosTxCache keepAliveRng
+          let cacheGuardedLeiosDB = withCacheGarbageCollection leiosTxCache leiosDB
           leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
@@ -568,7 +571,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkVolatileHasFS
               snapshotDelayRng
               llrnLdbFlavorArgs
-              leiosDB
+              cacheGuardedLeiosDB
               leiosAcquisitions
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
@@ -623,7 +626,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxClockSkew
                   historicityCheck
                   chainDB
-                  leiosDB
+                  cacheGuardedLeiosDB
+                  leiosTxCache
                   leiosAcquisitions
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
@@ -1031,6 +1035,7 @@ mkNodeKernelArgs ::
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   LeiosDbHandle m ->
+  NodeLeiosTxCache m ->
   LeiosAcquisitions m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
@@ -1056,6 +1061,7 @@ mkNodeKernelArgs
   chainSyncHistoricityCheck
   chainDB
   leiosDB
+  leiosTxCache
   leiosAcquisitions
   maxCaughtUpAge
   gsmDurationUntilTooOld
@@ -1080,6 +1086,7 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , leiosDB
+          , leiosTxCache
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime

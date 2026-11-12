@@ -9,52 +9,79 @@
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
+import Cardano.Crypto.Hash (Hash (UnsafeHash), castHash, hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent (threadDelay)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
-import Control.Exception (bracket, try)
+import Control.Exception (bracket, bracket_, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
+import qualified Data.IntSet as IntSet
 import Data.List (mapAccumL, sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Database.SQLite3 as SQL
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , ProtVerParity
+  , RankingBlockHash (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
   , decodeEndorserBlock
   , endorserBlockBytes
+  , endorserBlockHash
   , endorserBlockReferences
   , mkEndorserBlock
+  )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
+  ( insertAcquiredLeiosEb
+  , isAcquiredLeiosEb
+  , mkAcquiredLeiosEbs
+  , pruneAcquiredLeiosEbs
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
+  , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LocalFill
   , Promise (..)
   , TraceLeiosDb (..)
+  , TxWriteReceipt (..)
   , newLeiosDBInMemory
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheGarbageCollection)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
+  ( closeChecked
+  , finalizeConnStmts
+  , initialiseLeiosDbFiles
+  , mkConn
+  , openRawConnection
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert (sqlInsertEbBody, sqlInsertTxs)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives (dbExec)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (sqlBatchRetrieveTxs)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import qualified System.Timeout as Timeout
@@ -107,6 +134,20 @@ tests =
                  withTempLeiosDbPaths test_truncateImmutablePartition
              ]
          , testGroup
+             "receipt-time GC publication"
+             [ testCase (backend <> "/" <> name <> if bodyReceipt then "/body" else "/tx") $
+                 withSettledDb impl (test_receiptGc makeCache bodyReceipt)
+             | (backend, impl) <- [("InMemory", InMemory), ("SQLite", SQLite)]
+             , (name, makeCache) <-
+                 [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
+             , bodyReceipt <- [False, True]
+             ]
+         , testGroup
+             "transaction receipt commit boundary (SQLite)"
+             [ testCase "cannot settle before commit" test_receiptCommitBarrier
+             , testCase "commit failure returns no confirmation" test_receiptCommitFailure
+             ]
+         , testGroup
              "close"
              [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
              ]
@@ -150,7 +191,7 @@ rwInsertTxs rw point txs = void $ rwInsertTxsDropping rw point txs
 -- | 'rwInsertTxs', returning the offsets of the txs dropped because the EB
 -- referenced them with the wrong size.
 rwInsertTxsDropping :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
-rwInsertTxsDropping rw point txs = await =<< writeTxs (rwWriter rw) point txs
+rwInsertTxsDropping rw point txs = txWriteWrongSize <$> (await =<< writeTxs (rwWriter rw) point txs)
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EndorserBlockHash)]
 rwScanEbPoints = testScanEbPoints . rwReader
@@ -233,6 +274,10 @@ mkTestGroups impl =
           withFreshDb impl test_malformedTxWritesDropped
       , testCase "a point copied to the immutable partition and evicted is read from the immutable copy" $
           test_readsFallBackToImmutable impl
+      , testCase "receipts distinguish present, absent and malformed submissions" $
+          withFreshDb impl test_txReceipts
+      , testCase "receipts confirm immutable copies after eviction" $ test_receiptImmutable impl
+      , testCase "receipts do not confirm pruned targets" $ test_receiptPruned impl
       ]
   , testGroup
       "local fills"
@@ -1188,3 +1233,149 @@ withSettle volDbPath action =
 sqlBackgroundWork :: T.Text
 sqlBackgroundWork =
   T.pack "SELECT COUNT(*) FROM ebs WHERE status = 1 OR (status IN (0, 2) AND ebSlot < ?1)"
+
+rwInsertTxsReceipt :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO TxWriteReceipt
+rwInsertTxsReceipt rw point txs = await =<< writeTxs (rwWriter rw) point txs
+
+test_txReceipts :: LeiosDbHandle IO -> IO ()
+test_txReceipts db = withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+      receipt yes wrong = TxWriteReceipt (IntSet.fromList yes) wrong
+      tx off = txBytesFor eb off
+  rwInsertTxsReceipt rw point [(0, tx 0)] >>= (@?= receipt [] [])
+  rwInsertEbBody rw point eb
+  rwInsertTxsReceipt rw point [(0, tx 0), (1, BS.snoc (tx 1) 0), (2, tx 0), (-1, tx 0)]
+    >>= (@?= receipt [0] [1])
+  -- The first valid duplicate wins, matching the SQLite guarded fill.
+  rwInsertTxsReceipt rw point [(1, tx 1), (1, BS.map (+ 1) (tx 1)), (0, tx 0)]
+    >>= (@?= receipt [0, 1] [])
+  rwBatchRetrieveTxs rw point [1] >>= (@?= [(1, mkTestTxHash 1, Just (tx 1))])
+  -- A wrong-sized duplicate does not erase the valid copy already held.
+  rwInsertTxsReceipt rw point [(0, BS.snoc (tx 0) 0)] >>= (@?= receipt [0] [0])
+  rwInsertTxsReceipt rw point [] >>= (@?= receipt [] [])
+  rwInsertTxsReceipt rw (mkTestPoint 6 1) [(0, tx 0)] >>= (@?= receipt [] [])
+
+test_receiptImmutable :: DbImpl -> IO ()
+test_receiptImmutable impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+  writeWholeEb rw [point] eb
+  leiosDbPromoteToImmutable db [point]
+  settle 0
+  garbageCollect db 6
+  settle 6
+  rwScanEbPoints rw >>= (@?= [])
+  rwInsertTxsReceipt rw point [(0, txBytesFor eb 0), (1, txBytesFor eb 1), (2, txBytesFor eb 0)]
+    >>= (@?= TxWriteReceipt (IntSet.fromList [0, 1]) [])
+
+test_receiptPruned :: DbImpl -> IO ()
+test_receiptPruned impl = withSettledDb impl $ \db settle -> withRW db $ \rw -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 2
+  rwInsertEbBody rw point eb
+  garbageCollect db 6
+  settle 6
+  rwInsertTxsReceipt rw point [(0, txBytesFor eb 0)]
+    >>= (@?= TxWriteReceipt IntSet.empty [])
+
+test_receiptCommitBarrier :: IO ()
+test_receiptCommitBarrier = withFreshSQLiteFile $ \volPath _ db -> withWriter db $ \writer -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 1
+  _ <- await =<< writeEbBody writer point eb []
+  promise <- bracket (openRawConnection volPath) closeChecked $ \blocker ->
+    bracket_ (dbExec blocker (fromString "BEGIN IMMEDIATE")) (dbExec blocker (fromString "ROLLBACK")) $ do
+      pending <- writeTxs writer point [(0, txBytesFor eb 0)]
+      before <- SI.timeout 0.02 (await pending)
+      before @?= Nothing
+      pure pending
+  await promise >>= (@?= TxWriteReceipt (IntSet.singleton 0) [])
+
+-- Exercise a real deferred COMMIT failure after the guarded fill and metadata
+-- confirmation have succeeded. The provisional receipt must not escape.
+test_receiptCommitFailure :: IO ()
+test_receiptCommitFailure = withTempLeiosDbPaths $ \volPath immPath -> do
+  initialiseLeiosDbFiles volPath immPath
+  stats <- Strict.newTVarIO (LeiosDbStats 0 0 0)
+  bracket (openRawConnection volPath) closeChecked $ \vol ->
+    bracket (openRawConnection immPath) closeChecked $ \imm ->
+      bracket (mkConn nullTracer stats vol imm) finalizeConnStmts $ \conn -> do
+        let point = mkTestPoint 5 1
+            eb = mkTestEb 1
+            exec = dbExec vol . fromString
+        _ <- sqlInsertEbBody nullTracer conn point eb []
+        exec "PRAGMA foreign_keys = ON"
+        exec "CREATE TABLE receipt_parent (id INTEGER PRIMARY KEY)"
+        exec
+          "CREATE TABLE receipt_child (id INTEGER REFERENCES receipt_parent(id) DEFERRABLE INITIALLY DEFERRED)"
+        exec
+          "CREATE TRIGGER fail_receipt_commit AFTER UPDATE OF filled ON ebTxBytes BEGIN INSERT INTO receipt_child VALUES (1); END"
+        result <- try (sqlInsertTxs nullTracer conn point [(0, txBytesFor eb 0)])
+        case result :: Either LeiosDbException TxWriteReceipt of
+          Left _ -> pure ()
+          Right receipt -> assertFailure ("commit failure returned a receipt: " <> show receipt)
+        -- SQLite leaves a rejected deferred commit open. The production worker
+        -- terminates and closes it; this direct test rolls it back before reuse.
+        exec "ROLLBACK"
+        rows <- sqlBatchRetrieveTxs conn point [0]
+        [bytes | (_, _, bytes) <- rows] @?= [Nothing]
+
+-- Hold the callback after a real successful commit. GC overtakes it, while a
+-- newer point still holds the same TX. Exercise actual cache publication and
+-- the actual ChainDB acquired-set filter, without test hooks in production.
+test_receiptGc ::
+  IO (Cache.LeiosTxCache IO () ProtVerParity Cache.PackedEndorserBlock) ->
+  Bool ->
+  LeiosDbHandle IO ->
+  (SlotNo -> IO ()) ->
+  Assertion
+test_receiptGc makeCache bodyReceipt raw settle = do
+  cache <- makeCache
+  let db = withCacheGarbageCollection cache raw
+      eb = mkTestEb 1
+      txh = fst (head (endorserBlockReferences eb))
+      old = MkLeiosPoint 1 (endorserBlockHash eb)
+      newer = MkLeiosPoint 10 (endorserBlockHash eb)
+      track point =
+        void $
+          Cache.insertAnnouncement
+            cache
+            (pointSlotNo point)
+            (MkRankingBlockHash (castHash (pointEbHash point)))
+            (pointEbHash point)
+      publish point = Cache.setTxLocations cache point [(0, txh)]
+  track old
+  track newer
+  _ <- Cache.insertBody cache (pointEbHash old) (Cache.packEndorserBlock eb) () (\w _ _ _ _ -> w)
+  withRW db $ \rw -> do
+    writeWholeEb rw [old, newer] eb
+    publish old
+    receiptOffsets <-
+      if bodyReceipt
+        then rwInsertEbBodyFilling rw old eb []
+        else IntSet.toList . txWriteConfirmed <$> rwInsertTxsReceipt rw old [(0, txBytesFor eb 0)]
+    receiptOffsets @?= [0]
+    publish newer
+    let pruned = pruneAcquiredLeiosEbs 5 (mkAcquiredLeiosEbs [newer])
+    garbageCollect db 5
+    settle 5
+    lookupEbBody (rwReader rw) old >>= (@?= Nothing)
+    -- The obsolete callback attempts to republish an old durable location.
+    publish old
+    let final = insertAcquiredLeiosEb old pruned
+    assertBool "late notification cannot restore retirement" (not (isAcquiredLeiosEb old final))
+    assertBool "new acquisition survives" (isAcquiredLeiosEb newer final)
+    -- A distinct newly seen body reads source locations in its ordinary fold.
+    let probeBody = mkTestEb 2
+        probePoint = MkLeiosPoint 11 (endorserBlockHash probeBody)
+    track probePoint
+    (_, locations) <-
+      Cache.insertBody
+        cache
+        (pointEbHash probePoint)
+        (Cache.packEndorserBlock probeBody)
+        []
+        (\out off _ _ loc -> (off, loc) : out)
+    lookup 0 locations @?= Just (Just (MkTxLocation newer 0))
+    rwBatchRetrieveTxs rw newer [0] >>= (@?= [(0, txh, Just (txBytesFor eb 0))])

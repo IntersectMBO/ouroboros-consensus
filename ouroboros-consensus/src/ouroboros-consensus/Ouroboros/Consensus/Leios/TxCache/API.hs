@@ -121,9 +121,10 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Advertise where these txs' DURABLE bytes live -- the given point's rows
   -- at the given offsets -- for cross-point fill. Call this on write confirmation
   -- only: a location must never name bytes that could still be lost. A tx the
-  -- cache no longer tracks is skipped, never resurrected. Latest location wins:
-  -- a tx held by several points points at the most recently advertised one
-  -- (evicted last).
+  -- cache no longer tracks is skipped, never resurrected. Publication from a
+  -- point below the pruning frontier is rejected under the same cache lock,
+  -- even when a newer body still tracks that TX. Among eligible points, the
+  -- most recently advertised location wins.
   --
   -- MAY be called repeatedly for one point: its closure arrives over many
   -- 'MsgLeiosBlockTxs', and each batch confirms a slice. The point claims a

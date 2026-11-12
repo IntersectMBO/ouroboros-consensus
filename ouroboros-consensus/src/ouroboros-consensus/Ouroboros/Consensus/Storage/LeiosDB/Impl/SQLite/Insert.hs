@@ -16,6 +16,7 @@ import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
+import qualified Data.IntSet as IntSet
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
@@ -25,7 +26,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockBytes
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill, TxWriteReceipt (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -139,7 +140,7 @@ sqlInsertTxs ::
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   [(TxOffset, ByteString)] ->
-  IO [TxOffset]
+  IO TxWriteReceipt
 sqlInsertTxs _tracer conn point txBytesWithOffsets = do
   dbWithWriteTransaction conn $ do
     -- Fill the pre-allocated rows of the ebTxBytes table, counting how many
@@ -174,11 +175,29 @@ sqlInsertTxs _tracer conn point txBytesWithOffsets = do
         dbBindPoint stDecrMissingCount point
         dbBindInt64 stDecrMissingCount 3 nFilled
         dbStep1 stDecrMissingCount
-    pure (reverse wrongSize)
+    let submitted = IntSet.fromList (map fst txBytesWithOffsets)
+    volatile <- confirmedOffsets stConfirmedTxOffsets submitted
+    let remaining = IntSet.difference submitted volatile
+    immutable <- confirmedOffsets immStConfirmedTxOffsets remaining
+    let confirmed = IntSet.union volatile immutable
+    pure (TxWriteReceipt confirmed (reverse wrongSize))
  where
-  Conn{conVolDb = db, connVolStmts} = conn
+  Conn{conVolDb = db, connVolStmts, connImmStmts = ImmStmts{immStConfirmedTxOffsets}} = conn
   VolStmts
     { stFillEbTxBytes
     , stDecrMissingCount
     , stDeclaredTxSize
+    , stConfirmedTxOffsets
     } = connVolStmts
+  confirmedOffsets stmt offsets
+    | IntSet.null offsets = pure IntSet.empty
+    | otherwise = useStmt stmt $ do
+        dbBindPoint stmt point
+        dbBindUtf8 stmt 3 (jsonIntArray (IntSet.toAscList offsets))
+        let loop found =
+              dbStep stmt >>= \case
+                DB.Done -> pure found
+                DB.Row -> do
+                  offset <- fromIntegral <$> DB.columnInt64 stmt 0
+                  loop (IntSet.insert offset found)
+        loop IntSet.empty

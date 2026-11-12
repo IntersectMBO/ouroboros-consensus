@@ -453,12 +453,14 @@ lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
 -- referenced by recent points.
 setTxLocations ::
   LeiosPoint -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
-setTxLocations point offTxs idx =
-  idx
-    { locRing = Map.insert slot point (locRing idx)
-    , locNext = locNext'
-    , txLocState = List.foldl' upd (txLocState idx) offTxs
-    }
+setTxLocations point offTxs idx
+  | pointSlotNo point < prunedSlot idx = idx
+  | otherwise =
+      idx
+        { locRing = Map.insert slot point (locRing idx)
+        , locNext = locNext'
+        , txLocState = List.foldl' upd (txLocState idx) offTxs
+        }
  where
   (slot, locNext') = case ringSlotOf point idx of
     Just s -> (s, locNext idx)

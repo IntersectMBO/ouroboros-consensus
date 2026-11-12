@@ -81,12 +81,12 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , abandonClosure
   , acquireEbBody
-  , completeTxRequest
   , ebStateOnset
   , newLeiosJobPool
   , refundEbRequest
   , refundTxRequest
   , settleReceivingFromForge
+  , settleTxRequest
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
@@ -102,6 +102,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFill
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -371,11 +372,10 @@ data BodySource peer
 -- only if it settled first. A body from the LeiosTxCache is traced as taken from
 -- there only if it settled first.
 --
--- The LeiosDB's GC normally collects a point only after the fetch state has
--- pruned it, but only timing ensures that. Had it collected one first, a settle
--- could emit an acquisition the LeiosDB no longer backs ('writeTxs' drops txs
--- whose body is gone without reporting them). Each subscriber ignores such an
--- acquisition:
+-- The LeiosDB's GC can overtake a callback after its write committed. A
+-- receipt confirms presence at commit, not a pin through notification
+-- consumption. Fetch settlement ignores retired points, and each subscriber
+-- independently filters retired acquisitions:
 --
 -- * The ChainDB (@leiosAcquiredEbsRunner@) ignores 'AcquiredEb', and records
 --   'AcquiredEbTxs' only for a point no older than the slot it last pruned its
@@ -518,13 +518,10 @@ acquireForgedEb ctx point forged = do
       ( \unmask -> do
           labelThisThread "LeiosFetch.settleForgedEb"
           unmask $
-            settleForgedEb ctx point eb now $
-              Promise $ do
-                _held <- await bodyWritten
-                dropped <- await txsWritten
-                pure $
-                  IntSet.toList $
-                    IntSet.fromList [0 .. length refs - 1] `IntSet.difference` IntSet.fromList dropped
+            settleForgedEb ctx point eb now $ Promise $ do
+              _held <- await bodyWritten
+              receipt <- await txsWritten
+              pure (IntSet.toList (txWriteConfirmed receipt))
       )
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
@@ -671,8 +668,9 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
 -- record in the LeiosTxCache where those txs are durably held, and emit
 -- 'AcquiredEbTxs' if no job of the point remains.
 --
--- If the LeiosDB dropped some of the txs, the endorser block references them
--- with sizes other than their own, so no peer can complete its closure: no more
+-- Only fully confirmed jobs complete. Unconfirmed relevant work stays fetchable.
+-- A wrong-size diagnostic means the endorser block references txs with sizes
+-- other than their own, so no peer can complete its closure: no more
 -- of it is fetched at this point ('abandonClosure'), nothing is emitted, and
 -- the peer is disconnected.
 --
@@ -696,13 +694,14 @@ settleTxs ::
   RelativeTime ->
   -- | the offsets and hashes of the txs written
   [(TxOffset, TxHash)] ->
-  -- | the offsets of the txs the LeiosDB dropped
-  Promise m [TxOffset] ->
+  -- | explicit confirmation after the transaction write commits
+  Promise m TxWriteReceipt ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now written txsWritten = do
-  wrongSize <- IntSet.fromList <$> await txsWritten
+  receipt <- await txsWritten
+  let wrongSize = IntSet.fromList (txWriteWrongSize receipt)
   completed <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let outstanding' = completeTxRequest peer req outstanding
+    let outstanding' = settleTxRequest peer req (txWriteConfirmed receipt) outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
       _
         | not (IntSet.null wrongSize) ->
@@ -720,7 +719,7 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now written txsWritt
   setTxLocations
     lfcTxCache
     point
-    [(off, txHash) | (off, txHash) <- written, not (IntSet.member off wrongSize)]
+    [(off, txHash) | (off, txHash) <- written, IntSet.member off (txWriteConfirmed receipt)]
   void $ tryPutMVar lfcReady ()
   forM_ completed $ \onset ->
     traceWith lfcTracer $

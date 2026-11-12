@@ -121,6 +121,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheGarbageCollection)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -874,7 +875,9 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      leiosDB <- newLeiosDBInMemory
+      rawLeiosDB <- newLeiosDBInMemory
+      leiosTxCache <- newNodeLeiosTxCache (case seed of Seed x -> mkStdGen x)
+      let leiosDB = withCacheGarbageCollection leiosTxCache rawLeiosDB
       let chainDbArgs =
             mkArgs
               registry
@@ -1069,6 +1072,7 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , leiosTxCache
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck

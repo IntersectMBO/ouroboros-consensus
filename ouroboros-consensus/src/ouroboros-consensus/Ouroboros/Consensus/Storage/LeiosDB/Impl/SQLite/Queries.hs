@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
   , sql_fill_ebTxBytes
   , sql_fill_ebTxBytes_locally
   , sql_held_offsets
+  , sql_confirmed_tx_offsets_json
   , sql_declared_tx_size
   , sql_decrement_missing_tx_count
   , sql_init_missing_tx_count
@@ -116,6 +117,17 @@ sql_fill_ebTxBytes_locally =
   \      AND length(src.txBytes) = length(ebTxBytes.txBytes)\n\
   \  )\n\
   \"
+
+-- | Confirm submitted offsets using metadata only. Both partitions share these
+-- tables. Unfilled placeholders and absent/malformed rows are not presence.
+sql_confirmed_tx_offsets_json :: String
+sql_confirmed_tx_offsets_json =
+  unlines
+    [ "SELECT e.txOffset FROM json_each(?3) je"
+    , "JOIN ebTxs e ON e.ebSlot = ?1 AND e.ebHashBytes = ?2 AND e.txOffset = je.value"
+    , "JOIN ebTxBytes b ON b.ebSlot = e.ebSlot AND b.ebHashBytes = e.ebHashBytes AND b.txOffset = e.txOffset"
+    , "WHERE b.filled = 1 AND length(b.txBytes) = e.txBytesSize"
+    ]
 
 -- | The offsets at which the point holds its txs' bytes, ascending: a range of
 -- the primary key, at most one row per tx the body references.
