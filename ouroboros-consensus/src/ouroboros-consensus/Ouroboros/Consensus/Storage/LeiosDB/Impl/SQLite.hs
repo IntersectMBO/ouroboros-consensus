@@ -161,8 +161,8 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       Right promise -> await promise
 
   implOpenReader statsVar promotedSlotVar = do
-    volDb <- openRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     let conn = mkConn tracer statsVar promotedSlotVar volDb immDb
     pure
       LeiosDbReader

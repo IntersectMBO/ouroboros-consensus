@@ -65,12 +65,14 @@ data MutableHashTable s = MutableHashTable
   , mhtSize :: !(MutVar s Int)
   }
 
--- | Allocate a table of @2 ^ nshift@ slots (@nshift >= 6@) with the given 128-bit
--- salt. Feed a securely-random salt: keys are adversarial.
+-- | Allocate a table of @2 ^ nshift@ slots with the given 128-bit
+-- salt. The shift must leave room for all 40-byte entries in a signed Int.
+-- Feed a securely-random salt: keys are adversarial.
 new :: PrimMonad m => Int -> Word64 -> Word64 -> m (MutableHashTable (PrimState m))
 {-# SPECIALIZE new :: Int -> Word64 -> Word64 -> IO (MutableHashTable (PrimState IO)) #-}
 new nshift k0 k1
-  | nshift < 6 = error "MutableHashTable.new: nshift must be >= 6"
+  | nshift < 6 || nshift >= finiteBitSize (0 :: Int) - 6 =
+      error "MutableHashTable.new: invalid allocation shift"
   | otherwise = do
       let cap = 1 `unsafeShiftL` nshift
           occWords = cap `div` 64
