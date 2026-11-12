@@ -40,7 +40,6 @@ module Ouroboros.Consensus.Leios.NotifyLog
 import Control.Monad (forM_, forever, unless)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe)
 import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
@@ -104,6 +103,9 @@ data NotifyLog m blk = MkNotifyLog
   -- so that pruning visits only what expires.
   , notifyPrunedAt :: !(StrictTVar m RelativeTime)
   -- ^ When the log was last pruned.
+  , notifyAnnouncedUntil :: !(StrictTVar m (Map LeiosPoint RelativeTime))
+  -- ^ Each point the log holds an announcement at, and until when that
+  -- announcement is worth relaying.
   }
 
 -- | A position in the log, which only ever grows.
@@ -123,6 +125,7 @@ newNotifyLog =
     <*> newTVarIO notifyLogStart
     <*> newTVarIO Map.empty
     <*> newTVarIO (RelativeTime 0)
+    <*> newTVarIO Map.empty
 
 -- | Append a notification worth relaying until the given time, unless the log
 -- was pruned past it already.
@@ -140,6 +143,12 @@ appendNotifyLog notifyLog n expires = do
     modifyTVar (notifyEntries notifyLog) (Map.insert end n)
     modifyTVar (notifyExpiry notifyLog) (Map.insertWith (<>) expires [end])
     writeTVar (notifyEnd notifyLog) (succCursor end)
+    case n of
+      NotifyAnnouncement anc ->
+        modifyTVar (notifyAnnouncedUntil notifyLog) (Map.insertWith max (announcedPoint anc) expires)
+      NotifyVote{} -> pure ()
+      NotifyBlockOffer{} -> pure ()
+      NotifyBlockTxsOffer{} -> pure ()
 
 -- | The first notification at or after the cursor, and the cursor just past
 -- it.
@@ -168,6 +177,12 @@ pruneNotifyLog notifyLog now = do
     writeTVar (notifyExpiry notifyLog) unexpired
     modifyTVar (notifyEntries notifyLog) $
       (`Map.withoutKeys` Set.fromList (concat (Map.elems expired)))
+    modifyTVar (notifyAnnouncedUntil notifyLog) (Map.filter (>= now))
+
+-- | The point of the endorser block an announcement announces.
+announcedPoint :: AnnouncingHeader blk -> LeiosPoint
+announcedPoint anc =
+  MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
 
 succCursor :: NotifyCursor -> NotifyCursor
 succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
@@ -200,21 +215,11 @@ leiosOfferRelay acquisitions notifyLog = do
   next <- subscribeLeiosAcquisitions acquisitions
   forever $ atomically $ do
     acquired <- next
-    entries <- readTVar (notifyEntries notifyLog)
-    expiries <- readTVar (notifyExpiry notifyLog)
-    -- When the log's announcements at this point expire, if it holds any.
-    -- They share the point's slot, so they expire together.
-    let announcedUntil point =
-          listToMaybe
-            [ expires
-            | (expires, ats) <- Map.toList expiries
-            , at <- ats
-            , Just (NotifyAnnouncement anc) <- [Map.lookup at entries]
-            , MkLeiosPoint (electionSlot (ancElectionId anc)) (announcementEbHash (ancAnnouncement anc))
-                == point
-            ]
+    announcedUntil <- readTVar (notifyAnnouncedUntil notifyLog)
     case acquired of
       AcquiredEb point bodySize ->
-        forM_ (announcedUntil point) $ appendNotifyLog notifyLog (NotifyBlockOffer point bodySize)
+        forM_ (Map.lookup point announcedUntil) $
+          appendNotifyLog notifyLog (NotifyBlockOffer point bodySize)
       AcquiredEbTxs point ->
-        forM_ (announcedUntil point) $ appendNotifyLog notifyLog (NotifyBlockTxsOffer point)
+        forM_ (Map.lookup point announcedUntil) $
+          appendNotifyLog notifyLog (NotifyBlockTxsOffer point)
