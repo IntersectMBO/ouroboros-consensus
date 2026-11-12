@@ -184,6 +184,14 @@ succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
 -- The node acquires a body, and a closure, at most once per point, so this
 -- offers each at a point at most once, as a downstream peer requires.
 --
+-- So the node never offers an endorser block whose closure it held before it
+-- restarted, since it does not acquire those again
+-- ('Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel.newLeiosFetchKernel'),
+-- even if a peer sends its announcement again and the node relays that. This
+-- gap is deliberate and not worth closing: it only affects an announcement
+-- still young enough to relay just after a restart, and downstream peers can
+-- fetch that endorser block from any other node that offers it.
+--
 -- An acquisition may name a point whose writes the LeiosDB dropped (see
 -- 'LeiosAcquisition'). This offers none at such a point: by configuration,
 -- announcements expire before reaching the immutable tip
