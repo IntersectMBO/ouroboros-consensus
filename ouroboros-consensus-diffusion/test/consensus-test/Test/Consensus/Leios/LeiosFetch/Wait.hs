@@ -3,8 +3,9 @@
 module Test.Consensus.Leios.LeiosFetch.Wait (tests) where
 
 import Control.Monad (forM_, replicateM_, void)
-import Control.Monad.Class.MonadAsync (cancel, withAsync)
+import Control.Monad.Class.MonadAsync (cancel, wait, withAsync)
 import Control.Monad.Class.MonadFork (labelThisThread)
+import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadSTM (atomically)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -12,22 +13,38 @@ import Control.Monad.IOSim
   ( IOSim
   , SimEventType (..)
   , SimTrace
+  , exploreSimTrace
   , runSimOrThrow
   , runSimTrace
   , traceEvents
   , traceResult
   )
+import qualified Data.Sequence as Seq
+import Ouroboros.Consensus.Leios.Types
+  (LeiosPoint (..), endorserBlockHash, mkEndorserBlock)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (defaultLeiosFetchStaticEnv)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
+  (LeiosBlockRequest (..), LeiosFetchRequest (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait
+import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (Property, chooseInt, counterexample, forAll, property, testProperty)
+import Test.Util.Orphans.IOLike ()
 
 tests :: TestTree
 tests =
   testGroup
     "coordinator wait"
-    [ testCase "readiness at 100ms wakes before the deadline and fallback" testReadiness
+    [ testCase "no-op runtime release floods do not create planning wakeups" testNoopRuntimeFlood
+    , testCase "real runtime credit release wakes before the fixed deadline" testRuntimeRelease
+    , testProperty
+        "readiness racing timer registration is neither lost nor leaked"
+        propRegistrationRace
+    , testCase "readiness at 100ms wakes before the deadline and fallback" testReadiness
     , testCase "legacy parking consumes readiness without an idle timer" testLegacyPark
     , testCase "deadline at 150ms wakes before the idle fallback" testDeadline
     , testCase "idle fallback wakes at 500ms in SI seconds" testFallback
@@ -46,6 +63,75 @@ tests =
     , testCase "shutdown cancels the timer owned by the interrupted waiter" testShutdown
     , testProperty "generated early readiness wakes at its publication time" propReadyTimes
     ]
+
+runtimeFixture :: IOSim s (R.Runtime (IOSim s) Int, L.AttemptKey Int)
+runtimeFixture = do
+  ready <- atomically newReadiness
+  rt <- R.newRuntime defaultLeiosFetchStaticEnv ready (pure False)
+  commands <- IOLike.uncheckedNewTVarM Seq.empty
+  client <- atomically (R.openClient rt 0 False commands (pure Nothing))
+  let p = MkLeiosPoint 0 (endorserBlockHash (mkEndorserBlock []))
+      req = LeiosBlockRequest (MkLeiosBlockRequest p 1000 maxBound)
+  result <- atomically (R.enqueueRequest client (at 0) req)
+  key <- either (fail . show) pure result
+  atomically (awaitReadiness ready)
+  pure (rt, key)
+
+-- Count actual returns from the production wait, rather than assuming one
+-- planning pass per attempted notification. The clock/expiry model is the same
+-- fixed absolute deadline used by the existing flood regression below.
+testNoopRuntimeFlood :: Assertion
+testNoopRuntimeFlood = do
+  let simulation = labeled $ do
+        (rt, key) <- runtimeFixture
+        atomically $ R.releaseAttempt rt key >> awaitReadiness (R.runtimeReady rt)
+        let producer =
+              labelThisThread "stale-release"
+                >> replicateM_ 100 (threadDelay 0.005 >> atomically (R.releaseAttempt rt key))
+            loop clock wakes = do
+              _ <- waitForWakeup (R.runtimeReady rt) (clockDeadline clock)
+              now <- getMonotonicTime
+              let (fired, next) = T.expire now clock
+              if fired then pure (now, wakes + 1) else loop next (wakes + 1)
+        withAsync producer $ \_ -> loop initialClock (0 :: Int)
+  runSimOrThrow simulation @?= (at 0.2, 1)
+  assertNoTimerLeaks (runSimTrace (fst <$> simulation))
+
+testRuntimeRelease :: Assertion
+testRuntimeRelease = do
+  let simulation = labeled $ do
+        (rt, key) <- runtimeFixture
+        withAsync (threadDelay 0.1 >> atomically (R.releaseAttempt rt key)) $ \released -> do
+          first <- observedWait (R.runtimeReady rt) (Just (at 0.2))
+          wait released
+          atomically (R.releaseAttempt rt key)
+          second <- observedWait (R.runtimeReady rt) (Just (at 0.2))
+          pure (first, second)
+  runSimOrThrow simulation
+    @?= ((at 0.1, Wakeup ReadinessWake True), (at 0.2, Wakeup DeadlineWake False))
+  assertNoTimerLeaks (runSimTrace (fst . snd <$> simulation))
+
+propRegistrationRace :: Property
+propRegistrationRace = exploreSimTrace id (exploreRaces >> simulation) $ \_ tr ->
+  let created =
+        [timer | (_, _, Just "fetch-wait", EventTimerCreated timer _ _) <- traceEvents tr]
+      cancelled = [timer | (_, _, _, EventTimerCancelled timer) <- traceEvents tr]
+   in case traceResult False tr of
+        Left failure -> counterexample (show failure) False
+        Right result ->
+          counterexample (show result) $
+            property
+              ( result == (at 0, Wakeup ReadinessWake True)
+                  && all (\timer -> elem timer cancelled) created
+              )
+ where
+  simulation :: IOSim s (Time, Wakeup)
+  simulation = labeled $ do
+    ready <- atomically newReadiness
+    withAsync (atomically (notifyReadiness ready)) $ \producer -> do
+      result <- observedWait ready (Just (at 0.2))
+      wait producer
+      pure result
 
 at :: Rational -> Time
 at = Time . fromRational

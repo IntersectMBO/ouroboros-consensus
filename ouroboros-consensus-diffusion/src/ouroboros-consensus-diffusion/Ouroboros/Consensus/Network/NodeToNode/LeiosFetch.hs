@@ -22,10 +22,10 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Sequence as Seq
-import qualified Data.Vector.Strict as V
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
+import qualified Data.Vector.Strict as V
 import Network.Mux.Timeout (withTimeoutSerial)
 import Network.TypedProtocol.Codec (Annotator (..), AnyMessage (..), Codec, hoistAnnotation)
 import Network.TypedProtocol.Driver (runPipelinedPeerWithDriver)
@@ -33,8 +33,8 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , maxEndorserBlockBytesSize
   , Serialised (..)
+  , maxEndorserBlockBytesSize
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
@@ -159,15 +159,20 @@ runLeiosFetchClient tracer codec sizes ctx client peer channel = do
           SingLeiosFetch st -> m (ReceiveScope m ())
         scope _ = do
           (key, attempt) <- atomically (R.receiverAttempt client)
-          let bound = case R.attemptWork attempt of L.Body{} -> maxEndorserBlockBytesSize + leiosBlockMessageOverhead; L.Job{} -> maxLeiosTxsResponseBytesSize
+          let bound = case R.attemptWork attempt of
+                L.Body{} -> maxEndorserBlockBytesSize + leiosBlockMessageOverhead
+                L.Job{} -> maxLeiosTxsResponseBytesSize
               req = R.attemptRequest attempt
           pure
             ReceiveScope
               { receiveLimits = ProgressLimits bound 0 0
-              , receiveStarted = pure ()
+              , -- Retained input is local work too. Defer peer expiry until the
+                -- decoder either establishes the terminal receipt or needs more
+                -- channel input. This changes no absolute deadline or allowance.
+                receiveStarted = atomically (R.publishInput client True)
               , receiveInputStarting = atomically (R.publishInput client True)
-              , receiveInput = \_ -> atomically (R.publishInput client False)
-              , receiveAwaitInput = pure ()
+              , receiveInput = \_ -> pure ()
+              , receiveAwaitInput = atomically (R.publishInput client False)
               , receiveProgress = \_ -> throwIO R.MissingAttempt
               , receiveComplete = \receipt _ -> do
                   handlingAt <- getMonotonicTime
