@@ -37,7 +37,7 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
     else do
       let txs =
             [ TxSeq.TxTicket tx tn tz
-            | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
+            | TxSeq.TxTicket (ValidatedTxWithDiffs tx _ _) tn tz <- TxSeq.toList $ isTxs is
             ]
       values <-
         if pointHash (isTip is) == castHash (getTipHash ticked)

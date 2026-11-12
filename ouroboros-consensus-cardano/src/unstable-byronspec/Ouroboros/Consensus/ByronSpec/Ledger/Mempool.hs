@@ -60,6 +60,8 @@ instance LedgerSupportsMempool ByronSpecBlock where
   getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+  txLeiosBytes = nothingTxLeiosBytes
+  tickedLedgerProtVer = nothingTickedLedgerProtVer
 
 instance TxLimits ByronSpecBlock where
   type TxMeasurePhase1 ByronSpecBlock = IgnoringOverflow ByteSize32

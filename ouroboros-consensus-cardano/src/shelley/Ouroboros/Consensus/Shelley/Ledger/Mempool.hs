@@ -32,6 +32,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , mkShelleyTx
   , mkShelleyValidatedTx
   , perTxOverhead
+  , serializeTxForLeios
   , txByteSizeWithOverhead
 
     -- * Exported for tests
@@ -47,13 +48,16 @@ import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import Cardano.Ledger.Alonzo (ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core
   ( BlockBody
+  , EraTx
   , TopTx
   , Tx
   , allInputsTxBodyF
   , bodyTxL
   , eraDecoder
+  , eraProtVerLow
   , ppMaxBBSizeL
   , ppMaxBlockExUnitsL
+  , ppProtocolVersionL
   , sizeTxF
   , txIdTx
   , txSeqBlockBodyL
@@ -78,6 +82,7 @@ import Cardano.Ledger.Binary
   , FromCBOR (..)
   , FullByteString (..)
   , ToCBOR (..)
+  , serialize'
   )
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError))
 import qualified Cardano.Ledger.Conway.PParams as SL
@@ -92,6 +97,7 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppMaxRefScriptSizePerEndorserBlockL
   )
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
+import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
@@ -104,6 +110,7 @@ import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
@@ -213,6 +220,20 @@ perTxOverhead = 4
 txByteSizeWithOverhead :: L.EraTx era => Tx TopTx era -> Word32
 txByteSizeWithOverhead tx = tx ^. sizeTxF + perTxOverhead
 
+-- | The bytes of a transaction that an endorser block references.
+--
+-- These bytes must keep the @is_valid@ flag, because a peer cannot get it
+-- from anywhere else. 'EncCBOR' drops the flag in Dijkstra, so we use the
+-- block-body encoding.
+--
+-- Their length must not exceed 'txByteSizeWithOverhead'. Otherwise the
+-- endorser block can exceed the size that 'txEbMeasureDijkstra' reserved
+-- for it, and header validation rejects the block with 'LeiosEbTooBig'.
+serializeTxForLeios ::
+  forall era.
+  (EraTx era, SL.SafeToHash (Tx TopTx era)) => Tx TopTx era -> ByteString
+serializeTxForLeios = serialize' (eraProtVerLow @era) . toCBORForBlockInclusion
+
 instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
   LedgerSupportsMempool (ShelleyBlock proto era)
@@ -233,6 +254,14 @@ instance
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
+
+  txLeiosBytes (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
+    Just LeiosEraDict -> Just (serializeTxForLeios tx)
+    Nothing -> Nothing
+
+  tickedLedgerProtVer st = case getLeiosEraDict (Proxy @era) of
+    Just LeiosEraDict -> Just (getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL)
+    Nothing -> Nothing
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)

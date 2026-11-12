@@ -40,11 +40,15 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
+  , nothingTickedLedgerProtVer
+  , nothingTxLeiosBytes
   ) where
 
+import Cardano.Ledger.BaseTypes (ProtVer)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
@@ -255,10 +259,29 @@ class
     Text ->
     Maybe (ApplyTxErr blk)
 
+  -- | The bytes by which an endorser block references this transaction: those
+  -- whose hash it lists. 'Nothing' for a transaction no endorser block can
+  -- reference.
+  txLeiosBytes :: GenTx blk -> Maybe ByteString
+
+  -- | The protocol version under which this ledger state validates
+  -- transactions, if endorser blocks can reference its transactions.
+  tickedLedgerProtVer :: TickedLedgerState blk mk -> Maybe ProtVer
+
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
+
+-- | Value of 'txLeiosBytes' when no endorser block can reference the block
+-- type's transactions
+nothingTxLeiosBytes :: GenTx blk -> Maybe ByteString
+nothingTxLeiosBytes _ = Nothing
+
+-- | Value of 'tickedLedgerProtVer' when no endorser block can reference the
+-- block type's transactions
+nothingTickedLedgerProtVer :: TickedLedgerState blk mk -> Maybe ProtVer
+nothingTickedLedgerProtVer _ = Nothing
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult
