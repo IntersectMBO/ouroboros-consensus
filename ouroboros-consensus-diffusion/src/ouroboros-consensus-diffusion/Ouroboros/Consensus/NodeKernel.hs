@@ -496,9 +496,16 @@ initNodeKernel
     let onForgedEb hdr onset leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
-          for_ mbValid $ \valid -> do
-            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
-            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+          for_ mbValid $ \valid ->
+            -- Stay alive until the announcement is accepted and its endorser
+            -- block taken in: see 'onValidAnnouncement'. When the LeiosDB's
+            -- write queue is full, this is an unusually long critical section,
+            -- since taking the endorser block in waits for room there, and so
+            -- does whatever is ending this thread. A pool leads too rarely for
+            -- that to matter.
+            uninterruptibleMask_ $ do
+              void $ atomically $ onValidAnnouncement leiosAnnounceState valid
+              onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
