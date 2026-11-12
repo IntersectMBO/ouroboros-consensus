@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Tracing
   , module Ouroboros.Consensus.Tracing.ConvertTxId
   , module Ouroboros.Consensus.Tracing.HasIssuer
   , module Ouroboros.Consensus.Tracing.KESInfo
+  , module Ouroboros.Consensus.Tracing.LeiosNotify
   , module Ouroboros.Consensus.Tracing.Render
   ) where
 
@@ -22,5 +23,6 @@ import Ouroboros.Consensus.Tracing.HasIssuer
 import Ouroboros.Consensus.Tracing.KESInfo
 import Ouroboros.Consensus.Tracing.LeiosDB ()
 import Ouroboros.Consensus.Tracing.LeiosFetch ()
+import Ouroboros.Consensus.Tracing.LeiosNotify
 import Ouroboros.Consensus.Tracing.Peras ()
 import Ouroboros.Consensus.Tracing.Render
