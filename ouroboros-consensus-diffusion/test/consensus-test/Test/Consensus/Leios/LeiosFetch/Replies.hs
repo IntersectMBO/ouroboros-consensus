@@ -101,7 +101,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
   )
-import Ouroboros.Consensus.Util.IOLike (modifyMVar_, readMVar)
+import Ouroboros.Consensus.Util.IOLike (IOLike, modifyMVar_, readMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
@@ -112,7 +112,11 @@ tests :: TestTree
 tests =
   testGroup
     "replies"
-    [ testCase "closure summaries count confirmed network payload once" test_summary
+    [ testCase "retired forged callbacks cannot recreate coverage" test_forgePrunedCoverage
+    , testCase
+        "GC between forged body and TX writes cannot announce a phantom closure"
+        test_forgeCollectedBeforeTxs
+    , testCase "closure summaries count confirmed network payload once" test_summary
     , testCase "forge summaries keep locally produced bytes local" test_forgeSummary
     , testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
@@ -188,25 +192,34 @@ electee = KeyHash (UnsafeHash (SBS.pack (replicate 28 0)))
 
 -- | A client context over an in-memory LeiosDB and fresh state that is
 -- fetching the 'fixture', with its notifications collected, newest first.
-newContext :: IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+newContext :: IOLike m => m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContext = newContextHolding (pure ())
 
 -- | 'newContext', whose body writes are not done until this returns.
-newContextHolding :: IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+newContextHolding :: IOLike m => m () -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextHolding = let (point, _eb, _txs) = fixture in newContextAt point
 
 -- | 'newContextHolding', fetching the endorser block at this point instead.
 newContextAt ::
-  LeiosPoint -> IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+  IOLike m => LeiosPoint -> m () -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextAt point release = newContextGated point (pure release)
 
 -- | 'newContextAt', each of whose body writes is not done until what this
 -- gives at that write returns.
 newContextGated ::
-  LeiosPoint -> IO (IO ()) -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+  IOLike m => LeiosPoint -> m (m ()) -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextGated point gate = do
-  let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
+  newContextOver db point gate
+
+newContextOver ::
+  IOLike m =>
+  LeiosDbHandle m ->
+  LeiosPoint ->
+  m (m ()) ->
+  m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
+newContextOver db point gate = do
+  let MkLeiosPoint slot ebHash = point
   writer <- holdingBodies <$> openWriter db
   receiptTasks <- Receipts.newReceiptTasks
   localReuse <-
@@ -652,3 +665,40 @@ test_forgeSummary = do
     acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
   let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
   readTVarIO summaries >>= (@?= [ClosureSummary total total 0 0 Nothing True])
+
+-- Both writer submissions succeed, but the TX receipt has no target offsets:
+-- this is real backend GC, not a simulated failed Promise or malformed forge.
+test_forgeCollectedBeforeTxs :: Assertion
+test_forgeCollectedBeforeTxs = do
+  let (point, _, _) = fixture
+  db <- newLeiosDBInMemory
+  (base, notes) <- newContextOver db point (pure (pure ()))
+  let original = lfcWriter base
+      ctx =
+        base
+          { lfcWriter =
+              original
+                { writeTxs = \p txs -> do
+                    garbageCollect db (SlotNo 6)
+                    writeTxs original p txs
+                }
+          }
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+    acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+  readTVarIO notes >>= (@?= [])
+
+test_forgePrunedCoverage :: Assertion
+test_forgePrunedCoverage = do
+  let (point, _, _) = fixture
+  gate <- newEmptyTMVarIO
+  (ctx, notes) <- newContextHolding (atomically (readTMVar gate))
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+    modifyMVar_ (lfcOutstanding ctx) (pure . pruneOutstandingToImmTip (SlotNo 6))
+    atomically (putTMVar gate ())
+  readTVarIO notes >>= (@?= [])
+  out <- readMVar (lfcOutstanding ctx)
+  Map.null (closureCoverage out) @?= True
+  Map.null (ebState out) @?= True

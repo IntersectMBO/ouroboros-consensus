@@ -146,9 +146,19 @@ import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 -- The callbacks contain no payload, and cleanup affects only this attempt.
 data ReplyOwnership m = ReplyOwnership
   { claimUsefulReply :: STM m Bool
+  -- ^ Exclusively own submission of this still-needed body/job. A competing
+  -- accepted receipt can keep ownership even after its peer disappears.
   , acceptedReply :: Time -> BytesSize -> STM m (m ())
+  -- ^ Record writer acceptance and release physical request credit. Return
+  -- detached observation work to run only after registering the receipt's
+  -- node-owned callback, outside STM and the outstanding-state lock.
   , settledReceipt :: Time -> STM m (m ())
+  -- ^ Retire only this callback's pending ownership and return its observation;
+  -- a late callback must not clear another attempt's claim of the same work.
   , abandonUnsubmitted :: STM m ()
+  -- ^ Failure cleanup for a claim not accepted by the writer. Accepted work
+  -- remains the receipt callback's responsibility.
+
   }
 
 requestReplyOwnership ::
@@ -672,7 +682,14 @@ settleForgedEb ::
 settleForgedEb ctx point eb now written = do
   heldOffs <- await written
   acquired <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let (outstanding', toEmit) = settleReceivingFromForge point outstanding
+    -- A successful submission is not proof that all target rows survived to
+    -- the TX commit: GC can run between the body's and TXs' transactions. The
+    -- forge supplies every exact TX, so an incomplete receipt cannot establish
+    -- acquisition. Its collected point is retired by the ordinary pruner; no
+    -- receipt task waits for that bookkeeping entry to disappear.
+    let complete = IntMap.keysSet refs `IntSet.isSubsetOf` IntSet.fromList heldOffs
+        (outstanding', toEmit) =
+          if complete then settleReceivingFromForge point outstanding else (outstanding, Nothing)
         age = ageAt now $ maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
         (notifications, traces) = case toEmit of
           Just EmittedNothing ->
@@ -682,10 +699,9 @@ settleForgedEb ctx point eb now written = do
           Just EmittedBody -> ([AcquiredEbTxs point], [TraceLeiosFetchClientBlockTxsAcquired point age])
           Just EmittedBodyAndClosure -> ([], [])
           Nothing -> ([], [])
-    let complete = IntMap.keysSet refs `IntSet.isSubsetOf` IntSet.fromList heldOffs
-        mayFinish = not (null notifications) && complete
+    let mayFinish = not (null notifications)
         initialized =
-          if Map.member point (closureCoverage outstanding')
+          if not mayFinish || Map.member point (closureCoverage outstanding')
             then outstanding'
             else
               outstanding'
