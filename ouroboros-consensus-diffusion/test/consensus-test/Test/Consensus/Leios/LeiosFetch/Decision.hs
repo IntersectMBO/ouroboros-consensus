@@ -554,6 +554,8 @@ propEnv =
     , maxRequestedBytesSizePerBigLedgerPeer = 6000
     , maxRequestBytesSize = 1000
     , maxJobBytesSize = 500
+    , maxBodiesPerPeer = 4
+    , minimumServiceRate = 300000
     , maxJobTxCount = 4
     }
 
