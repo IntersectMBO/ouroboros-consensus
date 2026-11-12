@@ -24,6 +24,8 @@ module Ouroboros.Consensus.NodeKernel
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Ledger.BaseTypes (ProtVer (..))
+import Cardano.Ledger.Binary.Version (Version)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -42,6 +44,7 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
+import Data.ByteString (ByteString)
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
 import Data.Foldable (for_, traverse_)
@@ -80,7 +83,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, TxHash)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -488,6 +491,7 @@ initNodeKernel
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
+          , lfcMempoolTxs = leiosTxsInMempool mempool
           , -- Each trace names the connection, not which of its registrations.
             lfcTracer =
               contramap
@@ -777,6 +781,23 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
+
+-- | The bytes of those of these txs the mempool holds, as an endorser block
+-- references them, and the major protocol version it validated them under.
+leiosTxsInMempool ::
+  (IOLike m, LedgerSupportsMempool blk) =>
+  Mempool m blk ->
+  Set TxHash ->
+  m (Map TxHash (ByteString, Version))
+leiosTxsInMempool mempool hashes = do
+  (indexed, mbProtVer) <- atomically $ getLeiosTxIndex mempool
+  pure $ case mbProtVer of
+    -- No endorser block references the mempool era's txs, so it indexes none.
+    Nothing -> Map.empty
+    Just protVer ->
+      Map.mapMaybe
+        (fmap (\bytes -> (bytes, pvMajor protVer)) . txLeiosBytes . txForgetValidated)
+        (Map.restrictKeys indexed hashes)
 
 {-------------------------------------------------------------------------------
   Leios pruning

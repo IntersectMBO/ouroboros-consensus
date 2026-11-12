@@ -1393,6 +1393,8 @@ library diffusion
     bytestring,
     cardano-base,
     cardano-diffusion:{api, cardano-diffusion, protocols},
+    cardano-ledger-binary,
+    cardano-ledger-core,
     cardano-slotting,
     cardano-strict-containers,
     cborg,

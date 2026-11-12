@@ -21,6 +21,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (try)
+import Control.Monad (forM_)
 import Control.Monad.Class.MonadAsync (wait, withAsync)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
@@ -39,7 +40,9 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache
-  ( defaultLeiosTxCacheShift
+  ( LeiosTxCache (..)
+  , TxState (..)
+  , defaultLeiosTxCacheShift
   , evictOlderThan
   , newPureLeiosTxCache
   )
@@ -66,6 +69,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
   , acquireForgedEb
+  , noMempoolTxs
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -114,6 +118,12 @@ tests =
     "replies"
     [ testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
+    , testCase
+        "the client writes a body with the transactions the mempool holds, records them as validated, and acquires the closure if it holds them all"
+        test_closureFromMempool
+    , testCase
+        "the client fetches only the transactions of a body that the mempool does not hold"
+        test_partFromMempool
     , testCase "the client disconnects a peer whose body has another hash" $
         test_wrongHash
     , testCase
@@ -238,6 +248,7 @@ newContextGated point gate = do
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
+        , lfcMempoolTxs = noMempoolTxs
         , lfcTracer = nullTracer
         }
     , notes
@@ -283,6 +294,43 @@ test_acquisitions = do
     (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | The context, but with a mempool that holds these transactions, validated
+-- under an even protocol version.
+withMempool :: [LeiosTx] -> LeiosFetchClientContext IO Int -> LeiosFetchClientContext IO Int
+withMempool held ctx = ctx{lfcMempoolTxs = \hashes -> pure (Map.restrictKeys inMempool hashes)}
+ where
+  inMempool = Map.fromList [(hashLeiosTx tx, (leiosTxBytes tx, minBound)) | tx <- held]
+
+test_closureFromMempool :: Assertion
+test_closureFromMempool = do
+  let (point, eb, txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock
+    (withMempool txs ctx)
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
+  forM_ txs $ \tx ->
+    withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx tx))
+      >>= (@?= SJust (TxValidated minBound))
+
+-- | The mempool holds only the second transaction, so the request for the
+-- closure is for the first alone: a reply with just that one completes it.
+test_partFromMempool :: Assertion
+test_partFromMempool = do
+  let (point, eb, txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock
+    (withMempool (drop 1 txs) ctx)
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList (take 1 txs))
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
 
 -- | The one request the decision logic makes of a peer that offers the closure
