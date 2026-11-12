@@ -17,13 +17,15 @@ import qualified Cardano.Ledger.Core as SL
   , ppProtocolVersionL
   , txSeqBlockBodyL
   )
-import Cardano.Ledger.Hashes (originalBytes, unsafeMakeSafeHash)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
 import Data.Foldable (asum)
 import Data.List.NonEmpty (nonEmpty)
-import Data.Maybe.Strict (maybeToStrictMaybe)
+import Data.Maybe (isJust)
+import Data.Maybe.Strict (StrictMaybe (SJust), maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
@@ -116,8 +118,8 @@ forgeShelleyBlock
       pvMajor $
         getPParams (tickedShelleyLedgerState fbCurrentTickedLedgerState) ^. SL.ppProtocolVersionL
 
-    -- TODO Forging does not yet certify endorser blocks.
-    leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
+    leiosFields =
+      (,) (isJust fbLeiosCert) . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
 
     announce eb =
       EbReferencesAnnouncement
@@ -125,7 +127,14 @@ forgeShelleyBlock
         , ebReferencesAnnouncementSize = encodeEndorserBlockSize eb
         }
 
-    body =
+    -- A certifying block's transactions are the certified endorser block's, so
+    -- 'fbTxs' is empty then.
+    body = case (fbLeiosCert, getLeiosEraDict (Proxy @era)) of
+      (Nothing, _) -> txsBody
+      (Just cert, Just LeiosEraDict) -> txsBody & leiosCertBlockBodyL .~ SJust cert
+      (Just _, Nothing) -> error "forgeShelleyBlock: a certificate needs an era with a LeiosEraDict"
+
+    txsBody =
       SL.mkBasicBlockBody
         & SL.txSeqBlockBodyL
           .~ Seq.fromList (fmap extractTx fbTxs)

@@ -237,6 +237,7 @@ forgeDualByronBlock ForgeBlockArgs{..} =
         , fbCurrentTickedLedgerState = tickedDualLedgerStateMain fbCurrentTickedLedgerState
         , fbTxs = map vDualGenTxMain fbTxs
         , fbEbTxs = map vDualGenTxMain fbEbTxs
+        , fbLeiosCert
         , fbIsLeader
         }
 

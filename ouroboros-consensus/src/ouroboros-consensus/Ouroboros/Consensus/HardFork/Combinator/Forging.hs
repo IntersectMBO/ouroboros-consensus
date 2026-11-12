@@ -440,4 +440,5 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
               , fbTxs = map unwrapValidatedGenTx txs'
               , fbEbTxs = map unwrapValidatedGenTx ebTxs'
               , fbIsLeader = isLeader'
+              , fbLeiosCert = fbLeiosCert
               }
