@@ -1989,12 +1989,12 @@ nonCanonicalPoint = MkLeiosPoint 2 (UnsafeHash (SBS.replicate 32 3))
 -- 'nonCanonicalBytes'.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
-  _ <- await =<< writeEbBody writer heldPoint heldEb mempty
+  _ <- await =<< writeEbBody writer heldPoint heldEb mempty mempty
   _ <- await =<< writeTxs writer heldPoint (Map.fromList [(i, heldTxBytes i) | i <- heldOffsets])
   nonCanonicalEb <-
     either (throwIO . userError . show) pure $
       deserialiseEndorserBlock (Proxy @DijkstraEra) nonCanonicalBytes
-  _ <- await =<< writeEbBody writer nonCanonicalPoint nonCanonicalEb mempty
+  _ <- await =<< writeEbBody writer nonCanonicalPoint nonCanonicalEb mempty mempty
   pure ()
 
 {-------------------------------------------------------------------------------

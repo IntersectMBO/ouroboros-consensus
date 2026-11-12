@@ -165,7 +165,14 @@ rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb mempty
 
 -- | Also fill from local bytes, and return the offsets the point holds.
 rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> LocalFills -> IO [TxOffset]
-rwInsertEbBodyFilling rw point eb fills = Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills)
+rwInsertEbBodyFilling rw point eb fills = rwInsertEbBodyWithTxs rw point eb fills []
+
+-- | Also write these txs with the body, as the node writes those its mempool
+-- holds.
+rwInsertEbBodyWithTxs ::
+  RW -> LeiosPoint -> EndorserBlock -> LocalFills -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
+rwInsertEbBodyWithTxs rw point eb fills txs =
+  Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills (Map.fromList txs))
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
 rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
@@ -266,6 +273,10 @@ mkTestGroups impl =
           withFreshDb impl test_fillFromAnotherPoint
       , testCase "a body that misstates a tx's size fills nothing for it" $
           withFreshDb impl test_fillOfMisstatedSize
+      , testCase "a body writes the txs given with it, at the sizes it lists" $
+          withFreshDb impl test_bodyWithTxs
+      , testCase "a second write of a body reports all txs the point already holds" $
+          withFreshDb impl test_secondBodyWriteReportsHeld
       ]
   , testGroup
       "completion"
@@ -738,6 +749,33 @@ test_fillOfMisstatedSize db = do
     rwBatchRetrieveTxs con pointB [0] >>= (@?= Map.empty)
 
 -- * Garbage collection
+
+-- | Txs given with a body are written with it, unless the body lists another
+-- size at their offset, and the write reports those the point then holds.
+test_bodyWithTxs :: LeiosDbHandle IO -> IO ()
+test_bodyWithTxs db = do
+  let (pointA, ebA, _, _) = fillFixtures
+  withRW db $ \con -> do
+    -- The second tx's bytes are one byte short.
+    result <-
+      rwInsertEbBodyWithTxs con pointA ebA mempty [(0, txBytesFor ebA 0), (1, BS.drop 1 (txBytesFor ebA 1))]
+    result @?= [0]
+    holdsClosure con pointA >>= (@?= False)
+    rwInsertTxs con pointA [(1, txBytesFor ebA 1)]
+    holdsClosure con pointA >>= (@?= True)
+
+-- | A second write of a body at a point, with no fills of its own, reports the
+-- txs the point holds, as the settlement of whichever write settles first
+-- needs.
+test_secondBodyWriteReportsHeld :: LeiosDbHandle IO -> IO ()
+test_secondBodyWriteReportsHeld db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    rwInsertEbBodyFilling con pointB ebB (Map.singleton 0 (MkTxLocation pointA 1)) >>= (@?= [0])
+    rwInsertEbBodyFilling con pointB ebB mempty >>= (@?= [0])
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    rwInsertEbBodyFilling con pointB ebB mempty >>= (@?= [0, 1])
 
 -- | Write the EB at these points, with its body and all its transactions.
 writeWholeEb :: RW -> [LeiosPoint] -> EndorserBlock -> IO ()

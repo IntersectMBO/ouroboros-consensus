@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 -- in, where each of its txs will be in the closure, and the closure and the
 -- markers of its written txs, zeroes. Each point holds its own copy, so a write
 -- never touches another point's row. Then fill what it can from the bytes
--- other EBs hold, in the same transaction.
+-- other EBs hold and from the txs the writer holds, in the same transaction.
 --
 -- A fill copies the source's bytes only if they hash to the tx this body lists
 -- at the fill's offset, so a stale or wrong location fills nothing.
@@ -69,8 +69,9 @@ sqlInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
+  Map TxOffset ByteString ->
   IO (Set TxOffset)
-sqlInsertEbBody conn point eb fills = do
+sqlInsertEbBody conn point eb fills held = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (inserted, held) <- dbWithWriteTransaction conn $ do
@@ -79,7 +80,7 @@ sqlInsertEbBody conn point eb fills = do
     -- the txs written since.
     atPoint <- if inserted > 0 then pure Set.empty else markedAtPoint
     filled <- readLocalFills
-    let toWrite = filled `Map.withoutKeys` atPoint
+    let toWrite = (held `Map.union` filled) `Map.withoutKeys` atPoint
     dropped <- writeTxBytes conn point toWrite
     pure (inserted, atPoint <> (Map.keysSet toWrite `Set.difference` dropped))
   bumpVolatileStats conn inserted
