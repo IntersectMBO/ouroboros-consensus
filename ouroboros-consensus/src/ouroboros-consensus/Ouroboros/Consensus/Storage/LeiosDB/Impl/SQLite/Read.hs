@@ -6,13 +6,19 @@
 -- | Read operations of LeiosDB's SQLite backend.
 --
 -- Each lookup reads one partition, chosen by the point's slot, unless a
--- promotion overtook the read ('readPartition').
+-- promotion overtook the read ('readPartition'). Receipt confirmation instead
+-- uses the writer's connections under the boundary-publication mutex; TX
+-- marker and boundary reads cover only the submitted valid offset span.
+-- Rationale:
+-- @docs/fetch-policy/leiosfetch-improved.md#durable-confirmation-and-garbage-collection@.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   ( sqlScanCompleteEbPointsSince
   , sqlLookupEbBody
   , sqlBatchRetrieveTxs
   , sqlLookupEbClosure
   , sqlIsImmutable
+  , sqlConfirmBody
+  , sqlConfirmTxs
   , readPartition
   , lookupBlob
   , EbIndex (..)
@@ -53,6 +59,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
+import Ouroboros.Consensus.Storage.LeiosDB.API (BodyWriteReceipt (..), TxWriteReceipt (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
@@ -141,6 +148,46 @@ readPartition conn point readRow = do
 sqlLookupEbBody :: Conn -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
 sqlLookupEbBody conn point =
   fmap (Serialised . BSL.fromStrict) <$> readPartition conn point (`lookupBlob` point)
+
+-- | Prove body presence from the authoritative partition's committed markers.
+-- The writer holds the confirmation mutex from partition choice through this
+-- proof, after its volatile transaction has ended. Only boundary publication
+-- and truncation share that mutex; an immutable copy can proceed concurrently
+-- while the old boundary still governs confirmation.
+sqlConfirmBody :: Conn -> LeiosPoint -> IO BodyWriteReceipt
+sqlConfirmBody conn point = do
+  found <- readPartition conn point $ \db ->
+    lookupEbIndex db point >>= traverse (marked db)
+  pure $ maybe BodyUnavailable BodyPresent found
+ where
+  marked db ix@EbIndex{eiTxCount = n} = do
+    markers <- readTxWritten db ix 0 (n - 1)
+    pure $ Set.fromDistinctAscList [o | o <- [0 .. n - 1], isWritten markers o]
+
+-- | Prove submitted txs from their markers and declared bounds, without copying
+-- closure bytes. Called after commit under the same confirmation mutex as
+-- 'sqlConfirmBody'. Invalid offsets and absent targets confirm nothing.
+-- Read only the span of valid submitted offsets, including its final boundary;
+-- slice indices are relative to that span, while receipts keep original offsets.
+sqlConfirmTxs :: Conn -> LeiosPoint -> Map TxOffset ByteString -> IO TxWriteReceipt
+sqlConfirmTxs conn point submitted = do
+  found <- readPartition conn point $ \db ->
+    lookupEbIndex db point >>= traverse (confirmed db)
+  pure $ fromMaybe (TxWriteReceipt Set.empty Set.empty False) found
+ where
+  confirmed db ix@EbIndex{eiTxCount = n} =
+    case (Map.lookupMin inBody, Map.lookupMax inBody) of
+      (Just (lo, _), Just (hi, _)) -> do
+        markers <- readTxWritten db ix lo hi
+        bounds <- readTxBounds db ix lo hi
+        let sized off bytes =
+              BS.length bytes == boundAt bounds (off - lo + 1) - boundAt bounds (off - lo)
+            (accepted, missized) = Map.partitionWithKey sized inBody
+            held = Set.filter (\off -> isWritten markers (off - lo)) (Map.keysSet accepted)
+        pure (TxWriteReceipt held (Map.keysSet missized) True)
+      _ -> pure (TxWriteReceipt Set.empty Set.empty True)
+   where
+    inBody = Map.filterWithKey (\off _ -> off >= 0 && off < n) submitted
 
 -- | Retrieve tx bytes for a batch of offsets into the EB at one point: the
 -- offsets the body declares, with their bytes, or 'Nothing' where no tx was

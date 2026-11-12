@@ -78,6 +78,8 @@ newPureLeiosTxCache nshift = do
             mapM_ evaluate summary
             _ <- evaluate w
             pure (idx', (summary, w))
+      , classifyTxs = \point txs ->
+          MVar.withMVar var $ \idx -> evaluate $ Pure.classifyTxs point txs idx
       , insertLandedTxs = \point landed ->
           MVar.modifyMVar var $ \idx -> do
             let step (!idx', !fab) (MkLandedTx off txh sz st) =
@@ -102,6 +104,8 @@ nullLeiosTxCache =
   LeiosTxCache
     { evictOlderThanFoldl' = \_boundary nil _snoc -> pure (Set.empty, nil)
     , insertBodyAndFoldl' = \_point _b nil _snoc -> pure (Nothing, nil)
+    , classifyTxs = \_point txs ->
+        pure $! Foldable.foldl' (\acc (_txh, size) -> acc <> bucketTxArrival TxEvicted size) mempty txs
     , insertLandedTxs = \_point landed ->
         pure (foldMap (bucketTxArrival TxEvicted . ltSize) landed)
     , withLookupTx = \k -> k (\_txh -> pure SNothing)

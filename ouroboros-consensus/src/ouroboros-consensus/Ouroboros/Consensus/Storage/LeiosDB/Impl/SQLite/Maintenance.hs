@@ -7,6 +7,12 @@
 --   * promotion: volatile EBs are copied to the immutable partition once they are old enough;
 --   * garbage collection of the volatile partition;
 --   * the in-memory 'LeiosDbStats'.
+--
+-- Maintenance owns its connection before taking the short confirmation
+-- mutex. Bulk copying precedes boundary publication; truncation excludes
+-- confirmation throughout deletion and its matching boundary update.
+-- Rationale:
+-- @docs/fetch-policy/leiosfetch-improved.md#durable-confirmation-and-garbage-collection@.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   ( -- * Promotion to the immutable partition
     Promoter
@@ -39,6 +45,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
+import Control.Exception (mask_)
 import Control.Monad (forever, unless, when)
 import Control.ResourceRegistry
   ( ResourceRegistry
@@ -101,16 +108,22 @@ closePromoter promoterVar =
 -- immutable partition is never collected and the startup scan takes any EB
 -- there as complete. An EB without its closure throws an exception, and
 -- nothing is copied.
+--
+-- Keep exclusive ownership of the maintenance connection throughout, but take
+-- the confirmation mutex only to publish the committed partition boundary.
+-- Writer confirmation uses its own connections and never takes the connection
+-- mutex. Maintenance always acquires the connection mutex first.
 sqlPromoteToImmutable ::
   HasCallStack =>
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   MVar Promoter ->
+  MVar () ->
   StrictTVar IO SlotNo ->
   SlotNo ->
   [LeiosPoint] ->
   IO ()
-sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
+sqlPromoteToImmutable tracer statsVar promoterVar confirmationVar promotedSlotVar slot points =
   withMVar promoterVar $ \(Promoter db) -> do
     unless (null points) $ do
       -- Deferred, not 'dbWithWriteTransactionRaw': @BEGIN IMMEDIATE@ takes the
@@ -125,7 +138,9 @@ sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
       traceWith tracer $ TraceLeiosDbCopiedToImmutable copied
     -- Only once the copies are committed, so the reads it sends to the
     -- immutable partition find them.
-    atomically $ modifyTVar promotedSlotVar (max slot)
+    -- The tracer above may block or throw; it owns no confirmation mutex.
+    withMVar confirmationVar $ \_ ->
+      atomically $ modifyTVar promotedSlotVar (max slot)
  where
   copyEbToImmutable db point = do
     let ebHash = pointEbHash point
@@ -169,21 +184,28 @@ sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
 
 -- | Implements 'leiosDbTruncateImmutable': delete the immutable rows at or
 -- after the slot in one transaction, then set the promoted slot to it.
+-- Hold the confirmation mutex across both steps, inside connection ownership;
+-- no receipt can prove a partition chosen between deletion and publication.
 sqlTruncateImmutable ::
   HasCallStack =>
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   MVar Promoter ->
+  MVar () ->
   StrictTVar IO SlotNo ->
   SlotNo ->
   IO ()
-sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar slot =
+sqlTruncateImmutable tracer statsVar promoterVar confirmationVar promotedSlotVar slot =
   withMVar promoterVar $ \(Promoter db) -> do
     -- The connection's main database is the immutable partition, which
     -- unqualified table names resolve to before the attached volatile one.
-    deleted <- deleteEbsFrom db slot
-    bumpImmutableStats statsVar (negate deleted)
-    atomically $ writeTVar promotedSlotVar slot
+    deleted <- withMVar confirmationVar $ \_ -> mask_ $ do
+      -- The SQL transaction handles rollback before commit; after commit,
+      -- cancellation must not leave the matching boundary update undone.
+      deleted <- deleteEbsFrom db slot
+      bumpImmutableStats statsVar (negate deleted)
+      atomically $ writeTVar promotedSlotVar slot
+      pure deleted
     when (deleted > 0) $
       traceWith tracer $
         TraceLeiosDbTruncatedImmutable slot deleted
