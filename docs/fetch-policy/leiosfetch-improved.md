@@ -1,9 +1,8 @@
 # LeiosFetch receiver policy
 
-Status: under implementation. This document records the intended behavior of
-ordinary LeiosFetch while its staged implementation is verified. Individual
-sections become implementation descriptions only after their code and tests
-land. The wire protocol, server and whole-response decoder remain unchanged.
+This document describes the ordinary LeiosFetch receiver implementation. It
+uses the existing wire protocol, server and whole-response codec, with bounded
+requests, local transaction reuse and progressive recovery from slow sources.
 
 ## Purpose
 
@@ -102,6 +101,32 @@ penalty after aging existing evidence. Its half-life is 600 seconds, with scores
 at or below 0.5 forgiven. Successful service does not reset it. Removal ends
 that registration's score; stale timestamps cannot increase saved evidence.
 
+## Readiness and effective changes
+
+Readiness remains a coalescing dirty bit, alongside absolute deadlines and the
+500 ms maximum idle fallback. Publish effective state changes before signalling.
+Required runtime and offer/frontier signals share the publishing STM transaction.
+Do not use a debounce interval or rely on the fallback to repair a
+missing signal.
+
+Absent lease releases, unchanged or obsolete pending-owner cleanup, duplicate
+forge claims, and unchanged/pruned offers do not create fresh readiness. Compare
+only cheap operation outcomes or the individual offer/time entry. A no-op cannot
+clear readiness already set by a real change.
+
+Dispatch commitment reserves no new credit and activates no deadline, so it
+does not notify. Send return, terminal receipt, handler/FIFO completion and local
+decode exit retain their timing wakeups. Priority-barrier reconsideration has
+its own conditional signal, independent of dispatch. Pruning signals when its
+frontier is published so changed work relevance is reconsidered promptly.
+
+Physical cleanup and logical job release remain distinct. Kernel unregister
+must still signal after an earlier client finalizer removed the session and
+credit. Likewise, submission/receipt settlement explicitly signals its logical
+unpick/acquisition even when the physical release or exact-owner cleanup is a
+no-op. Cache, metadata-worker and body/receipt notifications are retained where
+they can accompany those broader effects.
+
 ## Timing and FIFO eligibility
 
 Use the original connection's KeepAlive RTT observation, with bounded fallback
@@ -148,6 +173,15 @@ pruning before physical GC. Late cache publication cannot replace a newer usable
 transaction source with a retired location. A stale guarded DB fill is a miss,
 not target possession.
 
+The mutable cache draws its two salt words from a dedicated, previously unused
+branch of the LeiosFetch RNG root. Fetch decisions keep the other branch;
+KeepAlive, peer sharing, TX submission and the surrounding node streams retain
+their existing derivations. Production and deterministic node fixtures allocate
+the salted cache and install its retirement wrapper before opening ChainDB.
+This separates stream ownership, not cryptographic secrecy: StdGen is not a
+security PRNG. Supplying a securely generated 128-bit startup secret remains
+a follow-up at the allocation split.
+
 ## Tracing
 
 Keep ordinary operator milestones and compact durable acquisition summaries.
@@ -172,3 +206,110 @@ SQLite insertions. The summary is emitted once at semantic durable completion.
 Unknown acquisition origins remain unknown. Arrival buckets, duplicate completed
 responses and mux wire totals answer different questions and must not be added
 to this distinct numerator.
+
+## Reading the implementation
+
+| Component | Responsibility |
+|---|---|
+| `Kernel` | Election focus, peer registrations, availability, first-offer times, shared outstanding-state lock and the event-driven planning loop. |
+| `Decision` and `Jobs` | EB priority, ranked source traversal, whole-TX packing, least-requested job selection and logical completion/unpicking. |
+| `Runtime` and `RequestState` | Original request identities, physical outstanding credit, FIFO/send/receive facts and pending submission/receipt claims. |
+| `Timing`, `PeerPenalty`, `Wait` | Pure service clocks and aged evidence, plus coalesced readiness/deadline/fallback waiting. |
+| `Client` and `Client.Replies` | Existing pipelined protocol interpreter, final dispatch recheck, validation and storage submission/settlement. |
+| `LocalReuse` and `ReceiptTasks` | Bounded local materialization and node-owned producer/callback lifetimes. |
+| `Coverage`, `Trace`, `Trace.Policy` | Confirmed acquisition origins and detached production observations. |
+
+The outstanding-state lock serializes logical planning and removal. Physical
+facts live in STM. Admission publishes an immutable descriptor, its credit and
+the existing peer command queue under an exception-safe lock-to-STM boundary.
+There is one command TVar, exposed through both the peer registration and runtime;
+the send, FIFO and installed-receiver queues describe different protocol facts.
+
+Send-return and handler callbacks reconcile only their original attempt. A fast
+reply's settled descriptor stays until its send return is observed; neither
+callback sweeps unrelated descriptors. Continuous-service classification uses
+the original invocation's reply FIFO and ignores uncommitted, terminal or
+settled requests. Pending-write callbacks carry the original work key and check
+its expected network or local owner, even after the connection and descriptor
+are gone. Discarding an unsent command edits only its original invocation's
+queue. Cross-peer hedge eligibility and peer teardown still inspect their
+shared ownership facts.
+
+A reservation means outstanding request debt, including queued work. It does
+not allocate a receive buffer or reserve database storage. Pending ownership
+means that one handler or accepted receipt is responsible for the local write;
+it is independent of the physical request's credit. A registration identifies
+one original peer lifetime, an invocation identifies one client run, and a local
+ordinal identifies its immutable request. None adds a wire sequence number.
+
+## Patience calculation
+
+Let `R` be the frozen RTT allowance. A positive connection-owned KeepAlive sample
+no older than 30 seconds gives `min(0.5 s, 1.5 × sample)`; a missing, stale,
+non-positive or future sample gives `0.5 s`. The source reader is captured for
+the original connection, without switching old requests to a replacement's RTT.
+
+For requested payload `B` and service benchmark `v` bits/s, transfer patience is
+`T = 8B / v`. With reference initial window `I = 14,600 B`, take the smallest
+positive `K` such that `I × (2^K − 1) ≥ B`, and cold patience
+`W = min(0.5 s, K × R)`. These are receiver policy references, not observations
+of the server's actual TCP congestion window.
+
+Only an eligible FIFO head gets a deadline. Its start is the maximum of send
+return plus `R`, the preceding response's original terminal receipt and local
+handler readiness, omitting unavailable predecessors. Add `max(T, W)` for a
+fresh request, or `max(T, R)` for a continuous pipeline. A later RTT sample or
+payload dribble never renews this allowance. An early reply may precede send
+return; reconciliation preserves its original receipt and releases no credit
+twice. Local handler/storage time delays eligibility of the following head.
+
+While known input is being decoded locally, defer expiry reconciliation: that
+input may establish an earlier complete-message receipt. This does not extend
+the absolute deadline. If decoding requires more channel input, the original
+deadline becomes eligible again immediately.
+
+At expiry, retain the physical request and consider progressive recovery. The
+source's actual eligible head can earn one closure-service penalty only while
+its job remains needed and no local submission/receipt already owns that work.
+Bodies and followers blocked behind another response do not earn that penalty.
+A terminal receipt clears wire blockage even while its local handler runs.
+
+## Local materialization and confirmation
+
+The Leios transaction cache supplies reusable bodies and confirmed transaction
+locations. The body writer fills target offsets from usable stored locations,
+then the bounded mempool pass imports exact matching serialized transactions.
+Materialization uses a 20,000 B target and at most 128 entries per slice, allowing
+one indivisible transaction to overhang. A shared gate bounds optional local
+work; no full mempool snapshot or payload vector is retained across its IO.
+
+The writer's receipt states which submitted target offsets are present at the
+successful transaction boundary, including rows already present or held in the
+immutable partition. Submission alone is insufficient. Fully confirmed immutable
+jobs retire; partly confirmed relevant jobs remain fetchable. The locally forged
+path also requires every reference to be confirmed before announcing acquisition.
+An incomplete forge receipt cannot establish acquisition. A callback for a
+point already pruned from fetching cannot recreate coverage.
+
+This implementation uses the ordinary writer and its existing queue. It does
+not introduce an additional storage handoff or capacity reservation. Actual
+storage failure reaches node supervision; invalid network data belongs to the
+original peer. Normal drain joins submitting producers and accepted callbacks;
+exceptional drain cancels and joins them. Neither peer removal nor a failed
+post-acceptance observation transfers an old claim to a replacement request.
+
+## Practical limits and follow-ups
+
+Responses are decoded as complete protocol messages. TX requests contain one
+whole-transaction job; the policy does not salvage an incomplete message or
+retain partial body bytes. Recovery leaves sent copies outstanding until reply
+or connection teardown. Per-peer limits bound their credit, rather than imposing
+a global duplicate-byte or fixed-copy ceiling.
+
+The mempool pass is one-time discovery. Later local arrivals are not a continuous
+resolver. A readable last-published index during mempool mutation is a separate
+follow-up; the current lookup still waits for the authoritative state. Election/chain urgency stays with consensus focus; source ranking
+operates inside that priority. Service settings and the ten-minute aging half-life
+are initial tuning choices. The ordinary accounting scripts and selected IOSim
+race checks are retained; a broader generated integrated-campaign framework is
+separate future work.
