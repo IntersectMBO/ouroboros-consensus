@@ -13,6 +13,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
   , SomeLeiosFetchJob (..)
+  , LeiosFetchJobActions (..)
   , leiosFetchClientPeerPipelined
   , toLeiosFetchClientPeerPipelined
   ) where
@@ -45,11 +46,21 @@ import Ouroboros.Consensus.Util.NormalForm.StrictTVar
   , writeTVar
   )
 
+-- | Operations attached to the immutable request. Dispatch is rechecked after
+-- waiting for a pipeline slot. The receive action binds its FIFO context before
+-- decoding; handler cleanup also runs while draining.
+data LeiosFetchJobActions m = LeiosFetchJobActions
+  { beforeDispatch :: m Bool
+  , beforeReceive :: m ()
+  , withReplyHandler :: m () -> m ()
+  }
+
 -- | A request to send, and what to do with its reply.
 data SomeLeiosFetchJob point eb tx m
   = forall st'.
     StateTokenI (StBusy st') =>
     MkSomeLeiosFetchJob
+      (LeiosFetchJobActions m)
       (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
       (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
 
@@ -129,32 +140,40 @@ leiosFetchClientPeerPipelined depth awaitStop awaitJob =
     Nat n ->
     SomeLeiosFetchJob point eb tx m ->
     Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
-  send stop !n (MkSomeLeiosFetchJob req k) =
-    YieldPipelined
-      ReflClientAgency
-      req
-      (receiver stop k)
-      (go1 stop $ Succ n)
+  send stop !n (MkSomeLeiosFetchJob actions req k) = Effect $ do
+    dispatch <- beforeDispatch actions
+    pure $
+      if dispatch
+        then
+          YieldPipelined
+            ReflClientAgency
+            req
+            (ReceiverEffect $ beforeReceive actions >> pure (receiver stop (withReplyHandler actions) k))
+            (go1 stop $ Succ n)
+        else go1 stop n
 
   receiver ::
     StateTokenI (StBusy st') =>
     StrictTVar m WhetherDraining ->
+    (m () -> m ()) ->
     (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()) ->
     Receiver (LeiosFetch point eb tx) AsClient (StBusy st') StIdle m C
-  receiver stop k =
+  receiver stop wrap k =
     ReceiverAwait ReflServerAgency $ \msg -> case msg of
-      MsgLeiosBlock{} -> handler stop k msg
-      MsgLeiosBlockTxs{} -> handler stop k msg
+      MsgLeiosBlock{} -> handler stop wrap k msg
+      MsgLeiosBlockTxs{} -> handler stop wrap k msg
 
   handler ::
     StrictTVar m WhetherDraining ->
+    (m () -> m ()) ->
     (msg -> m ()) ->
     msg ->
     Receiver (LeiosFetch point eb tx) AsClient StIdle StIdle m C
-  handler stop k x = ReceiverEffect $ do
-    readTVarIO stop >>= \case
-      AlreadyDraining -> pure ()
-      NotYetDraining -> k x
+  handler stop wrap k x = ReceiverEffect $ do
+    wrap $
+      readTVarIO stop >>= \case
+        AlreadyDraining -> pure ()
+        NotYetDraining -> k x
     pure $ ReceiverDone MkC
 
   drainThePipe :: a -> Nat n -> Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a

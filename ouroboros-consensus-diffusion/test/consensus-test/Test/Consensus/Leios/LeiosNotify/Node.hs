@@ -392,7 +392,9 @@ runNodeClientAgainst node next target = do
           { epChainSyncServer = quietChainSyncServer
           , epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
           , epLeiosNotifyClient = Nothing
-          , -- The node requests what the peer offers.
+          , -- Prompt Fetch assignment may request a synthetic offered body.
+            -- Keep that unrelated protocol silent until fixture teardown:
+            -- refusing it kills the peer mux before Notify can drain its ACKs.
             epLeiosFetchServer = silentLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }

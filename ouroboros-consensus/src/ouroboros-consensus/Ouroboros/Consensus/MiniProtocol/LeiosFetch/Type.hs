@@ -22,8 +22,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , bitmapToOffsets
   , byteLimitsLeiosFetch
   , codecLeiosFetch
+  , leiosBlockMessageOverhead
   , codecLeiosFetchId
   , maxLeiosTxsRequestBytesSize
+  , maxLeiosTxsResponseBytesSize
   , offsetsToBitmap
   , timeLimitsLeiosFetch
   ) where
@@ -211,6 +213,24 @@ deriving instance
 maxLeiosTxsRequestBytesSize :: Word32
 maxLeiosTxsRequestBytesSize = 500 * 1000
 
+-- | Maximum encoded size of one 'MsgLeiosBlockTxs': the protocol's TX payload
+-- ceiling plus 10% for tight CBOR framing. This is independent of the client's
+-- smaller job-packing target.
+--
+-- The framing uses at most seven outer bytes, plus a CBOR-in-CBOR tag and
+-- byte-string header per TX: four bytes below 256 bytes, five below 64 KiB,
+-- seven beyond. A valid TX spends at least one input and takes at least 47
+-- bytes, so the per-TX overhead is below 9% of the payload ceiling. The 10%
+-- margin also covers the outer framing.
+maxLeiosTxsResponseBytesSize :: Word32
+maxLeiosTxsResponseBytesSize =
+  maxLeiosTxsRequestBytesSize + maxLeiosTxsRequestBytesSize `div` 10
+
+-- | Maximum outer CBOR framing around a serialized body, including the
+-- CBOR-in-CBOR tag and byte-string header. This does not enlarge its payload.
+leiosBlockMessageOverhead :: Word32
+leiosBlockMessageOverhead = 10
+
 -- | The limits assume that peers write the parts of a message that are not
 -- hashed, such as the framing around its payloads, in tight CBOR: each
 -- integer and length in its fewest bytes. The decoders accept wider ones too,
@@ -224,18 +244,9 @@ byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   -- of a list of two items, the tag 2, and the closing marker if the list is
   -- indefinite-length; then the CBOR-in-CBOR tag (two bytes) and the header of
   -- the byte string (five bytes).
-  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + 10
-  SingBlockTxs -> withMargin maxLeiosTxsRequestBytesSize
+  SingBlock -> fromIntegral $ maxEndorserBlockBytesSize + leiosBlockMessageOverhead
+  SingBlockTxs -> fromIntegral maxLeiosTxsResponseBytesSize
   st@SingDone -> notActiveState st
- where
-  -- The margin covers what a 'MsgLeiosBlockTxs' writes around its payload: at
-  -- most seven bytes, plus a CBOR-in-CBOR tag and byte-string header per
-  -- transaction: four bytes while the transaction is under 256 bytes, five under
-  -- 64 KiB, seven beyond. A valid transaction spends at least one input, so it
-  -- takes at least 47 bytes, and the headers add under 9% of
-  -- 'maxLeiosTxsRequestBytesSize'.
-  withMargin :: Word32 -> Word
-  withMargin x = fromIntegral $ x + x `div` 10
 
 timeLimitsLeiosFetch ::
   ProtocolTimeLimits (LeiosFetch point eb tx)

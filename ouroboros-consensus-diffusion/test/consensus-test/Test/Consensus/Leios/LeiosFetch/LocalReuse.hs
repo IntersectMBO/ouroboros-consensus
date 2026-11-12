@@ -7,7 +7,6 @@ module Test.Consensus.Leios.LeiosFetch.LocalReuse (tests) where
 
 import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import Control.Monad (forM_, void, when)
-import Control.ResourceRegistry (withRegistry)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Tracer (mkTracer)
 import qualified Data.ByteString as BS
@@ -19,8 +18,10 @@ import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
 import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies hiding (processLeiosBlock)
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies hiding
+  ( processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
@@ -28,7 +29,14 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
 import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Util.IOLike
-import Test.Consensus.Leios.LeiosFetch.Replies (awaitNotes, fixture, newContext, newContextHolding)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( awaitNotes
+  , fixture
+  , newContext
+  , newContextHolding
+  , processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -429,7 +437,7 @@ testCachedBody = bounded $ do
   local <-
     newLocalReuse (Receipts.receiptClosing (lfcReceiptTasks ctx)) (sourceOf txs) (lfcWriter ctx)
   Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
-    withRegistry $ \registry -> acquireCachedBody registry ctx{lfcLocalReuse = local} point maxBound
+    acquireCachedBody ctx{lfcLocalReuse = local} point maxBound
     void $ awaitNotes notes 2
 
 testPeerRemoval :: IO ()
@@ -491,7 +499,3 @@ testRetireBetweenSlices = bounded $ withLocal txs $ \point eb _ writer -> do
   S.readTVarIO calls >>= (@?= 1)
  where
   txs = [MkLeiosTx (BS.replicate 19000 i) | i <- [0 .. 2]]
-
--- Keep this fixture expressed in decoded bodies while exercising the wire-facing handler.
-processLeiosBlock :: LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
-processLeiosBlock ctx peer request body = Replies.processLeiosBlock ctx peer request (serialiseEndorserBlock body)

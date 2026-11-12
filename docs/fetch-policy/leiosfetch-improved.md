@@ -43,11 +43,24 @@ must still fit the peer's credit and protocol bounds.
 | Big ledger peer TX credit | 262,144 B |
 | Whole-transaction job target | 65,536 B |
 | Outstanding bodies per peer | 4 |
+| Shared outstanding requests per peer | 150 |
 | Minimum service benchmark | 300,000 bit/s |
 
 Queued work already consumes its reservation. Waiting for a pipeline slot or
 another copy winning does not refund a sent request. Skip wholly obsolete work
 before dispatch and refund that unsent reservation exactly once.
+
+The physical lease ledger maintains the shared request total alongside TX bytes
+and body count. Queued and sent bodies and TX jobs all count, including zero-byte
+jobs. Successful reservation increments it; only removing the exact live lease
+decrements it. Repeated or old-invocation callbacks cannot refund a newer request.
+
+Admission returns its refusal reason from the same transaction that checks
+eligibility and reserves credit. Temporary TX-credit pressure differs from a job
+that exceeds the peer's whole budget. Closed or blocked sources, ineligible or
+same-source work, protocol-invalid jobs, and exhausted byte/body/request limits
+remain distinct. Only the actual temporary limit refusal supplies a pressure
+observation; no second scan reconstructs that decision.
 
 ## Source selection and progressive recovery
 
