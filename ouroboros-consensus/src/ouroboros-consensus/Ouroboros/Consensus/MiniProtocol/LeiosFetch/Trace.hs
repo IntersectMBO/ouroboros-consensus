@@ -3,6 +3,7 @@
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
+  , LeiosBlockTxSources (..)
   , LeiosTxCacheInsertBodySummary (..)
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
@@ -30,6 +31,9 @@ data TraceLeiosFetchClientEvent peer
     -- LeiosTxCache held for another point, rather than fetching it. Traced once
     -- the write is durable, if no delivery's write settled first.
     TraceLeiosFetchClientBlockFromCache !LeiosPoint
+  | -- | Where the node takes the transactions of the endorser block at this
+    -- point from, decided as it writes the body.
+    TraceLeiosFetchClientBlockTxSources !LeiosPoint !LeiosBlockTxSources
   | -- | Some of an endorser block's transactions arrived from this peer, their
     -- bytes classified by whether the node needed them.
     TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
@@ -41,6 +45,20 @@ data TraceLeiosFetchClientEvent peer
     -- began, if that is known.
     TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
   deriving (Show, Functor)
+
+-- | How many of an endorser block's transactions the node takes from each
+-- source, decided as it writes the body. The fields sum to the transactions the
+-- body references.
+data LeiosBlockTxSources = MkLeiosBlockTxSources
+  { btsLocalFills :: !Int
+  -- ^ copied from other points that durably hold them, unless a point no
+  -- longer holds its tx by the time the write runs
+  , btsMempool :: !Int
+  -- ^ written from the node's mempool
+  , btsRemaining :: !Int
+  -- ^ neither, so fetched from peers unless the point already holds them
+  }
+  deriving Show
 
 -- | Summary of an EB body inserted into the LeiosTxCache, for observability.
 -- The counts nest: @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.

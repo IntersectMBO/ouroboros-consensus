@@ -16,6 +16,7 @@ import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes (..)
+  , LeiosBlockTxSources (..)
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchServerEvent (..)
   )
@@ -34,6 +35,14 @@ instance
         ]
     TraceLeiosFetchClientBlockFromCache point ->
       mconcat ["kind" .= String "BlockFromCache", pointFields point]
+    TraceLeiosFetchClientBlockTxSources point sources ->
+      mconcat
+        [ "kind" .= String "BlockTxSources"
+        , pointFields point
+        , "localFills" .= btsLocalFills sources
+        , "mempool" .= btsMempool sources
+        , "remaining" .= btsRemaining sources
+        ]
     TraceLeiosFetchClientTxsArrived peer point arrival ->
       mconcat
         [ "kind" .= String "TxsArrived"
@@ -55,6 +64,16 @@ instance
       "Endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockFromCache point ->
       "Took endorser block " <> pretty point <> " from the LeiosTxCache"
+    TraceLeiosFetchClientBlockTxSources point sources ->
+      "Endorser block "
+        <> pretty point
+        <> ": "
+        <> showT (btsLocalFills sources)
+        <> " txs from other points, "
+        <> showT (btsMempool sources)
+        <> " from the mempool, "
+        <> showT (btsRemaining sources)
+        <> " remaining"
     TraceLeiosFetchClientTxsArrived peer point _ ->
       "Transactions of endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
@@ -67,12 +86,14 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   namespaceFor = \case
     TraceLeiosFetchClientBlockArrived{} -> Namespace [] ["BlockArrived"]
     TraceLeiosFetchClientBlockFromCache{} -> Namespace [] ["BlockFromCache"]
+    TraceLeiosFetchClientBlockTxSources{} -> Namespace [] ["BlockTxSources"]
     TraceLeiosFetchClientTxsArrived{} -> Namespace [] ["TxsArrived"]
     TraceLeiosFetchClientBlockAcquired{} -> Namespace [] ["BlockAcquired"]
     TraceLeiosFetchClientBlockTxsAcquired{} -> Namespace [] ["BlockTxsAcquired"]
 
   severityFor (Namespace _ ["BlockArrived"]) _ = Just Debug
   severityFor (Namespace _ ["BlockFromCache"]) _ = Just Debug
+  severityFor (Namespace _ ["BlockTxSources"]) _ = Just Info
   severityFor (Namespace _ ["TxsArrived"]) _ = Just Debug
   severityFor (Namespace _ ["BlockAcquired"]) _ = Just Info
   severityFor (Namespace _ ["BlockTxsAcquired"]) _ = Just Info
@@ -83,6 +104,9 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   documentFor (Namespace _ ["BlockFromCache"]) =
     Just
       "The node took an endorser block from the body its LeiosTxCache held for another point, rather than fetching it."
+  documentFor (Namespace _ ["BlockTxSources"]) =
+    Just
+      "How many of an endorser block's transactions the node copies from other points, takes from its mempool, and has yet to get, as it writes the body."
   documentFor (Namespace _ ["TxsArrived"]) =
     Just
       "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them."
@@ -95,6 +119,7 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   allNamespaces =
     [ Namespace [] ["BlockArrived"]
     , Namespace [] ["BlockFromCache"]
+    , Namespace [] ["BlockTxSources"]
     , Namespace [] ["TxsArrived"]
     , Namespace [] ["BlockAcquired"]
     , Namespace [] ["BlockTxsAcquired"]
