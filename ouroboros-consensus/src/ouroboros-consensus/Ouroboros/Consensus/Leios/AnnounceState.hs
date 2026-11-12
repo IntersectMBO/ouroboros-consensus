@@ -80,11 +80,12 @@ data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
 -- one of an election already pruned, while it was validated, is not new.
 --
 -- Once this accepts an announcement, no copy of it is new again, from any
--- peer. So a caller must act on a new announcement uninterruptibly, together
--- with this: if its thread died in between, as when its peer disconnects, the
--- announcement would stay accepted but never be acted on, and nothing would
--- act on it later. What the caller does there should be brief, since it delays
--- whatever is ending the thread.
+-- peer or the node's own forge. So a caller must act on a new announcement
+-- uninterruptibly, together with this: if its thread died in between, as when
+-- its peer disconnects or the forging credentials change, the announcement
+-- would stay accepted but never be acted on, and nothing would act on it
+-- later. What the caller does there should be brief, since it delays whatever
+-- is ending the thread.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
