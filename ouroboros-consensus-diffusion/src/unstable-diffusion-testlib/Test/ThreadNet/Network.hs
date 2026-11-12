@@ -95,6 +95,11 @@ import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (lfcReceiptTasks)
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( defaultLeiosAnnouncementAgeLimits
   )
@@ -562,37 +567,39 @@ runThreadNetwork
                 blockForging'
                 nodeInfo
                 (crucialTxs' ++ tniCrucialTxs)
-            atomically $ writeTVar vertexStatusVar $ VUp kernel app
+            again <- Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel kernel))) $ do
+              atomically $ writeTVar vertexStatusVar $ VUp kernel app
 
-            -- wait until this node instance should stop
-            again <- case Map.minViewWithKey rs of
-              -- end of test
-              Nothing -> do
-                OracularClock.waitUntilDone clock
-                pure Nothing
-              -- onset of schedule restart slot
-              Just ((s', nr'), rs') -> do
-                -- wait until the node should stop
-                tooLate <- OracularClock.blockUntilSlot clock s'
-                when tooLate $ do
-                  error $
-                    "unsatisfiable nodeRestarts: "
-                      ++ show (coreNodeId, s')
+              -- wait until this node instance should stop
+              again <- case Map.minViewWithKey rs of
+                -- end of test
+                Nothing -> do
+                  OracularClock.waitUntilDone clock
+                  pure Nothing
+                -- onset of schedule restart slot
+                Just ((s', nr'), rs') -> do
+                  -- wait until the node should stop
+                  tooLate <- OracularClock.blockUntilSlot clock s'
+                  when tooLate $ do
+                    error $
+                      "unsatisfiable nodeRestarts: "
+                        ++ show (coreNodeId, s')
 
-                -- this synchronization prevents a race with the
-                -- instrumentation thread: we it want to record the current
-                -- block number at the start of the slot, before this vertex
-                -- restarts the node
-                atomically $ do
-                  nextSlot <- readTVar nextInstrSlotVar
-                  check $ nextSlot > s'
+                  -- this synchronization prevents a race with the
+                  -- instrumentation thread: we it want to record the current
+                  -- block number at the start of the slot, before this vertex
+                  -- restarts the node
+                  atomically $ do
+                    nextSlot <- readTVar nextInstrSlotVar
+                    check $ nextSlot > s'
 
-                pure $ Just (s', pInfo', blockForging', nr', rs')
+                  pure $ Just (s', pInfo', blockForging', nr', rs')
 
-            -- stop threads that depend on/stimulate the kernel
-            atomically $ writeTVar vertexStatusVar VFalling
-            forM_ edgeStatusVars $ \edgeStatusVar -> atomically $ do
-              readTVar edgeStatusVar >>= check . (== EDown)
+              -- stop threads that depend on/stimulate the kernel
+              atomically $ writeTVar vertexStatusVar VFalling
+              forM_ edgeStatusVars $ \edgeStatusVar -> atomically $ do
+                readTVar edgeStatusVar >>= check . (== EDown)
+              pure again
 
             -- assuming nothing else is changing it, read the final chain
             let chainDB = getChainDB kernel

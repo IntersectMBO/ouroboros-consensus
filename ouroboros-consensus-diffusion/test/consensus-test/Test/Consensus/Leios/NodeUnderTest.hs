@@ -102,6 +102,11 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (lfcReceiptTasks)
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -131,6 +136,7 @@ import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
+  , getLeiosFetchKernel
   , initNodeKernel
   , newNodeLeiosTxCache
   )
@@ -406,23 +412,24 @@ withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
                 (const encodePeerAddr)
                 (const decodePeerAddr)
         connectedPeers <- newTVarIO Set.empty
-        body
-          NodeUnderTest
-            { nodeChainDB = chainDB
-            , nodeTopLevelConfig = topLevelConfigOf cfg
-            , nodeKernel = kernel
-            , nodeApps = apps
-            , nodeVersions =
-                mkNodeToNodeInitiatorResponderVersions
-                  (featureFlags kernelArgs)
-                  (miniProtocolParameters kernelArgs)
-                  nodeVersionData
-                  (supportedNodeToNodeVersions (Proxy @Blk))
-                  apps
-            , nodeSeeds = seeds
-            , nodeLeiosAcquisitions = leiosAcquisitions
-            , nodeConnectedPeers = connectedPeers
-            }
+        Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel kernel))) $
+          body
+            NodeUnderTest
+              { nodeChainDB = chainDB
+              , nodeTopLevelConfig = topLevelConfigOf cfg
+              , nodeKernel = kernel
+              , nodeApps = apps
+              , nodeVersions =
+                  mkNodeToNodeInitiatorResponderVersions
+                    (featureFlags kernelArgs)
+                    (miniProtocolParameters kernelArgs)
+                    nodeVersionData
+                    (supportedNodeToNodeVersions (Proxy @Blk))
+                    apps
+              , nodeSeeds = seeds
+              , nodeLeiosAcquisitions = leiosAcquisitions
+              , nodeConnectedPeers = connectedPeers
+              }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a

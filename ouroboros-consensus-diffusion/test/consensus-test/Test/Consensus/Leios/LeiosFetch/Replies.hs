@@ -3,7 +3,7 @@
 
 -- | Tests of how the node's LeiosFetch client takes in replies, against an
 -- in-memory LeiosDB.
-module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
+module Test.Consensus.Leios.LeiosFetch.Replies (tests, fixture, newContext, newContextHolding, awaitNotes) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
@@ -22,7 +22,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (try)
-import Control.Monad (forM_)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
@@ -40,8 +39,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache
-  ( LeiosTxCache (..)
-  , defaultLeiosTxCacheShift
+  ( defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
 import Ouroboros.Consensus.Leios.Types
@@ -67,7 +65,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
   , acquireForgedEb
-  , noMempoolTxs
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -89,6 +86,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , recordReferencedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullJobPool)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalSource (..), newLocalReuse)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , TraceLeiosFetchClientEvent (..)
@@ -117,12 +116,6 @@ tests =
     "replies"
     [ testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
-    , testCase
-        "the client writes a body with the transactions the mempool holds, records them as validated, and acquires the closure if it holds them all"
-        test_closureFromMempool
-    , testCase
-        "the client fetches only the transactions of a body that the mempool does not hold"
-        test_partFromMempool
     , testCase "the client disconnects a peer whose body has another hash" $
         test_wrongHash
     , testCase
@@ -224,6 +217,12 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  receiptTasks <- Receipts.newReceiptTasks
+  localReuse <-
+    newLocalReuse
+      (Receipts.receiptClosing receiptTasks)
+      (LocalSource (const (pure Map.empty)) (\() -> pure Nothing))
+      writer
   txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   outstanding <-
     uncheckedNewMVar $
@@ -241,10 +240,11 @@ newContextGated point gate = do
         , lfcOutstanding = outstanding
         , lfcReady = ready
         , lfcTxCache = txCache
+        , lfcReceiptTasks = receiptTasks
+        , lfcLocalReuse = localReuse
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
-        , lfcMempoolTxs = noMempoolTxs
         , lfcTracer = nullTracer
         }
     , notes
@@ -280,43 +280,6 @@ test_acquisitions = do
   closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
 
--- | The context, but with a mempool that holds these transactions, validated
--- under an even protocol version.
-withMempool :: [LeiosTx] -> LeiosFetchClientContext IO Int -> LeiosFetchClientContext IO Int
-withMempool held ctx = ctx{lfcMempoolTxs = \hashes -> pure (Map.restrictKeys inMempool hashes)}
- where
-  inMempool = Map.fromList [(hashLeiosTx tx, (leiosTxBytes tx, EvenProtVer)) | tx <- held]
-
-test_closureFromMempool :: Assertion
-test_closureFromMempool = do
-  let (point, eb, txs) = fixture
-  (ctx, notes) <- newContext
-  processLeiosBlock
-    (withMempool txs ctx)
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
-  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
-  forM_ txs $ \tx ->
-    withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx tx))
-      >>= (@?= Just (Right EvenProtVer))
-
--- | The mempool holds only the second transaction, so the request for the
--- closure is for the first alone: a reply with just that one completes it.
-test_partFromMempool :: Assertion
-test_partFromMempool = do
-  let (point, eb, txs) = fixture
-  (ctx, notes) <- newContext
-  processLeiosBlock
-    (withMempool (drop 1 txs) ctx)
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
-  closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList (take 1 txs))
-  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
-
 -- | The one request the decision logic makes of a peer that offers the closure
 -- of the endorser block at this point, whose body the client holds.
 closureRequest :: LeiosFetchClientContext IO Int -> LeiosPoint -> IO LeiosBlockTxsRequest
@@ -337,8 +300,11 @@ closureRequest ctx point = do
     _ -> assertFailure $ "expected one request, got " <> show (length reqs)
 
 -- | An endorser block that misstates the sizes of its first two transactions,
--- by amounts that cancel out, so that their job's count and total size check
--- out. Its third transaction is too big to share their job.
+-- by amounts that cancel out, so that their job's count, total size and hashes
+-- all check out. Its third transaction is too big to share their job. The
+-- LeiosDB drops the first two, so the client acquires no closure, fetches no
+-- more of it, not even the third's job, and its settlement throws, through its
+-- receipt owner's forwarding to the original client.
 test_wrongSizedTxs :: Assertion
 test_wrongSizedTxs = do
   let tx0 = MkLeiosTx (BS8.pack "tx zero")
@@ -662,7 +628,7 @@ test_overlappingTxsReplies = do
   assertBool
     ("the bytes were not needed once and redundant once: " <> show byPeer)
     (byPeer == [needed, redundant] || byPeer == [redundant, needed])
-  readTVarIO notes >>= (@?= [AcquiredClosure point, AcquiredBody point])
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
 
 -- | This writer, whose transaction writes are not done until this returns.
 holdingTxs :: IO () -> LeiosDbWriter IO -> LeiosDbWriter IO
