@@ -163,10 +163,13 @@ runLeiosFetchClient tracer codec sizes ctx client peer channel = do
           pure
             ReceiveScope
               { receiveLimits = ProgressLimits bound 0 0
-              , receiveStarted = pure ()
+              , -- Retained input is local work too. Defer peer expiry until the
+                -- decoder either establishes the terminal receipt or needs more
+                -- channel input. This changes no absolute deadline or allowance.
+                receiveStarted = atomically (R.publishInput client True)
               , receiveInputStarting = atomically (R.publishInput client True)
-              , receiveInput = \_ -> atomically (R.publishInput client False)
-              , receiveAwaitInput = pure ()
+              , receiveInput = \_ -> pure ()
+              , receiveAwaitInput = atomically (R.publishInput client False)
               , receiveProgress = \_ -> throwIO R.MissingAttempt
               , receiveComplete = \receipt _ -> do
                   handlingAt <- getMonotonicTime

@@ -26,6 +26,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (runLeiosFetchClient)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..), Promise (..))
@@ -47,7 +48,11 @@ tests :: TestTree
 tests =
   testGroup
     "ordinary observed wire"
-    [ testProperty "accepted ownership survives removal and stale settlement under POR" propReceiptRemoval
+    [ testCase "already received input cannot earn a stall while our decoder is paused" testDecodePause
+    , testCase
+        "needing more input after decoding retains the original absolute deadline"
+        testDecodeNeedsInput
+    , testProperty "accepted ownership survives removal and stale settlement under POR" propReceiptRemoval
     , testCase
         "silent source hits the original 60-second guard and releases its registration"
         testSilentGuard
@@ -383,3 +388,78 @@ propReceiptRemoval = exploreSimTrace id (exploreRaces >> scenario) $ \_ tr ->
           && followingClaim
           && Map.lookup (L.Body point) (R.pending final) == Just (R.NetworkOwner fresh, False)
       )
+
+-- Delay the real codec after its channel input has arrived, without modifying
+-- production scheduling. A local decoder pause is not new peer-service time.
+testDecodePause :: Assertion
+testDecodePause = runSimOrThrow (decodePause True) @?= (False, False)
+
+testDecodeNeedsInput :: Assertion
+testDecodeNeedsInput = runSimOrThrow (decodePause False) @?= (False, True)
+
+decodePause :: forall s. Bool -> IOSim s (Bool, Bool)
+decodePause completeInput = do
+  (ctx, _) <- newContext
+  client <- open ctx 0
+  let rt = lfcRuntime ctx
+      (point, eb, _) = fixture
+  Just key <-
+    atomically
+      ( R.enqueueRequest
+          client
+          (Time 0)
+          (LeiosBlockRequest (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound))
+      )
+  control <- uncheckedNewTVarM Continue
+  used <- uncheckedNewTVarM False
+  let baseCodec :: NetworkCodec (IOSim s)
+      baseCodec = codec
+      encoded = Network.TypedProtocol.Codec.encode baseCodec (MsgLeiosBlock eb)
+      payload = if completeInput then encoded else BL.take 2 encoded
+      channel =
+        Channel
+          { send = const (pure ())
+          , recv = do
+              sent <- atomically (readTVar used)
+              if sent
+                then atomically retry
+                else do
+                  SI.threadDelay 0.1
+                  atomically (writeTVar used True)
+                  pure (Just payload)
+          }
+      slowCodec :: NetworkCodec (IOSim s)
+      slowCodec =
+        baseCodec
+          { Network.TypedProtocol.Codec.decode = \tok -> pause <$> Network.TypedProtocol.Codec.decode baseCodec tok
+          }
+      pause ::
+        Network.TypedProtocol.Codec.DecodeStep BL.ByteString failure (IOSim s) a ->
+        Network.TypedProtocol.Codec.DecodeStep BL.ByteString failure (IOSim s) a
+      pause (Network.TypedProtocol.Codec.DecodePartial k) = Network.TypedProtocol.Codec.DecodePartial $ \bytes -> SI.threadDelay 2 >> k bytes
+      pause step = step
+      peer =
+        toLeiosFetchClientPeerPipelined
+          (leiosFetchClientPeerPipelined 150 (nextLeiosFetchClientCommand ctx (readTVar control) client))
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+    withAsync
+      ( runLeiosFetchClient
+          nullTracer
+          slowCodec
+          (byteLimitsLeiosFetch (fromIntegral . BL.length))
+          ctx
+          client
+          peer
+          channel
+      ) $ \downstream -> do
+      SI.threadDelay 1.1
+      state <- atomically (readTVar (R.runtimeFacts rt))
+      let expired = R.expireHeads (Time 1.1) (const True) state
+          fired = maybe False (T.clockFired . R.attemptClock) (Map.lookup key (R.attempts expired))
+      SI.threadDelay 1.1
+      following <- atomically (readTVar (R.runtimeFacts rt))
+      let next = R.expireHeads (Time 2.2) (const True) following
+          firedAfter = maybe False (T.clockFired . R.attemptClock) (Map.lookup key (R.attempts next))
+      atomically (writeTVar control Terminate)
+      if completeInput then void (wait downstream) else cancel downstream
+      pure (fired, firedAfter)

@@ -115,6 +115,8 @@ data Session m peer = Session
   , receiverReady :: !(Maybe Time)
   , localHandler :: !Bool
   , publishingInput :: !Bool
+  -- ^ Input publication/local decoding may still establish an earlier terminal
+  -- receipt. Reconcile expiry only after completion or a new channel-input wait.
   , reportedBlocked :: !Bool
   -- ^ Last emitted blocked/resumed state, one bit per live invocation.
   , pressure :: ![FetchLimit]
@@ -553,7 +555,7 @@ expireHeadsObserved now needed st =
 
 -- | Effective score at the ranking pass's captured time. Reading never
 -- renews evidence or changes FIFO eligibility.
--- Rationale: @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
+-- Rationale: @docs/fetch-policy/leiosfetch-improved.md#source-selection-and-progressive-recovery@.
 closureScore :: Time -> Session m peer -> P.Score
 closureScore now = P.effectiveScore now . closurePenalty
 
