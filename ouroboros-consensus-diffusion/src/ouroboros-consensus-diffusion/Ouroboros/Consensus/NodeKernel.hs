@@ -497,10 +497,10 @@ initNodeKernel
     -- requires.
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
-        leiosFetchAnnouncementFocuser leiosFetchKernel
+        leiosFetchAnnouncementFocuser registry leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
-        leiosFetchCertificateFocuser chainDB leiosFetchKernel
+        leiosFetchCertificateFocuser registry chainDB leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
