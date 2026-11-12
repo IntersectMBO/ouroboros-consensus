@@ -28,6 +28,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (foldM, void, when)
+import Control.ResourceRegistry (ResourceRegistry, forkLinkedThread)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -436,16 +437,19 @@ settleBody ctx source point eb bodyWritten = do
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
 -- holds for it, having taken it in for another point, instead of fetching it
 -- again: decode the bytes it was received in, write the body, filling its txs from where they are
--- durably held, and settle them as an arrival would.
+-- durably held, and settle them as an arrival would. A worker writes and
+-- settles, so this never waits for room in the LeiosDB's write queue.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
 acquireCachedBody ::
   IOLike m =>
+  -- | where to fork the worker, linked; this must run on one of its threads
+  ResourceRegistry m ->
   LeiosFetchClientContext m peer ->
   LeiosPoint ->
   LeiosEbByteSizes SizeLimit ->
   m ()
-acquireCachedBody ctx point bounds =
+acquireCachedBody registry ctx point bounds =
   lookupBody lfcTxCache (pointEbHash point) >>= \case
     Nothing -> pure ()
     Just packed -> case deserialiseEndorserBlock
@@ -458,8 +462,12 @@ acquireCachedBody ctx point bounds =
         | not (admitsSizes bounds (leiosEbByteSizes eb)) -> pure ()
         | otherwise -> do
             (_noSummary, localFills) <- insertBody lfcTxCache point packed [] snocLocated
-            bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills)
-            link =<< async (settleBody ctx CachedBody point eb bodyWritten)
+            -- The write can wait for room in the LeiosDB's write queue, so the
+            -- worker makes it.
+            void $
+              forkLinkedThread registry "LeiosFetch.settleBody" $
+                writeEbBody lfcWriter point eb (Map.fromList localFills)
+                  >>= settleBody ctx CachedBody point eb
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter} = ctx
 
