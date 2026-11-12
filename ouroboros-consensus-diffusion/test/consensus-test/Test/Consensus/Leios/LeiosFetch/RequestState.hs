@@ -143,4 +143,4 @@ requireRight :: Show e => Either e a -> IO a
 requireRight = either (\err -> assertFailure (show err) >> fail "unreachable") pure
 
 candidateEnv :: LeiosFetchStaticEnv
-candidateEnv = (defaultLeiosFetchStaticEnv 262144){maxRequestedBytesSizePerPeer = 262144}
+candidateEnv = (defaultLeiosFetchStaticEnv){maxRequestedBytesSizePerPeer = 262144}

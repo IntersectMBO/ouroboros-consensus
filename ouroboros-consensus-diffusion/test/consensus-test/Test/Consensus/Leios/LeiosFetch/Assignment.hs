@@ -446,7 +446,7 @@ withClosureConfig cfg action = withStateConfig cfg $ \rt original -> do
   let refs = [(hashLeiosTx (MkLeiosTx (BS.replicate 52041 n)), 52041) | n <- [0 .. 4]]
       body = mkEndorserBlock refs
       point = MkLeiosPoint (SlotNo 5) (endorserBlockHash body)
-      pool = newLeiosJobPool (defaultLeiosFetchStaticEnv 262144) (IntMap.fromList (zip [0 ..] refs))
+      pool = newLeiosJobPool (defaultLeiosFetchStaticEnv) (IntMap.fromList (zip [0 ..] refs))
       out =
         original
           { ebState = Map.singleton point (MkEbState SNothing (BodyAcquired pool))
@@ -518,7 +518,7 @@ orderedClosureSources point counts times offers =
     )
 
 defaultConfig :: LeiosFetchStaticEnv
-defaultConfig = defaultLeiosFetchStaticEnv maxBound
+defaultConfig = defaultLeiosFetchStaticEnv
 
 planRequests ::
   Ord peer =>

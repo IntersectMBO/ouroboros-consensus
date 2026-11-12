@@ -135,7 +135,6 @@ propEnv =
   MkLeiosFetchStaticEnv
     { maxRequestedBytesSizePerPeer = 32768
     , maxRequestedBytesSizePerBigLedgerPeer = 65536
-    , maxRequestBytesSize = 500000
     , maxJobBytesSize = 1024
     , maxBodiesPerPeer = 4
     , minimumServiceRate = 300000

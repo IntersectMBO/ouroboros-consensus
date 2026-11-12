@@ -126,6 +126,10 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (lfcReceiptTasks)
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
+  ( LeiosFetchStaticEnv
+  , defaultLeiosFetchStaticEnv
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
@@ -408,6 +412,8 @@ data StdRunNodeArgs m blk
   -- ^ Determine whether to use the system default mempool capacity or explicitly set
   -- capacity of the mempool.
   , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , srnLeiosFetchConfig :: Maybe LeiosFetchStaticEnv
+  -- ^ Ordinary fetch tuning; Nothing uses consensus defaults.
   , srnLeiosAnnouncementAgeLimits :: Maybe LeiosAnnouncementAgeLimits
   -- ^ Overrides 'defaultLeiosAnnouncementAgeLimits', how old an announcement
   -- the node relays or accepts. A network whose immutable tip is only minutes
@@ -1116,6 +1122,7 @@ mkNodeKernelArgs
           , txSubmissionRng = txRng
           , leiosAcquisitions
           , leiosFetchRng = lfRng
+          , leiosFetchConfig = defaultLeiosFetchStaticEnv
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar
           , genesisArgs
@@ -1313,6 +1320,7 @@ stdLowLevelRunNodeArgsIO
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
         . modifyLeiosAnnouncementAgeLimits
+        . maybe id (\config nka -> nka{leiosFetchConfig = config}) srnLeiosFetchConfig
      where
       modifyBlockFetchConfiguration =
         maybe

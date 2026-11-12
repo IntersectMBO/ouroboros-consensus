@@ -63,6 +63,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttObservation)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchLimit)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 
@@ -142,7 +143,7 @@ data Client m peer = Client
 
 newRuntime :: IOLike m => LeiosFetchStaticEnv -> W.Readiness m -> STM m Bool -> m (Runtime m peer)
 newRuntime cfg ready closing = do
-  checked <- either (throwIO . InvalidConfig) pure (validateLeiosFetchStaticEnv 60000000 cfg)
+  checked <- either (throwIO . InvalidConfig) pure (validateLeiosFetchStaticEnv maxIngressBytes cfg)
   facts <- uncheckedNewTVarM (RuntimeState Map.empty Map.empty L.emptyLedger Map.empty 0 0)
   pure (Runtime checked facts closing ready)
 
@@ -255,11 +256,12 @@ enqueueRequest client@(Client rt peer _) now req = do
         -- Declared job sizes are untrusted. Configuration ensures all legal
         -- indivisible TXs fit; an oversized invalid declaration is rejected,
         -- never promoted to a fatal coordinator exception.
-        let beyondProtocol = case req of LeiosBlockTxsRequest{} -> bytes > 500000; _ -> False
+        let beyondProtocol = case req of LeiosBlockTxsRequest{} -> bytes > maxLeiosTxsRequestBytesSize; _ -> False
         if beyondProtocol
           || blocked peer st
           || not (workEligible work st)
-          || length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (ledger st)), p == peer] >= 150
+          || length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (ledger st)), p == peer]
+            >= maxOutstandingRequests
           then pure Nothing
           else case L.reserve cfg (bigLedger session) key (L.Lease work bytes) (ledger st) of
             Left _ -> pure Nothing

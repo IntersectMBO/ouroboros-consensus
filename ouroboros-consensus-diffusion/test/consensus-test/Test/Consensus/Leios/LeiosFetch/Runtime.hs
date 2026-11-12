@@ -297,7 +297,7 @@ tests =
 withClient :: (R.Runtime IO Int -> R.Client IO Int -> IO ()) -> IO ()
 withClient action = do
   ready <- atomically W.newReadiness
-  rt <- R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (pure False)
+  rt <- R.newRuntime (defaultLeiosFetchStaticEnv) ready (pure False)
   client <- atomically (openClient rt 0 False (pure Nothing))
   action rt client
 

@@ -827,7 +827,8 @@ limitPressure rt peer req state
       L.Body{}
         | L.bodyRequests used >= maxBodiesPerPeer cfg -> [FetchBodyCount]
       _
-        | length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (R.ledger state)), p == peer] >= 150 ->
+        | length [() | (L.AttemptKey p _ _, _) <- Map.toList (L.leases (R.ledger state)), p == peer]
+            >= maxOutstandingRequests ->
             [FetchCommandCount]
       L.Job{}
         | L.transactionBytes used + fromIntegral (R.bytesOf req) > fromIntegral (fetchTxLimit summary) ->

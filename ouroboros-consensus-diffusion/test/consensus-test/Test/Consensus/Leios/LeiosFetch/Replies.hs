@@ -224,14 +224,14 @@ newContextGated point gate = do
           emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
   ready <- atomically W.newReadiness
   runtime <-
-    R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (Receipts.receiptClosing receiptTasks)
+    R.newRuntime (defaultLeiosFetchStaticEnv) ready (Receipts.receiptClosing receiptTasks)
   notes <- newTVarIO []
   let note = \case
         AcquiredEb p _bodySize -> AcquiredBody p
         AcquiredEbTxs p -> AcquiredClosure p
   pure
     ( MkLeiosFetchClientContext
-        { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
+        { lfcStaticEnv = defaultLeiosFetchStaticEnv
         , lfcOutstanding = outstanding
         , lfcReady = ready
         , lfcRuntime = runtime

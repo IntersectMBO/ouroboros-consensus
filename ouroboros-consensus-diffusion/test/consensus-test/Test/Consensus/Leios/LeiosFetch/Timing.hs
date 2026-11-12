@@ -85,4 +85,4 @@ tests =
       snapshot candidateEnv (Time 0) (Just (RttObservation 0.1 (Time 0))) bytes
 
 candidateEnv :: LeiosFetchStaticEnv
-candidateEnv = (defaultLeiosFetchStaticEnv 262144){maxRequestedBytesSizePerPeer = 262144}
+candidateEnv = (defaultLeiosFetchStaticEnv){maxRequestedBytesSizePerPeer = 262144}
