@@ -85,7 +85,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (..))
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, LeiosPoint, ProtVerParity, TxHash, protVerParity)
-import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
+import Ouroboros.Consensus.Leios.VoteState (VoteState, getCertificate, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Leios.Voting
   ( LeiosVoterEnv (..)
   , LeiosVoterTxCache
@@ -779,6 +779,7 @@ forkBlockForging IS{..} onForgedEb leiosVoterEnv subscribeClosures (MkBlockForgi
           mempool
           bf
           onForgedEb
+          (getCertificate (voterVoteState leiosVoterEnv))
           currentSlot
 
   voting bf =
