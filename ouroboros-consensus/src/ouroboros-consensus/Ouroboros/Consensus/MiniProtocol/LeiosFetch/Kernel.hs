@@ -229,10 +229,13 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
 
   -- The decision loop reads the registered peers within the same critical
   -- section in which it assigns requests, so it cannot assign this peer
-  -- anything after its requests are cancelled here.
-  unregister (lifetimeId, _) = modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
-    atomically $ modifyTVar lfkPeers (Map.delete lifetimeId)
-    pure $! removePeerFromOutstanding lifetimeId outstanding
+  -- anything after its requests are cancelled here. It then runs again, to ask
+  -- other peers for what this one had in flight.
+  unregister (lifetimeId, _) = do
+    modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
+      atomically $ modifyTVar lfkPeers (Map.delete lifetimeId)
+      pure $! removePeerFromOutstanding lifetimeId outstanding
+    void $ tryPutMVar (lfcReady lfkContext) ()
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
 -- with, unless the point is older than what has been pruned, and wake the
