@@ -307,7 +307,7 @@ processLeiosBlock ctx peer req bytes = do
       -- Settled only once the write lands, since the settle needs the offsets
       -- the point then holds. The client takes no other reply from this peer
       -- meanwhile.
-      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills
+      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills mempty
       settleBody ctx peer point eb heldOffs
   -- Checked last, so that the body is still taken: throwing it away would let
   -- a peer deny us an endorser block just by lowballing its own offer.
@@ -440,7 +440,7 @@ acquireForgedEb ::
   m ()
 acquireForgedEb ctx elId forged = do
   _ <- insertBody lfcTxCache point (packEndorserBlock eb)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty
+  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   awaitAll [void bodyWritten, txsWritten]
   -- The write of these txs has landed at this point: record them, as fill
