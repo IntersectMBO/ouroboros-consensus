@@ -75,7 +75,6 @@ data RequestError
   | OrdinalExhausted
   | MissingAttempt
   | InvalidRequestGeometry
-  | JobBeyondCredit
   | ClientClosed
   deriving Show
 

@@ -1580,6 +1580,8 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Client
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
+    Test.Consensus.Leios.LeiosFetch.Bookkeeping
+    Test.Consensus.Leios.LeiosFetch.Assignment
     Test.Consensus.Leios.LeiosFetch.LocalReuse
     Test.Consensus.Leios.LeiosFetch.Wait
     Test.Consensus.Leios.LeiosFetch.PeerPenalty
