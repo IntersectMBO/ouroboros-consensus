@@ -87,6 +87,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -205,6 +206,9 @@ data NodeUnderTest m = NodeUnderTest
   , nodeApps :: BlockNodeToNodeVersion Blk -> NodeApps m
   , nodeVersions :: NodeVersions m
   , nodeSeeds :: Seeds StdGen
+  , nodeLeiosAcquisitions :: LeiosAcquisitions m
+  -- ^ Where a test emits the endorser blocks and closures the node
+  -- acquires.
   }
 
 -- | Add a chain to the node's ChainDB, oldest first, starting at genesis
@@ -276,6 +280,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   -- What a node with Genesis disabled, the default, runs with.
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = configSeeds cfg
+  leiosAcquisitions <- newLeiosAcquisitions
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -292,6 +297,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             (seedSnapshotDelay seeds)
             (fst (mkInMemoryArgs ()))
             leiosDB
+            leiosAcquisitions
             ChainDB.defaultArgs
             updateChainDbArgs
       )
@@ -317,6 +323,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
               leiosDB
+              leiosAcquisitions
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
@@ -364,6 +371,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   (supportedNodeToNodeVersions (Proxy @Blk))
                   apps
             , nodeSeeds = seeds
+            , nodeLeiosAcquisitions = leiosAcquisitions
             }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.

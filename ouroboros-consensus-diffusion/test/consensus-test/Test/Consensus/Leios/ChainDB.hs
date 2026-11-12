@@ -11,6 +11,7 @@ import Control.Monad (forM_, void)
 import Control.Monad.Class.MonadSTM (atomically)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Ouroboros.Consensus.Block
@@ -22,6 +23,7 @@ import Ouroboros.Consensus.Block
   , blockSlot
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
@@ -52,14 +54,22 @@ tests =
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "ChainSel does not verify a certificate again for a claim it established" $
         runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
-    , testCase "a restart forgets a certifying block off the selection, until it arrives again" $
-        runSimOrThrow (heldAcrossRestart BodyOfA) @?= (True, False, True)
-    , testCase "a restart keeps a certifying block on the selection" $
-        runSimOrThrow (heldAcrossRestart ClosureOfA) @?= (True, True, True)
-    , testCase "the GC keeps an endorser block an immutable block certifies" $
-        fst (runSimOrThrow bodiesAfterGc) @?= endorserBlockReferences ebA
-    , testCase "the GC evicts an endorser block no block certifies" $
-        snd (runSimOrThrow bodiesAfterGc) @?= []
+    , testCase
+        "a restart keeps a certifying block on the selection, and forgets one off it until it arrives again"
+        $ forM_ [minBound .. maxBound]
+        $ \whatOfA ->
+          assertEqual
+            (show whatOfA)
+            ( True
+            , case whatOfA of
+                BodyOfA -> False
+                ClosureOfA -> True
+            , True
+            )
+            (runSimOrThrow (heldAcrossRestart whatOfA))
+    , testCase
+        "the GC keeps an endorser block an immutable block certifies, and evicts one no block certifies"
+        $ runSimOrThrow bodiesAfterGc @?= (Just (endorserBlockBytes ebA), Nothing)
     , testCase "ChainSel parks a certifying block until the closure arrives" $
         runSimOrThrow tipsAroundClosure
           @?= (blockPoint announcingA, blockPoint certifyingA)
@@ -72,12 +82,11 @@ tests =
 -- announces B, which nothing certifies. Once the immutable tip has passed both
 -- announcements and the GC has run, these are the bodies of A and B that the
 -- LeiosDB still holds.
-bodiesAfterGc :: IOSim s ([(TxHash, BytesSize)], [(TxHash, BytesSize)])
+bodiesAfterGc :: IOSim s (Maybe ByteString, Maybe ByteString)
 bodiesAfterGc = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA), (pointB, ebB)] $ \(point, eb) -> do
-      await =<< writeEbPoint writer point (encodeEndorserBlockSize eb)
       void $ await =<< writeEbBody writer point eb
       void $
         await
@@ -87,6 +96,10 @@ bodiesAfterGc = withNode $ \node -> do
             [ (offset, BS.replicate (fromIntegral size) 0)
             | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences eb)
             ]
+  atomically $
+    mapM_
+      (emitLeiosAcquisition (nodeLeiosAcquisitions node) . AcquiredEbTxs)
+      [pointA, pointB]
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks node chain
@@ -94,8 +107,8 @@ bodiesAfterGc = withNode $ \node -> do
   threadDelay 100
   withReader leiosDb $ \reader ->
     (,)
-      <$> lookupEbBody reader (pointEbHash pointA)
-      <*> lookupEbBody reader (pointEbHash pointB)
+      <$> lookupEbBody reader pointA
+      <*> lookupEbBody reader pointB
  where
   -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
   -- announcements.
@@ -126,7 +139,6 @@ heldAcrossRestart whatOfA = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
     void $ await =<< writeEbBody writer pointA ebA
     case whatOfA of
       BodyOfA -> pure ()
@@ -160,6 +172,7 @@ data WhatOfA
     BodyOfA
   | -- | Its body and its transactions
     ClosureOfA
+  deriving (Show, Enum, Bounded)
 
 -- | 'certifyingA', except a minority made its certificate.
 minorityCertifyingA :: LeiosTestBlock
@@ -200,13 +213,12 @@ ebB = mkEndorserBlock [(UnsafeHash (SBS.replicate 32 2), 10)]
 
 -- | The chain announces A and then certifies it, while the LeiosDB holds A's
 -- body but not its transactions. The tip of the selected chain before they
--- arrive, and after.
+-- arrive and the node emits their acquisition, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
 tipsAroundClosure = withNode $ \node -> do
   let leiosDb = getLeiosDB (nodeKernel node)
       chainDB = nodeChainDB node
   withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
     void $ await =<< writeEbBody writer pointA ebA
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
@@ -222,6 +234,8 @@ tipsAroundClosure = withNode $ \node -> do
           [ (offset, BS.replicate (fromIntegral size) 0)
           | (offset, (_txHash, size)) <- zip [0 ..] (endorserBlockReferences ebA)
           ]
+  atomically $
+    emitLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs pointA)
   threadDelay 1
   tipAfter <- atomically $ ChainDB.getTipPoint chainDB
   pure (tipBefore, tipAfter)
@@ -232,7 +246,6 @@ tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
 tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    await =<< writeEbPoint writer pointA (encodeEndorserBlockSize ebA)
     void $ await =<< writeEbBody writer pointA ebA
     void $
       await

@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
   , LoE (LoEDisabled)
@@ -96,6 +97,9 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- ^ RNG used to randomly determine the duration of snapshot delays
   , cdbsLeiosDb :: HKD f (LeiosDbHandle m)
   -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
+  , cdbsSubscribeLeiosAcquisitions :: HKD f (m (STM m LeiosEbNotification))
+  -- ^ Subscribe to the node's Leios acquisitions; see
+  -- 'Ouroboros.Consensus.Leios.Acquisitions.subscribeLeiosAcquisitions'.
   }
 
 -- | Default arguments
@@ -132,6 +136,7 @@ defaultSpecificArgs =
     , cdbsLoE = pure LoEDisabled
     , cdbsSnapshotDelayRNG = noDefault
     , cdbsLeiosDb = noDefault
+    , cdbsSubscribeLeiosAcquisitions = noDefault
     }
 
 -- | Default arguments
@@ -190,6 +195,8 @@ completeChainDbArgs ::
   LedgerDbBackendArgs m blk ->
   -- | The node's LeiosDB
   LeiosDbHandle m ->
+  -- | Subscribe to the node's Leios acquisitions
+  m (STM m LeiosEbNotification) ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -204,6 +211,7 @@ completeChainDbArgs
   snapshotDelayRNG
   flavorArgs
   leiosDb
+  subscribeLeiosAcquisitions
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -246,6 +254,7 @@ completeChainDbArgs
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
             , cdbsSnapshotDelayRNG = snapshotDelayRNG
             , cdbsLeiosDb = leiosDb
+            , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions
             }
       }
 
