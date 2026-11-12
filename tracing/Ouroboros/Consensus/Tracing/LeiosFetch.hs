@@ -8,19 +8,16 @@ module Ouroboros.Consensus.Tracing.LeiosFetch () where
 import Cardano.Crypto.Hash (hashToStringAsHex)
 import Cardano.Logging
 import Control.Exception (displayException)
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..))
 import Data.Aeson (Value (String), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Maybe.Strict (strictMaybeToMaybe)
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
-  ( FetchArrivalBytes (..)
-  , LeiosBlockTxSources (..)
-  , LeiosTxCacheInsertBodySummary (..)
-  , TraceLeiosFetchClientEvent (..)
-  , TraceLeiosFetchServerEvent (..)
-  )
 
 instance
   (LogFormatting peer, Show peer) =>
@@ -41,7 +38,7 @@ instance
         , "localFills" .= btsLocalFills sources
         , "mempool" .= btsMempool sources
         , "remaining" .= btsRemaining sources
-        , foldMap summaryFields summary
+        , foldMap cacheSummaryFields summary
         ]
     TraceLeiosFetchClientTxsArrived peer point arrival ->
       mconcat
@@ -54,11 +51,15 @@ instance
       mconcat ["kind" .= String "BlockAcquired", pointFields point, "age" .= age]
     TraceLeiosFetchClientBlockTxsAcquired point age ->
       mconcat ["kind" .= String "BlockTxsAcquired", pointFields point, "age" .= age]
+    TraceLeiosFetchClientClosureSummary point summary ->
+      mconcat ["kind" .= String "ClosureSummary", pointFields point, summaryFields summary]
+    TraceLeiosFetchClientPolicy peer invocation event ->
+      mconcat ["peer" .= forMachine dtal peer, "invocation" .= invocation, routineFields event]
    where
     arrivalFields (MkFetchArrivalBytes invalid evicted good extra) =
       mconcat
         ["invalidBytes" .= invalid, "evictedBytes" .= evicted, "goodBytes" .= good, "extraBytes" .= extra]
-    summaryFields summary =
+    cacheSummaryFields summary =
       "txCache"
         .= Aeson.object
           [ "acquired" .= ibsAcquired summary
@@ -86,6 +87,10 @@ instance
     TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
     TraceLeiosFetchClientBlockTxsAcquired point _ ->
       "Acquired the transactions of endorser block " <> pretty point
+    TraceLeiosFetchClientClosureSummary point summary ->
+      "Closure acquisition " <> pretty point <> ": " <> showT summary
+    TraceLeiosFetchClientPolicy peer invocation event ->
+      "LeiosFetch invocation " <> showT invocation <> " for " <> showT peer <> ": " <> showT event
    where
     pretty = Text.pack . prettyLeiosPoint
     summaryHuman summary =
@@ -108,12 +113,15 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
     TraceLeiosFetchClientTxsArrived{} -> Namespace [] ["TxsArrived"]
     TraceLeiosFetchClientBlockAcquired{} -> Namespace [] ["BlockAcquired"]
     TraceLeiosFetchClientBlockTxsAcquired{} -> Namespace [] ["BlockTxsAcquired"]
+    TraceLeiosFetchClientClosureSummary{} -> Namespace [] ["ClosureSummary"]
+    TraceLeiosFetchClientPolicy _ _ event -> Namespace [] [routineName event]
 
   severityFor (Namespace _ ["BlockArrived"]) _ = Just Debug
   severityFor (Namespace _ ["BlockTxSources"]) _ = Just Info
   severityFor (Namespace _ ["TxsArrived"]) _ = Just Debug
   severityFor (Namespace _ ["BlockAcquired"]) _ = Just Info
   severityFor (Namespace _ ["BlockTxsAcquired"]) _ = Just Info
+  severityFor (Namespace _ [name]) _ | name `elem` routineNames || name == "ClosureSummary" = Just Info
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["BlockArrived"]) =
@@ -129,8 +137,13 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
     Just
       "The node acquired an endorser block it fetched; its age is how long after its point's slot began."
   documentFor (Namespace _ ["BlockTxsAcquired"]) =
+    Just "The node durably holds all the transactions of an endorser block it fetched."
+  documentFor (Namespace _ ["ClosureSummary"]) =
     Just
-      "The node acquired all the transactions of an endorser block it fetched; its age is how long after its point's slot began."
+      "Distinct confirmed closure payload origins; excludes framing, retries and redundant wire traffic."
+  documentFor (Namespace _ [name])
+    | name `elem` routineNames =
+        Just "An ordinary fetch policy transition, captured by its original request or invocation owner."
   documentFor _ = Nothing
 
   allNamespaces =
@@ -140,6 +153,7 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
     , Namespace [] ["BlockAcquired"]
     , Namespace [] ["BlockTxsAcquired"]
     ]
+      ++ [Namespace [] [name] | name <- "ClosureSummary" : routineNames]
 
 pointFields :: LeiosPoint -> Aeson.Object
 pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
@@ -148,6 +162,7 @@ pointFields (MkLeiosPoint (SlotNo slot) ebHash) =
 -- The exceptions these events carry disconnect only the client, not the whole
 -- node, so their fields are rendered for structured logging, rather than left
 -- to the network layer's traces of the same exceptions, which 'show' them.
+
 instance LogFormatting TraceLeiosFetchServerEvent where
   forMachine _dtal = \case
     TraceLeiosFetchServerBlockRequested point ->
@@ -274,3 +289,143 @@ instance MetaTrace TraceLeiosFetchServerEvent where
     , Namespace [] ["TxsDbFailure"]
     , Namespace [] ["OpenReaderDbFailure"]
     ]
+
+-- These format only detached scalar facts; the source events contain no
+-- response vectors, request commitments, candidate maps or live state readers.
+instance (LogFormatting peer, Show peer) => LogFormatting (TraceLeiosFetchDetailEvent peer) where
+  forMachine dtal (TraceLeiosFetchDetailEvent peer invocation event) =
+    mconcat ["peer" .= forMachine dtal peer, "invocation" .= invocation, detailFields event]
+  forHuman (TraceLeiosFetchDetailEvent peer invocation event) =
+    "LeiosFetch invocation " <> showT invocation <> " for " <> showT peer <> ": " <> showT event
+
+instance MetaTrace (TraceLeiosFetchDetailEvent peer) where
+  namespaceFor (TraceLeiosFetchDetailEvent _ _ event) = Namespace [] [detailName event]
+  severityFor (Namespace _ [name]) _ | name `elem` detailNames = Just Debug
+  severityFor _ _ = Nothing
+  documentFor (Namespace _ [name])
+    | name `elem` detailNames =
+        Just
+          "A captured request lifecycle fact. Times are original monotonic observations; this independently suppressible tracer emits no packet fragments."
+  documentFor _ = Nothing
+  allNamespaces = [Namespace [] [name] | name <- detailNames]
+
+routineName :: FetchRoutine -> Text.Text
+routineName = \case
+  FetchUpstreamChanged{} -> "UpstreamStateChanged"
+  FetchHedgeOpened{} -> "HedgeOpened"
+  FetchBodyWon{} -> "BodyWinner"
+  FetchPenaltyCharged{} -> "PenaltyCharged"
+  FetchInvocationClosed{} -> "InvocationClosed"
+  FetchRegistrationRemoved{} -> "RegistrationRemoved"
+
+routineNames :: [Text.Text]
+routineNames =
+  [ "UpstreamStateChanged"
+  , "HedgeOpened"
+  , "BodyWinner"
+  , "PenaltyCharged"
+  , "InvocationClosed"
+  , "RegistrationRemoved"
+  ]
+
+routineFields :: FetchRoutine -> Aeson.Object
+routineFields event = mconcat ["kind" .= routineName event, fields]
+ where
+  fields = case event of
+    FetchUpstreamChanged blocked -> "blocked" .= blocked
+    FetchHedgeOpened request cause -> mconcat [requestFields request, "cause" .= showT cause]
+    FetchBodyWon request actual -> mconcat [requestFields request, "actualBytes" .= actual, "stage" .= String "WriterAccepted"]
+    FetchPenaltyCharged request at previous effective following ->
+      mconcat
+        [ requestFields request
+        , "eventAt" .= seconds at
+        , "savedBefore" .= penaltyFields previous
+        , "effectiveBefore" .= P.scoreValue effective
+        , "savedAfter" .= penaltyFields following
+        ]
+    FetchInvocationClosed used failed -> mconcat [usageFields used, "failed" .= failed]
+    FetchRegistrationRemoved used -> usageFields used
+
+requestFields :: FetchRequest -> Aeson.Object
+requestFields (FetchRequest ordinal point job bytes) =
+  mconcat
+    [pointFields point, "ordinal" .= ordinal, "job" .= strictMaybeToMaybe job, "payloadBytes" .= bytes]
+
+usageFields :: FetchUsage -> Aeson.Object
+usageFields (FetchUsage bytes bodies byteLimit bodyLimit) =
+  mconcat
+    [ "txBytesReserved" .= bytes
+    , "bodiesReserved" .= bodies
+    , "txByteLimit" .= byteLimit
+    , "bodyCountLimit" .= bodyLimit
+    ]
+
+penaltyFields :: P.Snapshot -> Aeson.Object
+penaltyFields value =
+  mconcat
+    [ "score" .= P.scoreValue (P.savedScore value)
+    , "at" .= fmap seconds (strictMaybeToMaybe (P.savedAt value))
+    ]
+
+summaryFields :: ClosureSummary -> Aeson.Object
+summaryFields (ClosureSummary total local network transactions missing forged) =
+  mconcat
+    [ "closureBytes" .= total
+    , "localBytes" .= local
+    , "uniqueNetworkBytes" .= network
+    , "uniqueNetworkTransactions" .= transactions
+    , "missingAtBodyBytes" .= missing
+    , "completedByForge" .= forged
+    ]
+
+detailName :: FetchDetail -> Text.Text
+detailName = \case
+  FetchAdmitted{} -> "RequestAdmitted"
+  FetchTransition{} -> "Transition"
+  FetchHeadActivated{} -> "HeadActivated"
+  FetchPressureChanged{} -> "PeerPressureChanged"
+
+detailNames :: [Text.Text]
+detailNames = ["RequestAdmitted", "Transition", "HeadActivated", "PeerPressureChanged"]
+
+detailFields :: FetchDetail -> Aeson.Object
+detailFields event = mconcat ["kind" .= detailName event, fields]
+ where
+  fields = case event of
+    FetchAdmitted request (FetchBudget rate rtt transfer cold source) at used selected ->
+      mconcat
+        [ requestFields request
+        , usageFields used
+        , "eventAt" .= seconds at
+        , "minimumBitsPerSecond" .= rate
+        , "rttAllowanceSeconds" .= duration rtt
+        , "transferSeconds" .= duration transfer
+        , "startupSeconds" .= duration cold
+        , "rttSource" .= showT source
+        , maybe mempty selectionFields (strictMaybeToMaybe selected)
+        ]
+    FetchTransition request phase at used ->
+      mconcat
+        [requestFields request, usageFields used, "phase" .= showT phase, "eventAt" .= seconds at]
+    FetchHeadActivated request started deadline continuous ->
+      mconcat
+        [ requestFields request
+        , "headStart" .= seconds started
+        , "deadline" .= seconds deadline
+        , "continuous" .= continuous
+        ]
+    FetchPressureChanged limits used -> mconcat [usageFields used, "limits" .= map showT limits]
+
+selectionFields :: FetchSelection -> Aeson.Object
+selectionFields (FetchSelection at score offered) =
+  mconcat
+    [ "selectionAt" .= seconds at
+    , "selectionScore" .= P.scoreValue score
+    , "firstClosureOfferAt" .= fmap seconds (strictMaybeToMaybe offered)
+    ]
+
+seconds :: Time -> Double
+seconds (Time value) = duration value
+
+duration :: DiffTime -> Double
+duration = realToFrac

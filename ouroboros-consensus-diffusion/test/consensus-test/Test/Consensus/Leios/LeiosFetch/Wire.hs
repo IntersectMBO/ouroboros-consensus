@@ -29,7 +29,14 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver.Limits (runPeerWithLimits)
-import Test.Consensus.Leios.LeiosFetch.Replies (awaitNotes, fixture, newContext, tryEnqueueRequest)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( assignRequests
+  , awaitNotes
+  , expireRuntimeHeads
+  , fixture
+  , newContext
+  , tryEnqueueRequest
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -124,6 +131,7 @@ testPipeline = bounded $ do
               nullTracer
               codec
               (byteLimitsLeiosFetch (fromIntegral . BL.length))
+              ctx
               client
               peer
               channel
@@ -166,7 +174,7 @@ testPendingBody = bounded $ do
   b <- open ctx 1
   keyA <- request a descriptor
   atomically $ R.commitRequest a keyA >>= check >> R.observeSend a (Time 0)
-  atomically (modifyTVar (R.runtimeFacts rt) (R.expireHeads (Time 10) (const True)))
+  atomically (modifyTVar (R.runtimeFacts rt) (expireRuntimeHeads (Time 10) (const True)))
   keyB <- request b descriptor
   gate <- newEmptyTMVarIO
   accepted <- newEmptyTMVarIO
@@ -182,12 +190,12 @@ testPendingBody = bounded $ do
                 }
           }
   Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
-    processLeiosBlock (requestReplyOwnership rt keyA (LeiosBlockRequest req)) gated 0 req (serialiseEndorserBlock eb)
+    processLeiosBlock (requestReplyOwnership gated keyA descriptor) gated 0 req (serialiseEndorserBlock eb)
     atomically (readTMVar accepted)
     atomically $ R.closePeer rt 0 >> R.closePeer rt 0
     -- B already physically owes a response, but cannot become another local
     -- writer while A's accepted receipt owns this body.
-    processLeiosBlock (requestReplyOwnership rt keyB (LeiosBlockRequest req)) ctx 1 req (serialiseEndorserBlock eb)
+    processLeiosBlock (requestReplyOwnership ctx keyB descriptor) ctx 1 req (serialiseEndorserBlock eb)
     atomically (Map.size . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= 1)
     atomically (putTMVar gate ())
     void (awaitNotes notes 1)

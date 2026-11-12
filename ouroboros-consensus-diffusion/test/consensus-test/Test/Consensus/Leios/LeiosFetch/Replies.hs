@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -12,6 +13,8 @@ module Test.Consensus.Leios.LeiosFetch.Replies
   , processLeiosBlock
   , processLeiosBlockTxs
   , tryEnqueueRequest
+  , assignRequests
+  , expireRuntimeHeads
   ) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
@@ -44,10 +47,12 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Vector.Strict as V
+import Data.Word (Word64)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache
   ( LeiosTxCache (..)
@@ -78,12 +83,16 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , acquireForgedEb
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage (ClosureSummary (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( EbFetchState (..)
+  ( ClosureOfferTimes
+  , EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
   , LeiosOutstanding (..)
+  , PeerOffer
+  , assignRequestsObserved
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
@@ -130,11 +139,36 @@ tryEnqueueRequest ::
 tryEnqueueRequest client at request =
   either (const Nothing) Just <$> R.enqueueRequest client at request
 
+-- | Ignore detached reports when a scenario checks assignment state directly.
+assignRequests ::
+  (IOLike.IOLike m, Ord peer) =>
+  R.Runtime m peer ->
+  IOLike.Time ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes Leios.SizeLimit)) ->
+  Maybe (SlotNo, Word64) ->
+  ClosureOfferTimes peer ->
+  Map.Map peer (Map.Map LeiosPoint PeerOffer) ->
+  LeiosOutstanding peer ->
+  m (LeiosOutstanding peer)
+assignRequests rt at forecast horizon times offers out =
+  fst <$> assignRequestsObserved rt at forecast horizon times offers out
+
+-- | Keep the real expiry transition when its reports are not the test's subject.
+expireRuntimeHeads ::
+  Ord peer =>
+  IOLike.Time ->
+  (L.Work LeiosPoint -> Bool) ->
+  R.RuntimeState m peer ->
+  R.RuntimeState m peer
+expireRuntimeHeads now wanted = fst . R.expireHeadsObserved now wanted
+
 tests :: TestTree
 tests =
   testGroup
     "replies"
-    [ testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
+    [ testCase "closure summaries count confirmed network payload once" test_summary
+    , testCase "forge summaries keep locally produced bytes local" test_forgeSummary
+    , testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
     , testCase
         "cache eviction cannot invalidate a positive body receipt"
@@ -277,6 +311,7 @@ newContextGated point gate = do
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
+        , lfcDetailTracer = nullTracer
         , lfcTracer = nullTracer
         }
     , notes
@@ -812,19 +847,6 @@ test_txsWhileForging = do
   [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
     @?= [(peer, point, fetchArrivalExtra closure)]
 
--- Unit fixtures isolate payload validation/storage. Runtime ownership and actual
--- client/driver interactions are exercised separately by lifecycle tests.
-unitOwnership :: ReplyOwnership IO
-unitOwnership = ReplyOwnership (pure True) (pure ()) (pure ()) (pure ())
-
-processLeiosBlock ::
-  LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
-processLeiosBlock ctx source request body = Replies.processLeiosBlock unitOwnership ctx source request (serialiseEndorserBlock body)
-
-processLeiosBlockTxs ::
-  LeiosFetchClientContext IO Int -> Int -> LeiosBlockTxsRequest -> V.Vector LeiosTx -> IO ()
-processLeiosBlockTxs = Replies.processLeiosBlockTxs unitOwnership
-
 -- | A peer sends the 'fixture''s body, the node asks it for the closure, and
 -- the node's own forge acquires the same endorser block at that point before
 -- the peer's txs arrive.
@@ -850,3 +872,56 @@ test_txsAfterForged = do
 -- | The election announcing the endorser block at this point.
 fixtureElection :: LeiosPoint -> ElectionId
 fixtureElection point = ElectionId (pointSlotNo point) electee
+
+-- Unit fixtures isolate payload validation/storage. Runtime ownership and actual
+-- client/driver interactions are exercised separately by lifecycle tests.
+unitOwnership :: ReplyOwnership IO
+unitOwnership = ReplyOwnership (pure True) (\_ _ -> pure (pure ())) (\_ -> pure (pure ())) (pure ())
+
+processLeiosBlock ::
+  LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
+processLeiosBlock ctx source request body = Replies.processLeiosBlock unitOwnership ctx source request (serialiseEndorserBlock body)
+
+processLeiosBlockTxs ::
+  LeiosFetchClientContext IO Int -> Int -> LeiosBlockTxsRequest -> V.Vector LeiosTx -> IO ()
+processLeiosBlockTxs = Replies.processLeiosBlockTxs unitOwnership
+
+-- Real writer receipts and the normal settlement path, including a duplicate
+-- response after semantic completion. Arrival counters are deliberately unused.
+test_summary :: Assertion
+test_summary = do
+  (base, notes) <- newContext
+  summaries <- newTVarIO []
+  let (point, eb, txs) = fixture
+      ctx =
+        base
+          { lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientClosureSummary p value -> atomically (modifyTVar summaries ((p, value) :))
+              _ -> pure ()
+          }
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    processLeiosBlockTxs ctx peer req (V.fromList txs)
+    _ <- awaitNotes notes 2
+    processLeiosBlockTxs ctx otherPeer req (V.fromList txs)
+  let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
+  readTVarIO summaries >>= (@?= [(point, ClosureSummary total 0 total 2 (Just total) False)])
+
+test_forgeSummary :: Assertion
+test_forgeSummary = do
+  (base, _) <- newContext
+  summaries <- newTVarIO []
+  let (point, _, txs) = fixture
+      ctx =
+        base
+          { lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientClosureSummary _ value -> atomically (modifyTVar summaries (value :))
+              _ -> pure ()
+          }
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+    acquireForgedEb ctx point (forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs))
+  let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
+  readTVarIO summaries >>= (@?= [ClosureSummary total total 0 0 Nothing True])

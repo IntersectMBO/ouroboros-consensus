@@ -46,6 +46,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent
+  , TraceLeiosFetchDetailEvent
   , TraceLeiosFetchServerEvent
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Trace (TraceLeiosNotifyClientEvent)
@@ -87,6 +88,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
+  , leiosFetchDetailTracer :: f (TraceLeiosFetchDetailEvent remotePeer)
   , leiosFetchClientTracer :: f (TraceLeiosFetchClientEvent remotePeer)
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
   , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
@@ -137,6 +139,7 @@ instance
       , blockFetchDecisionTracer = f blockFetchDecisionTracer
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
+      , leiosFetchDetailTracer = f leiosFetchDetailTracer
       , leiosFetchClientTracer = f leiosFetchClientTracer
       , leiosFetchServerTracer = f leiosFetchServerTracer
       , leiosNotifyClientTracer = f leiosNotifyClientTracer
@@ -187,6 +190,7 @@ nullTracers =
     , blockFetchDecisionTracer = nullTracer
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
+    , leiosFetchDetailTracer = nullTracer
     , leiosFetchClientTracer = nullTracer
     , leiosFetchServerTracer = nullTracer
     , leiosNotifyClientTracer = nullTracer
@@ -247,6 +251,7 @@ showTracers tr =
     , blockFetchDecisionTracer = show >$< tr
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
+    , leiosFetchDetailTracer = show >$< tr
     , leiosFetchClientTracer = show >$< tr
     , leiosFetchServerTracer = show >$< tr
     , leiosNotifyClientTracer = show >$< tr

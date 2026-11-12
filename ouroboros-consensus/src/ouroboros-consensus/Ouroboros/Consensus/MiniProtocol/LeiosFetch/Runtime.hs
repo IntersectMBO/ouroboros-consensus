@@ -38,7 +38,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
   , releaseAttempt
   , discardAttempt
   , nextDeadline
-  , expireHeads
   , closureScore
   , expireHeadsObserved
   , PenaltyCharge (..)
@@ -64,6 +63,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttObservation)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchLimit)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 
@@ -174,6 +174,10 @@ data Session m peer = Session
   -- ^ A complete reply is awaiting or undergoing local handling. Suppresses
   -- peer expiry and successor activation while our processing prevents reception.
   , publishingInput :: !Bool
+  , reportedBlocked :: !Bool
+  -- ^ Last emitted blocked/resumed state, one bit per live invocation.
+  , pressure :: ![FetchLimit]
+  -- ^ At most the three current pressure kinds; no event history.
   , closurePenalty :: !P.Penalty
   -- ^ Last charged closure evidence for this live registration. Pure reads
   -- age it; successful service does not reset it. Removal clears the state.
@@ -217,7 +221,22 @@ openClient rt peer big commands rtt = do
   when (Map.member peer (sessions st)) (throwSTM SessionExists)
   let n = nextInvocation st
       session =
-        Session n big rtt 0 commands Seq.empty Seq.empty Nothing Nothing Nothing False False P.emptyPenalty
+        Session
+          n
+          big
+          rtt
+          0
+          commands
+          Seq.empty
+          Seq.empty
+          Nothing
+          Nothing
+          Nothing
+          False
+          False
+          False
+          []
+          P.emptyPenalty
   writeTVar
     (runtimeFacts rt)
     st{sessions = Map.insert peer session (sessions st), nextInvocation = n + 1}
@@ -613,14 +632,6 @@ nextDeadline st = case [ at
   [] -> Nothing
   xs -> Just (minimum xs)
 
--- | Expire physical FIFO heads as before, charging a selection penalty only
--- on the first expiry of still-needed TX work. The caller holds the shared
--- outstanding lock; callbacks never acquire it to update these scores.
--- Rationale: @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
-expireHeads ::
-  Ord peer => Time -> (L.Work LeiosPoint -> Bool) -> RuntimeState m peer -> RuntimeState m peer
-expireHeads now wanted = fst . expireHeadsObserved now wanted
-
 -- | Detached facts captured only at an actual qualifying score increment.
 -- No request payload, policy table or later lookup is retained by the report.
 data PenaltyCharge peer = PenaltyCharge
@@ -640,8 +651,12 @@ data PenaltyCharge peer = PenaltyCharge
   }
   deriving (Eq, Show)
 
--- | Update clocks and capture once-only charges in the same owning fold.
+-- | Expire physical FIFO heads and capture once-only selection penalties
+-- for still-needed TX work. The caller holds the shared outstanding lock;
+-- callbacks never acquire it to update these scores. Clocks and detached
+-- charges are updated in the same owning fold.
 -- The coordinator emits the adapted reports after STM and its outer lock.
+-- Rationale: @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
 expireHeadsObserved ::
   Ord peer =>
   Time ->

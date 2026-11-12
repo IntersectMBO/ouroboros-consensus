@@ -19,10 +19,17 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 import System.Random (mkStdGen)
-import Test.Consensus.Leios.LeiosFetch.Replies (fixture, newContext, tryEnqueueRequest)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( expireRuntimeHeads
+  , fixture
+  , newContext
+  , tryEnqueueRequest
+  )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -46,6 +53,34 @@ tests =
     , testCase
         "discard leaves other peer queues and replacement invocations intact"
         testTargetedDiscard
+    , testCase
+        "admission freezes connection RTT while FIFO activation follows handler completion"
+        testRttAdmission
+    , testCase "charge and blocked traces replay captured ownership exactly once" $ withTxHeads $ \rt client out _ keys -> do
+        initial <- atomically (readTVar (R.runtimeFacts rt))
+        let (failed, charges) = R.expireHeadsObserved (Time 10) (\work -> case work of L.Job{} -> True; _ -> False) initial
+        case A.penaltyChanges charges of
+          [A.Routine key (FetchPenaltyCharged _ at previous effective following)] -> do
+            key @?= head keys
+            at @?= Time 10
+            previous @?= P.penaltySnapshot P.emptyPenalty
+            effective @?= P.zeroScore
+            following @?= P.penaltySnapshot (P.chargePenalty at P.emptyPenalty)
+          _ -> assertFailure "missing or repeated charge"
+        length (snd (R.expireHeadsObserved (Time 20) (const True) failed)) @?= 0
+        atomically (writeTVar (R.runtimeFacts rt) failed)
+        blocked <- atomically (A.blockedChanges rt)
+        case blocked of
+          [A.Routine _ (FetchUpstreamChanged True)] -> pure ()
+          _ -> assertFailure "missing blocked transition"
+        atomically (A.blockedChanges rt) >>= (\xs -> length xs @?= 0)
+        atomically (R.completeWire client (head keys) (Time 11))
+        resumed <- atomically (A.blockedChanges rt)
+        case resumed of
+          [A.Routine _ (FetchUpstreamChanged False)] -> pure ()
+          _ -> assertFailure "missing resumption"
+        -- The callback is still pending; a terminal already clears wire blockage.
+        void (pure out)
     , testCase "zero-byte jobs are bounded by the command count despite free byte credit" $ withClient $ \rt client -> do
         let (point, _, _) = fixture
             job = Jobs.MkLeiosJob (IntSet.singleton 0) 0 (Jobs.jobCommitmentOfTxs [])
@@ -324,7 +359,7 @@ testAdmissionReasons = withClient $ \rt client -> do
   atomically $ do
     R.commitRequest client primary >>= check
     R.observeSend client (Time 0)
-    modifyTVar (R.runtimeFacts rt) (R.expireHeads (Time 100) (const True))
+    modifyTVar (R.runtimeFacts rt) (expireRuntimeHeads (Time 100) (const True))
   reject (job 2 0) R.SourceBlocked
   atomically (R.closeClient client)
   atomically (R.enqueueRequest client (Time 101) (job 2 0)) >>= (@?= Left R.SourceClosed)
@@ -477,6 +512,43 @@ testTargetedDiscard = withClient $ \rt old -> do
   st <- atomically (readTVar (R.runtimeFacts rt))
   Map.member c (L.leases (R.ledger st)) @?= True
   Map.member b (L.leases (R.ledger st)) @?= True
+
+-- Admission captures a budget, not an activation timestamp. Later samples and
+-- replacement sessions cannot change it, while local handling gates the FIFO.
+testRttAdmission :: Assertion
+testRttAdmission = withClient $ \rt original -> do
+  sample <- uncheckedNewTVarM (Just (T.RttObservation 0.1 (Time 0)))
+  client <- atomically $ R.closeClient original >> openClient rt 0 False (readTVar sample)
+  first <- admit client 1
+  atomically $ R.commitRequest client first >>= check >> R.observeSend client (Time 0)
+  atomically $ writeTVar sample (Just (T.RttObservation 0.2 (Time 1)))
+  let point = MkLeiosPoint 2 (endorserBlockHash (mkEndorserBlock []))
+      req = LeiosBlockRequest (MkLeiosBlockRequest point 1000 maxBound)
+  second <-
+    atomically (tryEnqueueRequest client (Time 1) req) >>= maybe (fail "follower admission") pure
+  atomically $ R.commitRequest client second >>= check >> R.observeSend client (Time 1)
+  before <- atomically $ readTVar (R.runtimeFacts rt)
+  let clock key state = R.attemptClock (R.attempts state Map.! key)
+  T.snapshotRtt (T.clockSnapshot (clock first before)) @?= 0.15
+  T.snapshotRtt (T.clockSnapshot (clock second before)) @?= 0.3
+  T.snapshotRttSource (T.clockSnapshot (clock first before)) @?= T.KeepAliveSample
+  T.clockHead (clock second before) @?= Nothing
+  atomically $ R.completeWire client first (Time 2)
+  handling <- atomically $ readTVar (R.runtimeFacts rt)
+  T.clockHead (clock second handling) @?= Nothing
+  atomically $ R.finishHandler client first (bodyWork 1) (Time 3)
+  after <- atomically $ readTVar (R.runtimeFacts rt)
+  T.clockHead (clock second after) @?= Just (Just (Time 2), Just (Time 3))
+  T.clockSnapshot (clock second after) @?= T.clockSnapshot (clock second before)
+  replacement <- atomically $ R.closeClient client >> openClient rt 0 False (pure Nothing)
+  atomically (tryEnqueueRequest client (Time 4) req) >>= (@?= Nothing)
+  fresh <-
+    atomically (tryEnqueueRequest replacement (Time 4) req)
+      >>= maybe (fail "new invocation admission") pure
+  current <- atomically $ readTVar (R.runtimeFacts rt)
+  T.snapshotRtt (T.clockSnapshot (clock fresh current)) @?= 0.5
+  T.snapshotRttSource (T.clockSnapshot (clock fresh current)) @?= T.MissingRtt
+  assertBool "replacement has a distinct physical identity" (fresh /= second)
 
 withClient :: (R.Runtime IO Int -> R.Client IO Int -> IO ()) -> IO ()
 withClient action = do
@@ -646,7 +718,7 @@ openClient rt peer big sample = do
   R.openClient rt peer big queue sample
 
 expireHeads :: Time -> LeiosOutstanding Int -> R.RuntimeState IO Int -> R.RuntimeState IO Int
-expireHeads now out = R.expireHeads now (`workStillNeeded` out)
+expireHeads now out = expireRuntimeHeads now (`workStillNeeded` out)
 
 expireHeadsObserved ::
   Time ->
