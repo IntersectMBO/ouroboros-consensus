@@ -4,27 +4,22 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge
-  ( serializeTxForLeios
-  , forgeShelleyBlock
+  ( forgeShelleyBlock
   ) where
 
-import Cardano.Ledger.Binary (serialize')
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
-import qualified Cardano.Ledger.Core as Core (EraTx, TopTx, Tx)
+import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( blockBodySize
-  , eraProtVerLow
   , hashBlockBody
   , mkBasicBlockBody
   , ppProtocolVersionL
   , txSeqBlockBodyL
   )
-import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
-import Cardano.Ledger.Hashes (SafeToHash, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
-import Data.ByteString (ByteString)
 import Data.Foldable (asum)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe.Strict (maybeToStrictMaybe)
@@ -142,17 +137,3 @@ forgeShelleyBlock
         . castHash
         . getTipHash
         $ fbCurrentTickedLedgerState
-
--- | The bytes of a transaction that an endorser block references.
---
--- These bytes must keep the @is_valid@ flag, because a peer cannot get it
--- from anywhere else. 'EncCBOR' drops the flag in Dijkstra, so we use the
--- block-body encoding.
---
--- Their length must not exceed 'txByteSizeWithOverhead'. Otherwise the
--- endorser block can exceed the size that 'txEbMeasureDijkstra' reserved
--- for it, and header validation rejects the block with 'LeiosEbTooBig'.
-serializeTxForLeios ::
-  forall era.
-  (Core.EraTx era, SafeToHash (Core.Tx Core.TopTx era)) => Core.Tx Core.TopTx era -> ByteString
-serializeTxForLeios = serialize' (SL.eraProtVerLow @era) . toCBORForBlockInclusion

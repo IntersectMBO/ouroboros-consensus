@@ -315,6 +315,8 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   getTransactionKeySets (TestBlockGenTx tx) = getPayloadKeySets tx
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
+  txLeiosBytes = Ledger.nothingTxLeiosBytes
+  tickedLedgerProtVer = Ledger.nothingTickedLedgerProtVer
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
