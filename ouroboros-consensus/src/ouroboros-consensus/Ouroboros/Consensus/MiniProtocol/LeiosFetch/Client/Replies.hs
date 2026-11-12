@@ -531,14 +531,15 @@ noMempoolTxs _ = pure Map.empty
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
 -- one that arrived with no peer: take its body into the LeiosTxCache, write it
--- and then all its txs, take those into the LeiosTxCache as validated, wait for
--- both writes to be durable, and then settle the point ('settleForgedEb').
+-- together with all its txs, take those into the LeiosTxCache as validated,
+-- wait for the write to be durable, and then settle the point
+-- ('settleForgedEb').
 --
 -- Its bytes are not checked: the forge built the body from these very txs. No
 -- tx is filled from another point, since all of them are written.
 --
 -- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- to be durable as well as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -548,31 +549,24 @@ acquireForgedEb ::
 acquireForgedEb ctx point forged = do
   _ <-
     insertBody lfcTxCache point (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
-  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  written <- writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
-  settleForgedEb ctx point eb $
-    Promise $ do
-      _held <- await bodyWritten
-      await txsWritten
-      -- The point holds them all: the forge built the body from these very
-      -- txs, so none is of another size than it declares.
-      pure [0 .. length refs - 1]
+  settleForgedEb ctx point eb (Set.toList <$> written)
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter} = ctx
   eb = forgedEbBody forged
   refs = endorserBlockReferences eb
 
 -- | Record the forge's endorser block as acquired at this point, with no job
--- left, now that its writes are durable, and emit what of its acquisition the
+-- left, now that its write is durable, and emit what of its acquisition the
 -- node had not already emitted there ('settleReceivingFromForge').
 settleForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
   LeiosPoint ->
   EndorserBlock ->
-  -- | the offsets of the txs the point holds once the writes are durable
+  -- | the offsets of the txs the point holds once the write is durable
   Promise m [TxOffset] ->
   m ()
 settleForgedEb ctx point eb written = do
