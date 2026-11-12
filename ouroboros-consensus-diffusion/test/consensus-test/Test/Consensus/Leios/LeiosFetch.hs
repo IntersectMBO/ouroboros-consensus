@@ -10,15 +10,19 @@ import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import qualified Test.Consensus.Leios.LeiosFetch.PeerPenalty as PeerPenalty
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
 import qualified Test.Consensus.Leios.LeiosFetch.RequestState as RequestState
+import qualified Test.Consensus.Leios.LeiosFetch.Runtime as Runtime
 import qualified Test.Consensus.Leios.LeiosFetch.Timing as Timing
 import qualified Test.Consensus.Leios.LeiosFetch.Wait as Wait
+import qualified Test.Consensus.Leios.LeiosFetch.Wire as Wire
 import Test.Tasty
 
 tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ Timing.tests
+    [ Wire.tests
+    , Runtime.tests
+    , Timing.tests
     , PeerPenalty.tests
     , Wait.tests
     , RequestState.tests

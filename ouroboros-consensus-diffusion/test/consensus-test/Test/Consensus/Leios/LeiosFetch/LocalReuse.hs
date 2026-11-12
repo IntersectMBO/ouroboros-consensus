@@ -17,8 +17,10 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies hiding (processLeiosBlock)
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies hiding
+  ( processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
@@ -26,7 +28,14 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
 import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Util.IOLike
-import Test.Consensus.Leios.LeiosFetch.Replies (awaitNotes, fixture, newContext, newContextHolding)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( awaitNotes
+  , fixture
+  , newContext
+  , newContextHolding
+  , processLeiosBlock
+  , processLeiosBlockTxs
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -473,8 +482,3 @@ testRetireBetweenSlices = bounded $ withLocal txs $ \point eb _ writer -> do
   S.readTVarIO calls >>= (@?= 1)
  where
   txs = [MkLeiosTx (BS.replicate 19000 i) | i <- [0 .. 2]]
-
--- Keep this fixture expressed in decoded bodies while exercising the wire-facing handler.
-processLeiosBlock ::
-  LeiosFetchClientContext IO Int -> Int -> LeiosBlockRequest -> EndorserBlock -> IO ()
-processLeiosBlock ctx peer request body = Replies.processLeiosBlock ctx peer request (serialiseEndorserBlock body)

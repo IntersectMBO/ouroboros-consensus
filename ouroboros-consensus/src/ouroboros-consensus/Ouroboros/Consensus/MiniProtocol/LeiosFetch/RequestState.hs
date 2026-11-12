@@ -3,7 +3,8 @@
 -- | Physical request ownership, independent of durable job completion.
 -- Rationale: @docs/fetch-policy/leiosfetch-improved.md#requests-and-admission@.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState
-  ( AttemptKey (..)
+  ( CommandKey (..)
+  , AttemptKey (..)
   , Work (..)
   , workPoint
   , Lease (..)
@@ -174,3 +175,6 @@ removeOwner ::
 removeOwner peer = Map.update $ \bucket ->
   let remaining = Map.delete peer bucket
    in if Map.null remaining then Nothing else Just remaining
+
+-- | Invocation and ordinal in a peer-owned queue; its owner supplies the peer.
+data CommandKey = CommandKey !Natural !Word64 deriving (Eq, Ord, Show)
