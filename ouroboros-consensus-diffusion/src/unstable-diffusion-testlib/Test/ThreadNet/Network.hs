@@ -121,6 +121,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -877,7 +878,16 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      leiosDB <- newLeiosDBInMemory
+      let rng = case seed of
+            Seed s -> mkStdGen s
+          (kaRng, rng') = splitGen rng
+          (gsmRng, rng'') = splitGen rng'
+          (psRng, rng''') = splitGen rng''
+          (lfRng, rng'''') = splitGen rng'''
+          (txRng, chainSyncRng) = splitGen rng''''
+      rawLeiosDB <- newLeiosDBInMemory
+      leiosTxCache <- newNodeLeiosTxCache lfRng
+      let leiosDB = withCacheRetirement leiosTxCache rawLeiosDB
       leiosAcquisitions <- newLeiosAcquisitions
       let chainDbArgs =
             mkArgs
@@ -1058,12 +1068,6 @@ runThreadNetwork
             , hfbtMaxClockRewind = secondsToNominalDiffTime 0
             }
 
-      let rng = case seed of
-            Seed s -> mkStdGen s
-          (kaRng, rng') = splitGen rng
-          (gsmRng, rng'') = splitGen rng'
-          (psRng, rng''') = splitGen rng''
-          (lfRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1075,6 +1079,7 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , leiosTxCache
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck
@@ -1087,9 +1092,11 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , txSubmissionRng = snd (splitGen chainSyncRng)
+              , txSubmissionRng = txRng
               , leiosAcquisitions
-              , leiosFetchRng = lfRng
+              , -- Split off a generator the node uses anyway, so that the others'
+                -- streams stay as they were.
+                leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =

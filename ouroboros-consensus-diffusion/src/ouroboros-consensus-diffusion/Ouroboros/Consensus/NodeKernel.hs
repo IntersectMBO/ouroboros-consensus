@@ -20,6 +20,8 @@ module Ouroboros.Consensus.NodeKernel
   , initNodeKernel
   , leiosDeadlinePruner
   , leiosDeadlinePrunerInterval
+  , NodeLeiosTxCache
+  , newNodeLeiosTxCache
   , toConsensusMode
   ) where
 
@@ -80,7 +82,12 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , pruneNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
-import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
+import Ouroboros.Consensus.Leios.TxCache
+  ( LeiosTxCache
+  , PackedEndorserBlock
+  , defaultLeiosTxCacheShift
+  , newHashTableLeiosTxCache
+  )
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, ProtVerParity, TxHash, protVerParity)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
@@ -280,7 +287,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
-  -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
+  -- ^ Root whose left split seeds fetch decisions. Early cache allocation
+  -- takes only its right split for salts; neither consumer uses the root directly.
+  , leiosTxCache :: NodeLeiosTxCache m
+  -- ^ Allocated before opening ChainDB, with eviction wired before database GC.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -309,6 +319,24 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
 
+-- | Cache shared by forging, fetching, validation and database GC.
+type NodeLeiosTxCache m = LeiosTxCache m () ProtVerParity PackedEndorserBlock
+
+-- | Allocate before opening ChainDB so no background GC can predate cache
+-- retirement. Supply the same LeiosFetch root passed in 'NodeKernelArgs':
+-- decisions use its left split and the cache exclusively consumes its right.
+-- Peers choose the keys, so keep the salted mutable table.
+newNodeLeiosTxCache :: IOLike m => StdGen -> m (NodeLeiosTxCache m)
+newNodeLeiosTxCache leiosFetchRoot = do
+  -- Reserve the formerly unused branch for cache salts. Do not hand this branch
+  -- to KeepAlive or any other observable node activity.
+  -- TODO: For stronger protection, supply an explicit 128-bit secret generated
+  -- securely at startup instead of deriving the cache salts from StdGen.
+  let (_, cacheRng) = splitGen leiosFetchRoot
+      (salt0, rest) = uniform cacheRng
+      (salt1, _) = uniform rest
+  newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+
 initNodeKernel ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
@@ -327,6 +355,7 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosTxCache
     , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
@@ -472,12 +501,9 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
-    -- The LeiosTxCache's keys are chosen by peers, so its hash table is salted
-    -- with a secret of this node's.
-    let (leiosFetchPrng, saltRng) = splitGen leiosFetchRng
-        (salt0, saltRng') = uniform saltRng
-        (salt1, _) = uniform saltRng'
-    leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+    -- The right branch was reserved by early cache allocation; decisions
+    -- keep their existing left branch, independent of salt draws.
+    let (leiosFetchPrng, _) = splitGen leiosFetchRng
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
@@ -803,9 +829,11 @@ leiosTxsInMempool mempool hashes = do
   Leios pruning
 -------------------------------------------------------------------------------}
 
--- | Prune what the node holds only until the immutable tip passes it, each time
--- the immutable tip's slot advances: every LeiosNotify client's state, the
--- 'AnnounceState', the 'VoteState''s certificates, and the LeiosFetch state.
+-- | Retire node metadata at each advancing immutable slot: LeiosNotify client
+-- state, accepted announcements and certificates in one transaction, then fetch
+-- state and cache metadata at that same slot. Storage promotion independently
+-- fences the cache through its wrapped handle; this loop does not perform GC.
+-- See @docs/fetch-policy/leiosfetch-improved.md#immutable-tip-pruning@.
 leiosImmutableTipPruner ::
   (IOLike m, RunNode blk) =>
   ChainDB m blk ->

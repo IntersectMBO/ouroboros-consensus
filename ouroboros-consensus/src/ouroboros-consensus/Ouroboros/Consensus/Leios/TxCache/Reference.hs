@@ -251,14 +251,12 @@ evictOldest idx =
   (bodyState', txState', evEbs, evTxs) =
     decBody ebhEvicted (bodyState idx) (txState idx)
 
-  -- Evicting a body prunes the LeiosDb rows of its points, so their ring
-  -- entries no longer name durable fill sources: free them. A tx still held by
-  -- a younger point keeps that point's location (set by 'setTxLocations' when
-  -- the younger body landed); a tx that lived only in the evicted points now
-  -- resolves to /no/ location and is fetched, rather than to a pruned source
-  -- (or, once 'locNext' reuses the entry, a different point). Only a genuine
-  -- body eviction frees the entries; dropping one of several points of a
-  -- still-held EB leaves them in place.
+  -- Losing the last retained point of this body clears its location-ring
+  -- entries. This removes reuse hints, not database rows. A TX still tracked
+  -- by another body may therefore have no current location. Captured earlier
+  -- descriptors remain hints the writer can verify against available DB bytes.
+  -- Dropping only one point of a shared body keeps its ring entries; neither
+  -- retained metadata nor a recorded location pins the source against DB GC.
   locRing'
     | Set.member ebhEvicted evEbs = Map.filter ((/= ebhEvicted) . pointEbHash) (locRing idx)
     | otherwise = locRing idx
@@ -423,12 +421,14 @@ lookupBody ebh idx = (\(MkHeldBody _ b) -> b) <$> Map.lookup ebh (bodyState idx)
 -- referenced by recent points.
 setTxLocations ::
   LeiosPoint -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
-setTxLocations point offTxs idx =
-  idx
-    { locRing = Map.insert ringIdx point (locRing idx)
-    , locNext = locNext'
-    , txLocState = List.foldl' upd (txLocState idx) offTxs
-    }
+setTxLocations point offTxs idx
+  | pointSlotNo point < prunedSlot idx = idx
+  | otherwise =
+      idx
+        { locRing = Map.insert ringIdx point (locRing idx)
+        , locNext = locNext'
+        , txLocState = List.foldl' upd (txLocState idx) offTxs
+        }
  where
   (ringIdx, locNext') = case ringIndexOf point idx of
     Just i -> (i, locNext idx)

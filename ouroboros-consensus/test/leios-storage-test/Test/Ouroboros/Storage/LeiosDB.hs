@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests for the "Ouroboros.Consensus.Storage.LeiosDB" interface.
 --
@@ -9,64 +10,85 @@
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes, hashToStringAsHex)
+import Cardano.Ledger.Conway (ConwayEra)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, newTVarIO, writeTVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.DeepSeq (force)
-import Control.Exception (bracket, try)
+import Control.Exception (bracket, bracket_, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Control.Tracer (nullTracer)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
+import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Database.SQLite3 as SQL
+import qualified Ouroboros.Consensus.Leios.TxCache as Cache
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , Serialised
+  , ProtVerParity
+  , Serialised (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , deserialiseEndorserBlock
   , endorserBlockBytes
+  , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , mkEndorserBlock
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
+  ( BodyWriteReceipt (..)
+  , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
+  , TxWriteReceipt (..)
   , newLeiosDBInMemory
   , withLeiosDBSQLite
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( closeChecked
   , mkConn
   , openRawConnection
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert (sqlInsertEbBody, sqlInsertTxs)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   ( deleteEbsFrom
   , gcBatchSize
   , initialStats
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (lookupBlob, readPartition)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives (dbExec)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
+  ( lookupBlob
+  , readPartition
+  , sqlBatchRetrieveTxs
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling (withExistingLeiosDbFile)
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
+import Ouroboros.Consensus.Util.IOLike (cancel, concurrently, wait, withAsync)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
@@ -89,13 +111,31 @@ import Test.QuickCheck
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
   testGroup "LeiosDB" $
     forEachImplementation mkTestGroups
+      <> [testGroup "confirmed receipts" (forEachImplementation receiptTests)]
+      <> [ testCase ("promotion fences cache/" <> name) (testCacheFence makeCache)
+         | (name, makeCache) <-
+             [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
+         ]
+      <> [ testCase "a rejected blob commit cannot produce confirmation" testReceiptCommitFailure
+         , testCase "a receipt waits for the blob commit" testReceiptCommitBarrier
+         , testCase "late volatile markers cannot confirm a retired target" testLateVolatileMarkers
+         , testCase
+             "body and TX receipts progress before promotion publishes its boundary"
+             testReceiptsDuringPromotion
+         , testCase
+             "receipts progress while truncation tracing is paused"
+             testReceiptsDuringTruncation
+         , testCase
+             "interrupted promotion releases its locks without advancing the boundary"
+             testInterruptedPromotion
+         ]
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
          , testGroup
              "deleteEbsFrom on a partition file"
@@ -167,10 +207,14 @@ rwInsertEbBodyFilling rw point eb fills = rwInsertEbBodyWithTxs rw point eb fill
 rwInsertEbBodyWithTxs ::
   RW -> LeiosPoint -> EndorserBlock -> LocalFills -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
 rwInsertEbBodyWithTxs rw point eb fills txs =
-  Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills (Map.fromList txs))
+  heldOffsets <$> (await =<< writeEbBody (rwWriter rw) point eb fills (Map.fromList txs))
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
-rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point (Map.fromList txs)
+rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
+
+-- | Also the offsets dropped for their size.
+rwInsertTxsDropped :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
+rwInsertTxsDropped rw point txs = Set.toAscList . txWriteWrongSize <$> (await =<< writeTxs (rwWriter rw) point (Map.fromList txs))
 
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
@@ -240,6 +284,8 @@ mkTestGroups impl =
       "ebs"
       [ testProperty "insert then lookup" $ prop_ebsInsertThenLookup impl
       , testProperty "lookup missing returns empty" $ prop_ebsLookupMissing impl
+      , testCase "a body keeps the bytes it was received in" $
+          withFreshDb impl test_bodyKeepsReceivedBytes
       ]
   , testGroup
       "transactions"
@@ -458,6 +504,26 @@ prop_ebsLookupMissing impl =
         result === Nothing
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
 
+-- | A body is stored in the bytes it was received in, even when those are not
+-- the ledger's encoding of its references.
+test_bodyKeepsReceivedBytes :: LeiosDbHandle IO -> IO ()
+test_bodyKeepsReceivedBytes db = do
+  let
+    -- A map of one reference, whose size takes five bytes where the ledger
+    -- would write two.
+    received =
+      Serialised . BSL.fromStrict $
+        BS.concat
+          [BS.pack [0xa1, 0x58, 0x20], hashToBytes (testTxHash 0 101), BS.pack [0x1a, 0, 0, 0, 101]]
+    point = mkTestPoint (SlotNo 1) 1
+  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @ConwayEra) received
+  assertBool
+    "the ledger encodes these references in other bytes"
+    (serialiseEndorserBlock (mkEndorserBlock (endorserBlockReferences eb)) /= received)
+  withRW db $ \con -> do
+    rwInsertEbBody con point eb
+    rwLookupEbBody con point >>= (@?= Just received)
+
 -- * Property tests for transactions
 
 -- | Property: inserting tx bytes and retrieving them returns the correct data.
@@ -605,14 +671,17 @@ test_malformedTxWritesDropped db = do
       offsets = [0, 1]
   withRW db $ \con -> do
     rwInsertEbBody con point eb
-    -- An offset the body does not declare, and wrong-sized bytes.
-    rwInsertTxs
-      con
-      point
-      [ (2, txBytesFor eb 0)
-      , (0, BS.snoc (txBytesFor eb 0) 0)
-      , (1, BS.take 1 (txBytesFor eb 1))
-      ]
+    -- An offset the body does not declare, and wrong-sized bytes. Only the
+    -- latter are reported.
+    dropped <-
+      rwInsertTxsDropped
+        con
+        point
+        [ (2, txBytesFor eb 0)
+        , (0, BS.snoc (txBytesFor eb 0) 0)
+        , (1, BS.take 1 (txBytesFor eb 1))
+        ]
+    dropped @?= [0, 1]
     retrieved <- rwBatchRetrieveTxs con point offsets
     retrieved @?= Map.empty
     rwInsertTxs con point [(0, txBytesFor eb 0)]
@@ -972,9 +1041,16 @@ test_promoteIncompleteFails db = withRW db $ \con -> do
 -- | An EB with its body but none of its txs.
 test_promoteNothingWrittenFails :: LeiosDbHandle IO -> IO ()
 test_promoteNothingWrittenFails db = withRW db $ \con -> do
-  rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
+  let eb = mkTestEb 2
+      point = mkTestPoint 5 1
+  rwInsertEbBody con point eb
   assertPromoteFails db [mkTestPoint 5 1]
-  isImmutable (rwReader con) (mkTestPoint 5 1) >>= (@?= False)
+  isImmutable (rwReader con) point >>= (@?= False)
+  -- Failure must retain the old boundary and release both synchronization paths:
+  -- complete the same target and retry promotion through the public API.
+  rwInsertTxs con point (allTxsFor eb)
+  leiosDbPromoteToImmutable db 6 [point]
+  isImmutable (rwReader con) point >>= (@?= True)
 
 -- | Promoting the points up to slot 6 fails.
 assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
@@ -1350,3 +1426,393 @@ observe db bodies ops = withRW db $ \rw -> do
     OpBody point _ _ -> Just point
     OpTxs point _ -> Just point
     _ -> Nothing
+
+heldOffsets :: BodyWriteReceipt -> [TxOffset]
+heldOffsets BodyUnavailable = []
+heldOffsets (BodyPresent offsets) = Set.toAscList offsets
+
+receiptTests :: DbImpl -> [TestTree]
+receiptTests impl =
+  [ testCase "present empty body, absent retired target and complete immutable target differ" $
+      withFreshDb impl testBodyPresence
+  , testCase "only held submitted txs confirm, with separate wrong-size diagnostics" $
+      withFreshDb impl testPositiveTxReceipt
+  , testCase "offset spans preserve exact receipts and bytes for variable-sized TXs" $
+      withFreshDb impl testOffsetSpanReceipts
+  , testCase "a captured fill remains usable after metadata retirement, until collection" $
+      withFreshDb impl testCapturedFill
+  , testCase "write and promotion choose one valid receipt order" $
+      withFreshDb impl testConcurrentRetirement
+  , testCase "confirmation and truncation choose one valid receipt order" $
+      withFreshDb impl testConcurrentTruncation
+  ]
+
+testBodyPresence :: LeiosDbHandle IO -> Assertion
+testBodyPresence db = withWriter db $ \writer -> do
+  let eb = mkTestEb 2
+      live = mkTestPoint 950 1
+      complete = mkTestPoint 940 2
+      write p txs = await =<< writeEbBody writer p eb Map.empty txs
+  write live Map.empty >>= (@?= BodyPresent Set.empty)
+  write complete (Map.fromList [(i, txBytesFor eb i) | i <- [0, 1]])
+    >>= (@?= BodyPresent (Set.fromList [0, 1]))
+  leiosDbPromoteToImmutable db 1000 [complete]
+  write live Map.empty >>= (@?= BodyUnavailable)
+  write complete Map.empty >>= (@?= BodyPresent (Set.fromList [0, 1]))
+  garbageCollect db
+  withReader db $ \reader -> do
+    lookupEbBody reader live >>= (@?= Nothing)
+    lookupEbBody reader complete >>= (@?= Just (serialiseEndorserBlock eb))
+
+testPositiveTxReceipt :: LeiosDbHandle IO -> Assertion
+testPositiveTxReceipt db = withWriter db $ \writer -> do
+  let eb = mkTestEb 2
+      point = mkTestPoint 5 1
+      write = (await =<<) . writeTxs writer point . Map.fromList
+      receipt yes wrong present = TxWriteReceipt (Set.fromList yes) (Set.fromList wrong) present
+  write [(0, txBytesFor eb 0)] >>= (@?= receipt [] [] False)
+  _ <- await =<< writeEbBody writer point eb Map.empty Map.empty
+  write [(0, txBytesFor eb 0), (1, BS.snoc (txBytesFor eb 1) 0), (-1, BS.empty), (2, BS.empty)]
+    >>= (@?= receipt [0] [1] True)
+  write [(0, txBytesFor eb 0), (1, txBytesFor eb 1)] >>= (@?= receipt [0, 1] [] True)
+  -- Invalid replacement bytes cannot be confirmed merely because an earlier
+  -- valid copy is still marked present.
+  write [(0, BS.snoc (txBytesFor eb 0) 0)] >>= (@?= receipt [] [0] True)
+  leiosDbPromoteToImmutable db 6 [point]
+  garbageCollect db
+  write [(0, txBytesFor eb 0)] >>= (@?= receipt [0] [] True)
+  leiosDbTruncateImmutable db 5
+  leiosDbPromoteToImmutable db 6 []
+  write [(0, txBytesFor eb 0)] >>= (@?= receipt [] [] False)
+
+-- Explicit expected offsets keep this oracle separate from the backend's range
+-- and size filtering. Stored bytes catch rebased blob-write offsets, while
+-- receipts must omit written gap offsets and wrong-sized replacements.
+testOffsetSpanReceipts :: LeiosDbHandle IO -> Assertion
+testOffsetSpanReceipts db = withWriter db $ \writer -> withReader db $ \reader -> do
+  let eb = ebOfSizes [1, 17, 3, 64, 2, 97, 11, 5, 31]
+      allTxs = Map.fromList (allTxsFor eb)
+      offsets = Map.keysSet allTxs
+      prior = Map.restrictKeys allTxs (Set.fromList [0, 4, 8])
+      good off = (off, txBytesFor eb off)
+      oversized off = (off, BS.snoc (txBytesFor eb off) 0)
+      cases :: [(String, [(TxOffset, BS.ByteString)], [TxOffset], [TxOffset])]
+      cases =
+        [ ("empty", [], [], [])
+        , ( "all invalid"
+          , [(minBound, BS.empty), (-1, BS.empty), (9, BS.empty), (maxBound, BS.empty)]
+          , []
+          , []
+          )
+        , ("first", [good 0], [0], [])
+        , ("last", [good 8], [8], [])
+        , ("interior", [good 3], [3], [])
+        , ("contiguous", map good [2, 3, 4], [2, 3, 4], [])
+        , ("terminal boundary", map good [7, 8], [7, 8], [])
+        , ("sparse with held gap", map good [1, 7], [1, 7], [])
+        , ("mixed invalid", [(-1, BS.empty), good 5, (9, BS.empty)], [5], [])
+        , ("wrong held size", [good 2, (4, BS.empty), good 8], [2, 8], [4])
+        , ("wrong last size", [good 3, oversized 8], [3], [8])
+        , ("only wrong size", [oversized 4], [], [4])
+        ]
+      scenarios = zipWith (\seed row -> (mkTestPoint 5 seed, row)) [10 ..] cases
+      expectedReceipt accepted wrong =
+        TxWriteReceipt (Set.fromList accepted) (Set.fromList wrong) True
+  forM_ scenarios $ \(point, (label, submitted, accepted, wrong)) -> do
+    (await =<< writeEbBody writer point eb Map.empty prior)
+      >>= assertEqual (label <> "/initial body") (BodyPresent (Map.keysSet prior))
+    (await =<< writeTxs writer point (Map.fromList submitted))
+      >>= assertEqual (label <> "/volatile receipt") (expectedReceipt accepted wrong)
+    let expectedBytes = prior `Map.union` Map.restrictKeys allTxs (Set.fromList accepted)
+    batchRetrieveTxs reader point offsets
+      >>= assertEqual (label <> "/stored bytes") expectedBytes
+    -- Complete all targets before promotion, including gaps absent from the job.
+    (await =<< writeTxs writer point allTxs)
+      >>= assertEqual (label <> "/complete receipt") (TxWriteReceipt offsets Set.empty True)
+  leiosDbPromoteToImmutable db 6 (map fst scenarios)
+  garbageCollect db
+  forM_ scenarios $ \(point, (label, submitted, accepted, wrong)) -> do
+    (await =<< writeTxs writer point (Map.fromList submitted))
+      >>= assertEqual (label <> "/immutable receipt") (expectedReceipt accepted wrong)
+    batchRetrieveTxs reader point offsets >>= assertEqual (label <> "/immutable bytes") allTxs
+  -- Absence suppresses size diagnostics: there is no body against which to
+  -- classify these bytes, even though the same request has a wrong-sized TX above.
+  (await =<< writeTxs writer (mkTestPoint 1 200) (Map.fromList [good 3, oversized 8]))
+    >>= (@?= TxWriteReceipt Set.empty Set.empty False)
+
+testCapturedFill :: LeiosDbHandle IO -> Assertion
+testCapturedFill db = withWriter db $ \writer -> do
+  let eb = mkTestEb 1
+      source = mkTestPoint 1 1
+      first = mkTestPoint 10 1
+      next = mkTestPoint 11 1
+      fills = Map.singleton 0 (MkTxLocation source 0)
+  _ <- await =<< writeEbBody writer source eb Map.empty (Map.singleton 0 (txBytesFor eb 0))
+  leiosDbPromoteToImmutable db 5 []
+  -- A captured descriptor is a hint, not a pin. Until collection, the local
+  -- fill path may still find and verify its volatile bytes.
+  (await =<< writeEbBody writer first eb fills Map.empty) >>= (@?= BodyPresent (Set.singleton 0))
+  garbageCollect db
+  (await =<< writeEbBody writer next eb fills Map.empty) >>= (@?= BodyPresent Set.empty)
+
+testConcurrentRetirement :: LeiosDbHandle IO -> Assertion
+testConcurrentRetirement db = withWriter db $ \writer -> do
+  let eb = mkTestEb 1
+      point = mkTestPoint 950 1
+  (receipt, ()) <-
+    concurrently
+      (await =<< writeEbBody writer point eb Map.empty (Map.singleton 0 (txBytesFor eb 0)))
+      (leiosDbPromoteToImmutable db 1000 [])
+  assertBool "only absence or an earlier committed presence proof is valid" $
+    receipt == BodyUnavailable || receipt == BodyPresent (Set.singleton 0)
+  (await =<< writeTxs writer point (Map.singleton 0 (txBytesFor eb 0)))
+    >>= (@?= TxWriteReceipt Set.empty Set.empty False)
+  withReader db $ \reader -> lookupEbBody reader point >>= (@?= Nothing)
+
+-- Once the volatile copy is collected, a TX receipt must either precede
+-- truncation and prove the immutable copy, or follow it and prove no presence.
+testConcurrentTruncation :: LeiosDbHandle IO -> Assertion
+testConcurrentTruncation db = withWriter db $ \writer -> do
+  let eb = mkTestEb 1
+      point = mkTestPoint 5 1
+      txs = Map.singleton 0 (txBytesFor eb 0)
+      present = TxWriteReceipt (Set.singleton 0) Set.empty True
+      absent = TxWriteReceipt Set.empty Set.empty False
+  _ <- await =<< writeEbBody writer point eb Map.empty txs
+  leiosDbPromoteToImmutable db 6 [point]
+  garbageCollect db
+  (receipt, ()) <-
+    concurrently
+      (await =<< writeTxs writer point txs)
+      (leiosDbTruncateImmutable db 5)
+  assertBool "confirmation is ordered before or after truncation" $
+    receipt == present || receipt == absent
+  withReader db $ \reader -> lookupEbBody reader point >>= (@?= Nothing)
+  (await =<< writeEbBody writer point eb Map.empty Map.empty) >>= (@?= BodyPresent Set.empty)
+  (await =<< writeTxs writer point txs) >>= (@?= present)
+
+-- The production tracer runs after the copy commits, while maintenance still
+-- owns its connection. A receipt must not wait for that connection. This is a
+-- mutex regression, not a claim that SQL copying overlaps the writer's IO.
+testReceiptsDuringPromotion :: Assertion
+testReceiptsDuringPromotion = do
+  completed <- SI.timeout 5 $ withTempLeiosDbPaths $ \volPath immPath -> do
+    copied <- newEmptyMVar
+    resume <- newEmptyMVar
+    let tracer = mkTracer $ \case
+          TraceLeiosDbCopiedToImmutable _ -> putMVar copied () >> takeMVar resume
+          _ -> pure ()
+    withLeiosDBSQLite tracer volPath immPath $ \db -> withWriter db $ \writer -> do
+      let eb = mkTestEb 2
+          promoted = mkTestPoint 5 1
+          live = mkTestPoint 10 1
+          txs = Map.fromList [(i, txBytesFor eb i) | i <- [0, 1]]
+      _ <- await =<< writeEbBody writer promoted eb Map.empty txs
+      withAsync (leiosDbPromoteToImmutable db 6 [promoted]) $ \promotion -> do
+        takeMVar copied
+        body <- writeEbBody writer live eb Map.empty (Map.singleton 0 (txBytesFor eb 0))
+        tx <- writeTxs writer live (Map.singleton 1 (txBytesFor eb 1))
+        await body >>= (@?= BodyPresent (Set.singleton 0))
+        await tx >>= (@?= TxWriteReceipt (Set.singleton 1) Set.empty True)
+        putMVar resume ()
+        wait promotion
+      garbageCollect db
+      (await =<< writeEbBody writer promoted eb Map.empty Map.empty)
+        >>= (@?= BodyPresent (Set.fromList [0, 1]))
+      withReader db $ \reader ->
+        batchRetrieveTxs reader live (Set.fromList [0, 1]) >>= (@?= txs)
+  assertBool
+    "receipts progress during promotion and normal shutdown completes"
+    (isJust completed)
+
+-- Truncation publishes its lower boundary before tracing, outside confirmation
+-- ownership. A new body at the cutoff can therefore be fetched again even if
+-- that tracer is slow; the old immutable copy and collected volatile row are gone.
+testReceiptsDuringTruncation :: Assertion
+testReceiptsDuringTruncation = do
+  completed <- SI.timeout 5 $ withTempLeiosDbPaths $ \volPath immPath -> do
+    truncated <- newEmptyMVar
+    resume <- newEmptyMVar
+    let tracer = mkTracer $ \case
+          TraceLeiosDbTruncatedImmutable _ _ -> putMVar truncated () >> takeMVar resume
+          _ -> pure ()
+    withLeiosDBSQLite tracer volPath immPath $ \db -> withWriter db $ \writer -> do
+      let eb = mkTestEb 1
+          point = mkTestPoint 5 1
+          txs = Map.singleton 0 (txBytesFor eb 0)
+      _ <- await =<< writeEbBody writer point eb Map.empty txs
+      leiosDbPromoteToImmutable db 6 [point]
+      garbageCollect db
+      withAsync (leiosDbTruncateImmutable db 5) $ \truncation -> do
+        takeMVar truncated
+        (await =<< writeEbBody writer point eb Map.empty Map.empty) >>= (@?= BodyPresent Set.empty)
+        (await =<< writeTxs writer point txs)
+          >>= (@?= TxWriteReceipt (Set.singleton 0) Set.empty True)
+        putMVar resume ()
+        wait truncation
+  assertBool "truncation tracing owns no confirmation lock" (isJust completed)
+
+-- Cancellation after commit leaves the old boundary authoritative. A subsequent
+-- receipt and promotion must reuse both synchronization paths, and handle close
+-- must join the writer and release its connections.
+testInterruptedPromotion :: Assertion
+testInterruptedPromotion = do
+  completed <- SI.timeout 5 $ withTempLeiosDbPaths $ \volPath immPath -> do
+    copied <- newEmptyMVar
+    resume <- newEmptyMVar
+    let tracer = mkTracer $ \case
+          TraceLeiosDbCopiedToImmutable _ -> putMVar copied () >> takeMVar resume
+          _ -> pure ()
+    withLeiosDBSQLite tracer volPath immPath $ \db -> withWriter db $ \writer -> do
+      let eb = mkTestEb 1
+          promoted = mkTestPoint 5 1
+          omitted = mkTestPoint 5 2
+          txs = Map.singleton 0 (txBytesFor eb 0)
+      _ <- await =<< writeEbBody writer promoted eb Map.empty txs
+      withAsync (leiosDbPromoteToImmutable db 6 [promoted]) $ \promotion -> do
+        takeMVar copied
+        cancel promotion
+      -- Would be unavailable if cancellation had published the new boundary.
+      (await =<< writeEbBody writer omitted eb Map.empty txs)
+        >>= (@?= BodyPresent (Set.singleton 0))
+      putMVar resume ()
+      leiosDbPromoteToImmutable db 6 [promoted]
+      garbageCollect db
+      (await =<< writeTxs writer promoted txs)
+        >>= (@?= TxWriteReceipt (Set.singleton 0) Set.empty True)
+      (await =<< writeEbBody writer omitted eb Map.empty Map.empty) >>= (@?= BodyUnavailable)
+  assertBool
+    "interrupted promotion leaves reusable locks and closable connections"
+    (isJust completed)
+
+-- Realize the exact state left by a writer that passed its initial check,
+-- then committed volatile data after promotion omitted its target. Direct
+-- insertion is the backend operation used by that writer, not a test hook.
+-- This establishes the obsolete markers deterministically without inferring
+-- an unobservable scheduling point from queue admission or host sleeps.
+testLateVolatileMarkers :: Assertion
+testLateVolatileMarkers = withFreshSQLiteFile $ \volPath immPath db -> do
+  let eb = mkTestEb 1
+      point = mkTestPoint 950 1
+  leiosDbPromoteToImmutable db 1000 []
+  stats <- newTVarIO =<< initialStats volPath immPath
+  promoted <- newTVarIO 1000
+  bracket (openRawConnection volPath) closeChecked $ \vol ->
+    bracket (openRawConnection immPath) closeChecked $ \imm -> do
+      let conn = mkConn nullTracer stats promoted vol imm
+      _ <- sqlInsertEbBody conn point eb Map.empty Map.empty
+      _ <- sqlInsertTxs conn point (Map.singleton 0 (txBytesFor eb 0))
+      withWriter db $ \writer -> do
+        (await =<< writeEbBody writer point eb Map.empty Map.empty) >>= (@?= BodyUnavailable)
+        (await =<< writeTxs writer point (Map.singleton 0 (txBytesFor eb 0)))
+          >>= (@?= TxWriteReceipt Set.empty Set.empty False)
+
+testReceiptCommitBarrier :: Assertion
+testReceiptCommitBarrier = withFreshSQLiteFile $ \volPath _ db -> withWriter db $ \writer -> do
+  let point = mkTestPoint 5 1
+      eb = mkTestEb 1
+  _ <- await =<< writeEbBody writer point eb Map.empty Map.empty
+  pending <- bracket (openRawConnection volPath) closeChecked $ \blocker ->
+    bracket_ (dbExec blocker (fromString "BEGIN IMMEDIATE")) (dbExec blocker (fromString "ROLLBACK")) $ do
+      promise <- writeTxs writer point (Map.singleton 0 (txBytesFor eb 0))
+      SI.timeout 0.02 (await promise) >>= (@?= Nothing)
+      pure promise
+  await pending >>= (@?= TxWriteReceipt (Set.singleton 0) Set.empty True)
+
+-- A deferred foreign-key failure rejects COMMIT after all blob writes. This
+-- checks the real insertion transaction, not an exception fabricated by a mock.
+testReceiptCommitFailure :: Assertion
+testReceiptCommitFailure = withFreshSQLiteFile $ \volPath immPath _ -> do
+  stats <- newTVarIO =<< initialStats volPath immPath
+  promoted <- newTVarIO 0
+  bracket (openRawConnection volPath) closeChecked $ \vol ->
+    bracket (openRawConnection immPath) closeChecked $ \imm -> do
+      let conn = mkConn nullTracer stats promoted vol imm
+          point = mkTestPoint 5 1
+          eb = mkTestEb 1
+          exec = dbExec vol . fromString
+      _ <- sqlInsertEbBody conn point eb Map.empty Map.empty
+      exec "PRAGMA foreign_keys = ON"
+      exec "CREATE TABLE receipt_parent (id INTEGER PRIMARY KEY)"
+      exec
+        "CREATE TABLE receipt_child (id INTEGER REFERENCES receipt_parent(id) DEFERRABLE INITIALLY DEFERRED)"
+      exec
+        "CREATE TRIGGER fail_receipt_commit BEFORE INSERT ON ebs BEGIN INSERT INTO receipt_child VALUES (1); END"
+      result <- try (sqlInsertEbBody conn point eb Map.empty (Map.singleton 0 (txBytesFor eb 0)))
+      case result :: Either LeiosDbException (Set.Set TxOffset) of
+        Left _ -> pure ()
+        Right receipt -> assertFailure ("failed commit returned a result: " <> show receipt)
+      exec "ROLLBACK"
+      sqlBatchRetrieveTxs conn point (Set.singleton 0) >>= (@?= Map.empty)
+
+-- Calling cache operations inside the forwarded storage action checks both
+-- ordering and lock release. A bounded test guards against a wrapper regression
+-- holding its cache lock across storage; failures/older requests keep the fence.
+testCacheFence :: IO (Cache.LeiosTxCache IO () ProtVerParity Cache.PackedEndorserBlock) -> Assertion
+testCacheFence makeCache = do
+  result <- SI.timeout 2 $ do
+    cache <- makeCache
+    raw <- newLeiosDBInMemory
+    let oldBody = mkTestEb 1
+        newBody = mkTestEb 2
+        old = MkLeiosPoint 1 (endorserBlockHash oldBody)
+        newer = MkLeiosPoint 10 (endorserBlockHash newBody)
+        tx = fst (head (endorserBlockReferences oldBody))
+        insert point body =
+          void $
+            Cache.insertBody
+              cache
+              point
+              (Cache.packEndorserBlock body)
+              ()
+              (\acc _ _ _ _ -> acc)
+        checkFence = do
+          Cache.lookupBody cache (pointEbHash old) >>= assertBool "old cached body was pruned" . not . isJust
+          -- Neither the old point nor its location can be restored, even though
+          -- a newer body still references the same transaction.
+          insert old oldBody
+          Cache.setTxLocations cache old [(0, tx)]
+          (_, locations) <-
+            Cache.insertBody
+              cache
+              newer
+              (Cache.packEndorserBlock newBody)
+              []
+              (\acc off _ _ loc -> (off, loc) : acc)
+          lookup 0 locations @?= Just (Just (MkTxLocation newer 0))
+    insert old oldBody
+    insert newer newBody
+    Cache.setTxLocations cache newer [(0, tx)]
+    let failing =
+          withCacheRetirement
+            cache
+            raw{leiosDbPromoteToImmutable = \_ _ -> checkFence >> ioError (userError "promotion failed")}
+    failed <- try (leiosDbPromoteToImmutable failing 5 []) :: IO (Either IOError ())
+    case failed of { Left _ -> pure (); Right () -> assertFailure "failure was swallowed" }
+    entered <- newEmptyMVar
+    never <- newEmptyMVar
+    let interrupted =
+          withCacheRetirement
+            cache
+            raw
+              { leiosDbPromoteToImmutable = \_ _ -> checkFence >> putMVar entered () >> takeMVar never
+              }
+    withAsync (leiosDbPromoteToImmutable interrupted 8 []) $ \worker -> do
+      takeMVar entered
+      cancel worker
+    -- A point between the failed and interrupted boundaries is rejected too:
+    -- cancellation cannot roll the cache fence back from eight to five.
+    insert old{pointSlotNo = 7} oldBody
+    Cache.lookupBody cache (pointEbHash old)
+      >>= assertBool "interruption retained the newer fence" . not . isJust
+    let succeeding =
+          withCacheRetirement
+            cache
+            raw
+              { leiosDbPromoteToImmutable = \slot points -> checkFence >> leiosDbPromoteToImmutable raw slot points
+              }
+    leiosDbPromoteToImmutable succeeding 2 []
+    checkFence
+  case result of
+    Nothing -> assertFailure "cache lock was held across promotion"
+    Just () -> pure ()

@@ -28,7 +28,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 
 import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Control.Monad (foldM, void, when)
+import Control.Monad (foldM, unless, void, when)
 import Control.ResourceRegistry (ResourceRegistry, forkLinkedThread)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
@@ -95,7 +95,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
   , acquireEbBody
-  , completeTxRequest
+  , abandonClosure
+  , settleTxRequest
   , ebStateOnset
   , newLeiosJobPool
   , refundEbRequest
@@ -115,9 +116,11 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), offsetsToBitmap)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbWriter (..)
+  ( BodyWriteReceipt (..)
+  , LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -204,6 +207,8 @@ data ExnLeiosFetchInvalidReply
   | -- | The transactions that arrived for a job are not the ones its
     -- endorser block lists.
     ExnLeiosBlockTxsJobMismatch !LeiosPoint !Jobs.LeiosJobId !JobMismatch
+  | -- | Storage rejected the declared sizes at these submitted offsets.
+    ExnLeiosBlockTxsWrongSize !LeiosPoint ![TxOffset]
   deriving Show
 
 instance Exception ExnLeiosFetchInvalidReply
@@ -393,42 +398,45 @@ settleBody ::
   BodySource peer ->
   LeiosPoint ->
   EndorserBlock ->
-  Promise m (Set TxOffset) ->
+  Promise m BodyWriteReceipt ->
   m ()
 settleBody ctx source point eb bodyWritten = do
-  heldOffs <- await bodyWritten
-  traces <- modifyMVar lfcOutstanding $ \outstanding ->
-    case Map.lookup point (ebState outstanding) of
-      Nothing -> pure (outstanding, \_now -> notFirst fetchArrivalEvicted)
-      Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, \_now -> notFirst fetchArrivalExtra)
-      -- Only the forge's writes settle it.
-      Just (MkEbState _onset ReceivingFromForge{}) ->
-        pure (outstanding, \_now -> notFirst fetchArrivalExtra)
-      Just (MkEbState onset NoBody) -> do
-        let
-          jobPool =
-            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` toIntSet heldOffs)
-        atomically $ lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
-        when (Jobs.nullJobPool jobPool) $
-          atomically $
-            lfcNotify $
-              AcquiredEbTxs point
-        pure
-          ( acquireEbBody point jobPool outstanding
-          , \now ->
-              first
-                : TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
-                : [ TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
-                  | Jobs.nullJobPool jobPool
-                  ]
-          )
-  -- These bytes are durable now: advertise them as fill sources for later
-  -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- Set.toList heldOffs]
-  void $ tryPutMVar lfcReady ()
-  -- Read after emitting, so that the acquisitions' ages run until then.
-  now <- systemTimeCurrent lfcSystemTime
-  mapM_ (traceWith lfcTracer) (traces now)
+  receipt <- await bodyWritten
+  case receipt of
+    BodyUnavailable -> void $ tryPutMVar lfcReady ()
+    BodyPresent heldOffs -> do
+      traces <- modifyMVar lfcOutstanding $ \outstanding ->
+        case Map.lookup point (ebState outstanding) of
+          Nothing -> pure (outstanding, \_now -> notFirst fetchArrivalEvicted)
+          Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, \_now -> notFirst fetchArrivalExtra)
+          -- Only the forge's writes settle it.
+          Just (MkEbState _onset ReceivingFromForge{}) ->
+            pure (outstanding, \_now -> notFirst fetchArrivalExtra)
+          Just (MkEbState onset NoBody) -> do
+            let
+              jobPool =
+                newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` toIntSet heldOffs)
+            atomically $ lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
+            when (Jobs.nullJobPool jobPool) $
+              atomically $
+                lfcNotify $
+                  AcquiredEbTxs point
+            pure
+              ( acquireEbBody point jobPool outstanding
+              , \now ->
+                  first
+                    : TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
+                    : [ TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
+                      | Jobs.nullJobPool jobPool
+                      ]
+              )
+      -- These bytes are durable now: advertise them as fill sources for later
+      -- endorser blocks referencing the same txs.
+      setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- Set.toList heldOffs]
+      void $ tryPutMVar lfcReady ()
+      -- Read after emitting, so that the acquisitions' ages run until then.
+      now <- systemTimeCurrent lfcSystemTime
+      mapM_ (traceWith lfcTracer) (traces now)
  where
   MkLeiosFetchClientContext
     { lfcStaticEnv
@@ -502,7 +510,7 @@ writeBodyWithLocalTxs ::
   EndorserBlock ->
   LocalFills ->
   Maybe LeiosTxCacheInsertBodySummary ->
-  m (Promise m (Set TxOffset))
+  m (Promise m BodyWriteReceipt)
 writeBodyWithLocalTxs ctx point eb localFills summary = do
   inMempool <- lfcMempoolTxs (Set.fromList (map fst refs))
   let fromMempool =
@@ -561,7 +569,7 @@ acquireForgedEb ctx point forged = do
     writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
-  settleForgedEb ctx point eb (Set.toList <$> written)
+  settleForgedEb ctx point eb written
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter} = ctx
   eb = forgedEbBody forged
@@ -576,31 +584,35 @@ settleForgedEb ::
   LeiosPoint ->
   EndorserBlock ->
   -- | the offsets of the txs the point holds once the write is durable
-  Promise m [TxOffset] ->
+  Promise m BodyWriteReceipt ->
   m ()
 settleForgedEb ctx point eb written = do
-  heldOffs <- await written
-  acquired <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let (outstanding', toEmit) = settleReceivingFromForge point outstanding
-        onset = maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
-        (notifications, traces) = case toEmit of
-          Just EmittedNothing ->
-            ( [AcquiredEb point (encodeEndorserBlockSize eb), AcquiredEbTxs point]
-            , \age ->
-                [TraceLeiosFetchClientBlockAcquired point age, TraceLeiosFetchClientBlockTxsAcquired point age]
-            )
-          Just EmittedBody -> ([AcquiredEbTxs point], \age -> [TraceLeiosFetchClientBlockTxsAcquired point age])
-          Just EmittedBodyAndClosure -> ([], const [])
-          Nothing -> ([], const [])
-    atomically $ mapM_ lfcNotify notifications
-    pure (outstanding', \now -> traces (ageAt now onset))
-  -- These bytes are durable now: advertise them as fill sources for later
-  -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
-  void $ tryPutMVar lfcReady ()
-  -- Read after emitting, so that the acquisitions' ages run until then.
-  now <- systemTimeCurrent lfcSystemTime
-  mapM_ (traceWith lfcTracer) (acquired now)
+  receipt <- await written
+  case receipt of
+    BodyUnavailable -> void $ tryPutMVar lfcReady ()
+    BodyPresent held -> do
+      let heldOffs = Set.toAscList held
+      acquired <- modifyMVar lfcOutstanding $ \outstanding -> do
+        let (outstanding', toEmit) = settleReceivingFromForge point outstanding
+            onset = maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
+            (notifications, traces) = case toEmit of
+              Just EmittedNothing ->
+                ( [AcquiredEb point (encodeEndorserBlockSize eb), AcquiredEbTxs point]
+                , \age ->
+                    [TraceLeiosFetchClientBlockAcquired point age, TraceLeiosFetchClientBlockTxsAcquired point age]
+                )
+              Just EmittedBody -> ([AcquiredEbTxs point], \age -> [TraceLeiosFetchClientBlockTxsAcquired point age])
+              Just EmittedBodyAndClosure -> ([], const [])
+              Nothing -> ([], const [])
+        atomically $ mapM_ lfcNotify notifications
+        pure (outstanding', \now -> traces (ageAt now onset))
+      -- These bytes are durable now: advertise them as fill sources for later
+      -- endorser blocks referencing the same txs.
+      setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
+      void $ tryPutMVar lfcReady ()
+      -- Read after emitting, so that the acquisitions' ages run until then.
+      now <- systemTimeCurrent lfcSystemTime
+      mapM_ (traceWith lfcTracer) (acquired now)
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcNotify, lfcSystemTime, lfcTracer} = ctx
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
@@ -732,12 +744,15 @@ settleTxs ::
   -- | the reply's bytes, classified when it arrived
   FetchArrivalBytes ->
   -- | the write of the txs
-  Promise m () ->
+  Promise m TxWriteReceipt ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written arrival txsWritten = do
-  await txsWritten
+  receipt <- await txsWritten
+  let confirmed = toIntSet (txWriteConfirmed receipt)
+      wrongSize = txWriteWrongSize receipt
   traces <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let outstanding' = completeTxRequest peer req outstanding
+    let settled = settleTxRequest peer req confirmed outstanding
+        outstanding' = if Set.null wrongSize then settled else abandonClosure point settled
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
       -- This reply's write completed the closure.
       ( Just (MkEbState _ (BodyAcquired before))
@@ -753,11 +768,13 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written arrival txsW
       _ -> pure (outstanding', const [])
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point written
+  setTxLocations lfcTxCache point [(off, txh) | (off, txh) <- written, IntSet.member off confirmed]
   void $ tryPutMVar lfcReady ()
   -- Read after emitting, so that the acquisition's age runs until then.
   now <- systemTimeCurrent lfcSystemTime
   mapM_ (traceWith lfcTracer) (arrived <> traces now)
+  unless (Set.null wrongSize) $
+    throwIO $ ExnLeiosBlockTxsWrongSize point (Set.toAscList wrongSize)
  where
   MkLeiosFetchClientContext
     { lfcOutstanding

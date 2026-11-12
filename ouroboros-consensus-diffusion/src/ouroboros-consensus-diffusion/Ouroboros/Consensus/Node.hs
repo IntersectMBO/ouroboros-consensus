@@ -58,6 +58,7 @@ module Ouroboros.Consensus.Node
 
     -- * Internal helpers
   , mkNodeKernelArgs
+  , splitNodeKernelRngs
   , nodeKernelArgsEnforceInvariants
   , openChainDB
   ) where
@@ -157,6 +158,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withLeiosDBSQLite)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -558,6 +560,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           -- Where the node emits what it acquires, to the ChainDB among
           -- others.
+          let (_, _, leiosFetchRoot, _) = splitNodeKernelRngs keepAliveRng
+          leiosTxCache <- newNodeLeiosTxCache leiosFetchRoot
+          let cacheGuardedLeiosDB = withCacheRetirement leiosTxCache leiosDB
           leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
@@ -568,7 +573,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkVolatileHasFS
               snapshotDelayRng
               llrnLdbFlavorArgs
-              leiosDB
+              cacheGuardedLeiosDB
               leiosAcquisitions
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
@@ -623,7 +628,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxClockSkew
                   historicityCheck
                   chainDB
-                  leiosDB
+                  cacheGuardedLeiosDB
+                  leiosTxCache
                   leiosAcquisitions
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
@@ -1015,6 +1021,17 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leio
             defArgs
    in (,args) <$> ChainDB.openDB args
 
+-- | Derive the KeepAlive, peer-sharing, LeiosFetch and TX-submission roots,
+-- in that order, without changing their existing streams. Both early cache
+-- allocation and kernel assembly use this projection: the cache needs the
+-- LeiosFetch root before ChainDB opens, when the kernel cannot yet be built.
+splitNodeKernelRngs :: StdGen -> (StdGen, StdGen, StdGen, StdGen)
+splitNodeKernelRngs rng = (kaRng, psRng, lfRng, txRng)
+ where
+  (kaRng, rest) = splitGen rng
+  (psRng, remaining) = splitGen rest
+  (lfRng, txRng) = splitGen remaining
+
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
   (RunNode blk, IOLike m) =>
@@ -1031,6 +1048,7 @@ mkNodeKernelArgs ::
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   LeiosDbHandle m ->
+  NodeLeiosTxCache m ->
   LeiosAcquisitions m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
@@ -1056,6 +1074,7 @@ mkNodeKernelArgs
   chainSyncHistoricityCheck
   chainDB
   leiosDB
+  leiosTxCache
   leiosAcquisitions
   maxCaughtUpAge
   gsmDurationUntilTooOld
@@ -1067,9 +1086,7 @@ mkNodeKernelArgs
   mempoolTimeoutConfig
   txSubmissionInitDelay =
     do
-      let (kaRng, rng') = splitGen rng
-          (psRng, rng'') = splitGen rng'
-          (lfRng, txRng) = splitGen rng''
+      let (kaRng, psRng, lfRng, txRng) = splitNodeKernelRngs rng
       return
         NodeKernelArgs
           { tracers
@@ -1080,6 +1097,7 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , leiosDB
+          , leiosTxCache
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime

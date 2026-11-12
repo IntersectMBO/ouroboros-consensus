@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (forM, forM_, unless, void, when)
+import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
@@ -168,11 +168,10 @@ sqlInsertTxs ::
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   Map TxOffset ByteString ->
-  IO ()
+  IO (Set TxOffset)
 sqlInsertTxs conn point txBytesByOffset =
-  void $
-    dbWithWriteTransaction conn $
-      writeTxBytes conn point txBytesByOffset
+  dbWithWriteTransaction conn $
+    writeTxBytes conn point txBytesByOffset
 
 -- | Write txs into the closure of the EB at the point, and mark them written,
 -- within the caller's transaction, and return the offsets of those dropped for
@@ -187,20 +186,26 @@ writeTxBytes conn point txBytesByOffset =
   lookupEbIndex db point >>= \case
     Nothing -> pure Set.empty
     Just ix@EbIndex{eiRowid, eiTxCount = n} -> do
-      bounds <- readTxBounds db ix 0 (n - 1)
-      let start i = boundAt bounds i
-          end i = boundAt bounds (i + 1)
-          inBody = Map.filterWithKey (\txOffset _ -> txOffset >= 0 && txOffset < n) txBytesByOffset
-          sized txOffset txBytes = BS.length txBytes == end txOffset - start txOffset
-          (accepted, missized) = Map.partitionWithKey sized inBody
-          runs = consecutiveRuns fst (Map.toAscList accepted)
-      unless (Map.null accepted) $ do
-        withBlob db "ebs" "txs" eiRowid True $ \blob ->
-          forM_ runs $ \run ->
-            withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) (start (fst (NE.head run))))
-        withBlob db "ebs" "txWritten" eiRowid True $ \blob ->
-          forM_ runs $ \run ->
-            withDie db (DB.blobWrite blob (BS.replicate (NE.length run) 1) (fst (NE.head run)))
-      pure (Map.keysSet missized)
+      let inBody = Map.filterWithKey (\off _ -> off >= 0 && off < n) txBytesByOffset
+      case (Map.lookupMin inBody, Map.lookupMax inBody) of
+        (Just (lo, _), Just (hi, _)) -> do
+          -- Bound values stay absolute byte positions, but the metadata slice
+          -- starts at lo. Marker writes still use the original TX offsets.
+          bounds <- readTxBounds db ix lo hi
+          let start i = boundAt bounds (i - lo)
+              end i = boundAt bounds (i - lo + 1)
+              sized off bytes = BS.length bytes == end off - start off
+              (accepted, missized) = Map.partitionWithKey sized inBody
+              runs = consecutiveRuns fst (Map.toAscList accepted)
+          unless (Map.null accepted) $ do
+            withBlob db "ebs" "txs" eiRowid True $ \blob ->
+              forM_ runs $ \run -> do
+                let at = start (fst (NE.head run))
+                withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) at)
+            withBlob db "ebs" "txWritten" eiRowid True $ \blob ->
+              forM_ runs $ \run ->
+                withDie db (DB.blobWrite blob (BS.replicate (NE.length run) 1) (fst (NE.head run)))
+          pure (Map.keysSet missized)
+        _ -> pure Set.empty
  where
   Conn{conVolDb = db} = conn

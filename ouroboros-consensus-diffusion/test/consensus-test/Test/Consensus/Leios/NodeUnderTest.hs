@@ -113,6 +113,7 @@ import Ouroboros.Consensus.Node
   , mkNodeToNodeInitiatorResponderVersions
   , nodeKernelArgsEnforceInvariants
   , openChainDB
+  , splitNodeKernelRngs
   , stdVersionDataNTN
   )
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
@@ -131,6 +132,7 @@ import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
   , initNodeKernel
+  , newNodeLeiosTxCache
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -138,6 +140,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noP
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -306,12 +309,15 @@ withNodeUnderTest ::
   LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
-  -- Genesis is off, as it is by default, but some tests enable ChainSync
-  -- jumping ('nodeConfigCsj').
+withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
+  let seeds = configSeeds cfg
+      (_, _, leiosFetchRoot, _) = splitNodeKernelRngs (seedKeepAliveAndPeerSharing seeds)
+  leiosTxCache <- newNodeLeiosTxCache leiosFetchRoot
+  let leiosDB = withCacheRetirement leiosTxCache rawLeiosDB
+  -- What a node with Genesis disabled, the default, runs with, but for
+  -- ChainSync jumping, which the test chooses.
   let genesisConfig = disableGenesisConfig{gcCSJConfig = nodeConfigCsj cfg}
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs genesisConfig
-  let seeds = configSeeds cfg
   leiosAcquisitions <- newLeiosAcquisitions
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
@@ -357,6 +363,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
               leiosDB
+              leiosTxCache
               leiosAcquisitions
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
