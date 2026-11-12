@@ -271,9 +271,16 @@ bucketTxArrival = \case
 worstCaseCacheTxCount :: Int
 worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEndorserBlock
 
--- | The capacity the node's Leios tx cache is sized for: @2 ^@ this many
--- txs, against which it reports 'ibsCacheLoad'. It covers
--- 'worstCaseCacheTxCount' about twice over.
+-- | The table shift the node allocates its Leios tx cache with: @2 ^@ this
+-- many slots. The pure reference handle reports 'ibsCacheLoad' against the
+-- same allocation, so the load factor means one thing across both handles.
+-- It covers 'worstCaseCacheTxCount' about twice over.
+--
+-- The latency profile of accessing the hash table is part of the overall
+-- diffusion correctness, and that begins to degrade when the load factor
+-- exceeds ~50%. So that degradation is already a limiting factor even before it
+-- risks a total failure (at >100%). Keep this in mind before lowering this or
+-- raising 'maxTxsPerEndorserBlock'.
 defaultLeiosTxCacheShift :: Int
 defaultLeiosTxCacheShift = 22
 
