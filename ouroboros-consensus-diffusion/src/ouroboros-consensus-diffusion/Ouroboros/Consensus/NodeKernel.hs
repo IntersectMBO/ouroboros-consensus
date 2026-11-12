@@ -433,6 +433,10 @@ initNodeKernel
               (cschcMap varChainSyncHandles)
               varLoEFragment
 
+    -- Before anything that acquires runs, so that the offer relay misses no
+    -- acquisition.
+    nextLeiosAcquisition <- subscribeLeiosAcquisitions leiosAcquisitions
+
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st (LazySTM.takeTMVar blockForgingVar)
@@ -486,7 +490,7 @@ initNodeKernel
           leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
-        leiosOfferRelay leiosAcquisitions leiosNotifyLog
+        leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
