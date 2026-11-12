@@ -44,8 +44,10 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
+import Cardano.Ledger.BaseTypes (ProtVer)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
@@ -53,6 +55,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -213,6 +216,10 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
+  , getLeiosTxIndex :: STM m (Map TxHash (Validated (GenTx blk)), Maybe ProtVer)
+  -- ^ The transactions in the mempool that an endorser block can reference, by
+  -- the hash it references them by ('txLeiosBytes'), and the protocol version
+  -- they were validated under ('tickedLedgerProtVer').
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->
