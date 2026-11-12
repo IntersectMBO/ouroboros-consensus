@@ -187,8 +187,8 @@ data LeiosPeerLifetimeId peer = MkLeiosPeerLifetimeId !peer !Word64
 -- | What the node's LeiosFetch state holds about one upstream peer.
 data LeiosFetchPeer m blk = MkLeiosFetchPeer
   { lfpIsBigLedgerPeer :: !IsBigLedgerPeer
-  -- ^ Fixed for the connection's lifetime. The decision logic fetches more
-  -- aggressively from a big-ledger peer.
+  -- ^ Fixed for the connection's lifetime. Selects the independently
+  -- configured BLP credit, equal to ordinary credit by default.
   , lfpOfferings :: !(StrictTVar m (Map.Map LeiosPoint PeerOffer))
   -- ^ The peer's current offers, keyed by point. Written only by the
   -- LeiosNotify and ChainSync clients, as the peer offers, and by the decision
@@ -213,9 +213,11 @@ newLeiosFetchKernel ::
   (IOLike m, LedgerSupportsProtocol blk) =>
   ChainDB m blk ->
   LeiosDbHandle m ->
-  -- | Seeds the decision loop's PRNG.
+  -- | Ordinary admission and service policy.
   LeiosFetchStaticEnv ->
+  -- | The node's producer/receipt group has begun closing.
   STM m Bool ->
+  -- | Seeds the decision loop's PRNG.
   StdGen ->
   -- | Everything of the clients' context but the state this creates.
   ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
