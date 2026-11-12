@@ -118,7 +118,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
-  , awaitAll
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -527,15 +526,15 @@ noMempoolTxs _ = pure Map.empty
 
 -- | Acquire an endorser block the node's own forge produced in this election,
 -- as one that arrived with no peer: take its body into the LeiosTxCache, write
--- it and all its txs, take those into the LeiosTxCache as validated, and once
--- both writes land, hold it with no job left ('holdForgedEb') and emit the
--- acquisitions not yet emitted at its point.
+-- it together with all its txs, take those into the LeiosTxCache as validated,
+-- and once the write lands, hold it with no job left ('holdForgedEb') and emit
+-- the acquisitions not yet emitted at its point.
 --
 -- Its bytes are not checked: the forge built the body from these very txs. No
 -- tx is filled from another point, since all of them are written.
 --
 -- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- to be durable as well as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -545,21 +544,22 @@ acquireForgedEb ::
 acquireForgedEb ctx elId forged = do
   _ <-
     insertBody lfcTxCache point (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
-  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  written <-
+    writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
-  awaitAll [void bodyWritten, txsWritten]
+  held <- await written
   (onset, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
     let (outstanding', acquired) = holdForgedEb elId ebHash (encodeEndorserBlockSize eb) outstanding
     atomically $ mapM_ lfcNotify acquired
     pure
       (outstanding', (maybe SNothing ebStateOnset (Map.lookup point (ebState outstanding)), acquired))
   -- These bytes are durable now: advertise them as fill sources for later
-  -- endorser blocks referencing the same txs. The point holds them all: the
-  -- forge built the body from these very txs, so none is of another size than
-  -- it declares.
-  setTxLocations lfcTxCache point (zip [0 ..] (map fst refs))
+  -- endorser blocks referencing the same txs.
+  setTxLocations
+    lfcTxCache
+    point
+    [(off, txHash) | (off, (txHash, _size)) <- zip [0 ..] refs, Set.member off held]
   void $ tryPutMVar lfcReady ()
   -- Read after emitting, so that the acquisitions' ages run until then.
   now <- systemTimeCurrent lfcSystemTime
