@@ -1087,6 +1087,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = snd (splitGen chainSyncRng)
               , leiosAcquisitions
               , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
