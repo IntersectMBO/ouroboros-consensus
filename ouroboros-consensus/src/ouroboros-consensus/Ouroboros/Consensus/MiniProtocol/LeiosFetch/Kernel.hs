@@ -312,10 +312,17 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
       -- One forecast anchor for the whole pass: the immutable tip, which is
       -- also what the announcement validation a LeiosNotify offer rides on
       -- forecast from, so it reaches every slot such an offer names.
+      --
+      -- 'forecastFor' requires a slot no older than its anchor. A point the
+      -- pruner has yet to drop can be older, and gets the anchor's view.
       forecastLeiosView slot =
         getLeiosLedgerView (Proxy @(BlockProtocol blk))
           <$> runExcept
-            (forecastFor (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger)) slot)
+            ( forecastFor
+                (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
+                (max anchorSlot slot)
+            )
+      anchorSlot = withOrigin (SlotNo 0) id (getTipSlot (ledgerState immLedger))
       forecastEbBounds slot = maybe (MkLeiosEbByteSizeBounds 0 0) leiosEbByteSizeBounds <$> forecastLeiosView slot
       -- The current slot, and how many slots before it a point is still worth
       -- voting on, by the Leios periods of the ledger there, if the ledger
