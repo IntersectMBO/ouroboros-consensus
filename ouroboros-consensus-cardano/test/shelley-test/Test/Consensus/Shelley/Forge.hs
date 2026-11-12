@@ -271,6 +271,7 @@ forgeWith coreNode ebTxs = fmap ((,) topLevelConfig) $ do
           | ShelleyTx txid tx <- ebTxs
           ]
       , fbIsLeader = PraosIsLeader $ Leios.hbrVrfRes (rawHeaderBody (getHeader exampleDijkstraBlock))
+      , fbLeiosCert = Nothing
       }
  where
   slot = SlotNo 10

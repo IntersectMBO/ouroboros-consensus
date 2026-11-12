@@ -84,7 +84,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, TxHash)
-import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
+import Ouroboros.Consensus.Leios.VoteState (VoteState, getCertificate, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -563,7 +563,7 @@ initNodeKernel
             writeTQueue forgedEbs (announcingHeader valid, forged)
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
+        blockForgingController st onForgedEb leiosVoteState (LazySTM.takeTMVar blockForgingVar)
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -608,15 +608,16 @@ initNodeKernel
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+      VoteState m blk ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st onForgedEb getBlockForging = go []
+    blockForgingController st onForgedEb voteState getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st onForgedEb) blockForging
+        blockForging' <- traverse (forkBlockForging st onForgedEb voteState) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -752,9 +753,11 @@ forkBlockForging ::
   -- | What 'forge' does with each endorser block it produces, given the
   -- wall-clock onset of the slot it forged it in
   (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+  -- | Where 'forge' looks up the certificate the node aggregated
+  VoteState m blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
@@ -771,6 +774,7 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
               mempool
               bf
               (onForgedEb slotOnset)
+              (getCertificate voteState)
               currentSlot
     )
  where
