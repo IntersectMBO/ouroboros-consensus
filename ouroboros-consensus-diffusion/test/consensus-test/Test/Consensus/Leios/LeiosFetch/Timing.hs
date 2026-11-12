@@ -1,6 +1,8 @@
 module Test.Consensus.Leios.LeiosFetch.Timing (tests) where
 
+import Control.Exception (evaluate)
 import Control.Monad.Class.MonadTime.SI (Time (Time))
+import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing
 import Test.Tasty
@@ -10,7 +12,18 @@ tests :: TestTree
 tests =
   testGroup
     "head timing"
-    [ testCase "raw RTT freshness, cap and invalid samples" $ do
+    [ testCase "stored clock facts retain no deferred runtime predicates or selectors" $ do
+        inputs0 <- inputs 1000
+        let arrival = Time (snapshotTransfer inputs0 + snapshotRtt inputs0)
+            continuous = snapshotTransfer inputs0 > 0
+        clock <-
+          evaluate
+            ( received
+                arrival
+                (activate (Just arrival) (Just arrival) (sent arrival continuous (newClock inputs0)))
+            )
+        noThunks [] clock >>= maybe (pure ()) (assertFailure . show)
+    , testCase "raw RTT freshness, cap and invalid samples" $ do
         conservativeRttWithSource (Time 31) Nothing @?= (0.5, MissingRtt)
         conservativeRttWithSource (Time 30) (Just (RttObservation 0.1 (Time 0))) @?= (0.15, KeepAliveSample)
         conservativeRttWithSource (Time 31) (Just (RttObservation 0.1 (Time 0))) @?= (0.5, StaleRtt)

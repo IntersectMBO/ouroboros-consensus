@@ -71,7 +71,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosFetchRequest (..)
   , LeiosOutstanding (..)
   , defaultLeiosFetchStaticEnv
   , emptyLeiosOutstanding
@@ -84,6 +83,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullJobPool)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalSource (..), newLocalReuse)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request (LeiosFetchRequest)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
