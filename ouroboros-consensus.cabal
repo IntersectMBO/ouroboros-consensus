@@ -1392,6 +1392,7 @@ library diffusion
     base,
     bytestring,
     cardano-base,
+    cardano-crypto-leios,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
     cardano-strict-containers,

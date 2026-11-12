@@ -163,6 +163,7 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
                   LgrA{lgrA_tip = GenesisPoint, lgrA_transition = Nothing}
       , fbTxs = map validatedInA [txA 1, txA 2]
       , fbEbTxs = map validatedInA [txA 3]
+      , fbLeiosCert = Nothing
       , fbIsLeader = OneEraIsLeader $ Z $ WrapIsLeader ()
       }
 
