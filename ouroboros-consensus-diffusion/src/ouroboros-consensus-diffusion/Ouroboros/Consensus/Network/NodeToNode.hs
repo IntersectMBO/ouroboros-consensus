@@ -979,6 +979,7 @@ mkApps ::
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
+  , Hashable addrNTN
   , Exception e
   , NFData e
   , Monoid bLF
@@ -1211,6 +1212,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           (getPeerTxRegistry kernel)
           (getTxCountersVar kernel)
           them
+          (getIsLocalRoot kernel (remoteAddress them))
           $ \api ->
             runServer (newTxSubmissionServer api)
 

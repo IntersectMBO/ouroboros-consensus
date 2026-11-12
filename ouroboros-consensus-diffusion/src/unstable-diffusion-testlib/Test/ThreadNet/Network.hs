@@ -1081,6 +1081,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = snd (splitGen chainSyncRng)
               , -- These nodes' ChainDBs subscribe to nothing; see
                 -- 'fromMinimalChainDbArgs'.
                 leiosAcquisitions = noLeiosAcquisitions
