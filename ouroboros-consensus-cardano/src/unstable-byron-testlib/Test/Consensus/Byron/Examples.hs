@@ -166,6 +166,7 @@ exampleBlock =
             applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB)
       , fbTxs = [ValidatedByronTx exampleGenTx]
       , fbEbTxs = []
+      , fbLeiosCert = Nothing
       , fbIsLeader = fakeMkIsLeader leaderCredentials
       }
  where
