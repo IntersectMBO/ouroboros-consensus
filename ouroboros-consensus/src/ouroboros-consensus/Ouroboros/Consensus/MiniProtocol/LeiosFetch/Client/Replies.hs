@@ -307,7 +307,7 @@ processLeiosBlock ctx peer req bytes = do
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
     BodyToWrite eb localFills -> do
-      bodyWritten <- writeEbBody lfcWriter point eb localFills
+      bodyWritten <- writeEbBody lfcWriter point eb localFills mempty
       -- A failed write brings the node down, since the SQLite LeiosDB's writer
       -- is linked to it. This worker runs off this thread but is linked to it,
       -- so a failure also disconnects the peer, if its client still runs. Like
@@ -470,7 +470,7 @@ acquireCachedBody registry ctx point bounds =
             -- worker makes it.
             void $
               forkLinkedThread registry "LeiosFetch.settleBody" $
-                writeEbBody lfcWriter point eb (Map.fromList localFills)
+                writeEbBody lfcWriter point eb (Map.fromList localFills) mempty
                   >>= settleBody ctx CachedBody point eb
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter} = ctx
@@ -494,7 +494,7 @@ acquireForgedEb ::
 acquireForgedEb ctx point forged = do
   _ <-
     insertBody lfcTxCache point (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty
+  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs

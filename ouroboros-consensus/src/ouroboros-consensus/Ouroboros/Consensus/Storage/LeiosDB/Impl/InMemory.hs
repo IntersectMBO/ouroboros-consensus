@@ -195,8 +195,8 @@ openInMemoryWriter stateVar =
   pure
     LeiosDbWriter
       { closeWriter = pure ()
-      , writeEbBody = \point eb fills ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb fills)
+      , writeEbBody = \point eb fills held ->
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar point eb fills held)
       , writeTxs = \point txs ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
@@ -239,8 +239,9 @@ imInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
+  Map TxOffset ByteString ->
   m (Set TxOffset)
-imInsertEbBody stateVar point eb fills = do
+imInsertEbBody stateVar point eb fills held = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   atomically $ do
@@ -249,7 +250,7 @@ imInsertEbBody stateVar point eb fills = do
       then pure Set.empty
       else do
         let row = Map.findWithDefault newRow point (imVolatile s)
-            toWrite = filled s `Map.withoutKeys` Map.keysSet (rowTxs row)
+            toWrite = (given `Map.union` filled s) `Map.withoutKeys` Map.keysSet (rowTxs row)
             row' = row{rowTxs = rowTxs row <> toWrite}
         writeTVar stateVar s{imVolatile = Map.insert point row' (imVolatile s)}
         pure (Map.keysSet (rowTxs row'))
@@ -267,6 +268,12 @@ imInsertEbBody stateVar point eb fills = do
       , hashLeiosTx (MkLeiosTx bytes) == txHash
       , fromIntegral (BS.length bytes) == size
       ]
+  -- A given tx lands, as 'imInsertTxs' takes it, only at an offset the body
+  -- declares, at its declared size.
+  given =
+    Map.filterWithKey
+      (\off bytes -> fmap snd (Map.lookup off refs) == Just (fromIntegral (BS.length bytes)))
+      held
   refs = Map.fromList (zip [0 ..] (endorserBlockReferences eb))
   newRow =
     EbRow
