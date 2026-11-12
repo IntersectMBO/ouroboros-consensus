@@ -7,11 +7,25 @@ import qualified Test.Consensus.Leios.LeiosFetch.Codec as Codec
 import qualified Test.Consensus.Leios.LeiosFetch.Decision as Decision
 import qualified Test.Consensus.Leios.LeiosFetch.LocalReuse as LocalReuse
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
+import qualified Test.Consensus.Leios.LeiosFetch.PeerPenalty as PeerPenalty
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
+import qualified Test.Consensus.Leios.LeiosFetch.RequestState as RequestState
+import qualified Test.Consensus.Leios.LeiosFetch.Timing as Timing
+import qualified Test.Consensus.Leios.LeiosFetch.Wait as Wait
 import Test.Tasty
 
 tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [Codec.tests, Decision.tests, Replies.tests, LocalReuse.tests, Client.tests, Node.tests]
+    [ Timing.tests
+    , PeerPenalty.tests
+    , Wait.tests
+    , RequestState.tests
+    , Codec.tests
+    , Decision.tests
+    , Replies.tests
+    , LocalReuse.tests
+    , Client.tests
+    , Node.tests
+    ]

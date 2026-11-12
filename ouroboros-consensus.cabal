@@ -233,6 +233,12 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
@@ -409,6 +415,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
+    monoidal-synchronisation,
     aeson,
     array,
     base >=4.14 && <4.23,
@@ -1573,6 +1580,10 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.LocalReuse
+    Test.Consensus.Leios.LeiosFetch.Wait
+    Test.Consensus.Leios.LeiosFetch.PeerPenalty
+    Test.Consensus.Leios.LeiosFetch.Timing
+    Test.Consensus.Leios.LeiosFetch.RequestState
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosFetch.Replies
     Test.Consensus.Leios.LeiosNotify

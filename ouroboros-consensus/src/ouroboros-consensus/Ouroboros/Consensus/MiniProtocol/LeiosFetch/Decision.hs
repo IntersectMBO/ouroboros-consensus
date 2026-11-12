@@ -54,7 +54,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.Foldable as F
-import Data.IntMap.NonEmpty (NEIntMap)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -87,43 +86,15 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , TxHash
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (StdGen)
 
 {-------------------------------------------------------------------------------
   Requests
 -------------------------------------------------------------------------------}
-
-data LeiosFetchRequest
-  = LeiosBlockRequest LeiosBlockRequest
-  | LeiosBlockTxsRequest LeiosBlockTxsRequest
-
--- | A request for an endorser block's body.
-data LeiosBlockRequest = MkLeiosBlockRequest
-  { lbrPoint :: !LeiosPoint
-  , lbrOfferedSize :: !BytesSize
-  -- ^ The size the peer offered this endorser block at; not sent, but used by
-  -- the reply handler.
-  , lbrEbBounds :: !LeiosEbByteSizeBounds
-  -- ^ The ledger's bounds on this block; not sent, but used by the reply
-  -- handler.
-  }
-
--- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
--- covers, keyed by job id (so a request can't list a job twice), each with its
--- full commitment. Everything needed to validate the response is carried here,
--- so the reply handler needs no lookup into the (body-less) job pool -- and a
--- redundant response for a job that has since completed still validates. On
--- the wire only the offset bitmap goes to the peer; it is derived from the
--- union of the jobs' offsets (see
--- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.offsetsToBitmap'), not
--- stored.
-data LeiosBlockTxsRequest
-  = MkLeiosBlockTxsRequest
-      !LeiosPoint
-      !(NEIntMap Jobs.LeiosJob)
 
 {-------------------------------------------------------------------------------
   Offers
@@ -817,49 +788,6 @@ abandonClosure point o =
 -- 'maxRequestBytesSize': the current constitution's guardrails cap @maxTxSize@
 -- at 32,768 bytes (MTS-01), in Dijkstra as in Conway, and the defaults here
 -- are 64 KiB and 500 kB. 'maxJobTxCount' is hard.
-data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  { maxRequestedBytesSizePerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each non-big-ledger
-  -- peer
-  , maxRequestedBytesSizePerBigLedgerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each big-ledger peer.
-  --
-  -- At most the LeiosFetch ingress queue's size: the scheduler must never
-  -- leave more requested-but-unconsumed response bytes outstanding than that
-  -- queue can hold, else the mux tears the connection down (see
-  -- @Network.Mux.Ingress@'s @IngressQueueOverRun@).
-  --
-  -- Larger than 'maxRequestedBytesSizePerPeer' so a high-stake peer can be asked
-  -- for multiple whole EB closures at once, but still bounded so an adversarial
-  -- peer can't drown us.
-  , maxRequestBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes per request.
-  --
-  -- At most 'maxLeiosTxsRequestBytesSize', by which the codec bounds the reply
-  -- ('Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'):
-  -- an honest peer's reply to a larger request could cost it its connection.
-  , maxJobBytesSize :: BytesSize
-  -- ^ At most this many bytes of txs per job
-  , maxJobTxCount :: Int
-  -- ^ At most this many txs per job
-  }
-
--- | The settings the node runs with, given 'maxRequestedBytesSizePerBigLedgerPeer'.
-defaultLeiosFetchStaticEnv :: BytesSize -> LeiosFetchStaticEnv
-defaultLeiosFetchStaticEnv maxPerBigLedgerPeer =
-  MkLeiosFetchStaticEnv
-    { maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestedBytesSizePerBigLedgerPeer = maxPerBigLedgerPeer
-    , maxRequestBytesSize = maxLeiosTxsRequestBytesSize
-    , maxJobBytesSize = 64 * thousandBase2
-    , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
-    }
- where
-  million :: Num a => a
-  million = 10 ^ (6 :: Int)
-  thousandBase2 :: Num a => a
-  thousandBase2 = 2 ^ (10 :: Int)
-
 -- | Decide what to request from each peer right now
 --
 -- A big-ledger peer is fetched from aggressively: it has a larger per-peer
