@@ -107,6 +107,7 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictMVar
   , StrictTVar
   , async
+  , asyncWithUnmask
   , atomically
   , evaluate
   , labelThisThread
@@ -414,11 +415,17 @@ acquireForgedEb ::
 acquireForgedEb ctx point forged = do
   bodyWritten <- writeEbBody lfcWriter point eb
   txsWritten <- writeTxs lfcWriter point (zip [0 ..] (toList (forgedEbTxs forged)))
+  -- Unmasked, since this may run uninterruptibly ('onValidAnnouncement' says
+  -- why), which a plain 'async' would pass on to the worker for its whole
+  -- life, its wait for the writes included.
   link
-    =<< async
-      ( settleForgedEb ctx point eb $
-          Promise $
-            await bodyWritten >> void (await txsWritten)
+    =<< asyncWithUnmask
+      ( \unmask -> do
+          labelThisThread "LeiosFetch.settleForgedEb"
+          unmask $
+            settleForgedEb ctx point eb $
+              Promise $
+                await bodyWritten >> void (await txsWritten)
       )
  where
   MkLeiosFetchClientContext{lfcWriter} = ctx
