@@ -23,8 +23,7 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (serializeTxForLeios, txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
