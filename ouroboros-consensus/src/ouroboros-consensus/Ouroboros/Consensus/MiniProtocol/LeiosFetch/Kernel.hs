@@ -152,7 +152,7 @@ data LeiosFetchPeer m blk = MkLeiosFetchPeer
 
 -- | The node's LeiosFetch state, seeded with the complete closures its LeiosDB
 -- holds whose announcements the immutable tip has not passed, so that it
--- neither fetches nor announces those again.
+-- neither fetches them nor emits their acquisitions again.
 newLeiosFetchKernel ::
   (IOLike m, LedgerSupportsProtocol blk) =>
   ChainDB m blk ->
