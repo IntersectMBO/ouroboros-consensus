@@ -1003,9 +1003,8 @@ offersRelayed = runSimOrThrow $ do
     for_ (take 3 (iterate reannouncing someAnnouncingBlock)) $ \blk ->
       for_ (mkAnnouncingHeader topLevelConfig (ltbHeader blk)) $ \anc ->
         appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
-  withAsync (leiosOfferRelay acquisitions notifyLog) $ \_ -> do
-    -- Until the relay has subscribed.
-    threadDelay 1
+  next <- subscribeLeiosAcquisitions acquisitions
+  withAsync (leiosOfferRelay next notifyLog) $ \_ -> do
     atomically $ do
       emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
       emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)

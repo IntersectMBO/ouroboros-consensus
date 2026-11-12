@@ -47,10 +47,7 @@ import Ouroboros.Consensus.Block (Header)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   )
-import Ouroboros.Consensus.Leios.Acquisitions
-  ( LeiosAcquisitions (..)
-  , LeiosEbNotification (..)
-  )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -188,11 +185,12 @@ succCursor (MkNotifyCursor n) = MkNotifyCursor (n + 1)
 -- offers each at a point at most once, as a downstream peer requires.
 leiosOfferRelay ::
   IOLike m =>
-  LeiosAcquisitions m ->
+  -- | the next acquisition, from a subscription made before the node could
+  -- acquire anything
+  STM m LeiosEbNotification ->
   NotifyLog m blk ->
   m Void
-leiosOfferRelay acquisitions notifyLog = do
-  next <- subscribeLeiosAcquisitions acquisitions
+leiosOfferRelay next notifyLog =
   forever $ atomically $ do
     acquired <- next
     announcedUntil <- readTVar (notifyAnnouncedUntil notifyLog)
