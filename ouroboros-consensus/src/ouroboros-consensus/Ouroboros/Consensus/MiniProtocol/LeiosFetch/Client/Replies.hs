@@ -469,7 +469,8 @@ settleBody ctx source point eb now bodyWritten = do
 -- | Acquire the endorser block at this point from the body the LeiosTxCache
 -- holds for it, having taken it in for another point, instead of fetching it
 -- again: decode the bytes it was received in, write the body, filling its txs from where they are
--- durably held, and settle them as an arrival would.
+-- durably held, and settle them as an arrival would. A worker writes and
+-- settles, so this never waits for room in the LeiosDB's write queue.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
 acquireCachedBody ::
@@ -490,8 +491,18 @@ acquireCachedBody ctx point bounds =
         | otherwise -> do
             now <- systemTimeCurrent lfcSystemTime
             (_noSummary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
-            bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills)
-            link =<< async (settleBody ctx CachedBody point eb now bodyWritten)
+            -- The write can wait for room in the LeiosDB's write queue, so the
+            -- worker makes it. Unmasked, since this may run uninterruptibly
+            -- ('onValidAnnouncement' says why), which a plain 'async' would
+            -- pass on to the worker.
+            link
+              =<< asyncWithUnmask
+                ( \unmask -> do
+                    labelThisThread "LeiosFetch.settleBody"
+                    unmask $
+                      writeEbBody lfcWriter point eb (Map.fromList localFills)
+                        >>= settleBody ctx CachedBody point eb now
+                )
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
 
