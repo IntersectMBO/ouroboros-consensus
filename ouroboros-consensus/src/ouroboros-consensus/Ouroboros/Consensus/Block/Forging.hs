@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Block.Forging
   , ForgeBlockResult (..)
   ) where
 
+import Cardano.Crypto.Leios (LeiosCert)
 import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
@@ -279,6 +280,11 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   -- then apply in order without errors.
   , fbIsLeader :: !(IsLeader (BlockProtocol blk))
   -- ^ Proof that the node is the slot leader.
+  , fbLeiosCert :: !(Maybe LeiosCert)
+  -- ^ The certificate of the endorser block the block's predecessor announced,
+  -- if the block certifies it. Such a block carries no transactions of its own,
+  -- so 'fbTxs' and 'fbEbTxs' are then empty. Always 'Nothing' for a @blk@ that
+  -- does not support Leios.
   }
 
 {-------------------------------------------------------------------------------
