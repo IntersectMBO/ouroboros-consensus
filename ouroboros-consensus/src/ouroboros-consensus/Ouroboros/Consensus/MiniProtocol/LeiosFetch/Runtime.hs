@@ -60,11 +60,11 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttObservation)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchLimit)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
 import Ouroboros.Consensus.Util.IOLike
 
 -- | Configuration/internal errors are explicit; a legal indivisible job can
@@ -202,7 +202,7 @@ data Client m peer = Client
 
 newRuntime :: IOLike m => LeiosFetchStaticEnv -> W.Readiness m -> STM m Bool -> m (Runtime m peer)
 newRuntime cfg ready closing = do
-  checked <- either (throwIO . InvalidConfig) pure (validateLeiosFetchStaticEnv 60000000 cfg)
+  checked <- either (throwIO . InvalidConfig) pure (validateLeiosFetchStaticEnv maxIngressBytes cfg)
   facts <- uncheckedNewTVarM (RuntimeState Map.empty Map.empty L.emptyLedger Map.empty 0 0)
   pure (Runtime checked facts closing ready)
 

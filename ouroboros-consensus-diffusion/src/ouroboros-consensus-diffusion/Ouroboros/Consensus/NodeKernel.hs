@@ -106,7 +106,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   , SomeHeaderInFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchStaticEnv)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , LeiosPeerLifetimeId (..)
@@ -127,7 +127,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
-import Ouroboros.Consensus.Network.LeiosFetch (maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (pruneLeiosNotifyToImmTip)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -298,6 +297,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- takes only its right split for salts; neither consumer uses the root directly.
   , leiosTxCache :: NodeLeiosTxCache m
   -- ^ Allocated before opening ChainDB, with eviction wired before database GC.
+  , leiosFetchConfig :: LeiosFetchStaticEnv
+  -- ^ Validated ordinary fetch credit and patience settings.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -367,6 +368,7 @@ initNodeKernel
     , nextNewLeiosValidClaims
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
+    , leiosFetchConfig
     , initChainDB
     , blockFetchConfiguration
     , btime
@@ -520,12 +522,12 @@ initNodeKernel
       newLeiosFetchKernel
         chainDB
         leiosDB
-        (defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes))
+        leiosFetchConfig
         (Receipts.receiptClosing receiptTasks)
         leiosFetchPrng
         $ \outstanding ready runtime ->
           MkLeiosFetchClientContext
-            { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
+            { lfcStaticEnv = leiosFetchConfig
             , lfcOutstanding = outstanding
             , lfcReady = ready
             , lfcRuntime = runtime

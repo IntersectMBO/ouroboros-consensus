@@ -365,7 +365,7 @@ testAdmissionReasons = withClient $ \rt client -> do
   atomically (R.enqueueRequest client (Time 101) (job 2 0)) >>= (@?= Left R.SourceClosed)
   ready <- atomically W.newReadiness
   closed <- uncheckedNewTVarM False
-  closing <- R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (readTVar closed)
+  closing <- R.newRuntime defaultLeiosFetchStaticEnv ready (readTVar closed)
   queue <- Checked.newTVarIO Seq.empty
   original <- atomically (R.openClient closing (0 :: Int) False queue (pure Nothing))
   atomically (writeTVar closed True)
@@ -553,7 +553,7 @@ testRttAdmission = withClient $ \rt original -> do
 withClient :: (R.Runtime IO Int -> R.Client IO Int -> IO ()) -> IO ()
 withClient action = do
   ready <- atomically W.newReadiness
-  rt <- R.newRuntime (defaultLeiosFetchStaticEnv maxBound) ready (pure False)
+  rt <- R.newRuntime (defaultLeiosFetchStaticEnv) ready (pure False)
   client <- atomically (openClient rt 0 False (pure Nothing))
   action rt client
 
