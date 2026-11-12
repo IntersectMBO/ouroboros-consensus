@@ -116,7 +116,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
-  , awaitAll
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -503,15 +502,18 @@ noMempoolTxsAndVersion0 _ = pure (MkLeiosMempoolTxs Map.empty minBound)
 
 -- | Acquire an endorser block the node's own forge produced in this election,
 -- as one that arrived with no peer: take its body into the LeiosTxCache, write
--- it and all its txs, and once both writes land, record those txs in the
--- LeiosTxCache as validated, hold it with no job left ('holdForgedEb') and
+-- it together with all its txs, and once the write lands, record those txs in
+-- the LeiosTxCache as validated, hold it with no job left ('holdForgedEb') and
 -- emit the acquisitions not yet emitted at its point.
 --
--- Its bytes are not checked: the forge built the body from these very txs. No
--- tx is filled from another point, since all of them are written.
+-- Its txs go to 'writeEbBody' with the body, as the mempool's txs do in
+-- 'writeBodyWithLocalTxs', since they have not passed the MsgLeiosBlockTxs
+-- commitment check that 'writeTxs' is for. Their bytes are not checked: the
+-- forge built the body from these very txs. No tx is filled from another
+-- point, since all of them are written.
 --
--- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- So 'AcquiredEb', and with it the node's offer of the body, waits for the write
+-- of the txs as well as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -520,13 +522,11 @@ acquireForgedEb ::
   m ()
 acquireForgedEb ctx elId forged = do
   _ <- insertBody lfcTxCache point (packEndorserBlock eb)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty mempty
-  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
-  awaitAll [void bodyWritten, txsWritten]
+  written <-
+    writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  _ <- await written
   -- The write of these txs has landed at this point: record them, as fill
-  -- sources for later endorser blocks referencing the same txs. The point
-  -- holds them all: the forge built the body from these very txs, so none is
-  -- of another size than it declares.
+  -- sources for later endorser blocks referencing the same txs.
   _ <-
     insertLandedTxs
       lfcTxCache
