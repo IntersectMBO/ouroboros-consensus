@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Block.Forging
   , ForgeStateUpdateInfo (..)
   , MkBlockForging (..)
   )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlockHash
   , LeiosPoint (..)
@@ -279,7 +280,7 @@ runVoting Voting{keys, ups, adopts, closures, validating, validatedBefore} = run
     withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
       _ <- await =<< writeEbBody writer point eb Map.empty (Map.fromList (zip [0 ..] txs))
       pure ()
-    atomically $ nodeAcquiredClosure node point
+    atomically $ emitLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs point)
 
 waitUntil :: DiffTime -> IOSim s ()
 waitUntil at = do

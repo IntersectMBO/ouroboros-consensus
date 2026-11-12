@@ -1070,8 +1070,6 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
-              , -- Nothing tells of acquired closures yet, as in 'mkNodeKernelArgs'.
-                subscribeLeiosClosures = pure retry
               , leiosVoterTxCache = noLeiosVoterTxCache
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =

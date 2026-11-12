@@ -1078,10 +1078,6 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , leiosDB
-          , -- TODO Subscribe to the closures LeiosFetch acquires. The LeiosDB no
-            -- longer tells what is written to it, so nothing does until LeiosFetch
-            -- announces its acquisitions, and the node votes for no endorser block.
-            subscribeLeiosClosures = pure retry
           , -- TODO Look up and record the transactions the node validated in the
             -- LeiosTxCache, once LeiosFetch keeps one. Until then the voter
             -- validates every transaction in full.

@@ -67,7 +67,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisitions (..)
+  , LeiosEbNotification (..)
+  )
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , newAnnounceState
@@ -287,9 +290,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
-  , subscribeLeiosClosures :: m (STM m LeiosPoint)
-  -- ^ Subscribe to the points whose closure the node acquires from now on,
-  -- each once.
   , leiosVoterTxCache :: LeiosVoterTxCache m
   -- ^ Which transactions the node validated already, so that its voter only
   -- reapplies them.
@@ -338,7 +338,6 @@ initNodeKernel
     , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
-    , subscribeLeiosClosures
     , leiosVoterTxCache
     , initChainDB
     , blockFetchConfiguration
@@ -555,7 +554,7 @@ initNodeKernel
           st
           onForgedEb
           leiosVoterEnv
-          subscribeLeiosClosures
+          (subscribeLeiosClosures leiosAcquisitions)
           (LazySTM.takeTMVar blockForgingVar)
 
     void $
@@ -740,6 +739,17 @@ toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
 toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
+
+-- | Subscribe to the points whose closure the node acquires from now on, each
+-- once.
+subscribeLeiosClosures :: IOLike m => LeiosAcquisitions m -> m (STM m LeiosPoint)
+subscribeLeiosClosures acquisitions = do
+  next <- subscribeLeiosAcquisitions acquisitions
+  let nextClosure =
+        next >>= \case
+          AcquiredEbTxs point -> pure point
+          AcquiredEb{} -> nextClosure
+  pure nextClosure
 
 -- | Forge with a set of credentials, and vote with its BLS keys, if any.
 forkBlockForging ::
