@@ -240,12 +240,14 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
@@ -530,8 +532,10 @@ library tracing
     cardano-protocol,
     cardano-protocol-tpraos,
     cardano-slotting,
+    cardano-strict-containers,
     containers,
     deepseq,
+    io-classes:si-timers,
     kes-agent,
     ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol},
     ouroboros-network:{api, orphan-instances, ouroboros-network},
@@ -549,6 +553,7 @@ test-suite tracing-test
   hs-source-dirs: tracing/test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Tracing.LeiosFetch
     Test.Consensus.Tracing.Dijkstra
     Test.Consensus.Tracing.Golden
     Test.Consensus.Tracing.MetaTrace
@@ -566,8 +571,11 @@ test-suite tracing-test
     cardano-ledger-mary,
     cardano-ledger-shelley,
     cardano-protocol-tpraos,
+    cardano-strict-containers,
     containers,
+    contra-tracer,
     filepath,
+    io-classes:si-timers,
     ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, tracing, unstable-consensus-testlib},
     ouroboros-network:{api, ouroboros-network},
     tasty,
@@ -1579,6 +1587,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
     Test.Consensus.Leios.LeiosFetch.Bookkeeping
+    Test.Consensus.Leios.LeiosFetch.Coverage
     Test.Consensus.Leios.LeiosFetch.Assignment
     Test.Consensus.Leios.LeiosFetch.LocalReuse
     Test.Consensus.Leios.LeiosFetch.Wait

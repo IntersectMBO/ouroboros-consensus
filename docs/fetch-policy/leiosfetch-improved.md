@@ -65,9 +65,31 @@ observation; no second scan reconstructs that decision.
 ## Source selection and progressive recovery
 
 Consider EBs in consensus priority order. Within a selected EB, rank eligible
-sources by their effective stall penalty, offer arrival time and stable original
-connection identity. Capture arrival times independently for body and closure
-offers, including offers learned through ChainSync.
+closure sources by their effective stall penalty, first full-closure offer time
+and stable original connection identity. Body selection preserves upstream
+peer-map order. Capture arrival times independently for body and closure offers,
+including offers learned through ChainSync.
+
+Preserve least-requested job selection within each EB: unrequested jobs precede
+eligible rescues, and fewer existing copies rank first among rescues. A relevant
+job that fits a peer's total TX credit but exceeds its current remainder stops
+further TX assignment to that original peer invocation for this planning pass.
+The stop covers smaller jobs in the same EB and all later EBs; it creates no
+extra reservation or failure penalty. Bodies and other sources remain available.
+An exhausted shared request count or closed/blocked source stops both request
+kinds; an exhausted body count stops only bodies.
+
+Individual ineligible/same-source, permanently unfit and protocol-invalid jobs
+are skipped without blocking other candidates. Do not exclude zero-byte jobs
+merely because free TX bytes are zero; they can fit if no earlier priority
+barrier applies. Empty job pools are skipped before ranking, including terminal
+unavailable pools, without treating their emptiness as acquisition evidence.
+
+Stops expire at the end of the pass. If another source takes a recorded barrier
+and makes it ineligible during that pass, publish one coalesced readiness signal
+to reconsider the stopped peer's credit. An unchanged no-progress pass does not
+notify itself. Runtime admission still rechecks live eligibility and credit
+atomically; pass-local stops are advisory and never extend across invocations.
 
 Initially request unassigned work once. When every outstanding copy of some
 still-needed work has exhausted its own eligible service allowance, permit one
@@ -133,3 +155,20 @@ Use one separate detail tracer for high-frequency policy observations. Emit
 outside STM and shared locks, after detaching compact values from payloads and
 large state snapshots. Count distinct fetched transactions separately from
 locally reused bytes. Network/mux tracing remains the source of wire traffic.
+
+Routine client events record blocked/resumed sources, progressive hedge causes,
+body writer acceptance, exact penalty charges and invocation termination. A
+body-winner event marks writer acceptance; durable acquisition remains a separate
+milestone. Detail events carry the original invocation/ordinal, frozen RTT and
+startup inputs, selected score and first full-closure offer, FIFO activation,
+request phases and changes in credit pressure. Logging never refreshes these
+observations from the current connection or score.
+
+The closure summary counts positively confirmed target offsets once. Its local
+bytes include DB/mempool fills and bytes supplied by our own forge. Its network
+bytes describe useful validated acquisition, including confirmed target presence
+that another write may already have established; they are not a count of first
+SQLite insertions. The summary is emitted once at semantic durable completion.
+Unknown acquisition origins remain unknown. Arrival buckets, duplicate completed
+responses and mux wire totals answer different questions and must not be added
+to this distinct numerator.

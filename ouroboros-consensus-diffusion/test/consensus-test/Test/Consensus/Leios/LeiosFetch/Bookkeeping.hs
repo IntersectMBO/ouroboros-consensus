@@ -30,6 +30,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 import System.Random (mkStdGen)
+import Test.Consensus.Leios.LeiosFetch.Replies (assignRequests, expireRuntimeHeads)
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.IOLike ()
@@ -202,7 +203,7 @@ simulate :: R.Runtime (IOSim s) Peer -> Time -> Setup -> Sim -> Step -> IOSim s 
 simulate rt now setup original step = case step of
   Decide -> do
     let out = simOutstanding sim
-    atomically (modifyTVar (R.runtimeFacts rt) (R.expireHeads now (`workStillNeeded` out)))
+    atomically (modifyTVar (R.runtimeFacts rt) (expireRuntimeHeads now (`workStillNeeded` out)))
     updated <-
       assignRequests
         rt

@@ -41,6 +41,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Ju
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server (TraceChainSyncServerEvent)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent
+  , TraceLeiosFetchDetailEvent
   , TraceLeiosFetchServerEvent
   )
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
@@ -134,6 +135,7 @@ tests =
     , testGroup
         "leios"
         [ metaTrace @(TraceLeiosFetchClientEvent Peer) "TraceLeiosFetchClientEvent"
+        , metaTrace @(TraceLeiosFetchDetailEvent Peer) "TraceLeiosFetchDetailEvent"
         , metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
         , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]

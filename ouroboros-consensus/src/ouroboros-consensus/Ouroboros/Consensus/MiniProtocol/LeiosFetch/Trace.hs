@@ -1,10 +1,24 @@
 {-# LANGUAGE DeriveFunctor #-}
 
 -- | What the node's LeiosFetch client and server trace.
+-- Policy summaries have strict bounded fields; their public trace wrappers
+-- and formatting remain lazy. Producers materialize observation batches
+-- before leaving the transaction that owns the facts.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
   , LeiosBlockTxSources (..)
   , LeiosTxCacheInsertBodySummary (..)
+  , ClosureSummary (..)
+  , TraceLeiosFetchDetailEvent (..)
+  , FetchRequest (..)
+  , FetchUsage (..)
+  , FetchBudget (..)
+  , FetchSelection (..)
+  , FetchHedgeCause (..)
+  , FetchRoutine (..)
+  , FetchLimit (..)
+  , FetchPhase (..)
+  , FetchDetail (..)
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
   , fetchArrivalEvicted
@@ -13,9 +27,16 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , TraceLeiosFetchServerEvent (..)
   ) where
 
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Time.Clock (NominalDiffTime)
+import Data.Word (Word32, Word64)
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage (ClosureSummary (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttSource)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxBitmaps)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
@@ -26,7 +47,7 @@ data TraceLeiosFetchClientEvent peer
     -- whether the node needed them. One the node writes is traced once the
     -- write settles, and was needed only if no other reply's write
     -- settled first.
-    TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
+    TraceLeiosFetchClientBlockArrived !peer !LeiosPoint !FetchArrivalBytes
   | -- | The node took the endorser block at this point from the body the
     -- LeiosTxCache held for another point, rather than fetching it. Traced once
     -- the write is durable, if no reply's write settled first.
@@ -39,16 +60,18 @@ data TraceLeiosFetchClientEvent peer
       !LeiosBlockTxSources
       !(Maybe LeiosTxCacheInsertBodySummary)
   | -- | Some of an endorser block's transactions arrived from this peer, their
-    -- bytes classified by whether the node needed them. Ones the node writes
-    -- are traced once the write settles, and were needed only if no other
-    -- reply's write of them settled first.
-    TraceLeiosFetchClientTxsArrived peer LeiosPoint FetchArrivalBytes
-  | -- | The node acquired the endorser block this long after its point's slot
-    -- began, if that is known.
-    TraceLeiosFetchClientBlockAcquired LeiosPoint (Maybe NominalDiffTime)
-  | -- | The node acquired all of the endorser block's transactions this long
+    -- bytes classified by whether the node needed them. This arrival trace is
+    -- separate from the positive storage confirmation and acquisition events.
+    TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
+  | -- | The node durably holds the endorser block, which arrived this long
     -- after its point's slot began, if that is known.
-    TraceLeiosFetchClientBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
+    TraceLeiosFetchClientBlockAcquired !LeiosPoint !(Maybe NominalDiffTime)
+  | -- | The node durably holds all of the endorser block's transactions. The
+    -- arrival that completed them came this long after its point's slot
+    -- began, if that is known.
+    TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
+  | TraceLeiosFetchClientClosureSummary LeiosPoint ClosureSummary
+  | TraceLeiosFetchClientPolicy peer Natural FetchRoutine
   deriving (Show, Functor)
 
 -- | How many of an endorser block's transactions the node takes from each
@@ -144,3 +167,82 @@ data TraceLeiosFetchServerEvent
     -- the client.
     TraceLeiosFetchServerOpenReaderDbFailure !LeiosDbException
   deriving Show
+
+-- | The single independently suppressible high-frequency policy tracer. The
+-- invocation is node-global within the fetch runtime and remains captured after
+-- its original registration disappears; the request ordinal lives in its detail.
+data TraceLeiosFetchDetailEvent peer = TraceLeiosFetchDetailEvent peer Natural FetchDetail
+  deriving (Show, Functor)
+
+-- | Detached fetch identity. The ordinal is local auditing metadata and is
+-- never added to the fetch wire format. A job is the immutable whole-TX batch.
+data FetchRequest = FetchRequest
+  { fetchOrdinal :: !Word64
+  -- ^ Nonwrapping local request number within the captured invocation.
+  , fetchPoint :: !LeiosPoint
+  -- ^ Original EB identity, retained after reassignment or disconnection.
+  , fetchJob :: !(StrictMaybe Word32)
+  -- ^ Stable job index; SNothing identifies a body request.
+  , fetchPayloadBytes :: !Word32
+  -- ^ Offered body size or actual immutable whole-TX job size.
+  }
+  deriving (Eq, Show)
+
+-- | Independent transaction credit and body count, across all EBs at one peer.
+-- These are logical outstanding requests, not preallocated buffers or DB space.
+data FetchUsage = FetchUsage
+  { fetchTxBytes :: !Word64
+  -- ^ Live queued/sent transaction payload credit.
+  , fetchBodies :: !Word32
+  -- ^ Live body attempts across EBs, independent of transaction credit.
+  , fetchTxLimit :: !Word32
+  -- ^ Applicable ordinary/BLP transaction limit for this connection.
+  , fetchBodyLimit :: !Word32
+  -- ^ Applicable body-count limit for this connection.
+  }
+  deriving (Eq, Show)
+
+-- | Frozen SI timing inputs; later samples and payload dribbles do not renew them.
+data FetchBudget = FetchBudget !Word32 !DiffTime !DiffTime !DiffTime !RttSource
+  deriving (Eq, Show)
+
+-- | Exact ranking evidence captured before request admission. Usage at
+-- admission is a separate snapshot, and delayed tracing does not refresh this.
+data FetchSelection = FetchSelection !Time !P.Score !(StrictMaybe Time)
+  deriving (Eq, Show)
+
+data FetchHedgeCause = FetchOwnHeadExpiry | FetchBlockedFollower
+  deriving (Eq, Show)
+
+data FetchRoutine
+  = FetchUpstreamChanged !Bool
+  | FetchHedgeOpened !FetchRequest !FetchHedgeCause
+  | FetchBodyWon !FetchRequest !Word32
+  | FetchPenaltyCharged !FetchRequest !Time !P.Snapshot !P.Score !P.Snapshot
+  | FetchInvocationClosed !FetchUsage !Bool
+  | FetchRegistrationRemoved !FetchUsage
+  deriving (Eq, Show)
+
+data FetchLimit = FetchBodyCount | FetchTransactionCredit | FetchCommandCount
+  deriving (Bounded, Enum, Eq, Ord, Show)
+
+-- | One compact transition per phase, never a packet/input-span trace.
+data FetchPhase
+  = FetchDispatchCommitted
+  | FetchSoftExpired
+  | FetchSendReturned
+  | FetchReplyReceived
+  | FetchHandlerStarted
+  | FetchReceiptSettled
+  | FetchWriterAccepted
+  | FetchHandlerFinished
+  | FetchResourceSettled
+  | FetchObsoleteSkipped
+  deriving (Bounded, Enum, Eq, Show)
+
+data FetchDetail
+  = FetchAdmitted !FetchRequest !FetchBudget !Time !FetchUsage !(StrictMaybe FetchSelection)
+  | FetchTransition !FetchRequest !FetchPhase !Time !FetchUsage
+  | FetchHeadActivated !FetchRequest !Time !Time !Bool
+  | FetchPressureChanged ![FetchLimit] !FetchUsage
+  deriving (Eq, Show)
