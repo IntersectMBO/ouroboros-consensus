@@ -46,6 +46,7 @@ import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -53,12 +54,17 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Ledger.SupportsMempool (VersionWord16 (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache
-  ( LeiosTxCache (..)
+  ( LandedTx (..)
+  , LeiosTxCache (..)
+  , TxState (..)
   , defaultLeiosTxCacheShift
   , evictOlderThan
+  , insertBody
   , newPureLeiosTxCache
+  , packEndorserBlock
   )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
@@ -113,6 +119,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , fetchArrivalEvicted
   , fetchArrivalExtra
   , fetchArrivalGood
+  , fetchArrivalInvalid
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -120,10 +127,12 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , newLeiosDBInMemory
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbWriter (..)
+  ( BodyWriteReceipt (..)
+  , LeiosDbWriter (..)
   , Promise (..)
+  , TxWriteReceipt (..)
   )
-import Ouroboros.Consensus.Util.IOLike (modifyMVar_, readMVar)
+import Ouroboros.Consensus.Util.IOLike (IOLike, modifyMVar_, readMVar)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
 import System.Random (mkStdGen)
@@ -166,13 +175,25 @@ tests :: TestTree
 tests =
   testGroup
     "replies"
-    [ testCase "closure summaries count confirmed network payload once" test_summary
+    [ testCase "retired forged callbacks cannot recreate coverage" test_forgePrunedCoverage
+    , testCase
+        "incomplete combined forge confirmation cannot announce a phantom closure"
+        test_forgeIncompleteConfirmation
+    , testCase "closure summaries count confirmed network payload once" test_summary
     , testCase "forge summaries keep locally produced bytes local" test_forgeSummary
     , testCase "the client emits a body's acquisition, then its closure's, once each is durable" $
         test_acquisitions
     , testCase
         "cache eviction cannot invalidate a positive body receipt"
         test_cacheEvictionDuringBodyReceipt
+    , testCase
+        "duplicate hashes are classified without mutation and duplicate reply entries are rejected"
+        test_repeatedArrivalSnapshot
+    , testCase "an evicted point still settles a positive TX receipt" (test_evictedTxReceipt False)
+    , testCase
+        "a younger shared reference cannot redirect an evicted point receipt"
+        (test_evictedTxReceipt True)
+    , testCase "only confirmed TX offsets become held cache entries" test_partialTxConfirmation
     , testCase "the client disconnects a peer whose body has another hash" $
         test_wrongHash
     , testCase
@@ -260,25 +281,34 @@ electee = KeyHash (UnsafeHash (SBS.pack (replicate 28 0)))
 
 -- | A client context over an in-memory LeiosDB and fresh state that is
 -- fetching the 'fixture', with its notifications collected, newest first.
-newContext :: IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+newContext :: IOLike m => m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContext = newContextHolding (pure ())
 
 -- | 'newContext', whose body writes are not done until this returns.
-newContextHolding :: IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+newContextHolding :: IOLike m => m () -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextHolding = let (point, _eb, _txs) = fixture in newContextAt point
 
 -- | 'newContextHolding', fetching the endorser block at this point instead.
 newContextAt ::
-  LeiosPoint -> IO () -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+  IOLike m => LeiosPoint -> m () -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextAt point release = newContextGated point (pure release)
 
 -- | 'newContextAt', each of whose body writes is not done until what this
 -- gives at that write returns.
 newContextGated ::
-  LeiosPoint -> IO (IO ()) -> IO (LeiosFetchClientContext IO Int, StrictTVar IO [Acquired])
+  IOLike m => LeiosPoint -> m (m ()) -> m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
 newContextGated point gate = do
-  let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
+  newContextOver db point gate
+
+newContextOver ::
+  IOLike m =>
+  LeiosDbHandle m ->
+  LeiosPoint ->
+  m (m ()) ->
+  m (LeiosFetchClientContext m Int, StrictTVar m [Acquired])
+newContextOver db point gate = do
+  let MkLeiosPoint slot ebHash = point
   writer <- holdingBodies <$> openWriter db
   receiptTasks <- Receipts.newReceiptTasks
   localReuse <-
@@ -925,3 +955,135 @@ test_forgeSummary = do
     acquireForgedEb ctx point (forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs))
   let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
   readTVarIO summaries >>= (@?= [ClosureSummary total total 0 0 Nothing True])
+
+-- A combined forge write must confirm every requested transaction.
+test_forgeIncompleteConfirmation :: Assertion
+test_forgeIncompleteConfirmation = do
+  let (point, _, _) = fixture
+  db <- newLeiosDBInMemory
+  (base, notes) <- newContextOver db point (pure (pure ()))
+  let original = lfcWriter base
+      ctx =
+        base{lfcWriter = original{writeEbBody = \_ _ _ _ -> pure (Promise (pure (BodyPresent Set.empty)))}}
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+    acquireForgedEb ctx point (forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs))
+  readTVarIO notes >>= (@?= [])
+
+test_forgePrunedCoverage :: Assertion
+test_forgePrunedCoverage = do
+  let (point, _, _) = fixture
+  gate <- newEmptyTMVarIO
+  (ctx, notes) <- newContextHolding (atomically (readTMVar gate))
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    acquireForgedEb ctx point (forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs))
+    modifyMVar_ (lfcOutstanding ctx) (pure . pruneOutstandingToImmTip (SlotNo 6))
+    atomically (putTMVar gate ())
+  readTVarIO notes >>= (@?= [])
+  out <- readMVar (lfcOutstanding ctx)
+  Map.null (closureCoverage out) @?= True
+  Map.null (ebState out) @?= True
+
+-- The ledger reference map canonicalizes repeated hashes. The batch cache API
+-- must still account for repeated occurrences without mutation; a wire reply
+-- supplying an extra occurrence fails count validation before writer admission.
+test_repeatedArrivalSnapshot :: Assertion
+test_repeatedArrivalSnapshot = do
+  let (_, _, txs) = fixture
+      tx = head txs
+      eb = endorserBlockFromTxBytes (leiosTxBytes tx :| [leiosTxBytes tx])
+      point = MkLeiosPoint 5 (endorserBlockHash eb)
+      size = fromIntegral (BS8.length (leiosTxBytes tx))
+  (ctx, notes, traces) <- withTraces (newContextAt point (pure ()))
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    classifyTxs (lfcTxCache ctx) point [(hashLeiosTx tx, size), (hashLeiosTx tx, size)]
+      >>= (@?= fetchArrivalGood (2 * size))
+    result <- try (processLeiosBlockTxs ctx peer req (V.fromList [tx, tx]))
+    case result of
+      Left (ExnLeiosBlockTxsWrongCount p expected received) -> (p, expected, received) @?= (point, 1, 2)
+      Left other -> assertFailure (show other)
+      Right () -> assertFailure "unsolicited duplicate transaction was accepted"
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point])
+  withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx tx)) >>= (@?= SNothing)
+  txsArrivals <$> readTVarIO traces >>= (@?= [(peer, point, fetchArrivalInvalid (2 * size))])
+
+-- Eviction is a cache-capacity event, not storage failure or logical pruning.
+-- The original immutable arrival counters survive a subsequent cache change.
+test_evictedTxReceipt :: Bool -> Assertion
+test_evictedTxReceipt shared = do
+  let (point, eb, txs) = fixture
+      younger = point{pointSlotNo = pointSlotNo point + 1}
+      bytes = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+      x = head txs
+      y = last txs
+  (base, notes, traces) <- withTraces newContext
+  (hold, awaitHeld, release) <- newWriteHold
+  let ctx = base{lfcWriter = holdingTxs hold (lfcWriter base)}
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    processLeiosBlockTxs ctx peer req (V.fromList txs)
+    awaitHeld 1
+    awaitArrivals txsArrivals traces 1 >>= (@?= [(peer, point, fetchArrivalGood bytes)])
+    if shared
+      then do
+        _ <- await =<< writeEbBody (lfcWriter base) younger eb Map.empty Map.empty
+        _ <- await =<< writeTxs (lfcWriter base) younger (Map.singleton 0 (leiosTxBytes x))
+        _ <- insertBody (lfcTxCache ctx) younger (packEndorserBlock eb)
+        _ <-
+          insertLandedTxs
+            (lfcTxCache ctx)
+            younger
+            [ MkLandedTx
+                0
+                (hashLeiosTx x)
+                (fromIntegral (BS8.length (leiosTxBytes x)))
+                (TxValidated (MkVersionWord16 10))
+            ]
+        pure ()
+      else pure ()
+    evictOlderThan (lfcTxCache ctx) (pointSlotNo younger)
+    release
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  txsArrivals <$> readTVarIO traces >>= (@?= [(peer, point, fetchArrivalGood bytes)])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
+  withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx y)) >>= (@?= SNothing)
+  withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx x))
+    >>= (@?= if shared then SJust (TxValidated (MkVersionWord16 10)) else SNothing)
+  classifyTxs
+    (lfcTxCache ctx)
+    point
+    [(hashLeiosTx tx, fromIntegral (BS8.length (leiosTxBytes tx))) | tx <- txs]
+    >>= (@?= fetchArrivalEvicted bytes)
+
+-- Storage may confirm fewer offsets than were submitted. Unconfirmed entries
+-- cannot acquire a closure or become reusable via another retained point.
+test_partialTxConfirmation :: Assertion
+test_partialTxConfirmation = do
+  let (point, eb, txs) = fixture
+  (base, notes) <- newContext
+  let writer = lfcWriter base
+      partial =
+        writer
+          { writeTxs = \p payloads -> do
+              pending <- writeTxs writer p payloads
+              pure $ Promise $ do
+                receipt <- await pending
+                pure receipt{txWriteConfirmed = Set.intersection (Set.singleton 0) (txWriteConfirmed receipt)}
+          }
+      ctx = base{lfcWriter = partial}
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    processLeiosBlockTxs ctx peer req (V.fromList txs)
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point])
+  _ <- closureRequest ctx point
+  withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx (head txs)))
+    >>= (@?= SJust (TxInserted ()))
+  withLookupTx (lfcTxCache ctx) (\lookupTx -> lookupTx (hashLeiosTx (last txs))) >>= (@?= SNothing)
