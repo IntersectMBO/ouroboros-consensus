@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( -- * Partition files
     initialiseLeiosDbFiles
   , openRawConnection
+  , openReadOnlyRawConnection
   , withReadOnlyConn
   , closeChecked
 
@@ -53,7 +54,9 @@ withReadOnlyConn dbPath =
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openReadOnlyRawConnection dbPath = do
   db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
-  -- Only mmap_size: journal_mode and page_size need write access.
+  -- Readers need no writer pragmas or schema changes. Retain the busy
+  -- timeout for transient lock contention while opening/reading WAL files.
+  dbExec db "pragma busy_timeout = 1000;"
   dbExec db "pragma mmap_size = 268435500;"
   pure db
 

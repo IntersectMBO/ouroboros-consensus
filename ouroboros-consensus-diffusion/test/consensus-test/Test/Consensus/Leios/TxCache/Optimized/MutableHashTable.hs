@@ -34,14 +34,16 @@ module Test.Consensus.Leios.TxCache.Optimized.MutableHashTable
   , salt1
   ) where
 
+import Control.Exception (ErrorCall, try)
+import Control.Monad (void)
 import Control.Monad.ST (runST)
-import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
+import Data.Bits (finiteBitSize, shiftL, shiftR, xor, (.&.), (.|.))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64, Word8)
 import qualified Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable as HT
 import Test.Tasty (TestTree, adjustOption, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
@@ -64,7 +66,16 @@ tests :: TestTree
 tests =
   testGroup
     "TxCache.Optimized.MutableHashTable"
-    [ adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
+    [ testCase "rejects invalid allocation shifts before allocating" $
+        mapM_
+          (\n -> do
+            result <- try (void (HT.new n salt0 salt1)) :: IO (Either ErrorCall ())
+            case result of
+              Left _ -> pure ()
+              Right () -> assertFailure ("accepted invalid shift " <> show n)
+          )
+          [-1, 5, finiteBitSize (0 :: Int) - 6, finiteBitSize (0 :: Int)]
+    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "agrees with Data.Map across load factors" prop_matchesMap
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty
