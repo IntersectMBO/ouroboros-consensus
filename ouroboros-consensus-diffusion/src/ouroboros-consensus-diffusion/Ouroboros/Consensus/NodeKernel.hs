@@ -44,7 +44,6 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
-import Data.ByteString (ByteString)
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
 import Data.Foldable (for_, traverse_)
@@ -89,7 +88,7 @@ import Ouroboros.Consensus.Leios.TxCache
   , defaultLeiosTxCacheShift
   , newHashTableLeiosTxCache
   )
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, LeiosMempoolTxs (..), TxHash)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -118,6 +117,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , onForgedLeiosEb
   , pruneLeiosFetchToImmTip
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (mempoolLocalSource, newLocalReuse)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , ValidAnnouncement (..)
@@ -511,7 +512,10 @@ initNodeKernel
     -- The right branch was reserved by early cache allocation; decisions
     -- keep their existing left branch, independent of salt draws.
     let (leiosFetchPrng, _) = splitGen leiosFetchRng
+    receiptTasks <- Receipts.newReceiptTasks
     leiosWriter <- allocateWriter registry leiosDB
+    localReuse <-
+      newLocalReuse (Receipts.receiptClosing receiptTasks) (mempoolLocalSource mempool) leiosWriter
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
         MkLeiosFetchClientContext
@@ -519,10 +523,11 @@ initNodeKernel
           , lfcOutstanding = outstanding
           , lfcReady = ready
           , lfcTxCache = leiosTxCache
+          , lfcReceiptTasks = receiptTasks
+          , lfcLocalReuse = localReuse
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
-          , lfcMempoolTxs = leiosTxsInMempool mempool
           , -- Each trace names the connection, not which of its registrations.
             lfcTracer =
               contramap
@@ -590,9 +595,10 @@ initNodeKernel
     let onForgedEb onset hdr leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
-          for_ mbValid $ \valid -> atomically $ do
-            void $ onValidAnnouncement leiosAnnounceState valid
-            writeTQueue forgedEbs (announcingHeader valid, forged)
+          for_ mbValid $ \valid -> do
+            -- Never inherit an uninterruptible region across writer admission.
+            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
+            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
@@ -814,20 +820,6 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
-
--- | For the subset of these txs the Mempool currently holds, their bytes as an
--- endorser block references them; and the major protocol version the Mempool
--- validated them all under.
-leiosTxsInMempool ::
-  IOLike m =>
-  Mempool m blk ->
-  Set TxHash ->
-  m (LeiosMempoolTxs ByteString)
-leiosTxsInMempool mempool hashes = do
-  MkLeiosMempoolTxs indexed protVer <- atomically $ getLeiosTxIndex mempool
-  -- Built here, so that the peer's thread computes each tx's bytes.
-  pure $!
-    MkLeiosMempoolTxs (Map.map leiosTxMempoolViewBytes (Map.restrictKeys indexed hashes)) protVer
 
 {-------------------------------------------------------------------------------
   Leios pruning
