@@ -436,7 +436,9 @@ mkHandlers
                   -- it would one from a LeiosNotify peer.
                   mbValid <-
                     validHeaderAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
-                  for_ mbValid $ \valid -> do
+                  -- Stay alive until a new announcement is both accepted and
+                  -- acted on: see 'onValidAnnouncement'.
+                  for_ mbValid $ \valid -> uninterruptibleMask_ $ do
                     whetherNew <- atomically $ onValidAnnouncement getLeiosAnnounceState valid
                     case whetherNew of
                       NewAnnouncement -> onNewLeiosAnnouncement getLeiosFetchKernel valid
