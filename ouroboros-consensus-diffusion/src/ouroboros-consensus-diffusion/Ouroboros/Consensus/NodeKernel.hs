@@ -23,6 +23,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
+import Cardano.Base.Bytes (byteArrayToByteString)
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
@@ -42,6 +43,7 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
+import Data.ByteString (ByteString)
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
 import Data.Foldable (for_, traverse_)
@@ -80,7 +82,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, LeiosMempoolTxs (..), TxHash)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -491,6 +493,7 @@ initNodeKernel
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
+          , lfcMempoolTxs = leiosTxsInMempool mempool
           , -- Each trace names the connection, not which of its registrations.
             lfcTracer =
               contramap
@@ -781,6 +784,20 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
+
+-- | For the subset of these txs the Mempool currently holds, their bytes as an
+-- endorser block references them; and the major protocol version the Mempool
+-- validated them all under.
+leiosTxsInMempool ::
+  IOLike m =>
+  Mempool m blk ->
+  Set TxHash ->
+  m (LeiosMempoolTxs ByteString)
+leiosTxsInMempool mempool hashes = do
+  MkLeiosMempoolTxs indexed protVer <- atomically $ getLeiosTxIndex mempool
+  -- Converted here, so that the peer's thread copies only the requested txs' bytes.
+  pure $!
+    MkLeiosMempoolTxs (Map.map byteArrayToByteString (Map.restrictKeys indexed hashes)) protVer
 
 {-------------------------------------------------------------------------------
   Leios pruning
