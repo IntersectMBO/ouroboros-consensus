@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
     -- * Mempool environment
   , MempoolEnv (..)
   , initMempoolEnv
+  , initMempoolEnvWithLocalReuse
 
     -- * Ledger interface
   , LedgerInterface (..)
@@ -51,15 +52,18 @@ import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
+import qualified Data.ByteString as BS
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Typeable
-import Data.Word (Word64)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -68,6 +72,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosTx (..), TxHash, hashLeiosTx)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -93,6 +98,8 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
   , validatedTxDiffs :: !(LedgerTables blk DiffMK)
+  , validatedLeiosFingerprint :: !(Maybe LeiosFingerprint)
+  -- ^ Exact post-validation wire-byte hash/size, absent when unused/unsupported.
   }
   deriving Generic
 
@@ -102,6 +109,38 @@ deriving instance
   , NoThunks (TxOut blk)
   ) =>
   NoThunks (ValidatedTxWithDiffs blk)
+
+-- | Metadata only; no second serialized transaction payload is retained.
+data LeiosFingerprint = LeiosFingerprint !TxHash !BytesSize
+  deriving (Generic, NoThunks)
+
+-- | Compute exact metadata during existing insertion/revalidation maintenance.
+-- The index retains validated TX references and fingerprints, not their
+-- serialized payloads. Materialization belongs to the bounded lookup consumer.
+mkValidatedTxWithDiffs ::
+  forall blk.
+  LedgerSupportsMempool blk =>
+  Bool ->
+  Validated (GenTx blk) ->
+  LedgerTables blk DiffMK ->
+  ValidatedTxWithDiffs blk
+mkValidatedTxWithDiffs enabled tx diffs = ValidatedTxWithDiffs tx diffs fingerprint
+ where
+  fingerprint
+    | not enabled = Nothing
+    | otherwise = do
+        bytes <- txBytesForLeios (Proxy @blk) (txForgetValidated tx)
+        if toInteger (BS.length bytes) > toInteger (maxBound :: Word32)
+          then Nothing
+          else Just (LeiosFingerprint (hashLeiosTx (MkLeiosTx bytes)) (fromIntegral (BS.length bytes)))
+
+insertLeiosTx ::
+  ValidatedTxWithDiffs blk ->
+  Map TxHash (BytesSize, Validated (GenTx blk)) ->
+  Map TxHash (BytesSize, Validated (GenTx blk))
+insertLeiosTx entry index = case validatedLeiosFingerprint entry of
+  Nothing -> index
+  Just (LeiosFingerprint h size) -> Map.insert h (size, validatedTx entry) index
 
 -- | Internal state in the mempool
 data InternalState blk = IS
@@ -122,6 +161,10 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
+  , isLeiosEnabled :: !Bool
+  -- ^ Maintain exact Leios-byte metadata for bounded local discovery.
+  , isLeiosIndex :: !(Map TxHash (BytesSize, Validated (GenTx blk)))
+  -- ^ Hash/size and matching TX, committed with all other mempool state.
   , isTxKeys :: !(LedgerTables blk KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
@@ -216,6 +259,8 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
+    , isLeiosEnabled = False
+    , isLeiosIndex = Map.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
@@ -303,20 +348,34 @@ initMempoolEnv ::
   Maybe MempoolTimeoutConfig ->
   Tracer m (TraceEventMempool blk) ->
   m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
+initMempoolEnv = initMempoolEnvWithLocalReuse False
+
+initMempoolEnvWithLocalReuse ::
+  ( IOLike m
+  , LedgerSupportsMempool blk
+  , ValidateEnvelope blk
+  ) =>
+  Bool ->
+  LedgerInterface m blk ->
+  LedgerConfig blk ->
+  MempoolCapacityBytesOverride ->
+  Maybe MempoolTimeoutConfig ->
+  Tracer m (TraceEventMempool blk) ->
+  m (MempoolEnv m blk)
+initMempoolEnvWithLocalReuse enabled ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
   MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface
   eFrk <- meFrk
   case eFrk of
     -- This should happen very rarely, if between getting the state and getting
     -- the forker, the ledgerdb has changed. We just loop to try again here.
     Left{} -> do
-      initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer
+      initMempoolEnvWithLocalReuse enabled ledgerInterface cfg capacityOverride mbTimeoutConfig tracer
     Right frk -> do
       frkMVar <- newMVar frk
       let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
       isVar <-
         newTMVarIO $
-          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+          (initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'){isLeiosEnabled = enabled}
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
       return
@@ -386,22 +445,24 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   case runExcept (applyTx cfg wti isSlotNo tx st) of
     Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
-      ( Right (vtx, projectLedgerTables st')
-      , \dur ->
-          is
-            { isTxs =
-                isTxs
-                  :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
-                    nextTicketNo
-                    (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
-            , isTxKeys = isTxKeys <> getTransactionKeySets tx
-            , isTxValues = ltliftA2 unionValues isTxValues origValues
-            , isTxIds = Set.insert (txId tx) isTxIds
-            , isLedgerState = prependMempoolDiffs isLedgerState st'
-            , isLastTicketNo = nextTicketNo
-            }
-      )
+      let entry = mkValidatedTxWithDiffs (isLeiosEnabled is) vtx (projectLedgerTables st')
+       in ( Right (vtx, projectLedgerTables st')
+          , \dur ->
+              is
+                { isTxs =
+                    isTxs
+                      :> TxTicket
+                        entry
+                        nextTicketNo
+                        (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
+                , isTxKeys = isTxKeys <> getTransactionKeySets tx
+                , isTxValues = ltliftA2 unionValues isTxValues origValues
+                , isTxIds = Set.insert (txId tx) isTxIds
+                , isLeiosIndex = insertLeiosTx entry (isLeiosIndex is)
+                , isLedgerState = prependMempoolDiffs isLedgerState st'
+                , isLastTicketNo = nextTicketNo
+                }
+          )
  where
   IS
     { isTxs
@@ -436,9 +497,11 @@ revalidateTxsFor ::
   TicketNo ->
   -- | The removal generation to stamp on the result (see 'isRemovalCounter').
   Word64 ->
+  -- | Preserve whether this candidate maintains the auxiliary local index.
+  Bool ->
   [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
-revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTickets =
+revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen enabled txTickets =
   -- A from-scratch revalidation is just 'revalidateTxsFor'' onto an empty candidate
   -- at this base: no prior txs, ledger = @st@. Sharing the one implementation
   -- keeps the two byte-identical by construction.
@@ -450,7 +513,10 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
   -- the mempool's ticket counter is preserved and the next add continues from it.
   emptyResult =
     RevalidateTxsResult
-      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalCounter = removalGen}
+      (initInternalState capacityOverride lastTicketNo cfg slot st)
+        { isRemovalCounter = removalGen
+        , isLeiosEnabled = enabled
+        }
       []
 
 -- | The general revalidation step: reapply a /delta/ of already-validated txs on
@@ -501,9 +567,13 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
     survivorKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) validDelta
     survivorDiffs = Foldable.foldl' rawPrependDiffs (DiffMK mempty) $ map (getLedgerTables . snd3) validDelta
 
+    survivingTickets = map unwrap validDelta
+
     newIS =
       cand
-        { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
+        { isTxs = Foldable.foldl' (:>) (isTxs cand) survivingTickets
+        , isLeiosIndex =
+            Foldable.foldl' (flip (insertLeiosTx . txTicketTx)) (isLeiosIndex cand) survivingTickets
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
         , isTxKeys = isTxKeys cand <> survivorKeys
         , isTxValues =
@@ -516,8 +586,8 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
  where
-  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
-  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  wrap = \(TxTicket ValidatedTxWithDiffs{validatedTx = tx, validatedTxDiffs = df} tk tz) -> (tx, df, (tk, tz))
+  unwrap = \(tx, df, (tk, tz)) -> TxTicket (mkValidatedTxWithDiffs (isLeiosEnabled cand) tx df) tk tz
   fst3 (x, _, _) = x
   snd3 (_, x, _) = x
 

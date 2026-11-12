@@ -20,6 +20,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.Void (Void)
@@ -102,6 +103,9 @@ mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize}
 
 instance Ledger.LedgerSupportsMempool TestBlock where
+  -- Optional test wire encoding. Default fairness tests do not enable indexing.
+  txBytesForLeios _ (TestBlockGenTx tx) = Just (BS.pack (show tx))
+
   applyTx _cfg _shouldIntervene _slot gtx st =
     pure
       ( TestBlock.TickedTestLedger $

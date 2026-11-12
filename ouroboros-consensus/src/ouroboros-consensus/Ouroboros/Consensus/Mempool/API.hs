@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Mempool.API
 
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
@@ -53,6 +54,7 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (BytesSize, TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -176,6 +178,12 @@ data Mempool m blk = Mempool
   -- persistence.
   , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
   -- ^ Manually remove the given transactions from the mempool.
+  , lookupLeiosTxs :: [(TxHash, BytesSize)] -> STM m (Map TxHash (Validated (GenTx blk)))
+  -- ^ Look up only explicitly named exact wire hashes and sizes, returning
+  -- references to matching validated TXs. The caller bounds its query slice;
+  -- no whole-mempool snapshot escapes this read. Payload materialization is
+  -- outside STM. Empty when indexing is disabled or the era is unsupported.
+  -- See @docs/fetch-policy/leiosfetch-improved.md#offers-and-local-possession@.
   , getSnapshot :: STM m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the current mempool state. This allows for
   -- further pure queries on the snapshot.

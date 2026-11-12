@@ -682,7 +682,8 @@ initInternalState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool <-
-      openMempool
+      openMempoolWithLocalReuse
+        True
         registry
         (chainDBLedgerInterface chainDB)
         (configLedger cfg)

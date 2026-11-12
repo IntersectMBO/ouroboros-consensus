@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike
+import qualified Test.Consensus.Mempool.LocalReuse as LocalReuse
 import Test.Consensus.Mempool.Util
 import Test.Crypto.Hash ()
 import Test.QuickCheck
@@ -71,7 +72,8 @@ tests :: TestTree
 tests =
   testGroup
     "Mempool"
-    [ testGroup
+    [ LocalReuse.tests
+    , testGroup
         "TxSeq"
         [ testProperty "lookupByTicketNo complete" prop_TxSeq_lookupByTicketNo_complete
         , testProperty "lookupByTicketNo sound" prop_TxSeq_lookupByTicketNo_sound

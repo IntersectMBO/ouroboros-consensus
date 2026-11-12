@@ -839,6 +839,7 @@ test-suite consensus-test
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
+    Test.Consensus.Mempool.LocalReuse
     Test.Consensus.Mempool.Fairness.TestBlock
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
@@ -1717,6 +1718,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
     Ouroboros.Consensus.Shelley.Ledger.Mempool
+    Ouroboros.Consensus.Shelley.Ledger.TxBytes
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol
@@ -2081,8 +2083,9 @@ test-suite cardano-test
     cardano-ledger-babbage:testlib,
     cardano-ledger-binary:testlib,
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
-    cardano-ledger-conway:testlib,
+    cardano-ledger-conway:{cardano-ledger-conway, testlib},
     cardano-ledger-core:{cardano-ledger-core, testlib},
+    cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-mary:testlib,
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},

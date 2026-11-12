@@ -25,6 +25,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Identity
@@ -227,6 +228,12 @@ instance
       . hcmap proxySingle (txForgetValidated . unwrapValidatedGenTx)
       . getOneEraValidatedGenTx
       . getHardForkValidatedGenTx
+
+  txBytesForLeios _ (HardForkGenTx (OneEraGenTx ns)) =
+    hcollapse $ hcmap proxySingle projectLeiosBytes ns
+   where
+    projectLeiosBytes :: forall x. SingleEraBlock x => GenTx x -> K (Maybe ByteString) x
+    projectLeiosBytes tx = K (txBytesForLeios (Proxy @x) tx)
 
   getTransactionKeySets (HardForkGenTx (OneEraGenTx ns)) =
     hcollapse $
