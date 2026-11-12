@@ -123,6 +123,11 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (lfcReceiptTasks)
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -639,73 +644,74 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
-            rnNodeKernelHook registry nodeKernel
-            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
-            churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
-            let consensusDiffusionArgs =
-                  Cardano.Diffusion.CardanoConsensusArguments
-                    { Cardano.Diffusion.churnModeVar
-                    , Cardano.Diffusion.churnMetrics
-                    , Cardano.Diffusion.ledgerPeersAPI =
-                        LedgerPeersConsensusInterface
-                          { lpGetLatestSlot = getImmTipSlot nodeKernel
-                          , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
-                          , lpExtraAPI =
-                              Cardano.LedgerPeersConsensusInterface
-                                { Cardano.readFetchMode = getFetchMode nodeKernel
-                                , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
-                                , Cardano.updateOutboundConnectionsState =
-                                    let varOcs = getOutboundConnectionsState nodeKernel
-                                     in \newOcs -> do
-                                          oldOcs <- readTVar varOcs
-                                          when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
-                                    case targetBlock of
-                                      GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
-                                      (BlockPoint targetSlot (RawBlockHash targetHash)) ->
-                                        case fromShortRawHash (Proxy @blk) targetHash of
-                                          -- TODO: eventually we want to return
-                                          -- a proper error value here, see
-                                          -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
-                                          Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
-                                          Just targetHeaderHash -> do
-                                            let targetPoint = RealPoint targetSlot targetHeaderHash
-                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                              Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
-                                              Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
-                                              Right (RealPoint actualSlot actualHash) ->
-                                                k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
-                                }
-                          }
-                    , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
-                    , Cardano.Diffusion.freshBytes = throwSTM unsupportedEgressScheduling
-                    , Cardano.Diffusion.freshMaxBytes = throwSTM unsupportedEgressScheduling
-                    }
+            Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel nodeKernel))) $ do
+              rnNodeKernelHook registry nodeKernel
+              churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
+              churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
+              let consensusDiffusionArgs =
+                    Cardano.Diffusion.CardanoConsensusArguments
+                      { Cardano.Diffusion.churnModeVar
+                      , Cardano.Diffusion.churnMetrics
+                      , Cardano.Diffusion.ledgerPeersAPI =
+                          LedgerPeersConsensusInterface
+                            { lpGetLatestSlot = getImmTipSlot nodeKernel
+                            , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
+                            , lpExtraAPI =
+                                Cardano.LedgerPeersConsensusInterface
+                                  { Cardano.readFetchMode = getFetchMode nodeKernel
+                                  , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                  , Cardano.updateOutboundConnectionsState =
+                                      let varOcs = getOutboundConnectionsState nodeKernel
+                                       in \newOcs -> do
+                                            oldOcs <- readTVar varOcs
+                                            when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
+                                  , Cardano.getImmutableBlockPoint = \targetBlock k -> do
+                                      case targetBlock of
+                                        GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
+                                        (BlockPoint targetSlot (RawBlockHash targetHash)) ->
+                                          case fromShortRawHash (Proxy @blk) targetHash of
+                                            -- TODO: eventually we want to return
+                                            -- a proper error value here, see
+                                            -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
+                                            Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
+                                            Just targetHeaderHash -> do
+                                              let targetPoint = RealPoint targetSlot targetHeaderHash
+                                              ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                                Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
+                                                Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
+                                                Right (RealPoint actualSlot actualHash) ->
+                                                  k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                  }
+                            }
+                      , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                      , Cardano.Diffusion.freshBytes = throwSTM unsupportedEgressScheduling
+                      , Cardano.Diffusion.freshMaxBytes = throwSTM unsupportedEgressScheduling
+                      }
 
-            stdGen <- StrictSTM.newTVarIO peerSelectionRng
-            let ntnApps =
-                  mkNodeToNodeApps
-                    ntnAppsRng
-                    rnTraceNTN
-                    llrnChainSyncIdleTimeout
-                    llrnGenesisConfig
-                    rnTxSubmissionLogicVersion
-                    nodeKernelArgs
-                    nodeKernel
-                    churnMetrics
-                    encAddrNtN
-                    decAddrNtN
-                ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
-                apps =
-                  mkDiffusionApplications
-                    stdGen
-                    consensusDiffusionArgs
-                    (miniProtocolParameters nodeKernelArgs)
-                    ntnApps
-                    ntcApps
-                    nodeKernel
+              stdGen <- StrictSTM.newTVarIO peerSelectionRng
+              let ntnApps =
+                    mkNodeToNodeApps
+                      ntnAppsRng
+                      rnTraceNTN
+                      llrnChainSyncIdleTimeout
+                      llrnGenesisConfig
+                      rnTxSubmissionLogicVersion
+                      nodeKernelArgs
+                      nodeKernel
+                      churnMetrics
+                      encAddrNtN
+                      decAddrNtN
+                  ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
+                  apps =
+                    mkDiffusionApplications
+                      stdGen
+                      consensusDiffusionArgs
+                      (miniProtocolParameters nodeKernelArgs)
+                      ntnApps
+                      ntcApps
+                      nodeKernel
 
-            llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
+              llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
  where
   (gsmAntiThunderingHerd, rng') = splitGen llrnRng
   (peerSelectionRng, rng'') = splitGen rng'

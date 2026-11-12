@@ -3,7 +3,7 @@
 
 -- | Tests of how the node's LeiosFetch client takes in replies, against an
 -- in-memory LeiosDB.
-module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
+module Test.Consensus.Leios.LeiosFetch.Replies (tests, fixture, newContext, newContextHolding, awaitNotes) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
@@ -83,6 +83,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , recordReferencedPoint
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs (nullJobPool)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalSource (..), newLocalReuse)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , TraceLeiosFetchClientEvent (..)
@@ -203,6 +205,12 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  receiptTasks <- Receipts.newReceiptTasks
+  localReuse <-
+    newLocalReuse
+      (Receipts.receiptClosing receiptTasks)
+      (LocalSource (const (pure Map.empty)) (\() -> pure Nothing))
+      writer
   txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   _ <-
     insertAnnouncement txCache slot (MkRankingBlockHash (UnsafeHash (SBS.pack (replicate 32 1)))) ebHash
@@ -222,6 +230,8 @@ newContextGated point gate = do
         , lfcOutstanding = outstanding
         , lfcReady = ready
         , lfcTxCache = txCache
+        , lfcReceiptTasks = receiptTasks
+        , lfcLocalReuse = localReuse
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
@@ -280,7 +290,7 @@ closureRequest ctx point = do
 -- all check out. Its third transaction is too big to share their job. The
 -- LeiosDB drops the first two, so the client acquires no closure, fetches no
 -- more of it, not even the third's job, and its settlement throws, through its
--- link to the client's thread.
+-- receipt owner's forwarding to the original client.
 test_wrongSizedTxs :: Assertion
 test_wrongSizedTxs = do
   let tx0 = MkLeiosTx (BS8.pack "tx zero")
