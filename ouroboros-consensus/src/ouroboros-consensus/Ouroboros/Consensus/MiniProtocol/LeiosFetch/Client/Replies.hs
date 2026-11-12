@@ -93,6 +93,7 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictTVar
   , async
   , atomically
+  , labelThisThread
   , link
   , modifyMVar
   , modifyMVar_
@@ -285,7 +286,8 @@ processLeiosBlock ctx peer req eb = do
       -- is linked to it. This worker runs off this thread but is linked to it,
       -- so a failure also disconnects the peer, if its client still runs. Like
       -- the worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
-      link =<< async (settleBody ctx peer point eb now bodyWritten)
+      link
+        =<< async (labelThisThread "LeiosFetch.settleBody" >> settleBody ctx peer point eb now bodyWritten)
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
@@ -452,7 +454,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- registration's @LeiosPeerLifetimeId@, so the worker neither recreates the
   -- state that unregistering removed nor touches a later registration's. It
   -- ends once the write lands, which closing the LeiosDB ensures.
-  link =<< async (settleTxs ctx peer req now txsWritten)
+  link =<< async (labelThisThread "LeiosFetch.settleTxs" >> settleTxs ctx peer req now txsWritten)
  where
   MkLeiosFetchClientContext
     { lfcOutstanding
