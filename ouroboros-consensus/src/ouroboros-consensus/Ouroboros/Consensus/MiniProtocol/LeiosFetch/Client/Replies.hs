@@ -204,8 +204,9 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   { lfcStaticEnv :: !LeiosFetchStaticEnv
   , lfcOutstanding :: !(StrictMVar m (LeiosOutstanding peer))
   , lfcReady :: !(W.Readiness m)
+  -- ^ Wake the planner when a state change might unblock a fetch decision.
   , lfcRuntime :: !(R.Runtime m peer)
-  -- ^ Filled by anything that might unblock a new fetch decision.
+  -- ^ Physical request, FIFO service and pending-write ownership facts.
   , lfcTxCache :: !(LeiosTxCache m () ProtVerParity PackedEndorserBlock)
   , lfcReceiptTasks :: !(Receipts.ReceiptTasks m)
   -- ^ Node-owned submissions and accepted callbacks, independent of peer lifetime.

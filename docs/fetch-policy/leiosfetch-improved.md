@@ -33,8 +33,9 @@ chooses among the peers offering the selected work.
 The body and transaction requests have independent per-peer limits, shared
 across concurrent EBs. Admit a whole job before queueing it. Each TX request
 contains one immutable job, including its original offsets and commitment.
-A job containing an indivisible transaction may exceed its byte target and
-must still fit the peer's credit and protocol bounds.
+A transaction larger than the target forms a one-transaction job. Otherwise
+pack whole transactions without crossing the target. Every complete job must
+fit the peer's credit and protocol bounds.
 
 | Starting setting | Default |
 |---|---:|
@@ -89,6 +90,11 @@ identify each request. These are local correlation facts, not wire fields.
 Late callbacks cannot release a replacement request's credit or modify a new
 registration. Logical jobs and physical outstanding exchanges have distinct
 ownership.
+
+A complete-message observation stops network timing; it does not by itself
+return credit. Return credit when a validated reply's storage submission is
+accepted, or when its handler finishes without submitting work. Accepted receipt
+ownership remains until its callback settles.
 
 A handler owns validated work while submitting it. Transfer accepted work to a
 node-owned receipt task before interruption or post-acceptance tracing can lose
