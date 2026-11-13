@@ -406,15 +406,21 @@ pruneVotes ::
 pruneVotes st now = do
   missed <- atomically $ do
     MkVotes{votesPrunedAt, votesBySlot} <- readTVar (votes st)
-    let (unexpired, expired) = Map.partition ((now <=) . slotRelayUntil) votesBySlot
-    writeTVar (votes st) (MkVotes (max now votesPrunedAt) unexpired)
-    pure
-      [ (rbHash, weight)
-      | slotVotes' <- Map.elems expired
-      , (rbHash, weight) <- Map.toList (slotTallies slotVotes')
-      , weight < slotQuorum slotVotes'
-      ]
-  for_ missed $ \(rbHash, weight) -> traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
+    -- Every slot kept has not expired at 'votesPrunedAt', so pruning at or
+    -- before it forgets nothing.
+    if now <= votesPrunedAt
+      then pure []
+      else do
+        let (unexpired, expired) = Map.partition ((now <=) . slotRelayUntil) votesBySlot
+        writeTVar (votes st) (MkVotes now unexpired)
+        pure
+          [ (rbHash, weight)
+          | slotVotes' <- Map.elems expired
+          , (rbHash, weight) <- Map.toList (slotTallies slotVotes')
+          , weight < slotQuorum slotVotes'
+          ]
+  for_ missed $ \(rbHash, weight) ->
+    traceWith (tracer st) (TraceLeiosQuorumMissed rbHash weight)
 
 {-------------------------------------------------------------------------------
   Certificates
