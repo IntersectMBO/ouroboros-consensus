@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -16,8 +17,10 @@ module Ouroboros.Consensus.Leios.Protocol
   , LeiosLedgerView (..)
   , leiosEbByteSizeBounds
   , LeiosProtocol (..)
+  , NotCertifiable (..)
   , OCINStaleness (..)
   , defaultGetCertifiableLeiosAnnouncement
+  , WhyNotCertifiable (..)
   , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
@@ -75,6 +78,49 @@ decodeLeiosAnnouncement :: CBOR.Decoder s LeiosAnnouncement
 decodeLeiosAnnouncement =
   decodeRecordNamed (T.pack "LeiosAnnouncement") (const 3) $
     MkLeiosAnnouncement <$> fromCBOR <*> fromCBOR <*> CBOR.decodeWord32
+
+-- | Why the next header may certify no announcement.
+data WhyNotCertifiable
+  = -- | The most recently applied header carried none.
+    NothingAnnounced
+  | -- | It was announced in the previous era, and an endorser block may not be
+    -- certified across an era boundary.
+    AnnouncedInPreviousEra
+  | -- | It was announced in the previous epoch, and an endorser block may not be
+    -- certified across an epoch boundary.
+    --
+    -- (This restriction avoids some engineering complexity that wouldn't be
+    -- worthwhile, since this restriction only loses one EB opportunity per
+    -- epoch.)
+    AnnouncedInPreviousEpoch
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | Keeps the more specific reason: 'NothingAnnounced', then
+-- 'AnnouncedInPreviousEra', then 'AnnouncedInPreviousEpoch'.
+--
+-- An era boundary is also an epoch boundary, and either may be crossed first,
+-- so neither may trample the other's more specific reason.
+instance Semigroup WhyNotCertifiable where
+  (<>) = minBy specificityRank
+   where
+    minBy f a b = if f a > f b then b else a
+
+    specificityRank = \case
+      NothingAnnounced -> 0 :: Word -- most specific
+      AnnouncedInPreviousEra -> 1
+      AnnouncedInPreviousEpoch -> 2 -- least specific
+
+-- | Why a header at a given slot may not certify an endorser block.
+data NotCertifiable
+  = -- | Its predecessor's state holds no announcement it may certify.
+    NoCertifiableAnnouncement !WhyNotCertifiable
+  | -- | The announcement, voting and diffusion periods have not all elapsed
+    -- since the announcement.
+    TooYoung
+      !SlotNo -- Slot of the announcing block
+      !SlotNo -- Earliest slot in which a header may certify
+  deriving stock (Eq, Show)
 
 -- | The Leios parameters a ledger view carries.
 --
