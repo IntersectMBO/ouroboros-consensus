@@ -258,12 +258,13 @@ addVote st systemTime accepted = do
                   Right quorum -> pure (Added, quorum)
   -- Aggregate outside the STM transaction that recorded a vote. We often
   -- receive many votes in quick succession, even duplicates via different
-  -- peers. Having it recorded early will not have them validated again. Until
-  -- we have a certificate, every vote recorded above the threshold will result
-  -- in an attempt for certificate aggregation to be resilient against the
-  -- thread dying between recording and aggregating (e.g. due to a connection
-  -- reset). If that also was the last vote, we won't have a certificate, but
-  -- with such a close quorum its for the better to skip this round.
+  -- peers. Having it recorded early will not have them validated again. Every
+  -- vote recorded at or above the threshold returns the signatures, but only
+  -- aggregates them while there is no certificate yet, to be resilient against
+  -- the thread dying between recording and aggregating (e.g. due to a
+  -- connection reset). If that also was the last vote, we won't have a
+  -- certificate, but with such a close quorum its for the better to skip this
+  -- round.
   for_ quorum $ \signatures -> do
     -- Another vote may have been aggregated into the certificate since.
     unlessM (atomically hasCertificate) $
@@ -341,7 +342,7 @@ validateVote acceptedVote =
 
 -- | Keep and relay a vote the node has neither seen nor forgotten, as it was
 -- pruned past the vote's deadline already. If the votes for its announcement
--- reach quorum, and it has no certificate yet, return their signatures.
+-- reach quorum, return their signatures.
 recordVote ::
   IOLike m =>
   VoteState m blk ->
@@ -349,18 +350,17 @@ recordVote ::
   STM m (Either AddVoteResult (Maybe (Map LeiosSeatId LeiosSignature)))
 recordVote st validatedVote = do
   vs <- readTVar (votes st)
-  certified <- Map.member rbHash . certificatesByRbHash <$> readTVar (certificates st)
   let before = Map.lookup validatedElectionSlot (votesBySlot vs)
       after = maybe slotVotes' (mergeNonEquivocations slotVotes') before
       weightOfAfter = Map.findWithDefault 0 rbHash (slotTallies after)
   if
     | voteValidUntil < votesPrunedAt vs -> pure (Left ArrivedTooLate)
-    | maybe False (Map.member (voteSeatId vote) . slotVotes) before -> pure (Left AlreadyKnown)
+    | maybe False voteIn before -> pure (Left AlreadyKnown)
     | otherwise -> do
         writeTVar (votes st) vs{votesBySlot = Map.insert validatedElectionSlot after (votesBySlot vs)}
         appendNotifyLog (relayLog st) (NotifyVote vote) voteValidUntil
         pure . Right $
-          if not certified && validatedQuorum <= weightOfAfter
+          if validatedQuorum <= weightOfAfter
             then
               Just $
                 Map.fromList
@@ -370,6 +370,8 @@ recordVote st validatedVote = do
                   ]
             else Nothing
  where
+  voteIn = Map.member (voteSeatId vote) . slotVotes
+
   MkValidatedVote
     { validatedVote = vote
     , validatedElectionSlot
