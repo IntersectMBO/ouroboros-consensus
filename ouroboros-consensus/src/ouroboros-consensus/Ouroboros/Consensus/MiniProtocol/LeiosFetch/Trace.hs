@@ -28,8 +28,12 @@ data TraceLeiosFetchClientEvent peer
     -- and good otherwise. One the node writes is traced once its write settles.
     TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
   | -- | Where the node takes the transactions of the endorser block at this
-    -- point from, decided as it writes the body.
-    TraceLeiosFetchClientBlockTxSources !LeiosPoint !LeiosBlockTxSources
+    -- point from, decided as it writes the body, and the LeiosTxCache's
+    -- summary of taking that body in, if it took it in then.
+    TraceLeiosFetchClientBlockTxSources
+      !LeiosPoint
+      !LeiosBlockTxSources
+      !(Maybe LeiosTxCacheInsertBodySummary)
   | -- | Some of an endorser block's transactions arrived from this peer. The
     -- whole reply is invalid if it failed its checks. Otherwise each tx's bytes
     -- are evicted if its point was pruned, or the LeiosTxCache no longer
