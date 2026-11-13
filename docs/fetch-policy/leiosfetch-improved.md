@@ -28,6 +28,11 @@ Keep upstream election focus, certified-EB selection, ChainSync offers and
 locally forged acquisitions. These determine which EBs matter; source ranking
 chooses among the peers offering the selected work.
 
+The ledger can disable non-empty EB capacity when the committee's registered
+voting keys cannot reach its configured quorum. A diffusion-only fixture without
+those keys must label any quorum override explicitly; it is not certification
+validation or a change to production quorum policy.
+
 ## Requests and admission
 
 The body and transaction requests have independent per-peer limits, shared

@@ -140,6 +140,7 @@ import Ouroboros.Consensus.Util.IOLike
   , catch
   , finally
   , getMonotonicTime
+  , labelThisThread
   , mask_
   , modifyMVar
   , myThreadId
