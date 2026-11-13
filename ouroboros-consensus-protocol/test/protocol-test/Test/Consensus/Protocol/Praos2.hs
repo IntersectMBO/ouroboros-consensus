@@ -73,6 +73,9 @@ tests =
     , testProperty
         "leiosHeaderChecks rejects a header that contains a Leios certificate exactly when the parent's announcement is not certifiable"
         prop_headerChecksRejectLeiosCertWhenNotCertifiable
+    , testProperty
+        "CIP-0164's feasible values give a certification gap of 14 slots"
+        prop_cipFeasibleValuesGive14SlotGap
     ]
 
 -- | An endorser block may not be certified across an era boundary.
@@ -203,6 +206,30 @@ prop_certifiableReturnsAnnouncementOnceGapElapses =
     forAll genCertifyCase $ \c ->
       coverCertifyCase c $
         runCertifiable c === expectedCertifiable c
+
+-- | CIP-0164's feasible values (its Table 7) with one-second slots give a
+-- certification gap of @3 * 1 s + 4 s + 7 s = 14@ slots.
+--
+-- The expected slots are the CIP's numbers. The two properties above state
+-- the gap formula again in this module, so a misreading of the CIP made in
+-- both the code and this module passes them but fails this test.
+prop_cipFeasibleValuesGive14SlotGap :: Property
+prop_cipFeasibleValuesGive14SlotGap =
+  once $
+    runCertifiable (announcedAt100CertifyingAt 113) === Left (TooYoung 100 114)
+      .&&. runCertifiable (announcedAt100CertifyingAt 114) === Right ann
+ where
+  ann = unGen arbitrary (mkQCGen 0) 30
+  announcedAt100CertifyingAt slot =
+    CertifyCase
+      { ccPredecessorSlot = At 100
+      , ccAnnouncedByPredecessor = Strict.Right ann
+      , ccSlotLengthMs = 1000
+      , ccAnnouncementPeriodMs = 1000
+      , ccVotePeriodMs = 4000
+      , ccDiffusionPeriodMs = 7000
+      , ccSlot = slot
+      }
 
 -- | 'leiosHeaderChecks' rejects a header exactly when it contains a Leios
 -- certificate that 'expectedCertifiable' forbids, and the error names the
