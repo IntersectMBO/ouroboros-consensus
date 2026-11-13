@@ -280,10 +280,12 @@ addVote st systemTime accepted = do
   hasCertificate = isJust <$> getCertificate st rbHash
 
   recordCertificate cert = do
-    MkCertificates{certificatesPrunedAt} <- readTVar (certificates st)
-    let new = certificatesPrunedAt <= voteElectionSlot
+    certs@MkCertificates{certificatesPrunedAt, certificatesByRbHash} <- readTVar (certificates st)
+    let new =
+          certificatesPrunedAt <= voteElectionSlot
+            && Map.notMember rbHash certificatesByRbHash
     when new $ do
-      modifyTVar (certificates st) $ \certs@MkCertificates{certificatesByRbHash} ->
+      modifyTVar (certificates st) $ \certs ->
         certs
           { certificatesByRbHash =
               Map.insert rbHash (voteElectionSlot, cert) certificatesByRbHash
