@@ -10,13 +10,16 @@ import Cardano.Ledger.BaseTypes
   , Nonce (NeutralNonce)
   , ProtVer (..)
   , StrictMaybe (..)
+  , natVersion
   )
 import Cardano.Ledger.Coin (knownNonZeroCoin)
 import Cardano.Ledger.State (PoolDistr (..), emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (StandardCrypto)
-import Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
+import Cardano.Slotting.EpochInfo (EpochInfo, fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochSize (..), SlotInterval (..), SlotNo (..), WithOrigin (..))
 import Cardano.Slotting.Time (slotLengthFromMillisec, slotLengthFromSec)
+import Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
@@ -29,9 +32,11 @@ import Ouroboros.Consensus.Protocol.Abstract (TranslateProto (..))
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( NotCertifiable (..)
   , PolyPraosState (..)
+  , PolyPraosValidationErr (..)
   , Ticked (..)
   , WhyNotCertifiable (..)
   , certifiablePolyPraos
+  , leiosHeaderChecks
   , tickChainDepStatePolyPraos
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
@@ -40,7 +45,10 @@ import Ouroboros.Consensus.Protocol.Praos2
   , PerasOnly (Praos2HasPeras)
   , Praos2
   )
+import Test.Cardano.Protocol.Leios.BlockHeader.Arbitrary (genHeader)
 import Test.Consensus.Protocol.Serialisation.Generators ()
+import Test.QuickCheck.Gen (unGen)
+import Test.QuickCheck.Random (mkQCGen)
 import Test.Tasty
 import Test.Tasty.QuickCheck
 
@@ -60,8 +68,11 @@ tests =
     , testProperty "WhyNotCertifiable's <> is associative" prop_whyNotCertifiableAssociative
     , testProperty "WhyNotCertifiable's <> is commutative" prop_whyNotCertifiableCommutative
     , testProperty
-        "certifiablePolyPraos follows the certification rule stated in time"
-        prop_certifiableFollowsRuleInTime
+        "certifiablePolyPraos returns the parent's announcement only once the certification gap elapses"
+        prop_certifiableReturnsAnnouncementOnceGapElapses
+    , testProperty
+        "leiosHeaderChecks rejects a header that contains a Leios certificate exactly when the parent's announcement is not certifiable"
+        prop_headerChecksRejectLeiosCertWhenNotCertifiable
     ]
 
 -- | An endorser block may not be certified across an era boundary.
@@ -186,12 +197,82 @@ ledgerView =
 -------------------------------------------------------------------------------}
 
 -- | 'certifiablePolyPraos' agrees with CIP-0164's certification rule.
-prop_certifiableFollowsRuleInTime :: Property
-prop_certifiableFollowsRuleInTime =
+prop_certifiableReturnsAnnouncementOnceGapElapses :: Property
+prop_certifiableReturnsAnnouncementOnceGapElapses =
   checkCoverage $
     forAll genCertifyCase $ \c ->
       coverCertifyCase c $
         runCertifiable c === expectedCertifiable c
+
+-- | 'leiosHeaderChecks' rejects a header exactly when it contains a Leios
+-- certificate that 'expectedCertifiable' forbids, and the error names the
+-- reason and the slots.
+prop_headerChecksRejectLeiosCertWhenNotCertifiable :: Property
+prop_headerChecksRejectLeiosCertWhenNotCertifiable =
+  checkCoverage $
+    forAll genCertifyCase $ \c ->
+      forAll arbitrary $ \containsCert ->
+        cover 30 (not containsCert) "no certificate" $
+          coverCertifyCase c $
+            runCertificationCheck (headerView containsCert fixedHeader) c
+              === expectedCertificationCheck containsCert c
+
+expectedCertificationCheck ::
+  Bool ->
+  CertifyCase ->
+  Either (PolyPraosValidationErr (Praos2 StandardCrypto) StandardCrypto) ()
+expectedCertificationCheck containsCert c
+  | not containsCert = Right ()
+  | otherwise = case expectedCertifiable c of
+      Right _ann -> Right ()
+      Left (NotAnnounced why) ->
+        Left $
+          LeiosCertWithoutAnnouncement
+            (Praos2HasLeios ())
+            why
+            (ccPredecessorSlot c)
+            (ccSlot c)
+      Left (TooYoung announcingSlot earliest) ->
+        Left $
+          LeiosCertTooYoung (Praos2HasLeios ()) announcingSlot (ccSlot c) earliest
+
+-- | 'leiosHeaderChecks' reads only 'Views.hvLeios', which 'headerView' sets, so
+-- one header serves every case. Generating and signing a header for each case
+-- makes the property about 100 times slower.
+fixedHeader :: LeiosCodec.Header StandardCrypto
+fixedHeader = unGen (genHeader (natVersion @12)) (mkQCGen 0) 30
+
+-- | Calls 'leiosHeaderChecks' on the header at the case's slot.
+runCertificationCheck ::
+  Views.PolyPraosValidateView (Praos2 StandardCrypto) StandardCrypto ->
+  CertifyCase ->
+  Either (PolyPraosValidationErr (Praos2 StandardCrypto) StandardCrypto) ()
+runCertificationCheck view c =
+  runExcept $
+    leiosHeaderChecks (certifyEpochInfo c) view (ccSlot c) (certifyTickedState c)
+
+-- | The view of a header that announces nothing and contains a Leios
+-- certificate or not, as given. It is built as the Cardano block builds it
+-- for 'Praos2'. 'leiosHeaderChecks' reads only 'Views.hvLeios', so the other
+-- fields come from an arbitrary header.
+headerView ::
+  Bool ->
+  LeiosCodec.Header StandardCrypto ->
+  Views.PolyPraosValidateView (Praos2 StandardCrypto) StandardCrypto
+headerView containsCert header =
+  Views.HeaderView
+    { Views.hvPrevHash = LeiosCodec.hbPrev body
+    , Views.hvVK = LeiosCodec.hbVk body
+    , Views.hvVrfVK = LeiosCodec.hbVrfVk body
+    , Views.hvVrfRes = LeiosCodec.hbVrfRes body
+    , Views.hvOCert = LeiosCodec.hbOCert body
+    , Views.hvSlotNo = LeiosCodec.hbSlotNo body
+    , Views.hvLeios = Praos2HasLeios (containsCert, SNothing)
+    , Views.hvSigned = body
+    , Views.hvSignature = LeiosCodec.headerSig header
+    }
+ where
+  body = LeiosCodec.headerBody header
 
 -- | The inputs of one test case: a new block at slot 'ccSlot', the slot of its
 -- parent, what its parent announced, the slot length, and the three Leios
@@ -249,20 +330,23 @@ runCertifiable :: CertifyCase -> Either NotCertifiable LeiosAnnouncement
 runCertifiable c = result
  where
   Praos2HasLeios result =
-    certifiablePolyPraos
-      (fixedEpochInfo (EpochSize 1000000) (slotLengthFromMillisec (ccSlotLengthMs c)))
-      (ccSlot c)
-      TickedPraosState
-        { tickedPraosStateChainDepState =
-            predecessorState
-              (ccPredecessorSlot c)
-              (ccAnnouncedByPredecessor c)
-        , tickedPraosStateLedgerView =
-            ledgerView
-              { Views.plvLeios =
-                  withPeriods <$> Views.plvLeios ledgerView
-              }
-        }
+    certifiablePolyPraos (certifyEpochInfo c) (ccSlot c) (certifyTickedState c)
+
+certifyEpochInfo :: Monad m => CertifyCase -> EpochInfo m
+certifyEpochInfo c =
+  fixedEpochInfo (EpochSize 1000000) (slotLengthFromMillisec (ccSlotLengthMs c))
+
+-- | The predecessor's state ticked to 'ccSlot', with the case's periods in the
+-- ledger view.
+certifyTickedState :: CertifyCase -> Ticked (PolyPraosState (Praos2 StandardCrypto))
+certifyTickedState c =
+  TickedPraosState
+    { tickedPraosStateChainDepState =
+        predecessorState (ccPredecessorSlot c) (ccAnnouncedByPredecessor c)
+    , tickedPraosStateLedgerView =
+        ledgerView{Views.plvLeios = withPeriods <$> Views.plvLeios ledgerView}
+    }
+ where
   withPeriods llv =
     llv
       { llvAnnouncementPeriod = Milliseconds32 (fromInteger (ccAnnouncementPeriodMs c))
