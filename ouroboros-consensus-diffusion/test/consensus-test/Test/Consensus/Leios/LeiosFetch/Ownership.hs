@@ -17,12 +17,15 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
-import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
+import Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
+import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), CurrentSlot (..), slotLengthFromSec)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.AnnounceState
 import qualified Ouroboros.Consensus.Leios.NotifyLog as Log
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (..))
@@ -36,11 +39,15 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+import qualified Ouroboros.Consensus.NodeKernel as NK
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..))
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
 import Test.Cardano.Crypto.Leios.Gen (mkCommitteeFromTestSeats)
 import Test.Consensus.Leios.LeiosFetch.Replies (fixture, newContext)
+import qualified Test.Consensus.Leios.NodeUnderTest as Node
 import Test.Consensus.Leios.TestBlock
   ( LeiosTestBlock (..)
   , LeiosTestLedgerConfig (..)
@@ -48,6 +55,7 @@ import Test.Consensus.Leios.TestBlock
   , setAnnouncement
   , setSlot
   , singleNodeLeiosTestConfig
+  , successorLeiosBlock
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
@@ -156,6 +164,8 @@ tests =
         runSimOrThrow failedStartup @?= True
     , testCase "retirement before worker activation does not recreate state or submit payloads" $
         runSimOrThrow retiredBeforeActivation @?= (0, True)
+    , testCase "decision loop forecasts unpruned work at the newer immutable anchor" $
+        runSimOrThrow forecastBehindAnchor @?= True
     , testCase "worker starts unmasked even with a masked caller" unmaskedWorker
     ]
 
@@ -454,3 +464,37 @@ retiredBeforeActivation = do
   acquired <- S.readTVarIO notes
   count <- S.readTVarIO calls
   pure (count, Map.null (ebState out) && null acquired)
+
+-- A separate real kernel retains old work while the real ChainDB advances.
+-- Its pruner has not caught up. A fixture clock isolates forecast anchoring from
+-- diffusion-window expiry; no production scheduling hook is required.
+forecastBehindAnchor :: IOSim s Bool
+forecastBehindAnchor = Node.withNode $ \node -> do
+  threadDelay 14
+  Node.addBlocks node (take 14 (iterate successorLeiosBlock (firstLeiosBlock 0)))
+  anchor <- atomically $ do
+    ledger <- ChainDB.getImmutableLedger (Node.nodeChainDB node)
+    case getTipSlot (ledgerState ledger) of
+      NotOrigin slot | slot > SlotNo 1 -> pure slot
+      _ -> retry
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (original, _, _) = fixture
+      point = original{pointSlotNo = anchor - 1}
+      election = ancElectionId (announcingHeader (validAt point 0))
+      clock = (NK.getBlockchainTime (Node.nodeKernel node)){getCurrentSlot = pure (CurrentSlot anchor)}
+  modifyMVar_ (lfcOutstanding (lfkContext kernel)) $
+    pure
+      . focusElectionIfUnfocused election (pointEbHash point)
+      . recordReferencedPoint point SNothing
+  withLeiosFetchWorkers kernel $ withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \lifetime peer -> do
+    _ <-
+      atomically $
+        R.openClient (lfcRuntime (lfkContext kernel)) lifetime False (lfpRequestsToSend peer) (pure Nothing)
+    recordLeiosOffer kernel peer point (MkPeerOffer SNothing (OfferedBody 100))
+    withAsync
+      (leiosFetchDecisionLoop (Node.nodeTopLevelConfig node) (Node.nodeChainDB node) clock kernel)
+      $ \worker -> do
+        link worker
+        atomically $ readTVar (lfpRequestsToSend peer) >>= check . (not . null)
+        pure True

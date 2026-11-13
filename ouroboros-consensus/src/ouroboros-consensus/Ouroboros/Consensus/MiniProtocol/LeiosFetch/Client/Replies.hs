@@ -127,10 +127,10 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictMVar
   , Time
   , atomically
-  , labelThisThread
   , catch
   , finally
   , getMonotonicTime
+  , labelThisThread
   , mask_
   , modifyMVar
   , myThreadId
