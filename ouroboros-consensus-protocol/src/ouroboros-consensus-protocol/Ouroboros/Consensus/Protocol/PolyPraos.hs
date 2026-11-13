@@ -164,7 +164,9 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
+  , NotCertifiable (..)
   , OCINStaleness (..)
+  , WhyNotCertifiable (..)
   , decodeLeiosAnnouncement
   , encodeLeiosAnnouncement
   )
@@ -407,38 +409,6 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
       <*> traverse (\() -> decodeCertifiable) (pureLeiosOnly @proto ())
    where
     nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
-
--- | Why the next header may certify no announcement.
-data WhyNotCertifiable
-  = -- | The most recently applied header carried none.
-    NothingAnnounced
-  | -- | It was announced in the previous era, and an endorser block may not be
-    -- certified across an era boundary.
-    AnnouncedInPreviousEra
-  | -- | It was announced in the previous epoch, and an endorser block may not be
-    -- certified across an epoch boundary.
-    --
-    -- (This restriction avoids some engineering complexity that wouldn't be
-    -- worthwhile, since this restriction only loses one EB opportunity per
-    -- epoch.)
-    AnnouncedInPreviousEpoch
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
-
--- | Keeps the more specific reason: 'NothingAnnounced', then
--- 'AnnouncedInPreviousEra', then 'AnnouncedInPreviousEpoch'.
---
--- An era boundary is also an epoch boundary, and either may be crossed first,
--- so neither may trample the other's more specific reason.
-instance Semigroup WhyNotCertifiable where
-  (<>) = minBy specificityRank
-   where
-    minBy f a b = if f a > f b then b else a
-
-    specificityRank = \case
-      NothingAnnounced -> 0 :: Word -- most specific
-      AnnouncedInPreviousEra -> 1
-      AnnouncedInPreviousEpoch -> 2 -- least specific
 
 -- | What the next header may certify after crossing a boundary that rules out
 -- certifying the pending announcement, for this reason.
@@ -894,7 +864,7 @@ leiosHeaderChecks praosEpochInfo b slot tcs = do
     when containsCert $
       case certifiable of
         Right _ann -> pure ()
-        Left (NotAnnounced why) ->
+        Left (NoCertifiableAnnouncement why) ->
           throwError $
             LeiosCertWithoutAnnouncement
               err
@@ -904,17 +874,6 @@ leiosHeaderChecks praosEpochInfo b slot tcs = do
         Left (TooYoung announcingSlot earliestAllowed) ->
           throwError $
             LeiosCertTooYoung err announcingSlot slot earliestAllowed
-
--- | Why a header at a given slot may not certify an endorser block.
-data NotCertifiable
-  = -- | Its predecessor's state holds no announcement it may certify.
-    NotAnnounced !WhyNotCertifiable
-  | -- | The announcement, voting and diffusion periods have not all elapsed
-    -- since the announcement.
-    TooYoung
-      !SlotNo -- Slot of the announcing block
-      !SlotNo -- Earliest slot in which a header may certify
-  deriving stock (Eq, Show)
 
 -- | The announcement a header at this slot may certify, or why it may certify
 -- none, given its predecessor's chain-dependent state ticked to that slot.
@@ -940,8 +899,8 @@ certifiablePolyPraos praosEpochInfo slot (TickedPraosState cs lv) =
       case (announcedByPredecessor, praosStateLastSlot cs) of
         -- A state that announced an endorser block has necessarily applied a
         -- header, so 'Origin' is the same situation as announcing nothing.
-        (_, Origin) -> Left $ NotAnnounced NothingAnnounced
-        (Strict.Left why, NotOrigin _) -> Left $ NotAnnounced why
+        (_, Origin) -> Left $ NoCertifiableAnnouncement NothingAnnounced
+        (Strict.Left why, NotOrigin _) -> Left $ NoCertifiableAnnouncement why
         (Strict.Right ann, NotOrigin announcingSlot)
           | slot < earliestAllowed -> Left $ TooYoung announcingSlot earliestAllowed
           | otherwise -> Right ann
