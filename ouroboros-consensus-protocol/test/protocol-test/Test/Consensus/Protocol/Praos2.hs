@@ -252,7 +252,7 @@ expectedCertificationCheck containsCert c
   | not containsCert = Right ()
   | otherwise = case expectedCertifiable c of
       Right _ann -> Right ()
-      Left (NotAnnounced why) ->
+      Left (NoCertifiableAnnouncement why) ->
         Left $
           LeiosCertWithoutAnnouncement
             (Praos2HasLeios ())
@@ -327,8 +327,8 @@ data CertifyCase = CertifyCase
 -- there makes the property fail.
 expectedCertifiable :: CertifyCase -> Either NotCertifiable LeiosAnnouncement
 expectedCertifiable c = case (ccAnnouncedByPredecessor c, ccPredecessorSlot c) of
-  (_, Origin) -> Left $ NotAnnounced NothingAnnounced
-  (Strict.Left why, At _) -> Left $ NotAnnounced why
+  (_, Origin) -> Left $ NoCertifiableAnnouncement NothingAnnounced
+  (Strict.Left why, At _) -> Left $ NoCertifiableAnnouncement why
   (Strict.Right ann, At predecessorSlot)
     | startsLateEnough c (ccSlot c) -> Right ann
     | otherwise -> Left $ TooYoung predecessorSlot (earliestCertifyingSlot c)
