@@ -280,7 +280,7 @@ addVote st systemTime accepted = do
   hasCertificate = isJust <$> getCertificate st rbHash
 
   recordCertificate cert = do
-    certs@MkCertificates{certificatesPrunedAt, certificatesByRbHash} <- readTVar (certificates st)
+    MkCertificates{certificatesPrunedAt, certificatesByRbHash} <- readTVar (certificates st)
     let new =
           certificatesPrunedAt <= voteElectionSlot
             && Map.notMember rbHash certificatesByRbHash
