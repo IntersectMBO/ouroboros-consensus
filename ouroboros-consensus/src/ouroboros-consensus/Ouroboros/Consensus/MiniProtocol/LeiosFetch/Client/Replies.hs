@@ -105,6 +105,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -302,9 +303,9 @@ processLeiosBlock ctx peer req bytes = do
           -- Register the body's transactions in the tx cache, and read where
           -- some recent point holds any of them, so that the body
           -- write copies those rather than us fetching them again.
-          (_summary, fills) <-
+          (summary, fills) <-
             insertBodyAndFoldl' lfcTxCache point (packEndorserBlock eb) Map.empty snocLocated
-          pure (cleaned, BodyToWrite eb fills)
+          pure (cleaned, BodyToWrite eb fills summary)
   void $ tryPutMVar lfcReady ()
   case disposition of
     BodyTooBig exn -> do
@@ -312,11 +313,11 @@ processLeiosBlock ctx peer req bytes = do
         TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-    BodyToWrite eb localFills -> do
+    BodyToWrite eb localFills summary -> do
       -- Settled only once the write lands, since the settle needs the offsets
       -- the point then holds. The client takes no other reply from this peer
       -- meanwhile.
-      heldOffs <- writeBodyWithLocalTxs ctx point eb localFills
+      heldOffs <- writeBodyWithLocalTxs ctx point eb localFills summary
       settleBody ctx peer point eb heldOffs
   -- Checked last, so that the body is still taken: throwing it away would let
   -- a peer deny us an endorser block just by lowballing its own offer.
@@ -354,7 +355,8 @@ data BodyDisposition
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite !EndorserBlock !LocalFills
+    -- Also the LeiosTxCache's summary of taking it in, if it did.
+    BodyToWrite !EndorserBlock !LocalFills !(Maybe LeiosTxCacheInsertBodySummary)
 
 -- | Record the body as acquired at its point, now that its write has settled
 -- and holds the txs at these offsets,
@@ -448,14 +450,18 @@ settleBody ctx peer point eb heldOffs = do
 --
 -- Returns, once the write lands, the offsets at which the point then holds its
 -- txs.
+--
+-- It traces where the txs come from, along with the LeiosTxCache's summary of
+-- taking the body in, if it did.
 writeBodyWithLocalTxs ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
+  Maybe LeiosTxCacheInsertBodySummary ->
   m (Set TxOffset)
-writeBodyWithLocalTxs ctx point eb localFills = do
+writeBodyWithLocalTxs ctx point eb localFills summary = do
   MkLeiosMempoolTxs inMempool protVer <- lfcMempoolTxs (Set.fromList (map fst refs))
   let fromMempool =
         [ (off, txHash, bytes)
@@ -465,12 +471,14 @@ writeBodyWithLocalTxs ctx point eb localFills = do
       mempoolOffs = Set.fromList [off | (off, _, _) <- fromMempool]
       fills = localFills `Map.withoutKeys` mempoolOffs
   traceWith lfcTracer $
-    TraceLeiosFetchClientBlockTxSources point $
+    TraceLeiosFetchClientBlockTxSources
+      point
       MkLeiosBlockTxSources
         { btsLocalFills = length fills
         , btsMempool = length fromMempool
         , btsRemaining = length refs - length fills - length fromMempool
         }
+      summary
   heldOffs <-
     await
       =<< writeEbBody
