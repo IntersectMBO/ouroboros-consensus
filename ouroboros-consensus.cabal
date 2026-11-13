@@ -1536,6 +1536,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
+    Test.Consensus.NodeKernel
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
     Test.Consensus.PeerSimulator.Config

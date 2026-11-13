@@ -354,8 +354,8 @@ data ValidAnnouncement blk = MkValidAnnouncement
 --
 -- The margin is the sum of
 --
--- - 'Ouroboros.Consensus.Leios.NotifyLog.notifyLogPruneCadence', for which the
---   node may still relay a notification past its expiry;
+-- - 'Ouroboros.Consensus.NodeKernel.leiosDeadlinePrunerInterval', for which
+--   the node may still relay a notification past its expiry;
 -- - how far the node's clock may lag its peer's;
 -- - how long a notification may take from the node's log to its peer's checks,
 --   including the time its peer spends on the notifications ahead of it.
