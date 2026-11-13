@@ -79,13 +79,11 @@ data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
 --
--- Once this accepts an announcement, no copy of it is new again, from any
--- peer or the node's own forge. So a caller must act on a new announcement
--- uninterruptibly, together with this: if its thread died in between, as when
--- its peer disconnects or the forging credentials change, the announcement
--- would stay accepted but never be acted on, and nothing would act on it
--- later. What the caller does there should be brief, since it delays whatever
--- is ending the thread.
+-- Once accepted, no copy is new again. Compose acceptance with bounded
+-- node-owned bookkeeping admission in the same STM transaction; a caller's
+-- cancellation must not leave seen state without the work it requires.
+-- Slow processing runs under the node's supervised worker/receipt lifetime,
+-- outside this transaction and without an uninterruptible storage wait.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->

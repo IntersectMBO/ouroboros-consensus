@@ -197,8 +197,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       Right promise -> await promise
 
   implOpenReader statsVar = do
-    volDb <- openRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader

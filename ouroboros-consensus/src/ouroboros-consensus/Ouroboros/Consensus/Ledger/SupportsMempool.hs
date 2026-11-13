@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
@@ -121,6 +122,13 @@ class
   ) =>
   LedgerSupportsMempool blk
   where
+  -- | Exact whole-transaction bytes used by Leios references, including
+  -- witnesses and validity encoding. Unsupported eras return 'Nothing'. This
+  -- optional projection does no work unless local-reuse indexing is enabled.
+  -- See @docs/fetch-policy/leiosfetch-improved.md#offers-and-local-possession@.
+  txBytesForLeios :: proxy blk -> GenTx blk -> Maybe ByteString
+  txBytesForLeios _ _ = Nothing
+
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True

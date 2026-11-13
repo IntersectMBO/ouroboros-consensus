@@ -93,7 +93,7 @@ leiosNotifyClient ::
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
   -- | what to do with an announcement new to the node
-  (ValidAnnouncement blk -> m ()) ->
+  (ValidAnnouncement blk -> STM m ()) ->
   -- | record an offer the peer made
   (LeiosPoint -> PeerOffer -> m ()) ->
   ControlMessageSTM m ->

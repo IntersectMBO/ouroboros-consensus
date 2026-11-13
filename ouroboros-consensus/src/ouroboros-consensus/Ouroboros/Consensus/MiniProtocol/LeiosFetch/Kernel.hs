@@ -10,8 +10,11 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
+  , OfferTimes (..)
+  , noteOfferTime
   , LeiosPeerLifetimeId (..)
   , newLeiosFetchKernel
+  , newLeiosFetchKernelFromState
   , withLeiosFetchPeer
   , recordLeiosOffer
   , recordLeiosCertOffer
@@ -19,19 +22,19 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , ExnLeiosTwoCertificationClaims (..)
   , onNewLeiosAnnouncement
   , onForgedLeiosEb
+  , withLeiosFetchWorkers
   , leiosFetchDecisionLoop
   , leiosFetchFocuser
   , leiosFetchPruner
   ) where
 
 import Control.Monad (forM_, forever, unless, void, when)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except (runExcept)
-import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
-import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Void (Void)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
@@ -68,6 +71,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
+import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, onValidAnnouncement)
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -80,6 +84,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , ForgedEndorserBlock (..)
   , LeiosPoint (..)
+  , RankingBlockHash
   , endorserBlockHash
   , minCertificationSlot
   , toRankingBlockHash
@@ -88,26 +93,33 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , acquireCachedBody
-  , acquireForgedEb
+  , submitForgedEb
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
   , LeiosEbByteSizeBounds (..)
-  , LeiosFetchRequest
   , LeiosOutstanding (..)
   , OfferedHalves (..)
   , PeerOffer (..)
+  , assignRequestsObserved
   , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
-  , leiosFetchLogicIteration
   , markReceivingFromForge
-  , pruneOffers
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   , removePeerFromOutstanding
+  , workStillNeeded
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork as Owned
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchRoutine (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
   , ValidAnnouncement (..)
@@ -120,26 +132,26 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
-  ( DiffTime
-  , Exception
+  ( Exception
   , IOLike
+  , STM
   , StrictMVar
   , StrictTVar
+  , Time
   , atomically
   , bracket
-  , diffTime
+  , finally
   , getMonotonicTime
+  , mask_
   , modifyMVar
   , modifyMVar_
   , modifyTVar
+  , onException
   , readTVar
   , readTVarIO
   , retry
-  , takeMVar
-  , threadDelay
   , throwIO
-  , tryPutMVar
-  , uncheckedNewEmptyMVar
+  , throwSTM
   , uncheckedNewMVar
   , uncheckedNewTVarM
   , writeTVar
@@ -158,6 +170,14 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   , lfkNextLifetimeId :: !(StrictTVar m Word64)
   -- ^ What tells the next registration's 'LeiosPeerLifetimeId' apart from
   -- every earlier one.
+  , lfkWorkClosing :: !(StrictTVar m Bool)
+  -- ^ Closes every queue atomically before draining pre-admitted work.
+  , lfkAnnouncements :: !(Owned.OwnedWork m RankingBlockHash (ValidAnnouncement blk))
+  -- ^ Bounded metadata obligations, independent of slow storage producers.
+  , lfkCachedBodies :: !(Owned.OwnedWork m LeiosPoint LeiosEbByteSizeBounds)
+  -- ^ Optional lookups queued without claiming remote metadata as possession.
+  , lfkForged :: !(Owned.OwnedWork m LeiosPoint (ForgedEndorserBlock, STM m ()))
+  -- ^ Matching full-point callbacks share submission and confirmed completion.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
   -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
   -- and claims to. Nothing older is recorded afterwards, so that an offer or
@@ -183,13 +203,15 @@ data LeiosPeerLifetimeId peer = MkLeiosPeerLifetimeId !peer !Word64
 -- | What the node's LeiosFetch state holds about one upstream peer.
 data LeiosFetchPeer m blk = MkLeiosFetchPeer
   { lfpIsBigLedgerPeer :: !IsBigLedgerPeer
-  -- ^ Fixed for the connection's lifetime. The decision logic fetches more
-  -- aggressively from a big-ledger peer.
+  -- ^ Fixed for the connection's lifetime. Selects the independently
+  -- configured BLP credit, equal to ordinary credit by default.
   , lfpOfferings :: !(StrictTVar m (Map.Map LeiosPoint PeerOffer))
   -- ^ The peer's current offers, keyed by point. Written only by the
   -- LeiosNotify and ChainSync clients, as the peer offers, and by the decision
   -- loop and the pruner, as offers go dead.
-  , lfpRequestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
+  , lfpOfferTimes :: !(StrictTVar m (Map.Map LeiosPoint OfferTimes))
+  -- ^ Independent first body/closure observations, pruned with availability.
+  , lfpRequestsToSend :: !(StrictTVar m (Seq L.CommandKey))
   -- ^ The requests the decision loop assigned to this peer that its LeiosFetch
   -- client has not sent yet.
   , lfpCertificationClaims :: !(StrictTVar m (Map.Map ElectionId EndorserBlockHash))
@@ -207,31 +229,67 @@ newLeiosFetchKernel ::
   (IOLike m, LedgerSupportsProtocol blk) =>
   ChainDB m blk ->
   LeiosDbHandle m ->
+  -- | Ordinary admission and service policy.
+  LeiosFetchStaticEnv ->
+  -- | The node's producer/receipt group has begun closing.
+  STM m Bool ->
   -- | Seeds the decision loop's PRNG.
   StdGen ->
   -- | Everything of the clients' context but the state this creates.
   ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
-    StrictMVar m () ->
+    W.Readiness m ->
+    R.Runtime m (LeiosPeerLifetimeId peer) ->
     LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
   ) ->
   m (LeiosFetchKernel m peer blk)
-newLeiosFetchKernel chainDB leiosDb prng mkContext = do
+newLeiosFetchKernel chainDB leiosDb env closing prng mkContext = do
   immTipSlot <-
     atomically $
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
   acquired <- withReader leiosDb $ \reader ->
     scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
-  outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
-  ready <- uncheckedNewEmptyMVar
+  newLeiosFetchKernelFromState
+    (initializeLeiosOutstanding prng acquired immTipSlot)
+    env
+    closing
+    mkContext
+
+-- | Allocate the live runtime from a recovered outstanding snapshot. Database
+-- recovery belongs to 'newLeiosFetchKernel'; queue ownership and activation are
+-- independent of storage bootstrap.
+newLeiosFetchKernelFromState ::
+  IOLike m =>
+  LeiosOutstanding (LeiosPeerLifetimeId peer) ->
+  LeiosFetchStaticEnv ->
+  STM m Bool ->
+  ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
+    W.Readiness m ->
+    R.Runtime m (LeiosPeerLifetimeId peer) ->
+    LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
+  ) ->
+  m (LeiosFetchKernel m peer blk)
+newLeiosFetchKernelFromState initial env closing mkContext = do
+  outstanding <- uncheckedNewMVar initial
+  ready <- atomically W.newReadiness
+  lfkWorkClosing <- uncheckedNewTVarM False
+  let workClosing = (||) <$> readTVar lfkWorkClosing <*> closing
+  runtime <- R.newRuntime env ready workClosing
+  lfkAnnouncements <- Owned.newOwnedWork "LeiosFetch.announcements" 128 workClosing
+  lfkCachedBodies <- Owned.newOwnedWork "LeiosFetch.cachedBodies" 4 workClosing
+  lfkForged <- Owned.newOwnedWork "LeiosFetch.forged" 4 workClosing
   lfkPeers <- uncheckedNewTVarM Map.empty
   lfkNextLifetimeId <- uncheckedNewTVarM 0
-  lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
+  lfkPrunedSlot <- uncheckedNewTVarM (outstandingPrunedSlot initial)
   pure
     MkLeiosFetchKernel
-      { lfkContext = mkContext outstanding ready
+      { lfkContext = mkContext outstanding ready runtime
       , lfkPeers
       , lfkNextLifetimeId
       , lfkPrunedSlot
+      , lfkWorkClosing
+      , lfkAnnouncements
+      , lfkCachedBodies
+      , lfkForged
       }
 
 -- | Run the action with this peer's LeiosFetch state and the
@@ -262,6 +320,7 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
     fresh <-
       MkLeiosFetchPeer isBig
         <$> uncheckedNewTVarM Map.empty
+        <*> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM Seq.empty
         <*> uncheckedNewTVarM Map.empty
         <*> uncheckedNewTVarM GenesisPoint
@@ -274,6 +333,7 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
           | peer' == peer -> pure (lifetimeId, existing)
         _ -> do
           n <- readTVar lfkNextLifetimeId
+          when (n == maxBound) (throwSTM R.OrdinalExhausted)
           writeTVar lfkNextLifetimeId (n + 1)
           let lifetimeId = MkLeiosPeerLifetimeId peer n
           writeTVar lfkPeers (Map.insert lifetimeId fresh peers)
@@ -281,13 +341,24 @@ withLeiosFetchPeer kernel peer isBig k = bracket register unregister (uncurry k)
 
   -- The decision loop reads the registered peers within the same critical
   -- section in which it assigns requests, so it cannot assign this peer
-  -- anything after its requests are cancelled here. It then runs again, to ask
-  -- other peers for what this one had in flight.
+  -- anything after its requests are cancelled here.
   unregister (lifetimeId, _) = do
-    modifyMVar_ (lfcOutstanding lfkContext) $ \outstanding -> do
-      atomically $ modifyTVar lfkPeers (Map.delete lifetimeId)
-      pure $! removePeerFromOutstanding lifetimeId outstanding
-    void $ tryPutMVar (lfcReady lfkContext) ()
+    events <- mask_ $ modifyMVar (lfcOutstanding lfkContext) $ \outstanding -> do
+      events <- atomically $ do
+        facts <- readTVar (R.runtimeFacts (lfcRuntime lfkContext))
+        let captured = case Map.lookup lifetimeId (R.sessions facts) of
+              Nothing -> []
+              Just session ->
+                [ A.Routine
+                    (L.AttemptKey lifetimeId (R.invocation session) 0)
+                    (FetchRegistrationRemoved (A.usageSummary (lfcRuntime lfkContext) lifetimeId facts))
+                ]
+        A.forceObservations captured `seq` pure ()
+        modifyTVar lfkPeers (Map.delete lifetimeId)
+        R.closePeer (lfcRuntime lfkContext) lifetimeId
+        pure captured
+      pure (removePeerFromOutstanding lifetimeId outstanding, events)
+    A.emitObservations (lfcTracer lfkContext) (lfcDetailTracer lfkContext) events
 
 -- | Record a peer's offer, which an earlier offer of the same point merges
 -- with, unless the point is older than what has been pruned, and wake the
@@ -299,12 +370,14 @@ recordLeiosOffer ::
   LeiosPoint ->
   PeerOffer ->
   m ()
-recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
+recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings, lfpOfferTimes} point offer = do
+  now <- getMonotonicTime
   atomically $ do
     prunedSlot <- readTVar (lfkPrunedSlot kernel)
-    unless (pointSlotNo point < prunedSlot) $
+    unless (pointSlotNo point < prunedSlot) $ do
       modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
-  void $ tryPutMVar (lfcReady (lfkContext kernel)) ()
+      modifyTVar lfpOfferTimes (Map.alter (Just . noteOfferTime now (poOffered offer)) point)
+  atomically $ W.notifyReadiness (lfcReady (lfkContext kernel))
 
 -- | Record the offer a peer makes by rolling forward a header that contains a
 -- Leios certificate: the endorser block the certificate certifies, both its
@@ -442,9 +515,9 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
       unHeaderStateHistory $
         jTheirHeaderStateHistory jumpInfo
 
--- | List the endorser block a new announcement names as one to fetch, if it
--- takes its election's focus, and register the announcement with the
--- LeiosTxCache.
+-- | Own the bookkeeping of a newly accepted announcement in the same STM
+-- transaction as global acceptance. The node worker registers its cache
+-- reference and, if it introduces election focus, lists the point to fetch.
 --
 -- One entry per election: the announcement that takes the election's focus. A
 -- second announcement for an already-focused election is an equivocation, and
@@ -452,16 +525,29 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 -- cost us. If that one turns out to be the certified one, a verified
 -- certificate gives it an entry then.
 --
--- If the announcement takes the focus and the LeiosTxCache holds its endorser
--- block's body, taken in for another point, this acquires it at this point
--- from there ('acquireCachedBody'), rather than fetching it again.
+-- If it introduces focus, an independent bounded worker can acquire a cached
+-- body. Queued metadata and queued lookup alone never establish possession.
 onNewLeiosAnnouncement ::
   forall m peer blk.
   (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
   LeiosFetchKernel m peer blk ->
   ValidAnnouncement blk ->
-  m ()
+  STM m ()
 onNewLeiosAnnouncement kernel valid = do
+  void $
+    Owned.submitWork
+      (lfkAnnouncements kernel)
+      (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader (announcingHeader valid))))
+      valid
+  W.notifyReadiness (lfcReady (lfkContext kernel))
+
+-- The queue keeps the obligation through both cache registration and logical
+-- state installation. Neither can be lost when the announcing peer disconnects.
+registerAnnouncement ::
+  forall m peer blk.
+  (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
+  LeiosFetchKernel m peer blk -> ValidAnnouncement blk -> m ()
+registerAnnouncement kernel valid = do
   void $
     insertAnnouncement
       lfcTxCache
@@ -479,8 +565,8 @@ onNewLeiosAnnouncement kernel valid = do
             then (outstanding, False)
             else (outstanding', True)
   when changed $ do
-    acquireCachedBody (lfkContext kernel) point announcementEbBounds
-    void $ tryPutMVar lfcReady ()
+    atomically $ queueCachedBody kernel point announcementEbBounds
+    atomically $ W.notifyReadiness lfcReady
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache} = lfkContext kernel
   MkValidAnnouncement{announcingHeader = anc, announcementOnset, announcementEbBounds} = valid
@@ -494,69 +580,123 @@ onNewLeiosAnnouncement kernel valid = do
 -- from a peer: take in the endorser block the node's own forge produced, and
 -- the header announcing it, with no peer.
 --
--- The point is marked 'ReceivingFromForge' at once, before any peer could relay the
--- announcement back, so the node never fetches it, and its election is focused
--- on it. Then 'acquireForgedEb' writes and acquires it. Nothing here waits for
--- the writes to land, though submitting them can wait for room in the
--- LeiosDB's write queue.
+-- Admission installs an exact-point local-payload claim before the metadata
+-- or storage worker runs. The worker marks 'ReceivingFromForge' and submits
+-- its data. Matching callbacks share that operation through durable settlement;
+-- callers wait for writer admission, not durability. Caller cancellation never
+-- cancels the shared worker. Announcement novelty does not gate the payload.
 --
 -- The header must announce this endorser block.
 onForgedLeiosEb ::
   forall m peer blk.
   (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
   LeiosFetchKernel m peer blk ->
-  AnnouncingHeader blk ->
+  AnnounceState m blk ->
+  ValidAnnouncement blk ->
   ForgedEndorserBlock ->
   m ()
-onForgedLeiosEb kernel anc forged = do
-  void $
-    insertAnnouncement
-      lfcTxCache
-      slot
-      (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
-      ebHash
-  modifyMVar_ lfcOutstanding $ \outstanding ->
-    pure $
-      if slot < outstandingPrunedSlot outstanding
-        then outstanding
-        else focusElectionIfUnfocused elId ebHash $ markReceivingFromForge point outstanding
-  acquireForgedEb (lfkContext kernel) point forged
+onForgedLeiosEb kernel announcements valid forged = do
+  admitted <- atomically $ do
+    closing <- R.runtimeClosing (lfcRuntime (lfkContext kernel))
+    if closing
+      then pure Nothing
+      else do
+        void $ onValidAnnouncement announcements valid
+        metadata <-
+          Owned.submitWork
+            (lfkAnnouncements kernel)
+            (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
+            valid
+        W.notifyReadiness (lfcReady (lfkContext kernel))
+        pruned <- readTVar (lfkPrunedSlot kernel)
+        if pointSlotNo point < pruned
+          then pure Nothing
+          else do
+            admission <- Owned.submitWork (lfkForged kernel) point (forged, Owned.awaitAdmission metadata)
+            when (Owned.newlyOwned admission) $ R.claimLocalForge (lfcRuntime (lfkContext kernel)) point
+            pure (Just admission)
+  -- The caller may be cancelled here; the queued operation is already owned.
+  -- Joined callbacks wait for the same admission without cancelling its worker.
+  forM_ admitted (atomically . Owned.awaitAdmission)
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcTxCache} = lfkContext kernel
-  elId = ancElectionId anc
-  slot = electionSlot elId
-  ebHash = endorserBlockHash (forgedEbBody forged)
-  point = MkLeiosPoint slot ebHash
+  anc = announcingHeader valid
+  point = MkLeiosPoint (electionSlot (ancElectionId anc)) (endorserBlockHash (forgedEbBody forged))
+
+-- | The receipt supervisor encloses worker activation, processing, drain and
+-- cleanup. Before this scope even warm-cache/focuser paths can only queue work.
+withLeiosFetchWorkers ::
+  forall m peer blk a.
+  (IOLike m, ConvertRawHash blk, HasHeader (Header blk)) =>
+  LeiosFetchKernel m peer blk -> m a -> m a
+withLeiosFetchWorkers kernel action =
+  ( Receipts.withReceiptTasks (lfcReceiptTasks ctx)
+      . Owned.withOwnedWork
+        (lfkAnnouncements kernel)
+        (\_ valid -> registerAnnouncement kernel valid >> pure (pure False))
+      . Owned.withOwnedWork
+        (lfkCachedBodies kernel)
+        (\point bounds -> acquireCachedBody ctx point bounds >> pure (pure False))
+      . Owned.withOwnedWork (lfkForged kernel) submitForge
+      $ action `finally` atomically (writeTVar (lfkWorkClosing kernel) True)
+  )
+    `finally` atomically (modifyTVar (R.runtimeFacts (lfcRuntime ctx)) (\st -> st{R.localForges = mempty}))
+ where
+  ctx = lfkContext kernel
+  release point = atomically $ R.releaseLocalForge (lfcRuntime ctx) point
+  submitForge :: LeiosPoint -> (ForgedEndorserBlock, STM m ()) -> m (m Bool)
+  submitForge point (forged, metadataReady) =
+    ( do
+        atomically metadataReady
+        current <- modifyMVar (lfcOutstanding ctx) $ \outstanding ->
+          pure $
+            if pointSlotNo point < outstandingPrunedSlot outstanding
+              then (outstanding, False)
+              else (markReceivingFromForge point outstanding, True)
+        if not current
+          then release point >> pure (pure False)
+          else do
+            result <- submitForgedEb ctx point forged
+            case result of
+              Nothing -> throwIO Owned.WorkClosed
+              Just settled -> pure (atomically settled `finally` release point)
+    )
+      `onException` release point
+
+-- Optional local discovery has its own bounded worker and never consumes the
+-- metadata dispatch turn. Queued lookup is not a possession claim.
+queueCachedBody ::
+  IOLike m => LeiosFetchKernel m peer blk -> LeiosPoint -> LeiosEbByteSizeBounds -> STM m ()
+queueCachedBody kernel point bounds =
+  Owned.trySubmitWork (lfkCachedBodies kernel) point bounds
 
 -- | Each time something might give a peer something new to do, decide what to
--- request from every peer, at most twice a second.
+-- request from every peer, waking on readiness or the nearest active deadline.
 leiosFetchDecisionLoop ::
   forall m peer blk.
-  (IOLike m, Ord peer, LedgerSupportsProtocol blk, HasHardForkHistory blk) =>
+  (IOLike m, SI.MonadTimer m, Ord peer, LedgerSupportsProtocol blk, HasHardForkHistory blk) =>
   TopLevelConfig blk ->
   ChainDB m blk ->
   BlockchainTime m ->
   LeiosFetchKernel m peer blk ->
   m Void
 leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
-  () <- takeMVar lfcReady
+  due <- atomically (R.nextDeadline <$> readTVar (R.runtimeFacts lfcRuntime))
+  _ <- W.waitForWakeup lfcReady due
   iterationStart <- getMonotonicTime
-  (requests, offerDrops, peersVars) <- modifyMVar lfcOutstanding $ \outstanding -> do
+  reports <- mask_ $ modifyMVar lfcOutstanding $ \outstanding -> do
     -- Read the live peers while holding the outstanding state, so that this
     -- assigns nothing to a peer whose unregistering already cancelled its
     -- requests: their replies would never arrive, and the requests would stay
     -- outstanding forever.
-    (peersVars, offerings, currentSlot, immLedger) <- atomically $ do
+    (offerings, times, currentSlot, immLedger) <- atomically $ do
       peersVars <- readTVar lfkPeers
       offerings <- traverse (readTVar . lfpOfferings) peersVars
-      (,,,) peersVars offerings <$> getCurrentSlot btime <*> ChainDB.getImmutableLedger chainDB
+      times <- traverse (fmap (Map.mapMaybe closureOfferTime) . readTVar . lfpOfferTimes) peersVars
+      (,,,) offerings times <$> getCurrentSlot btime <*> ChainDB.getImmutableLedger chainDB
     let
       -- One forecast anchor for the whole pass: the immutable tip, which is
       -- also what the announcement validation a LeiosNotify offer rides on
       -- forecast from, so it reaches every slot such an offer names.
-      --
-      -- 'forecastFor' requires a slot no older than its anchor. A point the
-      -- pruner has yet to drop can be older, and gets the anchor's view.
       forecastLeiosView slot =
         getLeiosLedgerView (Proxy @(BlockProtocol blk))
           <$> runExcept
@@ -582,37 +722,28 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
               SlotNo window =
                 minCertificationSlot slotLength llvAnnouncementPeriod llvVotePeriod llvDiffusionPeriod 0
           pure (slot, window)
-      (!outstanding', requests, offerDrops) =
-        leiosFetchLogicIteration
-          (lfcStaticEnv lfkContext)
-          forecastEbBounds
-          mbHorizon
-          offerings
-          (Map.map lfpIsBigLedgerPeer peersVars)
-          outstanding
-    pure (outstanding', (requests, offerDrops, peersVars))
-  atomically $ do
-    -- Prune what of the offers the decision found can no longer help.
-    forM_ (Map.toList offerDrops) $ \(peer, pruned) ->
-      forM_ (Map.lookup peer peersVars) $ \vars ->
-        modifyTVar (lfpOfferings vars) (pruneOffers (NEMap.toMap pruned))
-    -- Published after the lock is released, so a peer that unregistered
-    -- meanwhile still gets these, although unregistering cancelled their
-    -- accounting. That is harmless: a peer unregisters only when one of its
-    -- mini-protocols ends, which the diffusion layer answers by demoting or
-    -- closing its connection, and its LeiosFetch client takes nothing more from
-    -- its queue once told to terminate.
-    forM_ (Map.toList requests) $ \(peer, reqs) ->
-      forM_ (Map.lookup peer peersVars) $ \vars ->
-        modifyTVar (lfpRequestsToSend vars) (<> NESeq.toSeq reqs)
-  iterationEnd <- getMonotonicTime
-  threadDelay $ loopInterval - (iterationEnd `diffTime` iterationStart)
+    transitions <- atomically $ do
+      before <- readTVar (R.runtimeFacts lfcRuntime)
+      let (expired, charges) = R.expireHeadsObserved iterationStart (`workStillNeeded` outstanding) before
+      writeTVar (R.runtimeFacts lfcRuntime) expired
+      blocked <- A.blockedChanges lfcRuntime
+      pure $!
+        A.forceObservations
+          (A.penaltyChanges charges ++ A.expiryChanges lfcRuntime iterationStart before expired ++ blocked)
+    (updated, admitted) <-
+      assignRequestsObserved
+        lfcRuntime
+        iterationStart
+        forecastEbBounds
+        mbHorizon
+        times
+        offerings
+        outstanding
+    pure (updated, A.forceObservations (transitions ++ admitted))
+  A.emitObservations (lfcTracer lfkContext) (lfcDetailTracer lfkContext) reports
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext
-
-  loopInterval :: DiffTime
-  loopInterval = 0.5
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcRuntime} = lfkContext
 
 -- | Move each election's focus onto the endorser block a verified certificate
 -- certifies, as ChainSel verifies such certificates.
@@ -646,8 +777,8 @@ leiosFetchFocuser chainDB kernel = go Map.empty
       pure $ Map.foldlWithKey' focus (outstanding, []) arrived
     -- The committee voted for each at its point, so the ledger's bounds there
     -- admit it.
-    forM_ missing $ \point -> acquireCachedBody (lfkContext kernel) point maxBound
-    void $ tryPutMVar lfcReady ()
+    atomically $ forM_ missing $ \point -> queueCachedBody kernel point maxBound
+    atomically $ W.notifyReadiness lfcReady
     go certified
 
   focus (outstanding, missing) elId ebHash =
@@ -691,10 +822,31 @@ leiosFetchPruner chainDB kernel = go (SlotNo 0)
     -- slot first.
     atomically $ do
       writeTVar lfkPrunedSlot immTipSlot
+      Owned.pruneCompleted (lfkForged kernel) ((>= immTipSlot) . pointSlotNo)
       peersVars <- readTVar lfkPeers
       forM_ peersVars $ \vars -> do
         modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
+        modifyTVar (lfpOfferTimes vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
         modifyTVar
           (lfpCertificationClaims vars)
           (Map.dropWhileAntitone ((< immTipSlot) . electionSlot))
     go immTipSlot
+
+-- | First arrivals are metadata about offers, never EB announcement times.
+data OfferTimes = OfferTimes
+  { bodyOfferTime :: !(Maybe Time)
+  , closureOfferTime :: !(Maybe Time)
+  }
+  deriving (Eq, Show)
+
+-- | Merge first observations independently; repeated/cross-protocol offers do
+-- not renew priority. Taking the minimum also handles observation/STM reordering.
+noteOfferTime :: Time -> OfferedHalves -> Maybe OfferTimes -> OfferTimes
+noteOfferTime now offered previous = OfferTimes (choose body oldBody) (choose closure oldClosure)
+ where
+  OfferTimes oldBody oldClosure = maybe (OfferTimes Nothing Nothing) id previous
+  body = case offered of OfferedClosure -> False; _ -> True
+  closure = case offered of OfferedBody{} -> False; _ -> True
+  choose False old = old
+  choose True Nothing = Just $! now
+  choose True (Just old) = Just $! min old now

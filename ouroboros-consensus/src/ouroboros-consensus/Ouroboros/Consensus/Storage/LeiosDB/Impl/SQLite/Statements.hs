@@ -113,6 +113,7 @@ data VolStmts = VolStmts
   , stFillEbTxBytes :: !DB.Statement
   , stFillEbTxBytesLocally :: !DB.Statement
   , stHeldOffsets :: !DB.Statement
+  , stConfirmedTxOffsets :: !DB.Statement
   , stDeclaredTxSize :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
@@ -129,6 +130,7 @@ data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
   , immStLookupEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
+  , immStConfirmedTxOffsets :: !DB.Statement
   }
 
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
@@ -136,6 +138,7 @@ prepareImmStmts db = preparingStmts db $ \prep -> do
   immStLookupEbBody <- prep sql_lookup_ebBodies
   immStLookupEbClosure <- prep sql_lookup_eb_closure
   immStBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
+  immStConfirmedTxOffsets <- prep sql_confirmed_tx_offsets_json
   pure ImmStmts{..}
 
 -- | Same use-after-free discipline as 'finalizeVolStmts'.
@@ -144,6 +147,7 @@ finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
   dbFinalize immStLookupEbClosure
   dbFinalize immStBatchRetrieveTxs
+  dbFinalize immStConfirmedTxOffsets
 
 -- | Prepare every statement 'VolStmts' names. Order is not observable.
 prepareVolStmts :: DB.Database -> IO VolStmts
@@ -157,6 +161,7 @@ prepareVolStmts db = preparingStmts db $ \prep -> do
   stFillEbTxBytes <- prep sql_fill_ebTxBytes
   stFillEbTxBytesLocally <- prep sql_fill_ebTxBytes_locally
   stHeldOffsets <- prep sql_held_offsets
+  stConfirmedTxOffsets <- prep sql_confirmed_tx_offsets_json
   stDeclaredTxSize <- prep sql_declared_tx_size
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
@@ -177,6 +182,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stFillEbTxBytes
   dbFinalize stFillEbTxBytesLocally
   dbFinalize stHeldOffsets
+  dbFinalize stConfirmedTxOffsets
   dbFinalize stDeclaredTxSize
   dbFinalize stDecrMissingCount
   dbFinalize stBatchRetrieveTxs

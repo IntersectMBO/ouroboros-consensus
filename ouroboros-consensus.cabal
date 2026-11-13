@@ -233,10 +233,22 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Request
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
@@ -343,6 +355,7 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.LeiosDB
     Ouroboros.Consensus.Storage.LeiosDB.API
+    Ouroboros.Consensus.Storage.LeiosDB.Cache
     Ouroboros.Consensus.Storage.LeiosDB.Exception
     Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
@@ -406,6 +419,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
+    monoidal-synchronisation,
     aeson,
     array,
     base >=4.14 && <4.23,
@@ -495,6 +509,7 @@ library tracing
     Ouroboros.Consensus.Tracing.KESInfo
     Ouroboros.Consensus.Tracing.LeiosDB
     Ouroboros.Consensus.Tracing.LeiosFetch
+    Ouroboros.Consensus.Tracing.LeiosNotify
     Ouroboros.Consensus.Tracing.Peras
 
   build-depends:
@@ -504,6 +519,7 @@ library tracing
     bech32,
     bytestring,
     cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-crypto-wrapper,
     cardano-data,
     cardano-ledger-allegra,
@@ -521,6 +537,7 @@ library tracing
     cardano-slotting,
     containers,
     deepseq,
+    io-classes:si-timers,
     kes-agent,
     ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol},
     ouroboros-network:{api, orphan-instances, ouroboros-network},
@@ -538,6 +555,7 @@ test-suite tracing-test
   hs-source-dirs: tracing/test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Tracing.LeiosFetch
     Test.Consensus.Tracing.Dijkstra
     Test.Consensus.Tracing.Golden
     Test.Consensus.Tracing.MetaTrace
@@ -557,6 +575,7 @@ test-suite tracing-test
     cardano-protocol-tpraos,
     containers,
     filepath,
+    io-classes:si-timers,
     ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, tracing, unstable-consensus-testlib},
     ouroboros-network:{api, ouroboros-network},
     tasty,
@@ -836,6 +855,7 @@ test-suite consensus-test
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
+    Test.Consensus.Mempool.LocalReuse
     Test.Consensus.Mempool.Fairness.TestBlock
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
@@ -1050,7 +1070,7 @@ test-suite leios-storage-test
     deepseq,
     direct-sqlite,
     directory,
-    io-classes:si-timers,
+    io-classes:{si-timers, strict-stm},
     ouroboros-consensus,
     QuickCheck,
     tasty,
@@ -1566,6 +1586,17 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Client
     Test.Consensus.Leios.LeiosFetch.Codec
     Test.Consensus.Leios.LeiosFetch.Decision
+    Test.Consensus.Leios.LeiosFetch.Bookkeeping
+    Test.Consensus.Leios.LeiosFetch.Coverage
+    Test.Consensus.Leios.LeiosFetch.Assignment
+    Test.Consensus.Leios.LeiosFetch.LocalReuse
+    Test.Consensus.Leios.LeiosFetch.Ownership
+    Test.Consensus.Leios.LeiosFetch.Wait
+    Test.Consensus.Leios.LeiosFetch.PeerPenalty
+    Test.Consensus.Leios.LeiosFetch.Timing
+    Test.Consensus.Leios.LeiosFetch.RequestState
+    Test.Consensus.Leios.LeiosFetch.Runtime
+    Test.Consensus.Leios.LeiosFetch.Wire
     Test.Consensus.Leios.LeiosFetch.Node
     Test.Consensus.Leios.LeiosFetch.Replies
     Test.Consensus.Leios.LeiosNotify
@@ -1714,6 +1745,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
     Ouroboros.Consensus.Shelley.Ledger.Mempool
+    Ouroboros.Consensus.Shelley.Ledger.TxBytes
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol
@@ -2078,8 +2110,9 @@ test-suite cardano-test
     cardano-ledger-babbage:testlib,
     cardano-ledger-binary:testlib,
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
-    cardano-ledger-conway:testlib,
+    cardano-ledger-conway:{cardano-ledger-conway, testlib},
     cardano-ledger-core:{cardano-ledger-core, testlib},
+    cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-mary:testlib,
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},

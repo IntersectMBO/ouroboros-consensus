@@ -168,31 +168,34 @@ newHashTableLeiosTxCache nshift k0 k1 = do
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \point offTxs ->
-          MVar.modifyMVarMasked stateVar $ \st -> do
-            -- A point's closure arrives over one or more batches, each a separate
-            -- call; all must land in the single slot the point holds. Claim a new
-            -- slot only the first time a point is seen (while it still occupies
-            -- the ring); claiming one per batch would wrap the ring every
-            -- 'maxAnnouncementCount' /batches/ rather than points, overwriting
-            -- slots still referenced by recent points.
-            let (slot, locNext') = case ringSlotOf point st of
-                  Just s -> (s, hsLocNext st)
-                  Nothing ->
-                    (UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount), hsLocNext st + 1)
-            F.for_ offTxs $ \(off, txh) -> do
-              let key = toKey txh
-              mv <- HT.lookup ht key
-              -- NOTE: Latest location wins: the newest source point outlives
-              -- older ones in both the ring and the db
-              F.for_ mv $ \w ->
-                HT.insert ht key (encodeLoc slot off .|. (w .&. 0xFFFFFFFF))
-            pure
-              ( st
-                  { hsLocRing = Map.insert slot point (hsLocRing st)
-                  , hsLocNext = locNext'
-                  }
-              , ()
-              )
+          MVar.modifyMVarMasked stateVar $ \st ->
+            if pointSlotNo point < hsPrunedSlot st
+              then pure (st, ())
+              else do
+                -- A point's closure arrives over one or more batches, each a separate
+                -- call; all must land in the single slot the point holds. Claim a new
+                -- slot only the first time a point is seen (while it still occupies
+                -- the ring); claiming one per batch would wrap the ring every
+                -- 'maxAnnouncementCount' /batches/ rather than points, overwriting
+                -- slots still referenced by recent points.
+                let (slot, locNext') = case ringSlotOf point st of
+                      Just s -> (s, hsLocNext st)
+                      Nothing ->
+                        (UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount), hsLocNext st + 1)
+                F.for_ offTxs $ \(off, txh) -> do
+                  let key = toKey txh
+                  mv <- HT.lookup ht key
+                  -- NOTE: Latest location wins: the newest source point outlives
+                  -- older ones in both the ring and the db
+                  F.for_ mv $ \w ->
+                    HT.insert ht key (encodeLoc slot off .|. (w .&. 0xFFFFFFFF))
+                pure
+                  ( st
+                      { hsLocRing = Map.insert slot point (hsLocRing st)
+                      , hsLocNext = locNext'
+                      }
+                  , ()
+                  )
       }
 
 {-------------------------------------------------------------------------------

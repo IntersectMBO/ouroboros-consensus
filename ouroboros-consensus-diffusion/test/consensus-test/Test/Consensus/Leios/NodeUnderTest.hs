@@ -101,6 +101,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -129,7 +130,9 @@ import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
+  , getLeiosFetchKernel
   , initNodeKernel
+  , newNodeLeiosTxCache
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -137,6 +140,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noP
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheGarbageCollection)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -301,7 +305,9 @@ withNodeUnderTest ::
   LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
+withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
+  leiosTxCache <- newNodeLeiosTxCache (seedKeepAliveAndPeerSharing (configSeeds cfg))
+  let leiosDB = withCacheGarbageCollection leiosTxCache rawLeiosDB
   -- What a node with Genesis disabled, the default, runs with, but for
   -- ChainSync jumping, which the test chooses.
   let genesisConfig = disableGenesisConfig{gcCSJConfig = nodeConfigCsj cfg}
@@ -350,6 +356,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
               leiosDB
+              leiosTxCache
               leiosAcquisitions
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
@@ -392,23 +399,24 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 (const encodePeerAddr)
                 (const decodePeerAddr)
         connectedPeers <- newTVarIO Set.empty
-        body
-          NodeUnderTest
-            { nodeChainDB = chainDB
-            , nodeTopLevelConfig = topLevelConfigOf cfg
-            , nodeKernel = kernel
-            , nodeApps = apps
-            , nodeVersions =
-                mkNodeToNodeInitiatorResponderVersions
-                  (featureFlags kernelArgs)
-                  (miniProtocolParameters kernelArgs)
-                  nodeVersionData
-                  (supportedNodeToNodeVersions (Proxy @Blk))
-                  apps
-            , nodeSeeds = seeds
-            , nodeLeiosAcquisitions = leiosAcquisitions
-            , nodeConnectedPeers = connectedPeers
-            }
+        withLeiosFetchWorkers (getLeiosFetchKernel kernel) $
+          body
+            NodeUnderTest
+              { nodeChainDB = chainDB
+              , nodeTopLevelConfig = topLevelConfigOf cfg
+              , nodeKernel = kernel
+              , nodeApps = apps
+              , nodeVersions =
+                  mkNodeToNodeInitiatorResponderVersions
+                    (featureFlags kernelArgs)
+                    (miniProtocolParameters kernelArgs)
+                    nodeVersionData
+                    (supportedNodeToNodeVersions (Proxy @Blk))
+                    apps
+              , nodeSeeds = seeds
+              , nodeLeiosAcquisitions = leiosAcquisitions
+              , nodeConnectedPeers = connectedPeers
+              }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a

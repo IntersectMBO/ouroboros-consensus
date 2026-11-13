@@ -40,7 +40,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTQueue
   )
-import Control.Monad (replicateM, void)
+import Control.Monad (replicateM, unless, void, when)
 import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -241,6 +241,14 @@ tests =
         "the relay offers an acquisition only at its own point, though the log holds announcements of the endorser block at others"
         $ offersRelayed
           @?= [OfferedBody somePoint 1000, OfferedClosure somePoint]
+    , testCase "acquisition after subscription survives relay worker startup" $
+        offersRelayedWhen True @?= [OfferedBody somePoint 1000, OfferedClosure somePoint]
+    , testCase "a later same-point announcement preserves offer expiry after the first expires" $
+        offersAfterExpiry True False @?= ([OfferedBody somePoint 1000, OfferedClosure somePoint], [])
+    , testCase "fully expired point announcements authorize no offer" $
+        offersAfterExpiry False False @?= ([], [])
+    , testCase "a late expired announcement cannot restore point offer authorization" $
+        offersAfterExpiry False True @?= ([], [])
     , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
         (_, downs) <- relay 20 [votedFor0] [0, 0]
         for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
@@ -860,7 +868,10 @@ data Offered = OfferedBody LeiosPoint BytesSize | OfferedClosure LeiosPoint
 -- it acquired, body and closure, at 'someAnnouncingBlock'. The offers the
 -- relay adds to the log.
 offersRelayed :: [Offered]
-offersRelayed = runSimOrThrow $ do
+offersRelayed = offersRelayedWhen False
+
+offersRelayedWhen :: Bool -> [Offered]
+offersRelayedWhen beforeStart = runSimOrThrow $ do
   notifyLog <- newNotifyLog @_ @Blk
   acquisitions <- newLeiosAcquisitions
   atomically $
@@ -868,10 +879,12 @@ offersRelayed = runSimOrThrow $ do
       for_ (mkAnnouncingHeader topLevelConfig (ltbHeader blk)) $ \anc ->
         appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime 1000)
   next <- subscribeLeiosAcquisitions acquisitions
+  let acquire = atomically $ do
+        emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
+        emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+  when beforeStart acquire
   withAsync (leiosOfferRelay next notifyLog) $ \_ -> do
-    atomically $ do
-      emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
-      emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+    unless beforeStart acquire
     threadDelay 1
     atomically $ concatMap offered <$> notifyLogNotifications notifyLog
  where
@@ -881,6 +894,33 @@ offersRelayed = runSimOrThrow $ do
     NotifyLog.NotifyBlockTxsOffer p -> [OfferedClosure p]
     NotifyLog.NotifyAnnouncement _ -> []
     NotifyLog.NotifyVote _ -> []
+
+-- Observe the point index through relayed offers, including a duplicate-point
+-- header with a longer lifetime and a stale append after the retirement frontier.
+offersAfterExpiry :: Bool -> Bool -> ([Offered], [Offered])
+offersAfterExpiry later staleAppend = runSimOrThrow $ do
+  notifyLog <- newNotifyLog @_ @Blk
+  acquisitions <- newLeiosAcquisitions
+  next <- subscribeLeiosAcquisitions acquisitions
+  let append blk expires = for_ (mkAnnouncingHeader topLevelConfig (ltbHeader blk)) $ \anc ->
+        appendNotifyLog notifyLog (NotifyLog.NotifyAnnouncement anc) (RelativeTime expires)
+      offered = \case
+        NotifyLog.NotifyBlockOffer p size -> [OfferedBody p size]
+        NotifyLog.NotifyBlockTxsOffer p -> [OfferedClosure p]
+        _ -> []
+  atomically $ do
+    append someAnnouncingBlock 5
+    when later $ append (setAnnouncement someEbHash 1000 (forkLeiosBlock someAnnouncingBlock)) 10
+    pruneNotifyLog notifyLog (RelativeTime 6)
+    when staleAppend $ append someAnnouncingBlock 5
+    emitLeiosAcquisition acquisitions (AcquiredEb somePoint 1000)
+    emitLeiosAcquisition acquisitions (AcquiredEbTxs somePoint)
+  withAsync (leiosOfferRelay next notifyLog) $ \_ -> do
+    threadDelay 0.01
+    before <- atomically $ concatMap offered <$> notifyLogNotifications notifyLog
+    atomically $ pruneNotifyLog notifyLog (RelativeTime 11)
+    after <- atomically $ concatMap offered <$> notifyLogNotifications notifyLog
+    pure (before, after)
 
 -- | The seat a name stands for in a log, 'a' for seat 0.
 seatOf :: Char -> Word16

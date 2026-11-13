@@ -21,12 +21,14 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , allocateWriter
   , LocalFill
   , TxOffset
+  , TxWriteReceipt (..)
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
+import Data.IntSet (IntSet)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
@@ -116,7 +118,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- nothing, and that tx stays fetchable.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m TxWriteReceipt)
   -- ^ Persist tx bodies for the EB at this point.
   --
   -- Each transaction is given by its offset into the EB body and its bytes.
@@ -131,11 +133,25 @@ data LeiosDbWriter m = LeiosDbWriter
   -- - or it is already stored,
   -- - or its size is not the declared one.
   --
-  -- Returns the offsets of the transactions dropped because the EB referenced
-  -- them with the wrong size: no such closure can be stored, and an honest
-  -- peer never serves one.
+  -- Returns explicit target-presence confirmation and ordered wrong-size
+  -- diagnostics. Absence of size errors alone does not prove a write landed:
+  -- the target may have been collected before this queued write executed.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
+
+-- | Presence at one successful transaction-write boundary, not a retention
+-- promise through later callbacks or notifications. Confirm only distinct
+-- submitted offsets, including copies already held in either partition.
+-- Unconfirmed offsets are the submitted set minus 'txWriteConfirmed'.
+-- See @docs/fetch-policy/leiosfetch-improved.md#durable-confirmation-and-garbage-collection@.
+data TxWriteReceipt = TxWriteReceipt
+  { txWriteConfirmed :: !IntSet
+  -- ^ Submitted offsets holding correctly sized bytes at commit.
+  , txWriteWrongSize :: ![TxOffset]
+  -- ^ Existing ordered diagnostics, independent of target presence. A valid
+  -- copy can already occupy an offset whose new submitted bytes are wrong.
+  }
+  deriving (Eq, Show)
 
 -- | The result of a submitted write.
 --

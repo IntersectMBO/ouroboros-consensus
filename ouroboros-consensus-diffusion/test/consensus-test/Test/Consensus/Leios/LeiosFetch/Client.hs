@@ -17,7 +17,8 @@ import Network.TypedProtocol.Codec (AnyMessage (..), PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
-  ( SomeLeiosFetchJob (..)
+  ( LeiosFetchJobActions (..)
+  , SomeLeiosFetchJob (..)
   , leiosFetchClientPeerPipelined
   , toLeiosFetchClientPeerPipelined
   )
@@ -103,6 +104,7 @@ runClient depth delayFor script = do
         atomically $ modifyTVar events ((now, role, event) :)
       job i =
         MkSomeLeiosFetchJob
+          (LeiosFetchJobActions (pure True) (pure ()) id)
           (MsgLeiosBlockRequest (N i))
           (pure $ \(MsgLeiosBlock (N j)) -> atomically $ modifyTVar handledVar (j :))
       next =

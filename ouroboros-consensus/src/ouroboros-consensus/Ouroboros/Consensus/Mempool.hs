@@ -35,6 +35,8 @@ module Ouroboros.Consensus.Mempool
     -- * Mempool initialization
   , MempoolTimeoutConfig (..)
   , openMempool
+  , openMempoolWithLocalReuse
+  , openMempoolWithoutSyncThreadWithLocalReuse
   , openMempoolWithoutSyncThread
 
     -- * ChainDB interface
@@ -77,5 +79,7 @@ import Ouroboros.Consensus.Mempool.Impl.Common
   )
 import Ouroboros.Consensus.Mempool.Init
   ( openMempool
+  , openMempoolWithLocalReuse
   , openMempoolWithoutSyncThread
+  , openMempoolWithoutSyncThreadWithLocalReuse
   )

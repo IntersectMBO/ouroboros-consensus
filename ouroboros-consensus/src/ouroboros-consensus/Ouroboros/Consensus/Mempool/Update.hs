@@ -494,6 +494,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
           (isLedgerState is `withLedgerTables` emptyLedgerTables)
           (isLastTicketNo is)
           newGen
+          (isLeiosEnabled is)
           toKeep
       traceWith trcr $
         TraceMempoolManuallyRemovedTxs toRemove (map getInvalidated removed) (isMempoolSize is')
@@ -589,6 +590,7 @@ implSyncWithLedger projectResult mpEnv =
                 ls
                 (isLastTicketNo is0)
                 (isRemovalCounter is0)
+                (isLeiosEnabled is0)
                 (TxSeq.toList (isTxs is0))
             -- A bounded catch-up loop reapplying whatever was added or
             -- removed while this ran, so the state lock is held only briefly at

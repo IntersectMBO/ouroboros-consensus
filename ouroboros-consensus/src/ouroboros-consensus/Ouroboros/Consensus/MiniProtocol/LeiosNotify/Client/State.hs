@@ -98,7 +98,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, MonadMask (..), atomically)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, STM, atomically)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -296,7 +296,7 @@ instance
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
 -- An accepted announcement goes on to the node's 'AnnounceState', and, if it
--- is new there, to the given action. The two happen uninterruptibly.
+-- is new there, to the given action.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
@@ -307,9 +307,8 @@ onLeiosNotifyAnnouncement ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
-  -- | what to do with an announcement new to the node; it runs
-  -- uninterruptibly, so it must not block for long
-  (ValidAnnouncement blk -> m ()) ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> STM m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
@@ -324,11 +323,9 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState onNew immLedg
     -- 'StaleOCIN' announcement counts against the peer.
     valid <-
       announcementValidity (ageLimits announceState) systemTime futureCheck cfg immLedger anc
-    -- Stay alive until a new announcement is both accepted and acted on: see
-    -- 'onValidAnnouncement'.
     lift $
-      uninterruptibleMask_ $
-        atomically (onValidAnnouncement announceState valid) >>= \case
+      atomically $
+        onValidAnnouncement announceState valid >>= \case
           NewAnnouncement -> onNew valid
           NotNewAnnouncement -> pure ()
     pure

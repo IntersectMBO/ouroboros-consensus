@@ -18,6 +18,8 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , NodeLeiosTxCache
+  , newNodeLeiosTxCache
   , toConsensusMode
   ) where
 
@@ -51,6 +53,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe)
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -66,7 +69,6 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , newAnnounceState
-  , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
@@ -75,8 +77,13 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , notifyLogPruner
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
-import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
+import Ouroboros.Consensus.Leios.TxCache
+  ( LeiosTxCache
+  , PackedEndorserBlock
+  , defaultLeiosTxCacheShift
+  , newHashTableLeiosTxCache
+  )
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, ProtVerParity)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, votePruner)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -94,7 +101,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   , SomeHeaderInFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchStaticEnv)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , LeiosPeerLifetimeId (..)
@@ -104,15 +111,15 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , newLeiosFetchKernel
   , onForgedLeiosEb
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (mempoolLocalSource, newLocalReuse)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
-  , ValidAnnouncement (..)
   , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
-import Ouroboros.Consensus.Network.LeiosFetch (maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (leiosNotifyPruner)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -154,6 +161,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   )
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
+  , localRootAddrs
   )
 import Ouroboros.Network.PeerSharing
   ( PeerSharingAPI
@@ -241,6 +249,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Accumulator for tx-submission counters of disconnected peers.
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
+  , getIsLocalRoot :: addrNTN -> STM m Bool
+  -- ^ Live local-root membership for transaction-submission peer tiers.
   , getLeiosNotifyClientStates ::
       StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
   -- ^ The state of each LeiosNotify client, by upstream peer, which
@@ -270,7 +280,11 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
-  -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
+  -- ^ Seeds the LeiosFetch decision loop's PRNG.
+  , leiosTxCache :: NodeLeiosTxCache m
+  -- ^ Allocated before opening ChainDB, with eviction wired before database GC.
+  , leiosFetchConfig :: LeiosFetchStaticEnv
+  -- ^ Validated ordinary fetch credit and patience settings.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -290,12 +304,25 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txSubmissionRng :: StdGen
+  -- ^ Independent random stream for transaction-submission peer selection.
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
+
+-- | Cache shared by forging, fetching, validation and database GC.
+type NodeLeiosTxCache m = LeiosTxCache m () ProtVerParity PackedEndorserBlock
+
+-- | Allocate before opening ChainDB so no background GC can predate cache
+-- retirement. Peers choose the keys, so keep the salted mutable table.
+newNodeLeiosTxCache :: IOLike m => StdGen -> m (NodeLeiosTxCache m)
+newNodeLeiosTxCache rng = do
+  let (salt0, rest) = uniform rng
+      (salt1, _) = uniform rest
+  newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
 
 initNodeKernel ::
   forall m addrNTN addrNTC blk.
@@ -315,14 +342,17 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosTxCache
     , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
+    , leiosFetchConfig
     , initChainDB
     , blockFetchConfiguration
     , btime
     , gsmArgs
     , peerSharingRng
+    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
@@ -412,7 +442,7 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
-    peerTxRegistry <- newPeerTxRegistry
+    peerTxRegistry <- newPeerTxRegistry txSubmissionRng
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
@@ -465,29 +495,40 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.notifyLogPruner" $
         notifyLogPruner systemTime leiosNotifyLog
 
-    -- The LeiosTxCache's keys are chosen by peers, so its hash table is salted
-    -- with a secret of this node's.
-    let (leiosFetchPrng, saltRng) = splitGen leiosFetchRng
-        (salt0, saltRng') = uniform saltRng
-        (salt1, _) = uniform saltRng'
-    leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+    let (leiosFetchPrng, _) = splitGen leiosFetchRng
+    receiptTasks <- Receipts.newReceiptTasks
     leiosWriter <- allocateWriter registry leiosDB
+    localReuse <-
+      newLocalReuse (Receipts.receiptClosing receiptTasks) (mempoolLocalSource mempool) leiosWriter
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
-        MkLeiosFetchClientContext
-          { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
-          , lfcOutstanding = outstanding
-          , lfcReady = ready
-          , lfcTxCache = leiosTxCache
-          , lfcWriter = leiosWriter
-          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
-          , lfcSystemTime = systemTime
-          , -- Each trace names the connection, not which of its registrations.
-            lfcTracer =
-              contramap
-                (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
-                (leiosFetchClientTracer tracers)
-          }
+      newLeiosFetchKernel
+        chainDB
+        leiosDB
+        leiosFetchConfig
+        (Receipts.receiptClosing receiptTasks)
+        leiosFetchPrng
+        $ \outstanding ready runtime ->
+          MkLeiosFetchClientContext
+            { lfcStaticEnv = leiosFetchConfig
+            , lfcOutstanding = outstanding
+            , lfcReady = ready
+            , lfcRuntime = runtime
+            , lfcTxCache = leiosTxCache
+            , lfcReceiptTasks = receiptTasks
+            , lfcLocalReuse = localReuse
+            , lfcWriter = leiosWriter
+            , lfcNotify = emitLeiosAcquisition leiosAcquisitions
+            , lfcSystemTime = systemTime
+            , lfcDetailTracer =
+                contramap
+                  (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                  (leiosFetchDetailTracer tracers)
+            , -- Each trace names the connection, not which of its registrations.
+              lfcTracer =
+                contramap
+                  (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                  (leiosFetchClientTracer tracers)
+            }
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
         leiosFetchDecisionLoop cfg chainDB btime leiosFetchKernel
@@ -508,16 +549,8 @@ initNodeKernel
     let onForgedEb hdr onset leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
-          for_ mbValid $ \valid ->
-            -- Stay alive until the announcement is accepted and its endorser
-            -- block taken in: see 'onValidAnnouncement'. When the LeiosDB's
-            -- write queue is full, this is an unusually long critical section,
-            -- since taking the endorser block in waits for room there, and so
-            -- does whatever is ending this thread. A pool leads too rarely for
-            -- that to matter.
-            uninterruptibleMask_ $ do
-              void $ atomically $ onValidAnnouncement leiosAnnounceState valid
-              onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+          for_ mbValid $ \valid -> do
+            onForgedLeiosEb leiosFetchKernel leiosAnnounceState valid forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
@@ -555,6 +588,7 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getIsLocalRoot = \peer -> Set.member peer . localRootAddrs <$> StrictSTM.readTVar publicPeerSelectionStateVar
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState
@@ -658,7 +692,8 @@ initInternalState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool <-
-      openMempool
+      openMempoolWithLocalReuse
+        True
         registry
         (chainDBLedgerInterface chainDB)
         (configLedger cfg)

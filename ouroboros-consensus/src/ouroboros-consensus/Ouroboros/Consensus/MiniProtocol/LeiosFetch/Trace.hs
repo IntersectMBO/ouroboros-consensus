@@ -3,6 +3,19 @@
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
+  , ClosureSummary (..)
+  , TraceLeiosFetchDetailEvent (..)
+  , FetchRequest (..)
+  , FetchUsage (..)
+  , FetchBudget (..)
+  , FetchSelection (..)
+  , FetchHedgeCause (..)
+  , FetchRoutine (..)
+  , FetchLimit (..)
+  , FetchPhase (..)
+  , FetchDetail (..)
+  , detachFetchDetail
+  , detachFetchRoutine
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
   , fetchArrivalEvicted
@@ -11,9 +24,15 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , TraceLeiosFetchServerEvent (..)
   ) where
 
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time)
 import Data.Time.Clock (NominalDiffTime)
+import Data.Word (Word32, Word64)
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Coverage (ClosureSummary (..))
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.PeerPenalty as P
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttSource)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxBitmaps)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
@@ -39,6 +58,8 @@ data TraceLeiosFetchClientEvent peer
     -- arrival that completed them came this long after its point's slot
     -- began, if that is known.
     TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
+  | TraceLeiosFetchClientClosureSummary LeiosPoint ClosureSummary
+  | TraceLeiosFetchClientPolicy peer Natural FetchRoutine
   deriving (Show, Functor)
 
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
@@ -102,3 +123,112 @@ data TraceLeiosFetchServerEvent
     -- the client.
     TraceLeiosFetchServerOpenReaderDbFailure !LeiosDbException
   deriving Show
+
+-- | The single independently suppressible high-frequency policy tracer. The
+-- invocation is node-global within the fetch runtime and remains captured after
+-- its original registration disappears; the request ordinal lives in its detail.
+data TraceLeiosFetchDetailEvent peer = TraceLeiosFetchDetailEvent peer Natural FetchDetail
+  deriving (Show, Functor)
+
+-- | Detached fetch identity. The ordinal is local auditing metadata and is
+-- never added to the fetch wire format. A job is the immutable whole-TX batch.
+data FetchRequest = FetchRequest
+  { fetchOrdinal :: !Word64
+  -- ^ Nonwrapping local request number within the captured invocation.
+  , fetchPoint :: !LeiosPoint
+  -- ^ Original EB identity, retained after reassignment or disconnection.
+  , fetchJob :: !(Maybe Word32)
+  -- ^ Stable job index; Nothing identifies a body request.
+  , fetchPayloadBytes :: !Word32
+  -- ^ Offered body size or actual immutable whole-TX job size.
+  }
+  deriving (Eq, Show)
+
+-- | Independent transaction credit and body count, across all EBs at one peer.
+-- These are logical outstanding requests, not preallocated buffers or DB space.
+data FetchUsage = FetchUsage
+  { fetchTxBytes :: !Word64
+  -- ^ Live queued/sent transaction payload credit.
+  , fetchBodies :: !Word32
+  -- ^ Live body attempts across EBs, independent of transaction credit.
+  , fetchTxLimit :: !Word32
+  -- ^ Applicable ordinary/BLP transaction limit for this connection.
+  , fetchBodyLimit :: !Word32
+  -- ^ Applicable body-count limit for this connection.
+  }
+  deriving (Eq, Show)
+
+-- | Frozen SI timing inputs; later samples and payload dribbles do not renew them.
+data FetchBudget = FetchBudget !Word32 !DiffTime !DiffTime !DiffTime !RttSource
+  deriving (Eq, Show)
+
+-- | Exact ranking evidence captured before request admission. Usage at
+-- admission is a separate snapshot, and delayed tracing does not refresh this.
+data FetchSelection = FetchSelection !Time !P.Score !(Maybe Time)
+  deriving (Eq, Show)
+
+data FetchHedgeCause = FetchOwnHeadExpiry | FetchBlockedFollower
+  deriving (Eq, Show)
+
+data FetchRoutine
+  = FetchUpstreamChanged Bool
+  | FetchHedgeOpened FetchRequest FetchHedgeCause
+  | FetchBodyWon FetchRequest Word32
+  | FetchPenaltyCharged FetchRequest Time P.Snapshot P.Score P.Snapshot
+  | FetchInvocationClosed FetchUsage Bool
+  | FetchRegistrationRemoved FetchUsage
+  deriving (Eq, Show)
+
+data FetchLimit = FetchBodyCount | FetchTransactionCredit | FetchCommandCount
+  deriving (Bounded, Enum, Eq, Ord, Show)
+
+-- | One compact transition per phase, never a packet/input-span trace.
+data FetchPhase
+  = FetchDispatchCommitted
+  | FetchSoftExpired
+  | FetchSendReturned
+  | FetchReplyReceived
+  | FetchHandlerStarted
+  | FetchReceiptSettled
+  | FetchWriterAccepted
+  | FetchHandlerFinished
+  | FetchResourceSettled
+  | FetchObsoleteSkipped
+  deriving (Bounded, Enum, Eq, Show)
+
+data FetchDetail
+  = FetchAdmitted FetchRequest FetchBudget Time FetchUsage (Maybe FetchSelection)
+  | FetchTransition FetchRequest FetchPhase Time FetchUsage
+  | FetchHeadActivated FetchRequest Time Time Bool
+  | FetchPressureChanged [FetchLimit] FetchUsage
+  deriving (Eq, Show)
+
+-- | Force only bounded scalar summaries at the producer boundary. Public
+-- event arguments remain lazy for disabled tracers; no payload is demanded.
+detachFetchDetail :: FetchDetail -> ()
+detachFetchDetail event = case event of
+  FetchAdmitted req budget at used selected ->
+    detachRequest req `seq`
+      budget `seq`
+        at `seq`
+          used `seq`
+            maybe
+              ()
+              ( \(FetchSelection chosen score offered) -> chosen `seq` score `seq` maybe () (\value -> value `seq` ()) offered
+              )
+              selected
+  FetchTransition req phase at used -> detachRequest req `seq` phase `seq` at `seq` used `seq` ()
+  FetchHeadActivated req start expiry continuous -> detachRequest req `seq` start `seq` expiry `seq` continuous `seq` ()
+  FetchPressureChanged limits used -> foldr seq () limits `seq` used `seq` ()
+
+detachFetchRoutine :: FetchRoutine -> ()
+detachFetchRoutine event = case event of
+  FetchUpstreamChanged blocked -> blocked `seq` ()
+  FetchHedgeOpened req cause -> detachRequest req `seq` cause `seq` ()
+  FetchBodyWon req actual -> detachRequest req `seq` actual `seq` ()
+  FetchPenaltyCharged req at before effective after -> detachRequest req `seq` at `seq` before `seq` effective `seq` after `seq` ()
+  FetchInvocationClosed used failed -> used `seq` failed `seq` ()
+  FetchRegistrationRemoved used -> used `seq` ()
+
+detachRequest :: FetchRequest -> ()
+detachRequest req = req `seq` maybe () (\n -> n `seq` ()) (fetchJob req)
