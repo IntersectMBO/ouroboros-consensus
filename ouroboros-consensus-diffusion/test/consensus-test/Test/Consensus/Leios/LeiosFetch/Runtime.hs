@@ -37,7 +37,20 @@ tests :: TestTree
 tests =
   testGroup
     "ordinary runtime lifecycle"
-    [ testCase
+    [ testGroup "effective readiness"
+        [ testCase "only a live physical release sets readiness" testReleaseReadiness
+        , testCase
+            "pending cleanup distinguishes changed, accepted and obsolete owners"
+            testPendingReadiness
+        , testCase "forge ownership notifies only on set membership changes" testForgeReadiness
+        , testCase
+            "commit is quiet while send, decode exit and terminal receipt still wake"
+            testTimingReadiness
+        , testCase
+            "obsolete callbacks neither alter nor wake a replacement invocation"
+            testObsoleteReadiness
+        ]
+    , testCase
         "explicit admission distinguishes credit, eligibility, protocol and lifetime refusals"
         testAdmissionReasons
     , testCase "explicit body and shared count refusals consume no credit or ordinal"
@@ -56,6 +69,12 @@ tests =
     , testCase
         "admission freezes connection RTT while FIFO activation follows handler completion"
         testRttAdmission
+    , testCase "known forge ownership keeps physical leases without charging redundant TX stalls" $ withTxHeads $ \rt _client out point keys -> do
+        atomically $ R.claimLocalForge rt point
+        initial <- atomically (readTVar (R.runtimeFacts rt))
+        let (expired, charges) = R.expireHeadsObserved (Time 10) (`workStillNeeded` out) initial
+        charges @?= []
+        map (\key -> Map.member key (L.leases (R.ledger expired))) keys @?= replicate (length keys) True
     , testCase "charge and blocked traces replay captured ownership exactly once" $ withTxHeads $ \rt client out _ keys -> do
         initial <- atomically (readTVar (R.runtimeFacts rt))
         let (failed, charges) = R.expireHeadsObserved (Time 10) (\work -> case work of L.Job{} -> True; _ -> False) initial
@@ -320,6 +339,131 @@ tests =
         atomically (R.settleReceipt rt a (bodyWork 0))
         atomically (Map.null . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)
     ]
+
+takeRuntimeReady :: R.Runtime IO Int -> IO Bool
+takeRuntimeReady rt = atomically $
+  orElse (W.awaitReadiness (R.runtimeReady rt) >> pure True) (pure False)
+
+testReleaseReadiness :: Assertion
+testReleaseReadiness = withClient $ \rt client -> do
+  key <- admit client 0
+  _ <- takeRuntimeReady rt
+  atomically (R.releaseAttempt rt (L.AttemptKey 99 99 99))
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.releaseAttempt rt key)
+  -- Repeated cleanup must neither create a fresh signal nor clear the real one.
+  atomically $ forM_ [1 .. 20 :: Int] $ \_ -> R.releaseAttempt rt key
+  takeRuntimeReady rt >>= (@?= True)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.releaseAttempt rt key)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (L.usage 0 . R.ledger <$> readTVar (R.runtimeFacts rt)) >>= (@?= L.Usage 0 0 0)
+
+testPendingReadiness :: Assertion
+testPendingReadiness = withClient $ \rt client -> do
+  key <- admit client 0
+  let work = bodyWork 0
+      point = L.workPoint work
+  _ <- takeRuntimeReady rt
+  atomically (R.clearUnsubmitted rt key work >> R.settleReceipt rt key work)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.claimUseful rt key) >>= (@?= True)
+  atomically (R.clearUnsubmitted rt key work)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.clearUnsubmitted rt key work)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.claimUseful rt key) >>= (@?= True)
+  atomically (R.acceptReply rt key work)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.clearUnsubmitted rt key work >> R.acceptReply rt key work)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.settleReceipt rt key work)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.settleReceipt rt key work)
+  takeRuntimeReady rt >>= (@?= False)
+  token <- atomically (R.claimLocalBody rt point) >>= maybe (fail "local claim") pure
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.acceptLocalBody rt point token >> R.acceptLocalBody rt point token)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.settleLocalBody rt point token)
+  takeRuntimeReady rt >>= (@?= True)
+  replacement <- atomically (R.claimLocalBody rt point) >>= maybe (fail "replacement") pure
+  _ <- takeRuntimeReady rt
+  atomically $ do
+    R.acceptLocalBody rt point token
+    R.settleLocalBody rt point token
+    R.settleReceipt rt key work
+    R.clearUnsubmitted rt key work
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (Map.lookup work . R.pending <$> readTVar (R.runtimeFacts rt))
+    >>= (@?= Just (R.LocalOwner replacement, False))
+  atomically (R.settleLocalBody rt point replacement)
+  takeRuntimeReady rt >>= (@?= True)
+
+testForgeReadiness :: Assertion
+testForgeReadiness = withClient $ \rt _ -> do
+  let point = L.workPoint (bodyWork 0)
+  _ <- takeRuntimeReady rt
+  atomically (R.releaseLocalForge rt point)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.claimLocalForge rt point)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.claimLocalForge rt point)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.releaseLocalForge rt point)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.releaseLocalForge rt point)
+  takeRuntimeReady rt >>= (@?= False)
+
+testTimingReadiness :: Assertion
+testTimingReadiness = withClient $ \rt client -> do
+  key <- admit client 0
+  _ <- takeRuntimeReady rt
+  atomically (R.commitRequest client key) >>= (@?= True)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.nextDeadline <$> readTVar (R.runtimeFacts rt)) >>= (@?= Nothing)
+  atomically (R.observeSend client (Time 0))
+  takeRuntimeReady rt >>= (@?= True)
+  original <- atomically (R.nextDeadline <$> readTVar (R.runtimeFacts rt))
+  assertBool "send return must activate the original deadline" (original /= Nothing)
+  atomically (R.publishInput client True >> R.publishInput client True)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically (R.nextDeadline <$> readTVar (R.runtimeFacts rt)) >>= (@?= Nothing)
+  atomically (R.publishInput client False)
+  takeRuntimeReady rt >>= (@?= True)
+  atomically (R.nextDeadline <$> readTVar (R.runtimeFacts rt)) >>= (@?= original)
+  atomically (R.publishInput client False)
+  takeRuntimeReady rt >>= (@?= False)
+  atomically $ modifyTVar (R.runtimeFacts rt) (expireRuntimeHeads (Time 100) (const True))
+  atomically (R.blocked 0 <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)
+  atomically (R.completeWire client key (Time 0.1))
+  takeRuntimeReady rt >>= (@?= True)
+  current <- atomically (readTVar (R.runtimeFacts rt))
+  R.blocked 0 current @?= False
+  T.clockReceipt (R.attemptClock (R.attempts current Map.! key)) @?= Just (Time 0.1)
+
+testObsoleteReadiness :: Assertion
+testObsoleteReadiness = withClient $ \rt old -> do
+  key <- admit old 0
+  atomically (R.closeClient old)
+  fresh <- atomically (openClient rt 0 False (pure Nothing))
+  next <- admit fresh 0
+  atomically (R.claimUseful rt next) >>= (@?= True)
+  _ <- takeRuntimeReady rt
+  atomically $ do
+    R.releaseAttempt rt key
+    R.acceptReply rt key (bodyWork 0)
+    R.clearUnsubmitted rt key (bodyWork 0)
+    R.settleReceipt rt key (bodyWork 0)
+    R.observeSend old (Time 100)
+    R.completeWire old key (Time 100)
+    R.publishInput old False
+    R.finishHandler old key (bodyWork 0) (Time 100)
+    R.closeClient old
+  takeRuntimeReady rt >>= (@?= False)
+  current <- atomically (readTVar (R.runtimeFacts rt))
+  Map.member next (L.leases (R.ledger current)) @?= True
+  Map.lookup (bodyWork 0) (R.pending current) @?= Just (R.NetworkOwner next, False)
 
 testAdmissionReasons :: Assertion
 testAdmissionReasons = withClient $ \rt client -> do

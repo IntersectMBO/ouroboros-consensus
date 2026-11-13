@@ -27,11 +27,13 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   , acquireCachedBody
   , acquireForgedEb
+  , submitForgedEb
   ) where
 
 import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Control.Monad (foldM, forM_, unless, when)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as S
+import Control.Monad (foldM, forM_, unless, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -166,7 +168,6 @@ data ReplyOwnership m = ReplyOwnership
   , abandonUnsubmitted :: STM m ()
   -- ^ Failure cleanup for a claim not accepted by the writer. Accepted work
   -- remains the receipt callback's responsibility.
-
   }
 
 requestReplyOwnership ::
@@ -519,6 +520,7 @@ settleBody ::
   Promise m BodyWriteReceipt ->
   m ()
 settleBody ctx source point eb now bodyWritten = do
+  labelThisThread "LeiosFetch.settleBody"
   receipt <- await bodyWritten
   case receipt of
     BodyUnavailable -> pure ()
@@ -610,30 +612,33 @@ acquireCachedBody ::
 acquireCachedBody ctx point bounds =
   mask_ $
     Receipts.withReceiptSubmission (lfcReceiptTasks ctx) $
-      Receipts.forkReceipt (lfcReceiptTasks ctx) $ do
-        labelThisThread "LeiosFetch.cachedBody"
-        lookupBody lfcTxCache (pointEbHash point) >>= \case
-          Nothing -> pure ()
-          Just packed -> case deserialiseEndorserBlock
-            (Proxy @DijkstraEra)
-            (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
-            Right eb | admitsSizes bounds (leiosEbByteSizes eb) -> do
-              claim <- modifyMVar (lfcOutstanding ctx) $ \out -> do
-                token <- case Map.lookup point (ebState out) of
-                  Just (MkEbState _ NoBody) -> atomically (R.claimLocalBody (lfcRuntime ctx) point)
-                  _ -> pure Nothing
-                pure (out, token)
-              forM_ claim $ \token ->
-                ( do
-                    now <- systemTimeCurrent lfcSystemTime
-                    (_summary, fills) <- insertBody lfcTxCache point packed [] snocLocated
-                    written <- writeEbBody lfcWriter point eb (Map.fromList fills) Map.empty
-                    atomically (R.acceptLocalBody (lfcRuntime ctx) point token)
-                    settleBody ctx CachedBody point eb now written
-                      `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point token)
-                )
-                  `finally` atomically (R.clearLocalBody (lfcRuntime ctx) token)
-            _ -> pure ()
+      lookupBody lfcTxCache (pointEbHash point) >>= \case
+        Nothing -> pure ()
+        Just packed -> case deserialiseEndorserBlock (Proxy @DijkstraEra) (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
+          -- They decoded when the body arrived. The point is then fetched like any
+          -- other.
+          Left _failure -> pure ()
+          Right eb
+            | not (admitsSizes bounds (leiosEbByteSizes eb)) -> pure ()
+            | otherwise -> do
+                claim <- modifyMVar (lfcOutstanding ctx) $ \out -> do
+                  token <- case Map.lookup point (ebState out) of
+                    Just (MkEbState _ NoBody) -> atomically (R.claimLocalBody (lfcRuntime ctx) point)
+                    _ -> pure Nothing
+                  pure (out, token)
+                forM_ claim $ \token ->
+                  ( do
+                      now <- systemTimeCurrent lfcSystemTime
+                      (_noSummary, localFills) <- insertBody lfcTxCache point packed [] snocLocated
+                      bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills) Map.empty
+                      atomically (R.acceptLocalBody (lfcRuntime ctx) point token)
+                      Receipts.forkReceipt
+                        (lfcReceiptTasks ctx)
+                        ( settleBody ctx CachedBody point eb now bodyWritten
+                            `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point token)
+                        )
+                  )
+                    `finally` atomically (R.clearLocalBody (lfcRuntime ctx) token)
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
 
@@ -654,17 +659,33 @@ acquireForgedEb ::
   LeiosPoint ->
   ForgedEndorserBlock ->
   m ()
-acquireForgedEb ctx point forged = Receipts.withReceiptSubmission (lfcReceiptTasks ctx) $ do
+acquireForgedEb ctx point forged = void $ submitForgedEb ctx point forged
+
+-- | Submit under the receipt group and return a joinable positive-completion
+-- observation. Writer admission returns to the forge caller before durability;
+-- the owned operation remains coalescible until its receipt has settled.
+-- Nothing means closing rejected the submission, not a promise to wait for.
+submitForgedEb ::
+  IOLike m =>
+  LeiosFetchClientContext m peer ->
+  LeiosPoint ->
+  ForgedEndorserBlock ->
+  m (Maybe (STM m Bool))
+submitForgedEb ctx point forged = Receipts.withReceiptSubmissionResult (lfcReceiptTasks ctx) $ do
+  completed <- S.newEmptyTMVarIO
   now <- systemTimeCurrent lfcSystemTime
   _ <-
     insertBody lfcTxCache point (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
   written <- writeEbBody lfcWriter point eb Map.empty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   Receipts.forkReceipt
     (lfcReceiptTasks ctx)
-    ( settleForgedEb ctx point eb now written
+    ( do
+        confirmed <- settleForgedEb ctx point eb now written
+        atomically $ S.putTMVar completed confirmed
     )
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
+  pure (S.readTMVar completed)
  where
   MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
   eb = forgedEbBody forged
@@ -682,21 +703,22 @@ settleForgedEb ::
   RelativeTime ->
   -- | the offsets of the txs the point holds once the writes are durable
   Promise m BodyWriteReceipt ->
-  m ()
+  m Bool
 settleForgedEb ctx point eb now written = do
   receipt <- await written
   case receipt of
-    BodyUnavailable -> pure ()
+    BodyUnavailable -> pure False
     BodyPresent confirmed -> do
+      labelThisThread "LeiosFetch.settleForgedEb"
       let heldOffs = Set.toAscList confirmed
-      acquired <- modifyMVar lfcOutstanding $ \outstanding -> do
+      let complete = IntMap.keysSet refs `IntSet.isSubsetOf` IntSet.fromList heldOffs
+      (current, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
         -- A successful submission is not proof that all target rows survived to
         -- the TX commit: GC can run between the body's and TXs' transactions. The
         -- forge supplies every exact TX, so an incomplete receipt cannot establish
         -- acquisition. Its collected point is retired by the ordinary pruner; no
         -- receipt task waits for that bookkeeping entry to disappear.
-        let complete = IntMap.keysSet refs `IntSet.isSubsetOf` IntSet.fromList heldOffs
-            (outstanding', toEmit) =
+        let (outstanding', toEmit) =
               if complete then settleReceivingFromForge point outstanding else (outstanding, Nothing)
             age = ageAt now $ maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
             (notifications, traces) = case toEmit of
@@ -722,12 +744,18 @@ settleForgedEb ctx point eb now written = do
             (updated, summary) = if mayFinish then finishPointCoverage point True initialized else (outstanding', Nothing)
         atomically $ mapM_ lfcNotify notifications
         pure
-          (updated, traces ++ [TraceLeiosFetchClientClosureSummary point value | Just value <- [summary]])
+          ( updated
+          ,
+            ( Map.member point (ebState updated)
+            , traces ++ [TraceLeiosFetchClientClosureSummary point value | Just value <- [summary]]
+            )
+          )
       -- These bytes are durable now: advertise them as fill sources for later
       -- endorser blocks referencing the same txs.
       setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
       atomically $ W.notifyReadiness lfcReady
       mapM_ (traceWith lfcTracer) acquired
+      pure (complete && current)
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcTxCache, lfcNotify, lfcTracer} = ctx
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
@@ -873,6 +901,7 @@ settleTxs ::
   Promise m TxWriteReceipt ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now written txsWritten = do
+  labelThisThread "LeiosFetch.settleTxs"
   receipt <- await txsWritten
   let wrongSize = toIntSet (txWriteWrongSize receipt)
   completed <- modifyMVar lfcOutstanding $ \outstanding -> do

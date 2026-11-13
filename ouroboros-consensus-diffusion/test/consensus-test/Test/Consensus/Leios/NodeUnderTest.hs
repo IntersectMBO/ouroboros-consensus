@@ -102,11 +102,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
-  ( LeiosFetchClientContext (lfcReceiptTasks)
-  )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -412,7 +408,7 @@ withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
                 (const encodePeerAddr)
                 (const decodePeerAddr)
         connectedPeers <- newTVarIO Set.empty
-        Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel kernel))) $
+        withLeiosFetchWorkers (getLeiosFetchKernel kernel) $
           body
             NodeUnderTest
               { nodeChainDB = chainDB

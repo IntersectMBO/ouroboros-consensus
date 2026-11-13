@@ -95,12 +95,8 @@ import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
-  ( LeiosFetchClientContext (lfcReceiptTasks)
-  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (defaultLeiosFetchStaticEnv)
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( defaultLeiosAnnouncementAgeLimits
   )
@@ -568,7 +564,7 @@ runThreadNetwork
                 blockForging'
                 nodeInfo
                 (crucialTxs' ++ tniCrucialTxs)
-            again <- Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel kernel))) $ do
+            again <- withLeiosFetchWorkers (getLeiosFetchKernel kernel) $ do
               atomically $ writeTVar vertexStatusVar $ VUp kernel app
 
               -- wait until this node instance should stop

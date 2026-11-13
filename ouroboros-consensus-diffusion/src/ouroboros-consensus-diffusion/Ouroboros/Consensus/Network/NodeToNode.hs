@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -79,14 +78,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint
   , LeiosTx
   , LeiosVote
-  , decodeSerialisedEndorserBlock
   , decodeLeiosPoint
   , decodeLeiosTx
   , decodeLeiosVote
-  , encodeSerialisedEndorserBlock
+  , decodeSerialisedEndorserBlock
   , encodeLeiosPoint
   , encodeLeiosTx
   , encodeLeiosVote
+  , encodeSerialisedEndorserBlock
   , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (MatchedBlock)
@@ -441,11 +440,11 @@ mkHandlers
                   -- it would one from a LeiosNotify peer.
                   mbValid <-
                     validHeaderAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
-                  for_ mbValid $ \valid ->
-                    atomically $
-                      onValidAnnouncement getLeiosAnnounceState valid >>= \case
-                        NewAnnouncement NotEquivocationProof ->
-                          enqueueLeiosAnnouncement getLeiosFetchKernel valid
+                  for_ mbValid $ \valid -> do
+                    atomically $ do
+                      whetherNew <- onValidAnnouncement getLeiosAnnounceState valid
+                      case whetherNew of
+                        NewAnnouncement NotEquivocationProof -> enqueueLeiosAnnouncement getLeiosFetchKernel valid
                         NewAnnouncement EquivocationProof -> pure ()
                         NotNewAnnouncement -> pure ()
                   for_ mbLeiosPeer $ \peerVars ->
@@ -584,6 +583,9 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN bLF = Codec
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
   , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) e m bLF
+  -- ^ The body retains its serialized inner payload. A received
+  -- 'EndorserBlock' keeps the bytes it arrived in. Its driver joins the chunks a
+  -- message arrives in, so 'mkApps' requires a 'Monoid' of @bLF@.
   }
 
 -- | Protocol codecs for the node-to-node protocols

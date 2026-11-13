@@ -94,8 +94,7 @@ leiosNotifyClient ::
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
-  -- | what to do with an announcement new to the node that proves no
-  -- equivocation, within the transaction that accepts it
+  -- | what to do with a new non-proof announcement, in its acceptance STM
   (ValidAnnouncement blk -> STM m ()) ->
   -- | record an offer the peer made
   (LeiosPoint -> PeerOffer -> m ()) ->

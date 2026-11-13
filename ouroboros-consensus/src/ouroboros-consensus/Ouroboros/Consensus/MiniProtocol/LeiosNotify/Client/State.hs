@@ -298,7 +298,7 @@ instance
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
 -- An accepted announcement goes on to the node's 'AnnounceState', and, if it
--- is new there and proves no equivocation, to the given action, in the same
+-- is new there and proves no equivocation, to the given action in the same
 -- transaction.
 onLeiosNotifyAnnouncement ::
   forall m blk.
@@ -310,8 +310,7 @@ onLeiosNotifyAnnouncement ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
-  -- | what to do with an announcement new to the node that proves no
-  -- equivocation, within the transaction that accepts it
+  -- | what to do with a new non-proof announcement, in its acceptance STM
   (ValidAnnouncement blk -> STM m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->

@@ -13,6 +13,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
   , AdmissionRejection (..)
   , PendingOwner (..)
   , claimLocalBody
+  , claimLocalForge
+  , releaseLocalForge
   , acceptLocalBody
   , clearLocalBody
   , settleLocalBody
@@ -52,6 +54,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Sequence (Seq (..), (|>))
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 import Data.Word (Word32, Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint)
@@ -128,6 +131,9 @@ data RuntimeState m peer = RuntimeState
   -- credit. False means submission is not yet accepted; True means writer
   -- acceptance has transferred settlement to a receipt task, so peer removal
   -- must not clear the claim.
+  , localForges :: !(Set.Set LeiosPoint)
+  -- ^ Known locally supplied payloads, including queued producers. Suppresses
+  -- new body and TX dispatch; already-sent replies retain their physical debt.
   , nextLocalOwner :: !Natural
   -- ^ Next runtime-wide identity for local body-import submission claims.
   -- Distinct tokens keep an old local completion from clearing a newer claim.
@@ -205,7 +211,7 @@ data Client m peer = Client
 newRuntime :: IOLike m => LeiosFetchStaticEnv -> W.Readiness m -> STM m Bool -> m (Runtime m peer)
 newRuntime cfg ready closing = do
   checked <- either (throwIO . InvalidConfig) pure (validateLeiosFetchStaticEnv maxIngressBytes cfg)
-  facts <- uncheckedNewTVarM (RuntimeState Map.empty Map.empty L.emptyLedger Map.empty 0 0)
+  facts <- uncheckedNewTVarM (RuntimeState Map.empty Map.empty L.emptyLedger Map.empty Set.empty 0 0)
   pure (Runtime checked facts closing ready)
 
 openClient ::
@@ -291,7 +297,10 @@ workOwners work st = [key | (key, lease) <- Map.toAscList (L.leases (ledger st))
 -- new lease, preventing one old expiry from authorizing repeated fanout.
 -- Rationale: @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
 workEligible :: Ord peer => L.Work LeiosPoint -> RuntimeState m peer -> Bool
-workEligible work st = Map.notMember work (pending st) && all stalled (workOwners work st)
+workEligible work st =
+  Set.notMember (L.workPoint work) (localForges st)
+    && Map.notMember work (pending st)
+    && all stalled (workOwners work st)
  where
   stalled key@(L.AttemptKey peer generation _) = case (Map.lookup peer (sessions st), Map.lookup key (attempts st)) of
     (Just session, Just _) | invocation session == generation -> blocked peer st
@@ -388,6 +397,7 @@ commitRequest client@(Client rt peer _) key = do
     (Just session, Just attempt)
       | not closing
       , Map.member key (L.leases (ledger st))
+      , Set.notMember (L.workPoint (attemptWork attempt)) (localForges st)
       , not (committed attempt) -> do
           writeTVar
             (runtimeFacts rt)
@@ -674,7 +684,10 @@ expireHeadsObserved now needed st =
         let (fired, clock) = T.expire now (attemptClock attempt)
             charge =
               fired && case attemptWork attempt of
-                work@L.Job{} -> needed work && Map.notMember work (pending acc)
+                work@L.Job{} ->
+                  needed work
+                    && Set.notMember (L.workPoint work) (localForges acc)
+                    && Map.notMember work (pending acc)
                 _ -> False
             previous = closurePenalty session
             effective = P.effectiveScore now previous
@@ -785,6 +798,26 @@ closeClient client@(Client rt peer _) = do
 data PendingOwner peer = NetworkOwner !(L.AttemptKey peer) | LocalOwner !Natural
   deriving (Eq, Ord, Show)
 
+-- | Installed atomically with bounded forge admission, before the MVar-owned
+-- logical state can be marked. Only the matching owned operation releases it.
+claimLocalForge :: IOLike m => Runtime m peer -> LeiosPoint -> STM m ()
+claimLocalForge rt point = do
+  st <- readTVar (runtimeFacts rt)
+  when (Set.notMember point (localForges st)) $ do
+    writeTVar (runtimeFacts rt) st{localForges = Set.insert point (localForges st)}
+    W.notifyReadiness (runtimeReady rt)
+
+-- | Release the known-payload claim installed by 'claimLocalForge', then wake
+-- planning so any still-needed work can be fetched again. Only the bounded
+-- forge operation that owns the claim may run this cleanup; requests already
+-- sent keep their physical leases until their normal settlement.
+releaseLocalForge :: IOLike m => Runtime m peer -> LeiosPoint -> STM m ()
+releaseLocalForge rt point = do
+  st <- readTVar (runtimeFacts rt)
+  when (Set.member point (localForges st)) $ do
+    writeTVar (runtimeFacts rt) st{localForges = Set.delete point (localForges st)}
+    W.notifyReadiness (runtimeReady rt)
+
 -- | Try to claim a local body import with a fresh 'LocalOwner' token. The caller
 -- checks that the body is still needed; existing acquisition claims take
 -- precedence. The claim suppresses new body copies while submission is owned
@@ -794,7 +827,7 @@ claimLocalBody rt point = do
   st <- readTVar (runtimeFacts rt)
   let work = L.Body point
       token = nextLocalOwner st
-  if Map.member work (pending st)
+  if Set.member point (localForges st) || Map.member work (pending st)
     then pure Nothing
     else do
       writeTVar
