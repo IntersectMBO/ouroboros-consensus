@@ -13,19 +13,33 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import qualified Control.Exception as E
 import Control.Monad (forM_, unless, void)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
-import Control.Tracer (nullTracer)
+import Control.ResourceRegistry (withRegistry)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
-import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
+import Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
+import Ouroboros.Consensus.BlockchainTime
+  ( BackoffDelay (..)
+  , BlockchainTime (..)
+  , CurrentSlot (..)
+  , HardForkBlockchainTimeArgs (..)
+  , SystemTime (..)
+  , TraceBlockchainTimeEvent (..)
+  , hardForkBlockchainTime
+  , slotLengthFromSec
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
-import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Config (SecurityParam (..), configLedger)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.AnnounceState
 import qualified Ouroboros.Consensus.Leios.NotifyLog as Log
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (..))
+import Ouroboros.Consensus.Leios.TxCache.API (evictOlderThan)
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -35,11 +49,15 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+import qualified Ouroboros.Consensus.NodeKernel as NK
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..))
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
 import Test.Cardano.Crypto.Leios.Gen (mkCommitteeFromTestSeats)
 import Test.Consensus.Leios.LeiosFetch.Replies (fixture, newContext, tryEnqueueRequest)
+import qualified Test.Consensus.Leios.NodeUnderTest as Node
 import Test.Consensus.Leios.TestBlock
   ( LeiosTestBlock (..)
   , LeiosTestLedgerConfig (..)
@@ -47,6 +65,7 @@ import Test.Consensus.Leios.TestBlock
   , setAnnouncement
   , setSlot
   , singleNodeLeiosTestConfig
+  , successorLeiosBlock
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
@@ -157,6 +176,13 @@ tests =
         runSimOrThrow failedStartup @?= True
     , testCase "retirement before worker activation does not recreate state or submit payloads" $
         runSimOrThrow retiredBeforeActivation @?= (0, True)
+    , testCase "decision loop forecasts unpruned work at the newer immutable anchor" $
+        runSimOrThrow forecastBehindAnchor @?= True
+    , testCase "the real HardFork clock retains its slot/onset pair through a tolerated rewind" $
+        runSimOrThrow hardForkOnsetRewind
+          @?= ( [(SlotNo 2, RelativeTime 2), (SlotNo 2, RelativeTime 2), (SlotNo 3, RelativeTime 3)]
+              , (RelativeTime 2.25, RelativeTime 1.5)
+              )
     , testCase "worker starts unmasked even with a masked caller" unmaskedWorker
     ]
 
@@ -475,3 +501,81 @@ retiredBeforeActivation = do
   acquired <- S.readTVarIO notes
   count <- S.readTVarIO calls
   pure (count, Map.null (ebState out) && null acquired)
+
+-- A separate real kernel retains old work while the real ChainDB advances.
+-- Its pruner has not caught up. A fixture clock isolates forecast anchoring from
+-- diffusion-window expiry; no production scheduling hook is required.
+forecastBehindAnchor :: IOSim s Bool
+forecastBehindAnchor = Node.withNode $ \node -> do
+  threadDelay 14
+  Node.addBlocks node (take 14 (iterate successorLeiosBlock (firstLeiosBlock 0)))
+  anchor <- atomically $ do
+    ledger <- ChainDB.getImmutableLedger (Node.nodeChainDB node)
+    case getTipSlot (ledgerState ledger) of
+      NotOrigin slot | slot > SlotNo 1 -> pure slot
+      _ -> retry
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (original, _, _) = fixture
+      point = original{pointSlotNo = anchor - 1}
+      election = ancElectionId (announcingHeader (validAt point 0))
+      -- The node fixture has one-second slots from system start. Freeze a
+      -- coherent slot/onset pair so this test still isolates forecast anchoring.
+      slotOnset = RelativeTime (fromIntegral (unSlotNo anchor))
+      clock =
+        (NK.getBlockchainTime (Node.nodeKernel node)){getCurrentSlot = pure (CurrentSlot anchor slotOnset)}
+  modifyMVar_ (lfcOutstanding (lfkContext kernel)) $
+    pure
+      . focusElectionIfUnfocused election (pointEbHash point)
+      . recordReferencedPoint point SNothing
+  withLeiosFetchWorkers kernel $ withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \lifetime peer -> do
+    _ <-
+      atomically $
+        R.openClient (lfcRuntime (lfkContext kernel)) lifetime False (lfpRequestsToSend peer) (pure Nothing)
+    recordLeiosOffer kernel peer point (MkPeerOffer SNothing (OfferedBody 100))
+    withAsync
+      (leiosFetchDecisionLoop (Node.nodeTopLevelConfig node) (Node.nodeChainDB node) clock kernel)
+      $ \worker -> do
+        link worker
+        atomically $ readTVar (lfpRequestsToSend peer) >>= check . (not . null)
+        pure True
+
+-- The node supplies the real ledger/history. A separate public clock receives
+-- its own time readings, so a rewind does not disturb the fixture node's clock.
+-- The existing production trace witnesses the rewind branch before we inspect
+-- its published pair; forward publication is acknowledged through getCurrentSlot.
+hardForkOnsetRewind :: IOSim s ([(SlotNo, RelativeTime)], (RelativeTime, RelativeTime))
+hardForkOnsetRewind = Node.withNode $ \node -> withRegistry $ \registry -> do
+  now <- uncheckedNewTVarM (RelativeTime 2.25)
+  rewind <- uncheckedNewTVarM Nothing
+  clock <-
+    hardForkBlockchainTime
+      HardForkBlockchainTimeArgs
+        { hfbtBackoffDelay = pure (BackoffDelay 1)
+        , hfbtGetLedgerState = ledgerState <$> ChainDB.getCurrentLedger (Node.nodeChainDB node)
+        , hfbtLedgerConfig = configLedger (Node.nodeTopLevelConfig node)
+        , hfbtRegistry = registry
+        , hfbtSystemTime = SystemTime{systemTimeCurrent = readTVarIO now, systemTimeWait = pure ()}
+        , hfbtTracer = mkTracer $ \event -> case event of
+            TraceSystemClockMovedBack previous current -> atomically $ writeTVar rewind (Just (previous, current))
+            _ -> pure ()
+        , hfbtMaxClockRewind = 2
+        }
+  let readKnown = do
+        sample <- getCurrentSlot clock
+        case sample of
+          CurrentSlot slot onset -> pure (slot, onset)
+          CurrentSlotUnknown -> retry
+  before <- atomically readKnown
+  atomically $ writeTVar now (RelativeTime 1.5)
+  witnessed <- atomically $ readTVar rewind >>= maybe retry pure
+  -- The trace precedes publication. IOSim runs that publication to its next
+  -- blocking delay before this short simulated timer can expire.
+  threadDelay 0.001
+  retained <- atomically readKnown
+  atomically $ writeTVar now (RelativeTime 3.25)
+  advanced <- atomically $ do
+    pair@(slot, _) <- readKnown
+    check (slot > SlotNo 2)
+    pure pair
+  pure ([before, retained, advanced], witnessed)

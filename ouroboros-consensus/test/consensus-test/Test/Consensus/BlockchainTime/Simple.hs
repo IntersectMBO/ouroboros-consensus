@@ -74,6 +74,8 @@ tests =
     [ adjustQuickCheckTests (`div` 10) $ testProperty "delayNextSlot" prop_delayNextSlot
     , testProperty "delayClockShift" prop_delayClockShift
     , adjustQuickCheckTests (const 1) $ testProperty "delayNoClockShift" prop_delayNoClockShift
+    , testProperty "known-slot watcher forwards onsets and ignores same-slot changes" prop_knownSlotOnsets
+    , testProperty "slot onsets survive fractional slots and a tolerated clock rewind" prop_slotOnsets
     ]
 
 {-------------------------------------------------------------------------------
@@ -288,7 +290,7 @@ prop_delayClockShift schedule =
 
   testResult :: Either Failure [SlotNo]
   testResult =
-    overrideDelay dawnOfTime schedule $
+    fmap (map fst) $ overrideDelay dawnOfTime schedule $
       testOverrideDelay
         (SystemStart dawnOfTime)
         (slotLengthFromSec 1)
@@ -322,7 +324,7 @@ prop_delayNoClockShift =
             (slotLengthFromMillisec 100)
             (secondsToNominalDiffTime 20)
             5
-      pure $ slots === [SlotNo n | n <- [0 .. 4]]
+      pure $ map fst slots === [SlotNo n | n <- [0 .. 4]]
 
 -- | Note that that under load, the returned list could be missing certain slots
 -- or contain more slots than requested. This means that tests using this
@@ -335,7 +337,7 @@ testOverrideDelay ::
   NominalDiffTime ->
   -- | Number of slots to collect
   Int ->
-  OverrideDelay m [SlotNo]
+  OverrideDelay m [(SlotNo, RelativeTime)]
 testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
   bracketWithPrivateRegistry
     ( \registry ->
@@ -350,8 +352,8 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
       slotsVar <- uncheckedNewTVarM []
       withWatcher
         "testOverrideDelay"
-        ( knownSlotWatcher btime $ \slotNo _onset -> do
-            atomically $ modifyTVar slotsVar (slotNo :)
+        ( knownSlotWatcher btime $ \slotNo onset -> do
+            atomically $ modifyTVar slotsVar ((slotNo, onset) :)
         )
         $ do
           -- Wait to collect the required number of slots
@@ -359,6 +361,74 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
             slots <- readTVar slotsVar
             when (length slots < numSlots) $ retry
             return $ reverse slots
+
+{-------------------------------------------------------------------------------
+  Slot-onset regressions
+-------------------------------------------------------------------------------}
+
+-- | Exercise the public watcher with a caller-controlled clock. Positive
+-- transitions are acknowledged by their callbacks; simulated time lets every
+-- runnable watcher retry before we inspect the negative cases.
+prop_knownSlotOnsets :: Property
+prop_knownSlotOnsets =
+  once $
+    runSimOrThrow knownSlotOnsetEvents
+      === [[], [first], [first], [first], [first], [first, next]]
+ where
+  first = (SlotNo 4, RelativeTime 1.25)
+  next = (SlotNo 7, RelativeTime 12.25)
+
+knownSlotOnsetEvents :: IOSim s [[(SlotNo, RelativeTime)]]
+knownSlotOnsetEvents = do
+  current <- uncheckedNewTVarM CurrentSlotUnknown
+  observed <- uncheckedNewTVarM []
+  let clock = BlockchainTime{getCurrentSlot = readTVar current}
+      snapshot = reverse <$> readTVarIO observed
+      settled = threadDelay 0.001 >> snapshot
+      awaitCount n = atomically $ do
+        events <- readTVar observed
+        check (length events >= n)
+        pure (reverse events)
+  withWatcher
+    "knownSlotOnsetEvents"
+    (knownSlotWatcher clock $ \slot onset -> atomically $ modifyTVar observed ((slot, onset) :))
+    $ do
+      unknown <- settled
+      atomically $ writeTVar current (CurrentSlot (SlotNo 4) (RelativeTime 1.25))
+      first <- awaitCount 1
+      atomically $ writeTVar current (CurrentSlot (SlotNo 4) (RelativeTime 9.5))
+      refined <- settled
+      atomically $ writeTVar current CurrentSlotUnknown
+      unavailable <- settled
+      atomically $ writeTVar current (CurrentSlot (SlotNo 4) (RelativeTime 10.75))
+      restored <- settled
+      atomically $ writeTVar current (CurrentSlot (SlotNo 7) (RelativeTime 12.25))
+      advanced <- awaitCount 2
+      pure [unknown, first, refined, unavailable, restored, advanced]
+
+-- | Sample the real Simple clock through the existing programmable delay.
+-- The clock jumps forward, then back across a half-second boundary. Its
+-- notifications must keep the original slot/onset pairing and skip no expected
+-- slot after the tolerated rewind.
+prop_slotOnsets :: Property
+prop_slotOnsets =
+  once $ case observed of
+    Left err -> counterexample (show err) (property False)
+    Right events ->
+      events
+        === [ (SlotNo 0, RelativeTime 0)
+            , (SlotNo 1, RelativeTime 0.5)
+            , (SlotNo 2, RelativeTime 1)
+            , (SlotNo 3, RelativeTime 1.5)
+            ]
+ where
+  observed =
+    overrideDelay dawnOfTime (Schedule [0.8, 0.4, 1.2]) $
+      testOverrideDelay
+        (SystemStart dawnOfTime)
+        (slotLengthFromMillisec 500)
+        (secondsToNominalDiffTime 2)
+        4
 
 {-------------------------------------------------------------------------------
   Test-programmable time
