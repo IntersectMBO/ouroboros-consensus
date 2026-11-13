@@ -11,8 +11,9 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import qualified Control.Exception as E
-import Control.Monad (unless)
-import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Control.Monad (unless, when)
+import Control.Monad.Class.MonadTest (exploreRaces)
+import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List.NonEmpty as NE
@@ -59,6 +60,7 @@ import Test.Consensus.Leios.TestBlock
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck (Property, counterexample, property, testProperty)
 import Test.Util.Orphans.IOLike ()
 
 assertM :: Applicative m => String -> Bool -> m ()
@@ -166,6 +168,12 @@ tests =
         runSimOrThrow retiredBeforeActivation @?= (0, True)
     , testCase "decision loop forecasts unpruned work at the newer immutable anchor" $
         runSimOrThrow forecastBehindAnchor @?= True
+    , testCase "simultaneous producer failures have one supervised teardown" $
+        runSimOrThrow simultaneousFailures @?= True
+    , testProperty
+        "simultaneous producer failures across scheduler interleavings"
+        propSimultaneousFailures
+    , testProperty "producer and receipt failures across scheduler interleavings" $ propFailuresWith True
     , testCase "worker starts unmasked even with a masked caller" unmaskedWorker
     ]
 
@@ -498,3 +506,48 @@ forecastBehindAnchor = Node.withNode $ \node -> do
         link worker
         atomically $ readTVar (lfpRequestsToSend peer) >>= check . (not . null)
         pure True
+
+-- Several producers can observe the same writer failure. Their original owner
+-- must complete cleanup without a second linked exception arriving afterwards.
+simultaneousFailures :: IOSim s Bool
+simultaneousFailures = simultaneousFailuresWith False
+
+simultaneousFailuresWith :: forall s. Bool -> IOSim s Bool
+simultaneousFailuresWith receiptAlso = do
+  tasks <- Receipts.newReceiptTasks
+  left <- Owned.newOwnedWork "test.left" 1 (pure False)
+  right <- Owned.newOwnedWork "test.right" 1 (pure False)
+  gate <- S.newEmptyTMVarIO
+  entered <- S.newTVarIO (0 :: Int)
+  joined <- S.newTVarIO (0 :: Int)
+  _ <- atomically $ Owned.submitWork left (0 :: Int) ()
+  _ <- atomically $ Owned.submitWork right (0 :: Int) ()
+  let count = if receiptAlso then 3 else 2
+      failAfterGate :: IOSim s ()
+      failAfterGate =
+        ( do
+            exploreRaces
+            atomically $ S.modifyTVar entered (+ 1)
+            atomically $ S.readTMVar gate
+            throwIO (userError "shared writer failure")
+        )
+          `finally` atomically (S.modifyTVar joined (+ 1))
+      producer _ _ = failAfterGate >> pure (pure False)
+  result <- try @_ @SomeException $ Receipts.withReceiptTasks tasks $ do
+    when receiptAlso $ Receipts.withReceiptSubmission tasks $ Receipts.forkReceipt tasks failAfterGate
+    Owned.withOwnedWork left producer $ Owned.withOwnedWork right producer $ do
+      atomically $ S.readTVar entered >>= check . (== count)
+      atomically $ S.putTMVar gate ()
+      atomically retry
+  threadDelay 0.001
+  stopped <- S.readTVarIO joined
+  pure (either (const True) (const False) result && stopped == count)
+
+propSimultaneousFailures :: Property
+propSimultaneousFailures = propFailuresWith False
+
+propFailuresWith :: Bool -> Property
+propFailuresWith receiptAlso = exploreSimTrace id (exploreRaces >> simultaneousFailuresWith receiptAlso) $ \_ trace ->
+  case traceResult False trace of
+    Left err -> counterexample (show err) False
+    Right ok -> property ok
