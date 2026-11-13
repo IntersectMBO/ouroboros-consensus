@@ -74,6 +74,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , getCertifiableLeiosAnnouncementPolyPraos
   , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
+  , leiosHeaderChecks
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
   , WhyNotCertifiable (..)
