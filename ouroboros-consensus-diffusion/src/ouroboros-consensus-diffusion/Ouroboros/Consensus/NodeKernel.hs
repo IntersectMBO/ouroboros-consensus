@@ -72,7 +72,6 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , newAnnounceState
-  , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import Ouroboros.Consensus.Leios.NotifyLog
@@ -110,7 +109,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , LeiosPeerLifetimeId (..)
-  , leiosFetchAnnouncementFocuser
   , leiosFetchCertificateFocuser
   , leiosFetchDecisionLoop
   , newLeiosFetchKernel
@@ -121,7 +119,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (mempoolLocalSourc
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
-  , ValidAnnouncement (..)
   , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -558,11 +555,6 @@ initNodeKernel
           leiosVoteState
           leiosNotifyClientStates
           leiosFetchKernel
-    -- Its death takes the node down, as 'leiosFetchAnnouncementFocuser'
-    -- requires.
-    void $
-      forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
-        leiosFetchAnnouncementFocuser leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
         leiosFetchCertificateFocuser (atomically nextNewLeiosValidClaims) leiosFetchKernel
@@ -570,48 +562,14 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
 
-    -- The node takes in each endorser block its forge produces, with the header
-    -- announcing it, through the handlers an announcement and an endorser block
-    -- from a peer go through, with no peer. As for a header ChainSync validated,
-    -- the announcement needs no further check: the forge built the header.
-    --
-    -- Most of that work is done by this worker, so that neither LeiosFetch nor
-    -- the LeiosDB can delay the forge adding the ranking block, and so that
-    -- cancelling the forge, as when the forging credentials change, cannot
-    -- interrupt it: the worker stops only with the node. A point the worker has
-    -- marked 'ReceivingFromForge' is fetched from no peer until the worker
-    -- settles it, and the honest chain can need that point: another ranking
-    -- block in the same slot can announce the same endorser block. The forge
-    -- only accepts the announcement and queues the endorser block for the
-    -- worker, in one transaction, as 'onValidAnnouncement' asks.
-    --
-    -- An endorser block still queued when the node stops is never fully
-    -- written, though its ranking block may already be in the ChainDB. That
-    -- ranking block remains valid without it, and no block will ever certify it:
-    -- its announcement still diffuses, but the node offers an endorser block and
-    -- its txs only once they are written, so no honest peer will ever offer
-    -- either, and so no honest peer can vote on it. A slow (buggy, overwhelmed or
-    -- unlucky) LeiosDB widens this window: the worker takes in one endorser
-    -- block at a time, waiting for room in the LeiosDB's write queue, where it
-    -- can lose every race for a freed slot to the node's other writes, and then
-    -- for the write to land.
-    --
-    -- The queue is unbounded, but receives at most one endorser block per
-    -- ranking block the node forges, so it stays stochastically small, unless
-    -- the LeiosDB has slowed to a completely unacceptable bottleneck.
-    forgedEbs <- newTQueueIO
-    void $
-      forkLinkedThread registry "NodeKernel.forgedEndorserBlocks" $
-        forever $ do
-          (anc, forged) <- atomically $ readTQueue forgedEbs
-          onForgedLeiosEb leiosFetchKernel anc forged
+    -- Announcements and forged payloads enter the bounded node-owned workers
+    -- atomically. The callback waits for writer admission, while accepted
+    -- receipt work survives cancellation of the forge and drains with the node.
     let onForgedEb onset hdr leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
           for_ mbValid $ \valid -> do
-            -- Never inherit an uninterruptible region across writer admission.
-            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
-            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+            onForgedLeiosEb leiosFetchKernel leiosAnnounceState valid forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
