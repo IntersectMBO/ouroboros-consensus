@@ -17,6 +17,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidReques
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes (..)
   , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary (..)
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchServerEvent (..)
   )
@@ -35,13 +36,14 @@ instance
         ]
     TraceLeiosFetchClientBlockFromCache point ->
       mconcat ["kind" .= String "BlockFromCache", pointFields point]
-    TraceLeiosFetchClientBlockTxSources point sources ->
+    TraceLeiosFetchClientBlockTxSources point sources summary ->
       mconcat
         [ "kind" .= String "BlockTxSources"
         , pointFields point
         , "localFills" .= btsLocalFills sources
         , "mempool" .= btsMempool sources
         , "remaining" .= btsRemaining sources
+        , foldMap summaryFields summary
         ]
     TraceLeiosFetchClientTxsArrived peer point arrival ->
       mconcat
@@ -58,13 +60,22 @@ instance
     arrivalFields (MkFetchArrivalBytes invalid evicted good extra) =
       mconcat
         ["invalidBytes" .= invalid, "evictedBytes" .= evicted, "goodBytes" .= good, "extraBytes" .= extra]
+    summaryFields summary =
+      "txCache"
+        .= Aeson.object
+          [ "tracked" .= ibsTracked summary
+          , "acquired" .= ibsAcquired summary
+          , "validated" .= ibsValidated summary
+          , "txCount" .= ibsCacheTxCount summary
+          , "load" .= ibsCacheLoad summary
+          ]
 
   forHuman = \case
     TraceLeiosFetchClientBlockArrived peer point _ ->
       "Endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockFromCache point ->
       "Took endorser block " <> pretty point <> " from the LeiosTxCache"
-    TraceLeiosFetchClientBlockTxSources point sources ->
+    TraceLeiosFetchClientBlockTxSources point sources summary ->
       "Endorser block "
         <> pretty point
         <> ": "
@@ -74,6 +85,7 @@ instance
         <> " from the mempool, "
         <> showT (btsRemaining sources)
         <> " remaining"
+        <> foldMap summaryHuman summary
     TraceLeiosFetchClientTxsArrived peer point _ ->
       "Transactions of endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
@@ -81,6 +93,15 @@ instance
       "Acquired the transactions of endorser block " <> pretty point
    where
     pretty = Text.pack . prettyLeiosPoint
+    summaryHuman summary =
+      "; the LeiosTxCache already tracked "
+        <> showT (ibsTracked summary)
+        <> " of them, had acquired "
+        <> showT (ibsAcquired summary)
+        <> " and validated "
+        <> showT (ibsValidated summary)
+        <> ", and is at load "
+        <> showT (ibsCacheLoad summary)
 
 instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   namespaceFor = \case
@@ -106,7 +127,7 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
       "The node took an endorser block from the body its LeiosTxCache held for another point, rather than fetching it."
   documentFor (Namespace _ ["BlockTxSources"]) =
     Just
-      "How many of an endorser block's transactions the node copies from other points, takes from its mempool, and has yet to get, as it writes the body."
+      "How many of an endorser block's transactions the node copies from other points, takes from its mempool, and has yet to get, as it writes the body. If the LeiosTxCache took the body in then, also how many of them it already tracked, had acquired and had validated, and its load."
   documentFor (Namespace _ ["TxsArrived"]) =
     Just
       "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them."

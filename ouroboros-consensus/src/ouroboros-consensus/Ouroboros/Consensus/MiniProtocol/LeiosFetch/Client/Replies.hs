@@ -103,6 +103,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -326,8 +327,8 @@ processLeiosBlock ctx peer req bytes = do
           -- Register the body's transactions in the tx cache, and read where
           -- some recent point durably holds any of them, so that the body
           -- write copies those rather than us fetching them again.
-          (_summary, located) <- insertBody lfcTxCache ebHash (packEndorserBlock eb) [] snocLocated
-          pure (cleaned, BodyToWrite eb (Map.fromList located))
+          (summary, located) <- insertBody lfcTxCache ebHash (packEndorserBlock eb) [] snocLocated
+          pure (cleaned, BodyToWrite eb (Map.fromList located) summary)
   void $ tryPutMVar lfcReady ()
   case delivery of
     BodyTooBig exn -> do
@@ -335,8 +336,8 @@ processLeiosBlock ctx peer req bytes = do
         TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-    BodyToWrite eb localFills -> do
-      bodyWritten <- writeBodyWithLocalTxs ctx point eb localFills
+    BodyToWrite eb localFills summary -> do
+      bodyWritten <- writeBodyWithLocalTxs ctx point eb localFills summary
       -- A failed write brings the node down, since the SQLite LeiosDB's writer
       -- is linked to it. This worker runs off this thread but is linked to it,
       -- so a failure also disconnects the peer, if its client still runs. Like
@@ -384,7 +385,8 @@ data BodyDelivery
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite !EndorserBlock !LocalFills
+    -- Also the LeiosTxCache's summary of taking it in, if it did.
+    BodyToWrite !EndorserBlock !LocalFills !(Maybe LeiosTxCacheInsertBodySummary)
 
 -- | Where a body that 'settleBody' settles came from.
 data BodySource peer
@@ -502,7 +504,7 @@ acquireCachedBody ctx point bounds =
         | not (admitsSizes bounds (leiosEbSizes eb)) -> pure ()
         | otherwise -> do
             now <- systemTimeCurrent lfcSystemTime
-            (_noSummary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
+            (summary, localFills) <- insertBody lfcTxCache (pointEbHash point) packed [] snocLocated
             -- The write can wait for room in the LeiosDB's write queue, so the
             -- worker makes it, and looks the txs up in the mempool for it.
             -- Unmasked, since this may run uninterruptibly
@@ -513,7 +515,7 @@ acquireCachedBody ctx point bounds =
                 ( \unmask -> do
                     labelThisThread "LeiosFetch.settleBody"
                     unmask $
-                      writeBodyWithLocalTxs ctx point eb (Map.fromList localFills)
+                      writeBodyWithLocalTxs ctx point eb (Map.fromList localFills) summary
                         >>= settleBody ctx CachedBody point eb now
                 )
  where
@@ -524,14 +526,18 @@ acquireCachedBody ctx point bounds =
 -- (the 'LocalFills'), and those its mempool holds. A tx the mempool holds is
 -- written from there rather than filled, since taking it from the mempool also
 -- records it in the LeiosTxCache as validated.
+--
+-- It traces where the txs come from, along with the LeiosTxCache's summary of
+-- taking the body in, if it did.
 writeBodyWithLocalTxs ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
+  Maybe LeiosTxCacheInsertBodySummary ->
   m (Promise m (Set TxOffset))
-writeBodyWithLocalTxs ctx point eb localFills = do
+writeBodyWithLocalTxs ctx point eb localFills summary = do
   inMempool <- lfcMempoolTxs (Set.fromList (map fst refs))
   let fromMempool =
         [ (off, txHash, bytes, parity)
@@ -541,12 +547,14 @@ writeBodyWithLocalTxs ctx point eb localFills = do
       mempoolOffs = Set.fromList [off | (off, _, _, _) <- fromMempool]
       fills = localFills `Map.withoutKeys` mempoolOffs
   traceWith lfcTracer $
-    TraceLeiosFetchClientBlockTxSources point $
+    TraceLeiosFetchClientBlockTxSources
+      point
       MkLeiosBlockTxSources
         { btsLocalFills = length fills
         , btsMempool = length fromMempool
         , btsRemaining = length refs - length fills - length fromMempool
         }
+      summary
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (_off, txHash, _bytes, parity) -> step w txHash parity) w0 fromMempool
   writeEbBody lfcWriter point eb fills (Map.fromList [(off, bytes) | (off, _txHash, bytes, _parity) <- fromMempool])
