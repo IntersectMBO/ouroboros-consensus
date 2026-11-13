@@ -28,8 +28,12 @@ data TraceLeiosFetchClientEvent peer
     -- settled first.
     TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
   | -- | Where the node takes the transactions of the endorser block at this
-    -- point from, decided as it writes the body.
-    TraceLeiosFetchClientBlockTxSources !LeiosPoint !LeiosBlockTxSources
+    -- point from, decided as it writes the body, and the LeiosTxCache's
+    -- summary of taking that body in, if it took it in then.
+    TraceLeiosFetchClientBlockTxSources
+      !LeiosPoint
+      !LeiosBlockTxSources
+      !(Maybe LeiosTxCacheInsertBodySummary)
   | -- | Some of an endorser block's transactions arrived from this peer, their
     -- bytes classified by whether the node needed them. Ones the node writes
     -- are traced once the write settles, and were needed only if no other
