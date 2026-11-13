@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -268,7 +269,8 @@ addVote st systemTime accepted = do
     unlessM (atomically hasCertificate) $
       case aggregateLeiosCert voteCommittee signatures of
         Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
-        Right cert -> do
+        Right !cert -> do
+          --  ^ Make sure not to store a thunk
           inserted <- atomically $ recordCertificate cert
           when inserted $
             traceWith (tracer st) (TraceLeiosCertified rbHash cert)
