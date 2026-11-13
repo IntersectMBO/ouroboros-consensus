@@ -73,6 +73,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , doValidateKESSignature'
   , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
+  , leiosHeaderChecks
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
   , WhyNotCertifiable (..)
