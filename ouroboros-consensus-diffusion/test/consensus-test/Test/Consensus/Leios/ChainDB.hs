@@ -14,6 +14,7 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (isJust)
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
@@ -21,6 +22,7 @@ import Ouroboros.Consensus.Block
   , blockHash
   , blockPoint
   , blockSlot
+  , castPoint
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
@@ -35,6 +37,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import Ouroboros.Consensus.Util.STM (forgetFingerprint)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
@@ -63,6 +66,21 @@ tests =
         snd (runSimOrThrow bodiesAfterGc) @?= Nothing
     , testCase "ChainSel selects a certifying block whose closure the LeiosDB held at start" $
         runSimOrThrow tipWithClosureBeforeStart @?= blockPoint certifyingA
+    , testCase
+        "after a crash, the ImmutableDB drops a block certifying an endorser block the LeiosDB lost"
+        $ runSimOrThrow (afterCrash immutableChain pointA LostA) @?= (blockPoint announcingA, False)
+    , testCase
+        "after a crash, the ImmutableDB keeps a block certifying an endorser block the LeiosDB holds"
+        $ runSimOrThrow (afterCrash immutableChain pointA KeptA)
+          @?= (blockPoint (immutableChain !! 5), True)
+    , testCase
+        "after a crash, the ImmutableDB drops a block starting a chunk that certifies an endorser block the LeiosDB lost"
+        $ runSimOrThrow (afterCrash chunkStartChain chunkStartPointA LostA)
+          @?= (blockPoint chunkStartAnnouncingA, False)
+    , testCase
+        "after a crash, the ImmutableDB keeps a block starting a chunk that certifies an endorser block the LeiosDB holds"
+        $ runSimOrThrow (afterCrash chunkStartChain chunkStartPointA KeptA)
+          @?= (blockPoint (chunkStartChain !! 13), True)
     ]
 
 -- | The node holds endorser blocks A and B, with their transactions. The
@@ -80,17 +98,80 @@ bodiesAfterGc = do
   withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
-    addBlocks node chain
+    addBlocks node immutableChain
     -- Long enough for the copy to the ImmutableDB and for the delayed GC.
     threadDelay 100
     withReader leiosDb $ \reader ->
       (,)
         <$> lookupEbBody reader pointA
         <*> lookupEbBody reader pointB
+
+-- | Sixteen blocks: as k is 10, the immutable tip is the sixth, past the
+-- announcements of A and B, and past the block certifying A.
+immutableChain :: [LeiosTestBlock]
+immutableChain = take 16 $ announcingA : certifyingA : iterate successorLeiosBlock announcingB
+
+-- | What the LeiosDB holds of A after a crash
+data AOnRestart
+  = -- | Nothing
+    LostA
+  | -- | Its promoted closure
+    KeptA
+
+-- | The node adds the chain, which certifies A at the given point, over a
+-- LeiosDB holding A's closure there, so A is promoted. Then it restarts after a
+-- crash over a LeiosDB holding the given part of A. Its ImmutableDB tip after
+-- the restart, and whether the LeiosDB then holds A's closure.
+afterCrash ::
+  [LeiosTestBlock] -> LeiosPoint -> AOnRestart -> IOSim s (Point LeiosTestBlock, Bool)
+afterCrash chain point aOnRestart = do
+  nodeDBs <- emptyNodeDBs
+  leiosDb <- newLeiosDBInMemory
+  writeClosureOfA leiosDb
+  withNodeOverDBs nodeDBs leiosDb $ \node -> do
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 30
+    addBlocks node chain
+    -- Long enough for the copy to the ImmutableDB and for the delayed GC.
+    threadDelay 100
+  leiosDb' <- case aOnRestart of
+    KeptA -> pure leiosDb
+    LostA -> newLeiosDBInMemory
+  withNodeOverDBsAfterUncleanShutdown nodeDBs leiosDb' $ \node ->
+    (,)
+      <$> atomically (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain (nodeChainDB node))
+      <*> withReader leiosDb' (\reader -> isJust <$> lookupEbClosure reader point)
  where
-  -- k is 10, so with sixteen blocks the immutable tip is the sixth, past both
-  -- announcements.
-  chain = take 16 $ announcingA : certifyingA : iterate successorLeiosBlock announcingB
+  writeClosureOfA db =
+    withWriter db $ \writer -> do
+      void $ await =<< writeEbBody writer point ebA []
+      void $ await =<< writeTxs writer point [(0, txA)]
+
+-- | 'immutableChain', but announcing A in slot 9 and certifying it in slot 10,
+-- where the ImmutableDB's second chunk starts, as its chunks span ten slots.
+-- With 24 blocks, the immutable tip is in slot 14.
+chunkStartChain :: [LeiosTestBlock]
+chunkStartChain =
+  prefix
+    ++ [chunkStartAnnouncingA, certifying]
+    ++ take 14 (drop 1 (iterate successorLeiosBlock certifying))
+ where
+  prefix = take 8 (iterate successorLeiosBlock (firstLeiosBlock 2))
+  certifying =
+    setLeiosCert
+      (certOf (rbHashOf chunkStartAnnouncingA) [0, 1, 2])
+      (successorLeiosBlock chunkStartAnnouncingA)
+
+-- | The block of 'chunkStartChain' announcing A, in slot 9.
+chunkStartAnnouncingA :: LeiosTestBlock
+chunkStartAnnouncingA =
+  setAnnouncement
+    (pointEbHash pointA)
+    (encodeEndorserBlockSize ebA)
+    (iterate successorLeiosBlock (firstLeiosBlock 2) !! 8)
+
+chunkStartPointA :: LeiosPoint
+chunkStartPointA = pointA{pointSlotNo = blockSlot chunkStartAnnouncingA}
 
 -- | Add the blocks with the given action, then report why the ChainDB judges
 -- the given block invalid, if it does.

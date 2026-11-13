@@ -66,6 +66,10 @@ So every block in the ImmutableDB has the EB it certifies in the immutable parti
 A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
 An EB whose closure is incomplete fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
+Neither the ImmutableDB nor the LeiosDB syncs its writes to disk, so a power loss can drop the newest writes of either, and leave the ImmutableDB with a block certifying an EB that the immutable partition lacks.
+After such an unclean shutdown, the ImmutableDB validates all its chunks when it opens, and checks each block against its predecessor: it truncates before the first block that certifies an EB the immutable partition does not hold, and the node fetches the blocks after it again.
+Promotion commits in chain order, so the LeiosDB loses only the newest EBs.
+
 A garbage collection deletes the rows before the promoted slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
 So it never deletes a row that reads still go to, nor one that a promotion still needs.
 The point and body writes of a point before the promoted slot are dropped, as a collection would delete them anyway: such a point is promoted or not certified, and the fetch logic ignores announcements older than the ImmutableDB tip.

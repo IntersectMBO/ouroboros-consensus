@@ -192,6 +192,7 @@ openInMemoryReader stateVar =
       { closeReader = pure ()
       , lookupEbBody = imLookupEbBody stateVar
       , lookupEbClosure = imLookupEbClosure stateVar
+      , isImmutable = \point -> Map.member point . imImmutableEbBodies <$> atomically (readTVar stateVar)
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
       , -- ThreadNet persists 'stateVar' across simulated restarts, so on
         -- restart this seeds the restored acquired-EB-closures set.

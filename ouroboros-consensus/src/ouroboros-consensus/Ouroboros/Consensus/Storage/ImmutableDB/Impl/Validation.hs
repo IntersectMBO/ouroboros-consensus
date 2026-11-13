@@ -73,6 +73,10 @@ data ValidateEnv m blk h = ValidateEnv
   , cacheConfig :: !Index.CacheConfig
   , codecConfig :: !(CodecConfig blk)
   , checkIntegrity :: !(blk -> Bool)
+  -- ^ Checked on each block during validation whose checksum does not match
+  -- its secondary index, on its own.
+  , checkExternalCompleteness :: !(Parent (Header blk) -> Header blk -> m Bool)
+  -- ^ Checked on each block's header during validation, given its parent's.
   }
 
 -- | Perform validation as per the 'ValidationPolicy' using 'validate' and
@@ -200,7 +204,7 @@ validateAllChunks ::
   ChunkNo ->
   m (ChunkNo, WithOrigin (Tip blk))
 validateAllChunks validateEnv@ValidateEnv{hasFS, chunkInfo} validateTracer lastChunk =
-  go (firstChunkNo, Origin) firstChunkNo GenesisHash
+  go (firstChunkNo, Origin) firstChunkNo GenesisHash Nothing
  where
   go ::
     (ChunkNo, WithOrigin (Tip blk)) ->
@@ -210,20 +214,24 @@ validateAllChunks validateEnv@ValidateEnv{hasFS, chunkInfo} validateTracer lastC
     ChainHash blk ->
     -- \^ The hash of the last block of
     -- the previous chunk
+    Maybe (Header blk) ->
+    -- \^ The header of that block, if any
     m (ChunkNo, WithOrigin (Tip blk))
-  go lastValid chunk prevHash = do
+  go lastValid chunk prevHash prevHeader = do
     let shouldBeFinalised =
           if chunk == lastChunk
             then ShouldNotBeFinalised
             else ShouldBeFinalised
     runExceptT
-      (validateChunk validateEnv shouldBeFinalised chunk (Just prevHash) validateTracer)
+      (validateChunk validateEnv shouldBeFinalised chunk (Just prevHash) prevHeader validateTracer)
       >>= \case
         Left () -> cleanup lastValid chunk $> lastValid
-        Right Nothing -> continueOrStop lastValid chunk prevHash
-        Right (Just validBlk) -> continueOrStop (chunk, NotOrigin validBlk) chunk prevHash'
+        Right Nothing -> continueOrStop lastValid chunk prevHash prevHeader
+        Right (Just validHeader) ->
+          continueOrStop (chunk, NotOrigin validTip) chunk prevHash' (Just validHeader)
          where
-          prevHash' = BlockHash (tipHash validBlk)
+          validTip = headerToTip validHeader
+          prevHash' = BlockHash (tipHash validTip)
 
   -- \| Validate the next chunk, unless the chunk just validated is the last
   -- chunk to validate. Cleanup files corresponding to chunks after the
@@ -235,12 +243,14 @@ validateAllChunks validateEnv@ValidateEnv{hasFS, chunkInfo} validateTracer lastC
     -- \^ The chunk just validated
     ChainHash blk ->
     -- \^ The hash of the last block of the previous chunk
+    Maybe (Header blk) ->
+    -- \^ The header of that block, if any
     m (ChunkNo, WithOrigin (Tip blk))
-  continueOrStop lastValid chunk prevHash
+  continueOrStop lastValid chunk prevHash prevHeader
     | chunk < lastChunk =
         do
           traceWith validateTracer (ValidatedChunk chunk ())
-          go lastValid (nextChunkNo chunk) prevHash
+          go lastValid (nextChunkNo chunk) prevHash prevHeader
     | otherwise =
         assert (chunk == lastChunk) $ do
           -- Cleanup is only needed when the final chunk was empty, yet valid.
@@ -290,12 +300,12 @@ validateMostRecentChunk validateEnv@ValidateEnv{hasFS} validateTracer c = do
   go :: ChunkNo -> m (ChunkNo, WithOrigin (Tip blk))
   go chunk =
     runExceptT
-      (validateChunk validateEnv ShouldNotBeFinalised chunk Nothing validateTracer)
+      (validateChunk validateEnv ShouldNotBeFinalised chunk Nothing Nothing validateTracer)
       >>= \case
-        Right (Just validBlk) -> do
+        Right (Just validHeader) -> do
           -- Found a valid block, we can stop now.
           removeFilesStartingFrom hasFS (nextChunkNo chunk)
-          return (chunk, NotOrigin validBlk)
+          return (chunk, NotOrigin (headerToTip validHeader))
         _ -- This chunk file is unusable: either the chunk is empty or
         -- everything after it should be truncated.
           | Just chunk' <- prevChunkNo chunk -> go chunk'
@@ -363,9 +373,10 @@ validateChunk ::
   -- | The hash of the last block of the previous chunk. 'Nothing' if
   -- unknown. When this is the first chunk, it should be 'Just Origin'.
   Maybe (ChainHash blk) ->
+  -- | The header of that block, if known, to check the first block against.
+  Maybe (Header blk) ->
   Tracer m (TraceChunkValidation blk ()) ->
-  -- | When non-empty, the 'Tip' corresponds to the last valid block in the
-  -- chunk.
+  -- | When non-empty, the header of the last valid block in the chunk.
   --
   -- When the chunk file is missing or when we should truncate starting from
   -- this chunk because it doesn't fit onto the previous one, @()@ is thrown.
@@ -373,8 +384,8 @@ validateChunk ::
   -- Note that when an invalid block is detected, we don't throw, but we
   -- truncate the chunk file. When validating the chunk file after it, we
   -- would notice it doesn't fit anymore, and then throw.
-  ExceptT () m (Maybe (Tip blk))
-validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTracer = do
+  ExceptT () m (Maybe (Header blk))
+validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash mbPrevHeader validationTracer = do
   lift $ traceWith validationTracer $ StartedValidatingChunk chunk ()
   chunkFileExists <- lift $ doesFileExist chunkFile
   unless chunkFileExists $ do
@@ -407,15 +418,17 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
   -- as input. If the checksums match, the parser doesn't have to do the
   -- expensive integrity check of a block.
   let expectedChecksums = map Secondary.checksum entriesFromSecondaryIndex
-  (entriesWithPrevHashes, mbErr) <-
+  (entriesWithPrevHashes, (mbErr, mbLastHeader)) <-
     lift $
       parseChunkFile
         codecConfig
         hasFS
         checkIntegrity
+        checkExternalCompleteness
+        mbPrevHeader
         chunkFile
         expectedChecksums
-        (\entries -> (\(es :> mbErr) -> (es, mbErr)) <$> S.toList entries)
+        (\entries -> (\(es :> r) -> (es, r)) <$> S.toList entries)
 
   -- Check whether the first block of this chunk fits onto the last block of
   -- the previous chunk.
@@ -483,22 +496,15 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
       traceWith validationTracer $ RewritePrimaryIndex chunk
       Primary.write hasFS chunk primaryIndex
 
-    return $ summaryToTipInfo <$> lastMaybe summary
+    -- The completeness check runs last, so the last header it passed is that
+    -- of the last summary, if any.
+    return $ lastMaybe summary *> ((\(Parent hdr) -> hdr) <$> mbLastHeader)
  where
   chunkFile = fsPathChunkFile chunk
   primaryIndexFile = fsPathPrimaryIndexFile chunk
   secondaryIndexFile = fsPathSecondaryIndexFile chunk
 
   HasFS{hTruncate, doesFileExist} = hasFS
-
-  summaryToTipInfo :: BlockSummary blk -> Tip blk
-  summaryToTipInfo BlockSummary{..} =
-    Tip
-      { tipSlotNo = summarySlotNo
-      , tipIsEBB = isBlockOrEBB $ Secondary.blockOrEBB summaryEntry
-      , tipBlockNo = summaryBlockNo
-      , tipHash = Secondary.headerHash summaryEntry
-      }
 
   -- \| 'InvalidFileError' is the only error that can be thrown while loading
   -- a primary or a secondary index file

@@ -83,7 +83,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
-  ( emptyLeiosValidClaims
+  ( certifiesPromotedEb
+  , emptyLeiosValidClaims
   , mkAcquiredLeiosEbs
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -177,7 +178,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     ) <- lift $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningDB
     traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
-    immutableDB <- ImmutableDB.openDB argsImmutableDb
+    immutableDB <-
+      withReader leiosDb $ \reader ->
+        ImmutableDB.openDB
+          argsImmutableDb
+            { ImmutableDB.immCheckExternalCompleteness =
+                certifiesPromotedEb (configBlock (Args.cdbsTopLevelConfig cdbSpecificArgs)) reader
+            }
     immutableDbTip <- atomically $ ImmutableDB.getTip immutableDB
     let immutableDbTipPoint = ImmutableDB.tipToPoint immutableDbTip
         immutableDbTipChunk =

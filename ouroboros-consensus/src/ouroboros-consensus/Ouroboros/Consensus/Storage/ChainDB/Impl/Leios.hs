@@ -7,10 +7,12 @@
 
 -- | What the ChainDB knows about Leios endorser blocks: which closures it has
 -- acquired, and so which blocks certifying an endorser block ChainSel may
--- select; and which claims some valid certificate has established.
+-- select; which claims some valid certificate has established; and whether
+-- the ImmutableDB's blocks have the endorser blocks they certify.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( -- * The Leios facts of a block
     leiosBlockInfo
+  , leiosHeaderInfo
 
     -- * Acquired closures
   , AcquiredLeiosEbs
@@ -29,13 +31,16 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , insertLeiosValidClaim
   , isLeiosValidClaim
   , pruneLeiosValidClaims
+
+    -- * Checking the ImmutableDB
+  , certifiesPromotedEb
   ) where
 
 import Control.Monad (guard)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
@@ -53,6 +58,8 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , RankingBlockHash
   )
+import Ouroboros.Consensus.Storage.ImmutableDB (Parent (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Storage.VolatileDB
   ( BlockInfo (..)
   , LeiosBlockInfo (..)
@@ -64,12 +71,20 @@ import Ouroboros.Consensus.Storage.VolatileDB
 
 -- | What the block says about Leios endorser blocks, read off its header.
 leiosBlockInfo ::
-  forall blk.
   BlockSupportsProtocol blk =>
   BlockConfig blk ->
   blk ->
   LeiosBlockInfo
-leiosBlockInfo bcfg blk =
+leiosBlockInfo bcfg = leiosHeaderInfo bcfg . getHeader
+
+-- | What the header says about Leios endorser blocks.
+leiosHeaderInfo ::
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  Header blk ->
+  LeiosBlockInfo
+leiosHeaderInfo bcfg hdr =
   LeiosBlockInfo
     { lbiHasCert = getContainsLeiosCert p view
     , lbiAnnouncedEb =
@@ -77,7 +92,7 @@ leiosBlockInfo bcfg blk =
     }
  where
   p = Proxy @(BlockProtocol blk)
-  view = validateView bcfg (getHeader blk)
+  view = validateView bcfg hdr
 
 {-------------------------------------------------------------------------------
   Acquired closures
@@ -235,3 +250,30 @@ pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot) =
     kept
  where
   (pruned, kept) = Map.spanAntitone (< slot) bySlot
+
+{-------------------------------------------------------------------------------
+  Checking the ImmutableDB
+-------------------------------------------------------------------------------}
+
+-- | Whether the endorser block that the block certifies, if any, is in the
+-- LeiosDB's immutable partition, given the header of the block's predecessor,
+-- which announces it.
+--
+-- An unclean shutdown can lose the newest writes of the ImmutableDB and of the
+-- LeiosDB, as neither syncs them to disk. The ImmutableDB checks this on each
+-- block it validates when it opens, and truncates before the first that fails,
+-- so that every block it holds has the endorser block it certifies there.
+certifiesPromotedEb ::
+  (Monad m, BlockSupportsProtocol blk) =>
+  BlockConfig blk ->
+  LeiosDbReader m ->
+  Parent (Header blk) ->
+  Header blk ->
+  m Bool
+certifiesPromotedEb bcfg reader (Parent prev) hdr
+  | not (lbiHasCert (leiosHeaderInfo bcfg hdr)) = pure True
+  | otherwise = case lbiAnnouncedEb (leiosHeaderInfo bcfg prev) of
+      SJust ebHash ->
+        isImmutable reader (MkLeiosPoint (blockSlot prev) ebHash)
+      -- The block cannot be valid.
+      SNothing -> pure False

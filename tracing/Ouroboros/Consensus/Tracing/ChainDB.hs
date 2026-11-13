@@ -3133,6 +3133,12 @@ instance ConvertRawHash blk => LogFormatting (ImmDB.TraceChunkValidation blk Imm
       , "chunkNo" .= String (renderChunkNo chunkNo)
       , "block" .= String (renderPointForDetails dtal pt)
       ]
+  forMachine dtal (ImmDB.InvalidChunkFile chunkNo (ImmDB.ChunkErrIncomplete pt)) =
+    mconcat
+      [ "kind" .= String "TraceImmutableDBEvent.InvalidChunkFile.ChunkErrIncomplete"
+      , "chunkNo" .= String (renderChunkNo chunkNo)
+      , "block" .= String (renderPointForDetails dtal pt)
+      ]
   forMachine _dtal (ImmDB.ValidatedChunk chunkNo _) =
     mconcat
       [ "kind" .= String "TraceImmutableDBEvent.ValidatedChunk"

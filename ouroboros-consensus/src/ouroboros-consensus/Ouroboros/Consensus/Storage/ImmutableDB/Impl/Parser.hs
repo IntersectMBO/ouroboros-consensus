@@ -61,6 +61,12 @@ data BlockSummary blk = BlockSummary
 -- * We check that each block fits onto the previous one by checking the hashes.
 --   If not, we return a 'ChunkErrHashMismatch' error.
 --
+-- * Each block that passes the checks above is checked for its external
+--   completeness, given the header of its parent, which is given for the first
+--   block of the chunk, if known. When the check returns 'False', a
+--   'ChunkErrIncomplete' error is returned. The header of the last block is
+--   returned alongside.
+--
 -- * An error is returned in the form of:
 --
 --   > 'Maybe' ('ChunkFileError' blk, 'Word64')
@@ -83,21 +89,26 @@ parseChunkFile ::
   HasFS m h ->
   -- | Check integrity of the block. 'False' = corrupt.
   (blk -> Bool) ->
+  -- | Check a block's external completeness.
+  (Parent (Header blk) -> Header blk -> m Bool) ->
+  -- | The header of the predecessor of the first block, if known.
+  Maybe (Header blk) ->
   FsPath ->
   [CRC] ->
   ( Stream
       (Of (BlockSummary blk, ChainHash blk))
       m
-      (Maybe (ChunkFileError blk, Word64)) ->
+      (Maybe (ChunkFileError blk, Word64), Maybe (Parent (Header blk))) ->
     m r
   ) ->
   m r
-parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
+parseChunkFile ccfg hasFS isNotCorrupt completenessPredicate mPreviousHeader fsPath expectedChecksums k =
   withStreamIncrementalOffsets
     hasFS
     decoder
     fsPath
     ( k
+        . checkExternalCompleteness (Parent <$> mPreviousHeader)
         . checkIfHashesLineUp
         . checkEntries expectedChecksums
         . fmap (fmap (first ChunkErrRead))
@@ -129,7 +140,7 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
       (Maybe (ChunkFileError blk, Word64)) ->
     -- \^ Input stream of blocks (with additional info)
     Stream
-      (Of (BlockSummary blk, ChainHash blk))
+      (Of (BlockSummary blk, ChainHash blk, Header blk))
       m
       (Maybe (ChunkFileError blk, Word64))
   checkEntries = \expected -> mapAccumS expected updateAcc
@@ -139,7 +150,7 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
       (Word64, (Word64, (blk, CRC))) ->
       Either
         (Maybe (ChunkFileError blk, Word64))
-        ( (BlockSummary blk, ChainHash blk)
+        ( (BlockSummary blk, ChainHash blk, Header blk)
         , [CRC]
         )
     updateAcc expected blkAndInfo@(offset, (_, (blk, checksum))) =
@@ -160,9 +171,9 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
 
   entryForBlockAndInfo ::
     (Word64, (Word64, (blk, CRC))) ->
-    (BlockSummary blk, ChainHash blk)
+    (BlockSummary blk, ChainHash blk, Header blk)
   entryForBlockAndInfo (offset, (_size, (blk, checksum))) =
-    (blockSummary, prevHash)
+    (blockSummary, prevHash, getHeader blk)
    where
     -- Don't accidentally hold on to the block!
     !prevHash = blockPrevHash blk
@@ -187,20 +198,20 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
 
   checkIfHashesLineUp ::
     Stream
-      (Of (BlockSummary blk, ChainHash blk))
+      (Of (BlockSummary blk, ChainHash blk, Header blk))
       m
       (Maybe (ChunkFileError blk, Word64)) ->
     Stream
-      (Of (BlockSummary blk, ChainHash blk))
+      (Of (BlockSummary blk, ChainHash blk, Header blk))
       m
       (Maybe (ChunkFileError blk, Word64))
   checkIfHashesLineUp = mapAccumS0 checkFirst checkNext
    where
     -- We pass the hash of the previous block around as the state (@s@).
-    checkFirst x@(BlockSummary{summaryEntry}, _) =
+    checkFirst x@(BlockSummary{summaryEntry}, _, _) =
       Right (x, Secondary.headerHash summaryEntry)
 
-    checkNext hashOfPrevBlock x@(BlockSummary{summaryEntry}, prevHash)
+    checkNext hashOfPrevBlock x@(BlockSummary{summaryEntry}, prevHash, _)
       | prevHash == BlockHash hashOfPrevBlock =
           Right (x, Secondary.headerHash summaryEntry)
       | otherwise =
@@ -208,6 +219,38 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
      where
       err = ChunkErrHashMismatch hashOfPrevBlock prevHash
       offset = Secondary.unBlockOffset $ Secondary.blockOffset summaryEntry
+
+  -- \| Check each block's external completeness, and stop with an error before
+  -- the first one the check rejects. Return the header of the last block
+  -- passed alongside.
+  checkExternalCompleteness ::
+    Maybe (Parent (Header blk)) ->
+    Stream
+      (Of (BlockSummary blk, ChainHash blk, Header blk))
+      m
+      (Maybe (ChunkFileError blk, Word64)) ->
+    Stream
+      (Of (BlockSummary blk, ChainHash blk))
+      m
+      (Maybe (ChunkFileError blk, Word64), Maybe (Parent (Header blk)))
+  checkExternalCompleteness mParentHeader input =
+    S.lift (S.next input) >>= \case
+      Left r -> return (r, mParentHeader)
+      Right ((summary@BlockSummary{summaryEntry, summarySlotNo}, prevHash, hdr), input') -> do
+        accepted <- S.lift $ case mParentHeader of
+          Nothing -> pure True
+          Just parent -> completenessPredicate parent hdr
+        if accepted
+          then S.yield (summary, prevHash) *> checkExternalCompleteness (Just (Parent hdr)) input'
+          else
+            return
+              ( Just
+                  ( ChunkErrIncomplete
+                      (BlockPoint summarySlotNo (Secondary.headerHash summaryEntry))
+                  , Secondary.unBlockOffset (Secondary.blockOffset summaryEntry)
+                  )
+              , mParentHeader
+              )
 
 {-------------------------------------------------------------------------------
   Streaming utilities

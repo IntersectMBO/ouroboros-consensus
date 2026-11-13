@@ -94,6 +94,9 @@ data LeiosDbReader m = LeiosDbReader
   -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
   -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
   -- not written.
+  , isImmutable :: HasCallStack => LeiosPoint -> m Bool
+  -- ^ Whether the immutable partition holds the EB at this point. Checks the
+  -- ImmutableDB against the LeiosDB when the ChainDB opens.
   , scanCompleteEbClosuresNotOlderThanSlot ::
       HasCallStack =>
       SlotNo -> m [LeiosPoint]

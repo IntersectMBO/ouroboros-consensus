@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , sqlLookupEbBody
   , sqlBatchRetrieveTxs
   , sqlLookupEbClosure
+  , sqlIsImmutable
   , readPartition
   , lookupBlob
   , EbIndex (..)
@@ -156,6 +157,18 @@ sqlBatchRetrieveTxs conn point offsets =
                 ix
                 [o | o <- IntSet.toAscList (IntSet.fromList offsets), o >= 0, o < eiTxCount]
           )
+
+-- | Whether the immutable partition holds the EB at the point, whichever
+-- partition its reads go to.
+sqlIsImmutable :: Conn -> LeiosPoint -> IO Bool
+sqlIsImmutable Conn{conImmDb = immDb} point =
+  dbWithTransaction immDb $
+    withStmt immDb "SELECT 1 FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
+      dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+      dbBindHash stmt 2 (pointEbHash point)
+      dbStepSafe stmt >>= \case
+        DB.Done -> pure False
+        DB.Row -> pure True
 
 -- | The bytes of the txs of the EB at the point in body order, or 'Nothing'
 -- unless each of them is written.

@@ -173,6 +173,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
         , lookupEbClosure = sqlLookupEbClosure conn
+        , isImmutable = sqlIsImmutable conn
         }
 
   implOpenWriter writeQueue =

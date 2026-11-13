@@ -78,11 +78,7 @@ newtype Promoter = Promoter DB.Database
 openPromoter :: FilePath -> FilePath -> IO (MVar Promoter)
 openPromoter volPath immPath = do
   db <- openRawConnection immPath
-  orCloseOnError db $ do
-    -- The ImmutableDB appends the blocks once their promotion returns, and the
-    -- next collection deletes the volatile copy: a promotion must survive a
-    -- power loss too.
-    dbExec db "pragma main.synchronous = full;"
+  orCloseOnError db $
     withStmt db "ATTACH ? AS vol" $ \stmt -> do
       dbBindUtf8 stmt 1 (fromString volPath)
       dbStep1Safe stmt
