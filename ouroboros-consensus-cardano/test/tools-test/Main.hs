@@ -175,6 +175,7 @@ blockCountTest logStep = do
   -- the truncater runs: it opens the files itself and VACUUMs them.
   let volLeiosDb = chainDB <> "/leios.vol.db"
       immLeiosDb = chainDB <> "/leios.imm.db"
+      -- The same EB at both: the truncation goes by slot.
       keptEb = MkLeiosPoint 0 (endorserBlockHash eb)
       droppedEb = MkLeiosPoint 500000 (endorserBlockHash eb)
   withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->

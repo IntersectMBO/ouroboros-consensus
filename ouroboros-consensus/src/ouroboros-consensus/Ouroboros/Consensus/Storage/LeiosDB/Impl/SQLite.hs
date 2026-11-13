@@ -258,7 +258,7 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
             next <- runJob job
             end <- getMonotonicTime
             traceWith tracer $
-              TraceLeiosDbWriteJobDone (describeJob job) (realToFrac (diffTime end start))
+              TraceLeiosDbWriteJobDone (describeJob job) (diffTime end start)
             case next of
               Stop -> pure ()
               Continue -> serve
@@ -287,7 +287,7 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
               pure Continue
 
           -- Whether promotion passed this point already, so its writes are
-          -- dropped: it is either promoted or not certified.
+          -- dropped: it is either promoted or not needed by the immutable chain.
           isPromoted :: LeiosPoint -> IO Bool
           isPromoted point = (pointSlotNo point <) <$> readTVarIO promotedSlotVar
 

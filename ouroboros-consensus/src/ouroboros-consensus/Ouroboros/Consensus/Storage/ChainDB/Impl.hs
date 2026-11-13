@@ -248,9 +248,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- The seed is every closure the LeiosDB holds that a block the initial
     -- chain selection could select may certify.
     --
-    -- TODO Grow it as the node acquires closures. The LeiosDB no longer tells
+    -- FIXME Grow it as the node acquires closures. The LeiosDB no longer tells
     -- what is written to it, so nothing does until LeiosFetch announces its
-    -- acquisitions. Then also key 'AcquiredLeiosEbs' by point, as the LeiosDB
+    -- acquisitions, which the open follow-up PRs of #2490 add. Then also key 'AcquiredLeiosEbs' by point, as the LeiosDB
     -- is: a closure acquired at one point of an endorser block is not one at
     -- another. Promotion copies the certified point's closure only, and fails
     -- the node if it is incomplete.

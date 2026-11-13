@@ -1,5 +1,7 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
+import Control.Monad.Class.MonadTime.SI (DiffTime)
+
 -- | In-memory LeiosDb counters: seeded from the database files once per
 -- handle, bumped by the write, copy and GC paths, never written back.
 --
@@ -35,8 +37,8 @@ data TraceLeiosDb
     TraceLeiosDbWriteJobDone
       -- | the job
       String
-      -- | seconds the writer spent on it
-      Double
+      -- | how long the writer spent on it
+      DiffTime
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
   | -- | A promotion committed EBs' closures to the immutable partition.

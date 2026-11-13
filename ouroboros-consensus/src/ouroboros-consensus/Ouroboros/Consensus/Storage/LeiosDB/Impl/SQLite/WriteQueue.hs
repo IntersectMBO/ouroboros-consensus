@@ -70,7 +70,7 @@ data WriteJob
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       ![(TxOffset, ByteString)]
-      -- | where the worker puts the offsets dropped for their size
+      -- | where the worker reports the offsets that were dropped because they had the wrong size
       !(ResolveWriteJob [TxOffset])
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.

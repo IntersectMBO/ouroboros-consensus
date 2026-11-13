@@ -126,8 +126,8 @@ tests =
              , testCase "promotes an EB at the certified point, not at another point of it" $
                  withFreshSQLiteFile test_promoteAtCertifiedSlot
              , testCase
-                 "a truncated and reopened database keeps reading a promoted EB from the immutable partition" $
-                 withTempLeiosDbPaths test_truncateKeepsPromotedEb
+                 "a truncated and reopened database keeps reading a promoted EB from the immutable partition"
+                 $ withTempLeiosDbPaths test_truncateKeepsPromotedEb
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -258,6 +258,8 @@ mkTestGroups impl =
           withFreshDb impl test_fillCompletesClosure
       , testCase "a body fills its txs from another point of the same endorser block" $
           withFreshDb impl test_fillFromAnotherPoint
+      , testCase "a body that misstates a tx's size fills nothing for it" $
+          withFreshDb impl test_fillOfMisstatedSize
       ]
   , testGroup
       "completion"
@@ -710,6 +712,17 @@ test_fillFromAnotherPoint db = withRW db $ \con -> do
     rwInsertEbBodyFilling con younger eb [(off, MkTxLocation (mkTestEbHash 1) off) | off <- [0, 1]]
   result @?= [0, 1]
   rwLookupEbClosure con younger >>= (@?= Just (map snd (allTxsFor eb)))
+
+-- | A body listing the tx of the source by its hash, but with another size.
+test_fillOfMisstatedSize :: LeiosDbHandle IO -> IO ()
+test_fillOfMisstatedSize db = do
+  let (pointA, ebA, pointB, _) = fillFixtures
+      ebB = mkEndorserBlock [(testTxHash 1 101, 102)]
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation (pointEbHash pointA) 1)]
+    result @?= []
+    rwBatchRetrieveTxs con pointB [0] >>= (@?= [(0, Nothing)])
 
 -- * Garbage collection
 

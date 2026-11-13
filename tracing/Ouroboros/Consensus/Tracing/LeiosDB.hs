@@ -19,11 +19,11 @@ instance LogFormatting TraceLeiosDb where
       mconcat ["kind" .= String "LeiosDbWriterQueueFull", "job" .= job]
     TraceLeiosDbWriteAbandoned job ->
       mconcat ["kind" .= String "LeiosDbWriteAbandoned", "job" .= job]
-    TraceLeiosDbWriteJobDone job seconds ->
+    TraceLeiosDbWriteJobDone job duration ->
       mconcat
         [ "kind" .= String "LeiosDbWriteJobDone"
         , "job" .= job
-        , "durationMillis" .= (seconds * 1000)
+        , "durationMillis" .= millis duration
         ]
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
       mconcat
@@ -44,8 +44,8 @@ instance LogFormatting TraceLeiosDb where
       "A LeiosDB write waited for room in the writer's queue: " <> Text.pack job
     TraceLeiosDbWriteAbandoned job ->
       "A LeiosDB write was lost while waiting for room in the writer's queue: " <> Text.pack job
-    TraceLeiosDbWriteJobDone job seconds ->
-      "The LeiosDB writer ran " <> Text.pack job <> " in " <> showT (seconds * 1000) <> " ms"
+    TraceLeiosDbWriteJobDone job duration ->
+      "The LeiosDB writer ran " <> Text.pack job <> " in " <> showT (millis duration) <> " ms"
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
       "The LeiosDB holds "
         <> showT volatileEbs
@@ -137,3 +137,7 @@ instance MetaTrace TraceLeiosDb where
     , Namespace [] ["Copied"]
     , Namespace [] ["Evicted"]
     ]
+
+-- | A duration in seconds, in milliseconds.
+millis :: Real a => a -> Double
+millis duration = realToFrac duration * 1000

@@ -90,7 +90,7 @@ data LeiosDbReader m = LeiosDbReader
   -- 'Nothing' unless each of them is written. The body lists their hashes.
   , batchRetrieveTxs ::
       HasCallStack =>
-      LeiosPoint -> [Int] -> m [(Int, Maybe ByteString)]
+      LeiosPoint -> [TxOffset] -> m [(TxOffset, Maybe ByteString)]
   -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
   -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
   -- not written.

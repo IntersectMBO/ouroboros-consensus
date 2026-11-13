@@ -15,11 +15,11 @@ Announcements that name the same pair share the row.
 Each row holds the whole EB:
 
 - `txWritten` is a byte per transaction the body lists, set once the transaction is written.
-- `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size.
+- `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size. For two transactions of 64 and 1024 bytes, it is the 12 bytes `00000000 00000040 00000440`: the first spans bytes 0 to 63, the second bytes 64 to 1087.
 - `body` is the body in the bytes it was received in.
 - `txs` is the closure: the bytes of the EB's transactions, concatenated.
 
-The table is denormalized all the way.
+The table is fully denormalized; we're essentially using SQLite only for its durability and concurrency control.
 A transaction that belongs to two EBs is stored twice, and an EB announced at several slots is stored at each.
 The worst case, every slot naming a different EB, shares nothing anyway, so the partition's size depends only on how many points it holds, however often EBs repeat.
 And reads and writes touch one row, with no joins.
@@ -41,9 +41,9 @@ erDiagram
     }
 ```
 
-- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: each is fetched, written and collected on its own, so a write never touches another point's row. In the same transaction, the body's transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash to the transaction the body lists.
+- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: the LeiosFetch fetches and writes each on its own, so one point's writes never need to touch other points' rows. In the same SQL transaction that writes the body, whichever of its Cardano transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash and length match the body's claim.
 - Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
-- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. LeiosDB decodes no body and checks no hash for it: the writers check each transaction against the body before writing it.
+- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. This scan decodes no body and checks no hash for it, since hashes were confirmed when the transactions were originally written.
 - Reads take the row at the requested point: in the immutable partition if the point is older than the promoted slot (see below), else in the volatile one, and never fall back to the other. A read of the volatile partition that a promotion and a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which that promotion filled.
 - Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.

@@ -98,20 +98,22 @@ leiosHeaderInfo bcfg hdr =
   Acquired closures
 -------------------------------------------------------------------------------}
 
--- | The endorser blocks whose closure the LeiosDB holds, each with the slot of
--- its youngest focus (see @launchBgTasks@).
---
--- That slot is the youngest slot of any acquired closure's 'LeiosPoint' of the
--- endorser block, since the ChainDB hears of a closure at every focus not
--- older than the ImmutableDB tip.
+-- | The endorser blocks whose closure the LeiosDB holds.
 --
 -- 'UnsafeAcquiredLeiosEbs' does not ensure that 'aleBySlot' is the inverse of
 -- 'aleYoungestSlot'; build one with 'mkAcquiredLeiosEbs' instead.
 data AcquiredLeiosEbs = UnsafeAcquiredLeiosEbs
   { aleYoungestSlot :: !(Map EndorserBlockHash SlotNo)
+  -- ^ INVARIANT: the slot of the youngest 'LeiosPoint' with that EB hash in
+  -- 'aleBySlot'.
+  --
+  -- The domain is used by ChainSel when checking which CertRBs are
+  -- parked/not-selectable.
+  --
+  -- The codomain is used instead of a refcount when pruning.
   , aleBySlot :: !(Map SlotNo (NESet EndorserBlockHash))
-  -- ^ The inverse of 'aleYoungestSlot', so that pruning costs only what it
-  -- prunes.
+  -- ^ Each 'LeiosPoint' the LeiosDB has acquired is inserted into this map;
+  -- see @launchBgTasks@.
   }
   deriving stock Generic
   deriving anyclass NoThunks

@@ -96,7 +96,7 @@ closePromoter promoterVar =
 -- The blocks certifying them are on the chain, hence the fetch logic completed
 -- the EBs. Still check that each of their txs is marked written, since the
 -- immutable partition is never collected and the startup scan takes any EB
--- there as complete. An EB without its closure fails the whole promotion, and
+-- there as complete. An EB without its closure throws an exception, and
 -- nothing is copied.
 sqlPromoteToImmutable ::
   HasCallStack =>
@@ -176,7 +176,8 @@ sqlGarbageCollect writeQueue = do
   when more $ sqlGarbageCollect writeQueue
 
 -- | How many rows a 'GarbageCollect' job deletes at most, which bounds how
--- long a write waits behind it.
+-- long a write waits behind it: sixteen rows of 12.5 MB closures take about
+-- 50 ms to delete.
 gcBatchSize :: Int
 gcBatchSize = 16
 
@@ -200,6 +201,10 @@ deleteEbsBefore db limit slot =
 -- partition holds. It may lag the slot the latest promotion reached, which is
 -- not on disk, but no point at or after it is promoted, so its reads lose
 -- nothing by going to the volatile partition.
+--
+-- Promotion copies at most one EB per slot, as it copies only those an
+-- immutable block certifies, and each is announced by a block of its own slot.
+-- So no promotion leaves an EB of the newest promoted slot behind.
 initialPromotedSlot :: HasCallStack => FilePath -> IO SlotNo
 initialPromotedSlot immPath =
   withReadOnlyConn immPath $ \db ->

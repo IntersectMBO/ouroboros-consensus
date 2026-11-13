@@ -375,11 +375,11 @@ genEbHash i = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
 -- pool shared between EBs (a rotating slice, so consecutive EBs overlap),
 -- the rest are unique to this EB. With dup fraction 0 every tx is unique.
 ebTxsFor :: Opts -> Int -> [BS.ByteString]
-ebTxsFor opts ebIdx = map (genTx opts) (ebTxIdsFor opts ebIdx)
+ebTxsFor opts ebIdx = map (genTx opts) (ebTxHashesFor opts ebIdx)
 
--- | The ids 'ebTxsFor' generates the txs from.
-ebTxIdsFor :: Opts -> Int -> [TxHash]
-ebTxIdsFor opts ebIdx =
+-- | The hashes 'ebTxsFor' generates the txs from.
+ebTxHashesFor :: Opts -> Int -> [TxHash]
+ebTxHashesFor opts ebIdx =
   [genSharedTxHash ((ebIdx * nShared + k) `mod` poolSize) | k <- [0 .. nShared - 1]]
     ++ [genTxHash ebIdx txIdx | txIdx <- [nShared .. optTxsPerEb opts - 1]]
  where
@@ -406,11 +406,11 @@ genSharedTxHash j = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 3
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
--- | Generate a TX payload: the id's bytes padded with zeros to 'optTxBytes'.
+-- | Generate a TX payload: the hash's bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
-genTx opts txId = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
  where
-  h = hashToBytes txId
+  h = hashToBytes txHash
 
 -- * Measurement phases
 

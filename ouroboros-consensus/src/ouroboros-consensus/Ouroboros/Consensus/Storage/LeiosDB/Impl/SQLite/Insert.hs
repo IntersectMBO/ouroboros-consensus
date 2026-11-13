@@ -94,12 +94,13 @@ sqlInsertEbBody conn point eb fills = do
         pure $ IntSet.fromList [o | o <- [0 .. n - 1], isWritten txWritten o]
 
   -- The bytes of the fills, by offset in this body: those the node holds that
-  -- hash to the tx this body lists there. Each source is read once, in
+  -- hash to the tx this body lists there. Writing them drops those of another
+  -- size than the body lists. Each source is read once, in
   -- ascending offsets, as each blob handle walks the blob's pages from its
   -- start.
   readLocalFills =
-    fmap IntMap.unions $ forM (Map.toList bySource) $ \(srcHash, wanted) -> do
-      srcTxs <- readFromSource srcHash (IntMap.keysSet wanted)
+    fmap IntMap.unions $ forM (Map.toList bySource) $ \(srcEbHash, wanted) -> do
+      srcTxs <- readFromSource srcEbHash (IntMap.keysSet wanted)
       pure $
         IntMap.fromList
           [ (txOffset, tx)
@@ -110,22 +111,22 @@ sqlInsertEbBody conn point eb fills = do
           , hashLeiosTx (MkLeiosTx tx) == txHash
           ]
 
-  -- The fills by source, then by offset in the source, but those of offsets the
-  -- body does not list.
+  -- The fills by source, then by offset in the source, excluding the fills
+  -- that are beyond the end of the body.
   bySource =
     Map.fromListWith
       (IntMap.unionWith (<>))
-      [ (srcHash, IntMap.singleton srcOffset [txOffset])
-      | (txOffset, MkTxLocation srcHash srcOffset) <- fills
+      [ (srcEbHash, IntMap.singleton srcOffset [txOffset])
+      | (txOffset, MkTxLocation srcEbHash srcOffset) <- fills
       , srcOffset >= 0
       , IntMap.member txOffset refsByOffset
       ]
 
   -- The written txs at these offsets of the EB, from the first of its points
   -- that holds each.
-  readFromSource srcHash wanted = do
+  readFromSource srcEbHash wanted = do
     rows <- withStmt db "SELECT rowid, length(txWritten) FROM ebs WHERE ebHashBytes = ?1" $ \stmt -> do
-      dbBindHash stmt 1 srcHash
+      dbBindHash stmt 1 srcEbHash
       let loop acc =
             dbStep stmt >>= \case
               DB.Done -> pure (reverse acc)
