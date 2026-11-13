@@ -415,15 +415,20 @@ validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotN
         extLedger <- lift $ atomically $ roforkerGetLedgerState forker
         let ticked = applyChainTick OmitLedgerEvents lcfg slot (ledgerState extLedger)
             capacity = ebCapacityTxMeasure lcfg ticked
-            -- What the references take, before loading any transaction. What
-            -- the transactions take is checked as they are applied.
+            -- What the references and the transactions they claim take, before
+            -- loading any transaction.
+            claimedBytes = sum [toInteger size | (_txHash, size) <- references]
             referencesBytes =
               sum
-                [ toInteger . unByteSize32 $ sizeEndorserBlockReference (ByteSize32 (fromIntegral size))
+                [ toInteger . unByteSize32 $ sizeEndorserBlockReference (ByteSize32 size)
                 | (_txHash, size) <- references
                 ]
-        when (referencesBytes > toInteger (unByteSize32 (txEbMeasureByteSize capacity))) $
-          throwError EbOverCapacity
+            capacityOf f = toInteger (unByteSize32 (f capacity))
+        when
+          ( claimedBytes > capacityOf txEbMeasureTxsByteSize
+              || referencesBytes > capacityOf txEbMeasureByteSize
+          )
+          $ throwError EbOverCapacity
 
         closure <- lift (lookupEbClosure reader point) >>= (?>= ClosureUnavailable)
         when (length closure /= length references) $ throwError ClosureUnavailable

@@ -918,6 +918,7 @@ newtype LeiosTestEbMeasure = LeiosTestEbMeasure (IgnoringOverflow ByteSize32)
 
 instance TxEbMeasureByteSize LeiosTestEbMeasure where
   txEbMeasureByteSize (LeiosTestEbMeasure (IgnoringOverflow bytes)) = bytes
+  txEbMeasureTxsByteSize (LeiosTestEbMeasure (IgnoringOverflow bytes)) = bytes
 
 -- | What an endorser block may hold.
 leiosTestEbCapacity :: ByteSize32

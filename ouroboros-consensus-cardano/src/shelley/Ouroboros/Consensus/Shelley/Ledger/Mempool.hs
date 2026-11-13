@@ -903,6 +903,8 @@ data DijkstraEbMeasure = DijkstraEbMeasure
 
 instance TxEbMeasureByteSize DijkstraEbMeasure where
   txEbMeasureByteSize = unIgnoringOverflow . txReferencesSize
+  txEbMeasureTxsByteSize DijkstraEbMeasure{ebClosureMeasure = TxMeasure alonzo _} =
+    txMeasureByteSize alonzo
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes
