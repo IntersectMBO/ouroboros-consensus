@@ -394,9 +394,9 @@ instance ConsensusProtocol LeiosTestProtocol where
 
   protocolSecurityParam = ltpcSecurityParam
 
-  -- No node leads; the test itself decides what gets minted. A node's
-  -- credentials are only its BLS keys, to vote.
-  checkIsLeader _ _ _ _ = Nothing
+  -- A node with BLS keys only votes; one without leads in every slot. Either
+  -- way, the test itself decides what gets minted.
+  checkIsLeader _ keys _ _ = if null keys then Just () else Nothing
 
   tickChainDepState _ _ _ = TickedLeiosTestChainDepState
   updateChainDepState _ hdr _ _ = latestAnnouncement hdr <$ checkValidity hdr
