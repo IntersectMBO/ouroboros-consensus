@@ -51,6 +51,8 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , PraosToSign (..)
   , SerialisePraosState
   , Ticked (..)
+  , NotCertifiable (..)
+  , certifiablePolyPraos
   , checkIsLeaderPolyPraos
   , forgePraosFields
   , getOpCertCountersPolyPraos
