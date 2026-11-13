@@ -7,6 +7,7 @@ module Test.Consensus.Protocol.Praos2 (tests) where
 import Cardano.Ledger.BaseTypes
   ( BoundedRational (..)
   , Milliseconds32 (..)
+  , Nonce (NeutralNonce)
   , ProtVer (..)
   , StrictMaybe (..)
   )
@@ -15,7 +16,7 @@ import Cardano.Ledger.State (PoolDistr (..), emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochSize (..), SlotInterval (..), SlotNo (..), WithOrigin (..))
-import Cardano.Slotting.Time (slotLengthFromSec)
+import Cardano.Slotting.Time (slotLengthFromMillisec, slotLengthFromSec)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
@@ -26,9 +27,11 @@ import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (.
 import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
 import Ouroboros.Consensus.Protocol.Abstract (TranslateProto (..))
 import Ouroboros.Consensus.Protocol.PolyPraos
-  ( PolyPraosState (..)
+  ( NotCertifiable (..)
+  , PolyPraosState (..)
   , Ticked (..)
   , WhyNotCertifiable (..)
+  , certifiablePolyPraos
   , tickChainDepStatePolyPraos
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
@@ -56,6 +59,9 @@ tests =
         prop_crossingEraAndEpochInEitherOrder
     , testProperty "WhyNotCertifiable's <> is associative" prop_whyNotCertifiableAssociative
     , testProperty "WhyNotCertifiable's <> is commutative" prop_whyNotCertifiableCommutative
+    , testProperty
+        "certifiablePolyPraos follows the certification rule stated in time"
+        prop_certifiableFollowsRuleInTime
     ]
 
 -- | An endorser block may not be certified across an era boundary.
@@ -174,3 +180,170 @@ ledgerView =
             , plvQuorumThresholdSafetyMargin = fromMaybe (error "impossibe") (boundRational (2 % 100))
             }
     }
+
+{-------------------------------------------------------------------------------
+  Certifiability
+-------------------------------------------------------------------------------}
+
+-- | 'certifiablePolyPraos' agrees with CIP-0164's certification rule.
+prop_certifiableFollowsRuleInTime :: Property
+prop_certifiableFollowsRuleInTime =
+  checkCoverage $
+    forAll genCertifyCase $ \c ->
+      coverCertifyCase c $
+        runCertifiable c === expectedCertifiable c
+
+-- | The inputs of one test case: a new block at slot 'ccSlot', the slot of its
+-- parent, what its parent announced, the slot length, and the three Leios
+-- periods.
+data CertifyCase = CertifyCase
+  { ccPredecessorSlot :: WithOrigin SlotNo
+  , ccAnnouncedByPredecessor :: Strict.Either WhyNotCertifiable LeiosAnnouncement
+  , ccSlotLengthMs :: Integer
+  , ccAnnouncementPeriodMs :: Integer
+  -- ^ L_hdr
+  , ccVotePeriodMs :: Integer
+  -- ^ L_vote
+  , ccDiffusionPeriodMs :: Integer
+  -- ^ L_diff
+  , ccSlot :: SlotNo
+  }
+  deriving Show
+
+-- | The rule as CIP-0164 states it: a header may certify the endorser block its
+-- predecessor announced if the header's slot starts at least
+-- @3 * L_hdr + L_vote + L_diff@ after the predecessor's slot starts.
+--
+-- It compares start times in milliseconds. It does not reuse the rounding up
+-- to whole slots that 'Leios.minCertificationSlot' does, so a wrong rounding
+-- there makes the property fail.
+expectedCertifiable :: CertifyCase -> Either NotCertifiable LeiosAnnouncement
+expectedCertifiable c = case (ccAnnouncedByPredecessor c, ccPredecessorSlot c) of
+  (_, Origin) -> Left $ NotAnnounced NothingAnnounced
+  (Strict.Left why, At _) -> Left $ NotAnnounced why
+  (Strict.Right ann, At predecessorSlot)
+    | startsLateEnough c (ccSlot c) -> Right ann
+    | otherwise -> Left $ TooYoung predecessorSlot (earliestCertifyingSlot c)
+
+-- | Whether slot @s@ starts at least the gap after the predecessor's slot starts.
+startsLateEnough :: CertifyCase -> SlotNo -> Bool
+startsLateEnough c s =
+  toInteger (unSlotNo s - unSlotNo (predecessorSlotNo c)) * ccSlotLengthMs c
+    >= gapMs c
+
+-- | The first slot that starts late enough, found by counting up from the
+-- predecessor's slot.
+earliestCertifyingSlot :: CertifyCase -> SlotNo
+earliestCertifyingSlot c = until (startsLateEnough c) (+ 1) (predecessorSlotNo c)
+
+gapMs :: CertifyCase -> Integer
+gapMs c = 3 * ccAnnouncementPeriodMs c + ccVotePeriodMs c + ccDiffusionPeriodMs c
+
+predecessorSlotNo :: CertifyCase -> SlotNo
+predecessorSlotNo c = case ccPredecessorSlot c of
+  Origin -> 0
+  At s -> s
+
+-- | Calls 'certifiablePolyPraos' on the case.
+runCertifiable :: CertifyCase -> Either NotCertifiable LeiosAnnouncement
+runCertifiable c = result
+ where
+  Praos2HasLeios result =
+    certifiablePolyPraos
+      (fixedEpochInfo (EpochSize 1000000) (slotLengthFromMillisec (ccSlotLengthMs c)))
+      (ccSlot c)
+      TickedPraosState
+        { tickedPraosStateChainDepState =
+            predecessorState
+              (ccPredecessorSlot c)
+              (ccAnnouncedByPredecessor c)
+        , tickedPraosStateLedgerView =
+            ledgerView
+              { Views.plvLeios =
+                  withPeriods <$> Views.plvLeios ledgerView
+              }
+        }
+  withPeriods llv =
+    llv
+      { llvAnnouncementPeriod = Milliseconds32 (fromInteger (ccAnnouncementPeriodMs c))
+      , llvVotePeriod = Milliseconds32 (fromInteger (ccVotePeriodMs c))
+      , llvDiffusionPeriod = Milliseconds32 (fromInteger (ccDiffusionPeriodMs c))
+      }
+
+-- | The rule reads only the last slot and the announcement. The other fields
+-- are fixed.
+predecessorState ::
+  WithOrigin SlotNo ->
+  Strict.Either WhyNotCertifiable LeiosAnnouncement ->
+  PolyPraosState (Praos2 StandardCrypto)
+predecessorState lastSlot announcement =
+  PraosState
+    { praosStateLastSlot = lastSlot
+    , praosStateOCertCounters = Map.empty
+    , praosStateEvolvingNonce = NeutralNonce
+    , praosStateCandidateNonce = NeutralNonce
+    , praosStateEpochNonce = NeutralNonce
+    , praosStatePreviousEpochNonce = NeutralNonce
+    , praosStateLabNonce = NeutralNonce
+    , praosStateLastEpochBlockNonce = NeutralNonce
+    , praosStateLeiosAnnouncement = Praos2HasLeios announcement
+    }
+
+genCertifyCase :: Gen CertifyCase
+genCertifyCase = do
+  predecessorSlot <-
+    frequency [(1, pure Origin), (9, At . SlotNo <$> choose (0, 1000))]
+  announced <-
+    frequency [(1, Strict.Left <$> arbitrary), (3, Strict.Right <$> arbitrary)]
+  slotLengthMs <- choose (1, 3000)
+  let wholeSlots = (* slotLengthMs) <$> choose (0, 5)
+      anyMs = choose (0, 10000)
+  -- The certification gap is 3 * L_hdr + L_vote + L_diff. Generate one of
+  -- three kinds: a gap of 0 ms, a gap of a whole number of slots, or a gap that
+  -- rounds up to the next slot.
+  (hdrMs, voteMs, diffMs) <-
+    frequency
+      [ (1, pure (0, 0, 0))
+      , (3, (,,) <$> wholeSlots <*> wholeSlots <*> wholeSlots)
+      , (6, (,,) <$> anyMs <*> anyMs <*> anyMs)
+      ]
+  let withoutSlot =
+        CertifyCase
+          { ccPredecessorSlot = predecessorSlot
+          , ccAnnouncedByPredecessor = announced
+          , ccSlotLengthMs = slotLengthMs
+          , ccAnnouncementPeriodMs = hdrMs
+          , ccVotePeriodMs = voteMs
+          , ccDiffusionPeriodMs = diffMs
+          , ccSlot = 0
+          }
+      earliest = earliestCertifyingSlot withoutSlot
+      -- A header's slot is always after its predecessor's.
+      afterPredecessor = max (predecessorSlotNo withoutSlot + 1)
+  -- Mostly next to the earliest certifying slot, where an off-by-one shows.
+  slot <-
+    afterPredecessor
+      <$> oneof
+        [ pure (earliest - 1)
+        , pure earliest
+        , pure (earliest + 1)
+        , (earliest +) . SlotNo <$> choose (0, 10)
+        ]
+  pure withoutSlot{ccSlot = slot}
+
+-- | Fails the property unless each kind of case is generated often enough.
+coverCertifyCase :: CertifyCase -> Property -> Property
+coverCertifyCase c =
+  cover 1 (ccPredecessorSlot c == Origin) "predecessor at Origin"
+    . cover 5 (notAnnounced && ccPredecessorSlot c /= Origin) "predecessor announced nothing certifiable"
+    . cover 10 (not notAnnounced && ccSlot c < earliest) "before the earliest slot"
+    . cover 10 (not notAnnounced && ccSlot c == earliest) "at the earliest slot"
+    . cover 10 (not notAnnounced && ccSlot c > earliest) "after the earliest slot"
+    . cover 5 (gapMs c == 0) "gap of 0 ms"
+    . cover 10 (gapMs c > 0 && gapMs c `mod` ccSlotLengthMs c == 0) "gap of whole slots"
+    . cover 10 (gapMs c `mod` ccSlotLengthMs c /= 0) "gap that rounds up"
+ where
+  earliest = earliestCertifyingSlot c
+  notAnnounced = case ccAnnouncedByPredecessor c of
+    Strict.Left{} -> True
+    Strict.Right{} -> False
