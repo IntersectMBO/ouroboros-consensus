@@ -12,13 +12,12 @@ import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Short as SBS
+import Data.Functor ((<&>))
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), SystemTime (..))
 import Ouroboros.Consensus.Leios.AnnounceState (newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
-  ( Notification (NotifyVote)
-  , appendNotifyLog
-  , newNotifyLog
+  ( newNotifyLog
   , nextNotifyLog
   , notifyLogStart
   )
@@ -71,44 +70,40 @@ prop_leiosDeadlinePrunerInterval =
   -- Leaving at least 90% of the grace period to transmission and queueing.
   farBelow a b = 10 * a <= b
 
--- | A vote past its deadline, recorded and relayed as 'addVote' does just as the
--- deadline pruner runs, is either rejected or relayed, in every interleaving. So
--- the pruner must prune the votes before the notify log.
+-- | A vote past its deadline, recorded just as the deadline pruner runs, is
+-- either rejected or relayed, in every interleaving. So the pruner must prune
+-- the votes before the notify log.
 prop_leiosDeadlinePrunerRace :: Property
 prop_leiosDeadlinePrunerRace =
   once $ exploreSimTrace id (exploreRaces *> raceVote) $ \_ tr ->
     case traceResult False tr of
       Right relayed -> counterexample "kept a vote it does not relay" relayed
       Left e -> counterexample (show e) False
-
--- | Whether the node relays the vote if it keeps it.
-raceVote :: IOSim s Bool
-raceVote = do
-  notifyLog <- newNotifyLog @_ @LeiosTestBlock
-  announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
-  st <- newVoteState nullTracer announceState notifyLog
-  withAsync (leiosDeadlinePruner systemTime notifyLog st) $ \_ ->
-    withAsync (addAtPrunerRun st notifyLog) $ \adding -> do
-      -- Let the pruner run whichever way the vote raced it.
-      threadDelay (2 * nominalDelay leiosDeadlinePrunerInterval)
-      wait adding
  where
-  systemTime =
-    SystemTime
-      { systemTimeCurrent = (\(Time t) -> RelativeTime (realToFrac t)) <$> getMonotonicTime
-      , systemTimeWait = pure ()
-      }
+  raceVote :: IOSim s Bool
+  raceVote = do
+    notifyLog <- newNotifyLog @_ @LeiosTestBlock
+    announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
+    voteState <- newVoteState nullTracer announceState notifyLog
+    let systemTime =
+          SystemTime
+            { systemTimeCurrent = getMonotonicTime <&> \(Time t) -> RelativeTime (realToFrac t)
+            , systemTimeWait = pure ()
+            }
+    withAsync (leiosDeadlinePruner systemTime notifyLog voteState) $ \_ ->
+      withAsync (addAtPrunerRun voteState notifyLog) $ \adding -> do
+        -- Let the pruner run whichever way the vote raced it.
+        threadDelay (2 * nominalDelay leiosDeadlinePrunerInterval)
+        wait adding
 
-  -- When the pruner runs the second time, record the vote and relay it, and
-  -- say whether the node relays it if it keeps it.
-  addAtPrunerRun st notifyLog = do
+  -- When the pruner runs the second time, record the vote, and say whether the
+  -- node relays it if it keeps it.
+  addAtPrunerRun voteState notifyLog = do
     threadDelay (nominalDelay leiosDeadlinePrunerInterval)
     atomically $
-      recordVote st validated >>= \case
+      recordVote voteState validated >>= \case
         Left _ -> pure True
-        Right _ -> do
-          appendNotifyLog notifyLog (NotifyVote vote) deadline
-          (True <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure False
+        Right _ -> (True <$ nextNotifyLog notifyLog notifyLogStart) `orElse` pure False
 
   vote = signedVote (MkRankingBlockHash (UnsafeHash (SBS.replicate 32 0))) 0
 

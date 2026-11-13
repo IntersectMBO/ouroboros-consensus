@@ -31,19 +31,19 @@ module Ouroboros.Consensus.Leios.VoteState
   ( VoteState
   , newVoteState
   , TraceLeiosVoteState (..)
-  , AddVoteResult (..)
+
+    -- * Votes
+  , currentVotes
   , addVote
-  , ValidatedVote (..)
+  , AddVoteResult (..)
   , validateVote
+  , ValidatedVote (..)
+  , recordVote
+  , pruneVotes
 
     -- * Certificates
   , getCertificate
   , pruneCertificates
-
-    -- * The votes kept
-  , currentVotes
-  , recordVote
-  , pruneVotes
   ) where
 
 import Cardano.Crypto.DSIGN.Class (verifyDSIGN)
@@ -58,6 +58,7 @@ import Cardano.Crypto.Leios
   , leiosSignContext
   , resolveLeiosSeat
   )
+import Cardano.Prelude (isJust, unlessM)
 import Control.Monad (when)
 import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (for_)
@@ -112,6 +113,30 @@ data VoteState m blk = MkVoteState
   , tracer :: !(Tracer m TraceLeiosVoteState)
   }
 
+-- | The first valid vote of each seat, per election slot, for every election
+-- slot whose deadline had not passed when the votes were last pruned.
+data Votes = MkVotes
+  { votesPrunedAt :: !RelativeTime
+  -- ^ When the votes were last pruned. The node may have forgotten whether it
+  -- has a vote whose deadline is before this.
+  , votesBySlot :: !(Map SlotNo SlotVotes)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | The votes of one election slot, their deadline and their quorum.
+data SlotVotes = MkSlotVotes
+  { slotRelayUntil :: !RelativeTime
+  , slotQuorum :: !Weight
+  , slotVotes :: !(Map LeiosSeatId LeiosVote)
+  -- ^ A seat votes once per election slot, whichever announcement it votes
+  -- for.
+  , slotTallies :: !(Map RankingBlockHash Weight)
+  -- ^ INVARIANT: The weight of the votes in 'slotVotes' for each announcement.
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
 newVoteState ::
   IOLike m =>
   Tracer m TraceLeiosVoteState -> AnnounceState m blk -> NotifyLog m blk -> m (VoteState m blk)
@@ -122,6 +147,29 @@ newVoteState tracer' announceState' notifyLog =
     <*> pure notifyLog
     <*> newTVarIO (MkCertificates 0 Map.empty)
     <*> pure tracer'
+
+-- | Whether the node has a vote of this seat in this election.
+hasSeenVote ::
+  MonadSTM m =>
+  VoteState m blk -> AcceptedVote -> STM m Bool
+hasSeenVote st accepted = do
+  MkVotes{votesBySlot} <- readTVar (votes st)
+  pure $
+    maybe
+      False
+      (Map.member voteSeatId . slotVotes)
+      (Map.lookup voteElectionSlot votesBySlot)
+ where
+  MkAcceptedVote
+    { acceptedVote = MkLeiosVote{voteSeatId}
+    , voteElectionSlot
+    } = accepted
+
+-- | The votes the node keeps, by election slot and seat.
+currentVotes ::
+  IOLike m =>
+  VoteState m blk -> STM m (Map SlotNo (Map LeiosSeatId LeiosVote))
+currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
 
 -- | What the node's 'VoteState' traces, for each vote it adds or does not, so
 -- these are frequent. What 'addVote' did with a vote is up to its caller to
@@ -203,12 +251,10 @@ addVote st systemTime accepted = do
             Left reason -> pure (VoteInvalid reason, Nothing)
             Right validVote -> do
               traceWith (tracer st) (TraceLeiosVoteValidated acceptedVote)
-              atomically $ do
+              atomically $
                 recordVote st validVote >>= \case
                   Left notAdded -> pure (notAdded, Nothing)
-                  Right quorum -> do
-                    relayVote
-                    pure (Added, quorum)
+                  Right quorum -> pure (Added, quorum)
   -- Aggregate outside the STM transaction that recorded a vote. We often
   -- receive many votes in quick succession, even duplicates via different
   -- peers. Having it recorded early will not have them validated again. Until
@@ -217,28 +263,29 @@ addVote st systemTime accepted = do
   -- thread dying between recording and aggregating (e.g. due to a connection
   -- reset). If that also was the last vote, we won't have a certificate, but
   -- with such a close quorum its for the better to skip this round.
-  for_ quorum $ \signatures ->
-    case aggregateLeiosCert voteCommittee signatures of
-      Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
-      Right cert -> do
-        inserted <- atomically $ do
-          certs@MkCertificates{certificatesPrunedAt, certificatesByRbHash} <- readTVar (certificates st)
-          let new =
-                certificatesPrunedAt <= voteElectionSlot
-                  && Map.notMember rbHash certificatesByRbHash
-          when new $
-            writeTVar
-              (certificates st)
-              certs{certificatesByRbHash = Map.insert rbHash (voteElectionSlot, cert) certificatesByRbHash}
-          pure new
-        when inserted $ traceWith (tracer st) (TraceLeiosCertified rbHash cert)
+  for_ quorum $ \signatures -> do
+    -- Another vote may have been aggregated into the certificate since.
+    unlessM (atomically hasCertificate) $
+      case aggregateLeiosCert voteCommittee signatures of
+        Left err -> traceWith (tracer st) (TraceLeiosAggregationFailed rbHash err)
+        Right cert -> do
+          inserted <- atomically $ recordCertificate cert
+          when inserted $
+            traceWith (tracer st) (TraceLeiosCertified rbHash cert)
   pure result
  where
-  relayVote =
-    appendNotifyLog
-      (relayLog st)
-      (NotifyVote acceptedVote)
-      (voteUntil voteWindow)
+  hasCertificate = isJust <$> getCertificate st rbHash
+
+  recordCertificate cert = do
+    MkCertificates{certificatesPrunedAt} <- readTVar (certificates st)
+    let new = certificatesPrunedAt <= voteElectionSlot
+    when new $ do
+      modifyTVar (certificates st) $ \certs@MkCertificates{certificatesByRbHash} ->
+        certs
+          { certificatesByRbHash =
+              Map.insert rbHash (voteElectionSlot, cert) certificatesByRbHash
+          }
+    pure new
 
   MkAcceptedVote
     { acceptedVote
@@ -290,60 +337,9 @@ validateVote acceptedVote =
       , voteValidUntil = voteUntil voteWindow
       }
 
-{-------------------------------------------------------------------------------
-  The votes kept
--------------------------------------------------------------------------------}
-
--- | The first valid vote of each seat, per election slot, for every election
--- slot whose deadline had not passed when the votes were last pruned.
-data Votes = MkVotes
-  { votesPrunedAt :: !RelativeTime
-  -- ^ When the votes were last pruned. The node may have forgotten whether it
-  -- has a vote whose deadline is before this.
-  , votesBySlot :: !(Map SlotNo SlotVotes)
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
-
--- | The votes of one election slot, their deadline and their quorum.
-data SlotVotes = MkSlotVotes
-  { slotRelayUntil :: !RelativeTime
-  , slotQuorum :: !Weight
-  , slotVotes :: !(Map LeiosSeatId LeiosVote)
-  -- ^ A seat votes once per election slot, whichever announcement it votes
-  -- for.
-  , slotTallies :: !(Map RankingBlockHash Weight)
-  -- ^ INVARIANT: The weight of the votes in 'slotVotes' for each announcement.
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
-
--- | Whether the node has a vote of this seat in this election.
-hasSeenVote ::
-  MonadSTM m =>
-  VoteState m blk -> AcceptedVote -> STM m Bool
-hasSeenVote st accepted = do
-  MkVotes{votesBySlot} <- readTVar (votes st)
-  pure $
-    maybe
-      False
-      (Map.member voteSeatId . slotVotes)
-      (Map.lookup voteElectionSlot votesBySlot)
- where
-  MkAcceptedVote
-    { acceptedVote = MkLeiosVote{voteSeatId}
-    , voteElectionSlot
-    } = accepted
-
--- | The votes the node keeps, by election slot and seat.
-currentVotes ::
-  IOLike m =>
-  VoteState m blk -> STM m (Map SlotNo (Map LeiosSeatId LeiosVote))
-currentVotes st = Map.map slotVotes . votesBySlot <$> readTVar (votes st)
-
--- | Keep a vote the node has neither seen nor forgotten, as it was pruned past
--- the vote's deadline already. If the votes for its announcement reach quorum,
--- and it has no certificate yet, return their signatures.
+-- | Keep and relay a vote the node has neither seen nor forgotten, as it was
+-- pruned past the vote's deadline already. If the votes for its announcement
+-- reach quorum, and it has no certificate yet, return their signatures.
 recordVote ::
   IOLike m =>
   VoteState m blk ->
@@ -360,6 +356,7 @@ recordVote st validatedVote = do
     | maybe False (Map.member (voteSeatId vote) . slotVotes) before -> pure (Left AlreadyKnown)
     | otherwise -> do
         writeTVar (votes st) vs{votesBySlot = Map.insert validatedElectionSlot after (votesBySlot vs)}
+        appendNotifyLog (relayLog st) (NotifyVote vote) voteValidUntil
         pure . Right $
           if not certified && validatedQuorum <= weightOfAfter
             then
