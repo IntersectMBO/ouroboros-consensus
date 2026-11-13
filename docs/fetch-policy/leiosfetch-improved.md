@@ -85,6 +85,40 @@ a maximum 500 ms idle fallback. The fallback is not a minimum planning interval.
 
 ## Ownership and shutdown
 
+Announcement acceptance and a bounded node-owned bookkeeping obligation commit
+in one STM transaction. A full metadata queue rolls back acceptance; disconnecting
+the announcing peer cannot erase admitted work. The metadata worker registers
+cache references and election/fetch state without waiting for database submission.
+It retains each obligation until that bookkeeping completes.
+
+Metadata, optional cache lookups and known forged payloads have separate queues
+and workers. The current hard bounds are 128 queued/running metadata entries,
+four cache lookups and four forged payloads. Keeping bounded validated headers
+also preserves their onset/bounds and distinct cache references; the global
+announcement set alone does not retain all of that processing context. A blocked
+payload submission cannot occupy the metadata dispatch turn. When optional cache
+capacity is full, fetching remains available rather than queuing unlimited local
+work. Queued metadata or lookup does not establish possession. An active cache
+hit claims only its exact body, not missing closure transactions.
+
+Forge admission is independent of whether a peer announced the header first.
+Admission installs a known local-payload claim for the full EB point, suppressing
+new body and transaction dispatch while its worker waits. It does not refund or
+cancel requests already sent. Matching forge callbacks share one bounded operation:
+callers wait for writer admission (or retirement), while the owner remains live through durable
+settlement. Each announcing header still gets its cache reference. Only positive,
+still-current receipt confirmation allows later callbacks to skip resubmission;
+an empty or abandoned job pool is insufficient. Retirement also fences late
+completion evidence.
+
+Workers activate inside receipt supervision. Before that scope even a supplied
+warm cache or an early certificate/focuser can only queue local work. Shutdown
+closes admission before draining queued/running work, then drains accepted
+receipts before storage closes. Already-admitted workers can still transfer to
+receipt ownership during that drain. Exceptional shutdown cancels and joins the
+workers, clears their local claims and unblocks admission waiters with failure.
+Slow writer and receipt waits remain interruptible.
+
 Use original registration, client invocation and a checked local ordinal to
 identify each request. These are local correlation facts, not wire fields.
 Late callbacks cannot release a replacement request's credit or modify a new
@@ -153,7 +187,7 @@ to this distinct numerator.
 | `Runtime` and `RequestState` | Original request identities, physical outstanding credit, FIFO/send/receive facts and pending submission/receipt claims. |
 | `Timing`, `PeerPenalty`, `Wait` | Pure service clocks and aged evidence, plus coalesced readiness/deadline/fallback waiting. |
 | `Client` and `Client.Replies` | Existing pipelined protocol interpreter, final dispatch recheck, validation and storage submission/settlement. |
-| `LocalReuse` and `ReceiptTasks` | Bounded local materialization and node-owned producer/callback lifetimes. |
+| `LocalReuse`, `OwnedWork` and `ReceiptTasks` | Bounded local materialization, announcement/forge obligations and node-owned producer/callback lifetimes. |
 | `Coverage`, `Trace`, `Trace.Policy` | Confirmed acquisition origins and detached production observations. |
 
 The outstanding-state lock serializes logical planning and removal. Physical

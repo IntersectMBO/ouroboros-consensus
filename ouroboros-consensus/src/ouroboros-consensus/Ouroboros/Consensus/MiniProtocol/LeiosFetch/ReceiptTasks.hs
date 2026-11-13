@@ -11,13 +11,14 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
   , newReceiptTasks
   , receiptClosing
   , withReceiptSubmission
+  , withReceiptSubmissionResult
   , forkReceipt
   , withReceiptTasks
   ) where
 
 import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import Control.Exception (AsyncException (ThreadKilled))
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, void, when)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
 import Numeric.Natural (Natural)
@@ -56,7 +57,12 @@ receiptClosing ReceiptTasks{state} = closing <$> S.readTVar state
 -- accepted promise has acquired its receipt owner. Closing and registration
 -- share one transaction, so observing no producers closes the fork race.
 withReceiptSubmission :: IOLike m => ReceiptTasks m -> m () -> m ()
-withReceiptSubmission ReceiptTasks{state} action = mask_ $ do
+withReceiptSubmission tasks action = void $ withReceiptSubmissionResult tasks action
+
+-- | The result distinguishes rejected new work from an admitted producer.
+-- Queue workers must not wait forever on a promise no producer installed.
+withReceiptSubmissionResult :: IOLike m => ReceiptTasks m -> m a -> m (Maybe a)
+withReceiptSubmissionResult ReceiptTasks{state} action = mask_ $ do
   tid <- myThreadId
   token <- atomically $ do
     st <- S.readTVar state
@@ -66,9 +72,12 @@ withReceiptSubmission ReceiptTasks{state} action = mask_ $ do
         let key = nextId st
         S.writeTVar state st{nextId = key + 1, producers = Map.insert key tid (producers st)}
         pure (Just key)
-  forM_ token $ \key ->
-    action
-      `finally` atomically (S.modifyTVar state $ \st -> st{producers = Map.delete key (producers st)})
+  traverse
+    ( \key ->
+        action
+          `finally` atomically (S.modifyTVar state $ \st -> st{producers = Map.delete key (producers st)})
+    )
+    token
 
 -- | Called within a registered submission, after writer acceptance. A start
 -- latch prevents a fast child finishing before its handle is installed. A

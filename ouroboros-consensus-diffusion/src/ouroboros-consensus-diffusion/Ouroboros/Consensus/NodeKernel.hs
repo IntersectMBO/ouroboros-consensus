@@ -69,7 +69,6 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , newAnnounceState
-  , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
@@ -116,7 +115,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (mempoolLocalSourc
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
-  , ValidAnnouncement (..)
   , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -552,9 +550,7 @@ initNodeKernel
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
           for_ mbValid $ \valid -> do
-            -- Never inherit an uninterruptible region across writer admission.
-            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
-            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+            onForgedLeiosEb leiosFetchKernel leiosAnnounceState valid forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)

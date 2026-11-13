@@ -123,15 +123,11 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
-  ( LeiosFetchClientContext (lfcReceiptTasks)
-  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
   ( LeiosFetchStaticEnv
   , defaultLeiosFetchStaticEnv
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (lfkContext))
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -650,7 +646,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
-            Receipts.withReceiptTasks (lfcReceiptTasks (lfkContext (getLeiosFetchKernel nodeKernel))) $ do
+            withLeiosFetchWorkers (getLeiosFetchKernel nodeKernel) $ do
               rnNodeKernelHook registry nodeKernel
               churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
               churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration

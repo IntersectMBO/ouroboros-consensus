@@ -244,6 +244,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
@@ -1589,6 +1590,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Coverage
     Test.Consensus.Leios.LeiosFetch.Assignment
     Test.Consensus.Leios.LeiosFetch.LocalReuse
+    Test.Consensus.Leios.LeiosFetch.Ownership
     Test.Consensus.Leios.LeiosFetch.Wait
     Test.Consensus.Leios.LeiosFetch.PeerPenalty
     Test.Consensus.Leios.LeiosFetch.Timing

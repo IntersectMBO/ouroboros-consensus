@@ -32,7 +32,13 @@ tests :: TestTree
 tests =
   testGroup
     "ordinary runtime lifecycle"
-    [ testCase "charge and blocked traces replay captured ownership exactly once" $ withTxHeads $ \rt client out _ keys -> do
+    [ testCase "known forge ownership keeps physical leases without charging redundant TX stalls" $ withTxHeads $ \rt _client out point keys -> do
+        atomically $ R.claimLocalForge rt point
+        initial <- atomically (readTVar (R.runtimeFacts rt))
+        let (expired, charges) = R.expireHeadsObserved (Time 10) (`workStillNeeded` out) initial
+        charges @?= []
+        map (\key -> Map.member key (L.leases (R.ledger expired))) keys @?= replicate (length keys) True
+    , testCase "charge and blocked traces replay captured ownership exactly once" $ withTxHeads $ \rt client out _ keys -> do
         initial <- atomically (readTVar (R.runtimeFacts rt))
         let (failed, charges) = R.expireHeadsObserved (Time 10) (\work -> case work of L.Job{} -> True; _ -> False) initial
         case A.penaltyChanges charges of
