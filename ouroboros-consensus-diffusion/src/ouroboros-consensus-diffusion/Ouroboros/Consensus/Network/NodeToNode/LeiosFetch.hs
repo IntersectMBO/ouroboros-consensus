@@ -16,9 +16,9 @@ import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
