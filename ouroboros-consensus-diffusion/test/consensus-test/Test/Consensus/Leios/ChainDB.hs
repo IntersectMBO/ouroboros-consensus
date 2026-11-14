@@ -27,6 +27,10 @@ import Ouroboros.Consensus.Block
   , castPoint
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisition (..)
+  , LeiosAcquisitions (..)
+  )
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..), LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
