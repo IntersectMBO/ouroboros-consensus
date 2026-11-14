@@ -460,7 +460,13 @@ open ::
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
   (chainDB, internal) <- openDBInternal args False
-  addBlockAsync <- async (intAddBlockRunner internal)
+  addBlockAsync <- async $ do
+    -- The runner uses resource registries, which call 'threadLabel' on the
+    -- current thread. On an unlabelled thread that can crash the RTS, see
+    -- https://gitlab.haskell.org/ghc/ghc/-/issues/27618.
+    me <- myThreadId
+    labelThread me "ChainDB.addBlockRunner"
+    intAddBlockRunner internal
   link addBlockAsync
   return ChainDBState{chainDB, internal, addBlockAsync}
 
