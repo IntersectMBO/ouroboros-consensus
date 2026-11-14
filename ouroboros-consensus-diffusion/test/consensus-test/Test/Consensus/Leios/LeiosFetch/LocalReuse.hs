@@ -76,7 +76,8 @@ tests :: TestTree
 tests =
   testGroup
     "bounded local reuse and receipts"
-    [ testCase "whole EB preparation comparison fixture" testPreparationComparison
+    [ testCase "body admission progress comparison fixture" testBodyAdmissionComparison
+    , testCase "whole EB preparation comparison fixture" testPreparationComparison
     , testCase "DB-filled closures do not wait on a missing mempool" $ bounded $ withLocal txs $ \p eb _ writer -> do
         _ <- await =<< writeTxs writer p (Map.fromList [(i, leiosTxBytes tx) | (i, tx) <- zip [0 ..] txs])
         local <- newLocalReuse (pure False) (LocalSource (const retry) (\() -> pure Nothing)) writer
@@ -534,3 +535,32 @@ testPreparationComparison = bounded $ forM_ [0, 100, 200] $ \overlap -> do
   putStrLn ("PREPARATION overlap=" ++ show overlap ++ " body,tx,lookup=" ++ show result)
   case result of
     (bodyWrites, _, _) -> bodyWrites @?= 1
+
+-- Hold writer admission (rather than receipt completion) and observe whether
+-- the peer handler can return. Both versions must eventually acquire the body.
+testBodyAdmissionComparison :: IO ()
+testBodyAdmissionComparison = bounded $ do
+  (base, notes) <- newContext
+  entered <- S.newEmptyTMVarIO
+  release <- S.newEmptyTMVarIO
+  let original = lfcWriter base
+      writer =
+        original
+          { writeEbBody = \p body fills given -> do
+              atomically (S.putTMVar entered ())
+              atomically (S.readTMVar release)
+              writeEbBody original p body fills given
+          }
+      ctx = base{lfcWriter = writer}
+      (point, eb, _) = fixture
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx)
+    $ withAsync
+      (processLeiosBlock ctx 0 (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb)
+    $ \handler -> do
+      atomically (S.readTMVar entered)
+      outcome <- SI.timeout 0.1 (wait handler)
+      putStrLn
+        ("PREPARATION handler_waits_for_writer=" ++ show (case outcome of Nothing -> True; _ -> False))
+      atomically (S.putTMVar release ())
+      wait handler
+      void (awaitNotes notes 1)
