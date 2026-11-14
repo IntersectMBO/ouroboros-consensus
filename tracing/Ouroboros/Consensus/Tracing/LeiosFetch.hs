@@ -32,6 +32,8 @@ instance
         , pointFields point
         , arrivalFields arrival
         ]
+    TraceLeiosFetchClientBlockFromCache point ->
+      mconcat ["kind" .= String "BlockFromCache", pointFields point]
     TraceLeiosFetchClientTxsArrived peer point arrival ->
       mconcat
         [ "kind" .= String "TxsArrived"
@@ -51,6 +53,8 @@ instance
   forHuman = \case
     TraceLeiosFetchClientBlockArrived peer point _ ->
       "Endorser block " <> pretty point <> " arrived from " <> showT peer
+    TraceLeiosFetchClientBlockFromCache point ->
+      "Took endorser block " <> pretty point <> " from the LeiosTxCache"
     TraceLeiosFetchClientTxsArrived peer point _ ->
       "Transactions of endorser block " <> pretty point <> " arrived from " <> showT peer
     TraceLeiosFetchClientBlockAcquired point _ -> "Acquired endorser block " <> pretty point
@@ -62,11 +66,13 @@ instance
 instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   namespaceFor = \case
     TraceLeiosFetchClientBlockArrived{} -> Namespace [] ["BlockArrived"]
+    TraceLeiosFetchClientBlockFromCache{} -> Namespace [] ["BlockFromCache"]
     TraceLeiosFetchClientTxsArrived{} -> Namespace [] ["TxsArrived"]
     TraceLeiosFetchClientBlockAcquired{} -> Namespace [] ["BlockAcquired"]
     TraceLeiosFetchClientBlockTxsAcquired{} -> Namespace [] ["BlockTxsAcquired"]
 
   severityFor (Namespace _ ["BlockArrived"]) _ = Just Debug
+  severityFor (Namespace _ ["BlockFromCache"]) _ = Just Debug
   severityFor (Namespace _ ["TxsArrived"]) _ = Just Debug
   severityFor (Namespace _ ["BlockAcquired"]) _ = Just Info
   severityFor (Namespace _ ["BlockTxsAcquired"]) _ = Just Info
@@ -74,6 +80,9 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
 
   documentFor (Namespace _ ["BlockArrived"]) =
     Just "An endorser block arrived, its bytes classified by whether the node needed them."
+  documentFor (Namespace _ ["BlockFromCache"]) =
+    Just
+      "The node took an endorser block from the body its LeiosTxCache held for another point, rather than fetching it."
   documentFor (Namespace _ ["TxsArrived"]) =
     Just
       "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them."
@@ -85,6 +94,7 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
 
   allNamespaces =
     [ Namespace [] ["BlockArrived"]
+    , Namespace [] ["BlockFromCache"]
     , Namespace [] ["TxsArrived"]
     , Namespace [] ["BlockAcquired"]
     , Namespace [] ["BlockTxsAcquired"]

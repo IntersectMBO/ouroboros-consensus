@@ -16,6 +16,7 @@ import qualified Cardano.Ledger.Core as SL
   , eraProtVerLow
   , hashBlockBody
   , mkBasicBlockBody
+  , ppProtocolVersionL
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Dijkstra.Tx (toCBORForBlockInclusion)
@@ -28,7 +29,7 @@ import Data.Foldable (asum)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
-import Lens.Micro ((&), (.~))
+import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockHash
   , forgeLeiosEb
+  , protVerParity
   )
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -48,6 +50,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
+import Ouroboros.Consensus.Shelley.Ledger.Ledger (getPParams, tickedShelleyLedgerState)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
@@ -105,8 +108,14 @@ forgeShelleyBlock
     forgedEb :: WhenLeios proto (Maybe ForgedEndorserBlock)
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
-        Just LeiosEraDict -> forgeLeiosEb . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
+        Just LeiosEraDict ->
+          forgeLeiosEb validatedUnder . fmap (serializeTxForLeios . extractTx) <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
+
+    -- The mempool validated the transactions against this very state.
+    validatedUnder =
+      protVerParity $
+        getPParams (tickedShelleyLedgerState fbCurrentTickedLedgerState) ^. SL.ppProtocolVersionL
 
     -- TODO Forging does not yet certify endorser blocks.
     leiosFields = (,) False . maybeToStrictMaybe . fmap (announce . forgedEbBody) <$> forgedEb
