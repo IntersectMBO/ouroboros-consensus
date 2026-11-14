@@ -491,7 +491,13 @@ instance BlockSupportsMetrics BlockB where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios BlockB where
+  data LedgerEndorserBlock BlockB
+
   blockLeiosCert = defaultBlockLeiosCert
+  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
+  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
+  getEndorserBlockKeySets eb = case eb of {}
+  applyLedgerEndorserBlock _cfg eb = case eb of {}
 
 deriving via
   SelectViewDiffusionPipelining BlockB

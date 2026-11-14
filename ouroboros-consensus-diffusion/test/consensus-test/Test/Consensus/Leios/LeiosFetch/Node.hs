@@ -1260,7 +1260,7 @@ newListenerWith node immTip offset = do
 
   immLedger =
     (forgetLedgerTables (leiosTestInitExtLedger (configLedger cfg)))
-      { ledgerState = LeiosTestLedger immTip
+      { ledgerState = LeiosTestLedger immTip Nothing
       }
 
   systemTime = defaultSystemTime (SystemStart (addUTCTime (negate offset) start)) nullTracer
