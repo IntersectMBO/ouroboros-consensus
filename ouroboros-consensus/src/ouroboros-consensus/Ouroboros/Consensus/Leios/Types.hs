@@ -53,6 +53,7 @@ module Ouroboros.Consensus.Leios.Types
   , forgedEbTxs
   , forgedEbTxsParity
   , forgeLeiosEb
+  , LeiosClosure (..)
   , endorserBlockHash
   , endorserBlockReferences
   , encodeEndorserBlock
@@ -364,6 +365,13 @@ protVerParity :: ProtVer -> ProtVerParity
 protVerParity pv
   | even (getVersion64 (pvMajor pv)) = EvenProtVer
   | otherwise = OddProtVer
+
+-- | The bytes of an endorser block and of the transactions it references, in
+-- order, as the LeiosDB stores them.
+data LeiosClosure = MkLeiosClosure
+  { closureEb :: !(Serialised EndorserBlock)
+  , closureTxs :: ![LeiosTx]
+  }
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
