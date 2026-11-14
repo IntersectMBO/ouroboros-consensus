@@ -118,12 +118,7 @@ launchBgTasks ::
   ) =>
   ChainDbEnv m blk ->
   -- | The point of the next closure the node acquires, subscribed to before
-  -- seeding 'cdbAcquiredLeiosEbs', so that none is missed in between. It names
-  -- every point of the EB that is its election's focus and not older than the
-  -- ImmutableDB tip, even one that becomes the focus after the closure was
-  -- acquired. An election's focus is the first announcement in it that the
-  -- node accepts, until a verified certificate names another, so every point
-  -- that a block certifies is among them.
+  -- seeding 'cdbAcquiredLeiosEbs', so that none is missed in between.
   STM m LeiosPoint ->
   m ()
 launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do

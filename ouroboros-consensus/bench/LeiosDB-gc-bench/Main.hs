@@ -358,7 +358,7 @@ populateDb opts db =
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = zip [0 ..] (ebTxsFor opts ebIdx)
-      bodyWritten <- writeEbBody writer point eb []
+      bodyWritten <- writeEbBody writer point eb mempty
       txsWritten <- writeTxs writer point txs
       awaitAll [void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
@@ -451,7 +451,7 @@ runPhases opts db flushEvents latRef schedule =
           snd
             <$> timed
               ( do
-                  bodyWritten <- writeEbBody w point eb []
+                  bodyWritten <- writeEbBody w point eb mempty
                   txsWritten <- writeTxs w point txs
                   -- Awaiting both times them to durability.
                   awaitAll [void bodyWritten, void txsWritten]

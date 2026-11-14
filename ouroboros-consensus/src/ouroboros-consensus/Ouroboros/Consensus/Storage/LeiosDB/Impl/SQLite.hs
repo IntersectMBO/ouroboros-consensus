@@ -143,7 +143,8 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
     -- The sampler holds no connection -- it only reads counters -- so
     -- cancelling it is safe at any point.
     cancelThread samplerThread
-    -- Waits for a promotion in flight.
+    -- Before the writer: waits for a promotion in flight, so that none still
+    -- runs once the writer has closed and the handle reports itself closed.
     _ <- release promoterKey
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to

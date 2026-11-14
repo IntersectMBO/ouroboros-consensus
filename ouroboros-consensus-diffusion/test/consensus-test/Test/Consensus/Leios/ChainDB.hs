@@ -97,7 +97,7 @@ bodiesAfterGc = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA, txA), (pointB, ebB, txB)] $ \(point, eb, tx) -> do
-      void $ await =<< writeEbBody writer point eb []
+      void $ await =<< writeEbBody writer point eb mempty
       void $ await =<< writeTxs writer point [(0, tx)]
   withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
@@ -148,7 +148,7 @@ afterCrash chain point aOnRestart = do
  where
   writeClosureOfA db =
     withWriter db $ \writer -> do
-      void $ await =<< writeEbBody writer point ebA []
+      void $ await =<< writeEbBody writer point ebA mempty
       void $ await =<< writeTxs writer point [(0, txA)]
 
 -- | The node adds 'twoCertifiedChain' over a LeiosDB holding the closures of
@@ -180,7 +180,7 @@ lostRowBeforeAnother = do
  where
   writeClosure db point eb tx =
     withWriter db $ \writer -> do
-      void $ await =<< writeEbBody writer point eb []
+      void $ await =<< writeEbBody writer point eb mempty
       void $ await =<< writeTxs writer point [(0, tx)]
 
 -- | 'immutableChain', but its fourth block certifies B. With sixteen blocks,
@@ -245,7 +245,7 @@ heldAcrossRestart whatOfA = do
   nodeDBs <- emptyNodeDBs
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    void $ await =<< writeEbBody writer pointA ebA []
+    void $ await =<< writeEbBody writer pointA ebA mempty
     case whatOfA of
       BodyOfA -> pure ()
       ClosureOfA ->
@@ -325,7 +325,7 @@ tipWithClosureBeforeStart :: IOSim s (Point LeiosTestBlock)
 tipWithClosureBeforeStart = do
   leiosDb <- newLeiosDBInMemory
   withWriter leiosDb $ \writer -> do
-    void $ await =<< writeEbBody writer pointA ebA []
+    void $ await =<< writeEbBody writer pointA ebA mempty
     void $
       await
         =<< writeTxs

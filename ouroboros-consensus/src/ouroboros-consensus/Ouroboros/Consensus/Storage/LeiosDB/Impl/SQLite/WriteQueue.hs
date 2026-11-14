@@ -39,7 +39,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -62,7 +62,7 @@ data WriteJob
       -- | the EB body
       !EndorserBlock
       -- | the txs to fill from local bytes
-      ![LocalFill]
+      !LocalFills
       -- | where the worker puts the offsets the point holds
       !(ResolveWriteJob [TxOffset])
   | WriteTxs

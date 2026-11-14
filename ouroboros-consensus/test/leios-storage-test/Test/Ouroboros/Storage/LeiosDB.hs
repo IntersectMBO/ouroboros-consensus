@@ -21,6 +21,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -50,7 +51,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
-  , LocalFill
+  , LocalFills
   , Promise (..)
   , newLeiosDBInMemory
   , storeForgedEb
@@ -161,10 +162,10 @@ withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 
 -- Writes are awaited, so a read that follows one sees it.
 rwInsertEbBody :: RW -> LeiosPoint -> EndorserBlock -> IO ()
-rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb []
+rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb mempty
 
 -- | Also fill from local bytes, and return the offsets the point holds.
-rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> [LocalFill] -> IO [TxOffset]
+rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> LocalFills -> IO [TxOffset]
 rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
@@ -294,6 +295,8 @@ mkTestGroups impl =
           withFreshDb impl test_gcKeepsPromotedEb
       , testCase "fails for an EB whose closure is incomplete, copying nothing" $
           withFreshDb impl test_promoteIncompleteFails
+      , testCase "fails for an EB none of whose txs is written" $
+          withFreshDb impl test_promoteNothingWrittenFails
       , testCase "promotes an EB promoted at another point" $
           withFreshDb impl test_promoteAtEachPoint
       , testCase "a truncation drops the promoted EBs at or after its slot, which can be written again" $
@@ -565,6 +568,8 @@ test_multipleSlotsSameHash db = do
     rwInsertEbBody con point2 eb
     rwInsertTxs con point1 (allTxsFor eb)
     rwScanComplete con 0 >>= (@?= [point1])
+    rwInsertTxs con point2 (allTxsFor eb)
+    rwScanComplete con 0 >>= (@?= [point1, point2])
 
 -- | An EB announced again after its closure completed at an older point: the
 -- new point is complete only once its own txs are written.
@@ -594,10 +599,10 @@ test_ebBodyReportsHeldTxs :: LeiosDbHandle IO -> IO ()
 test_ebBodyReportsHeldTxs db = withRW db $ \con -> do
   let eb = mkTestEb 3
       point = mkTestPoint 1 1
-  rwInsertEbBodyFilling con point eb [] >>= (@?= [])
+  rwInsertEbBodyFilling con point eb mempty >>= (@?= [])
   rwInsertTxs con point (take 2 (allTxsFor eb))
-  rwInsertEbBodyFilling con point eb [] >>= (@?= [0, 1])
-  rwInsertEbBodyFilling con (mkTestPoint 2 1) eb [] >>= (@?= [])
+  rwInsertEbBodyFilling con point eb mempty >>= (@?= [0, 1])
+  rwInsertEbBodyFilling con (mkTestPoint 2 1) eb mempty >>= (@?= [])
 
 -- | Each point of an EB is read on its own: a point holds only the body and
 -- txs written at it, whatever another point of the EB holds.
@@ -669,9 +674,11 @@ test_fillFromAnotherEb db = do
         con
         pointB
         ebB
-        [ (0, MkTxLocation (pointEbHash pointA) 1)
-        , (1, MkTxLocation (pointEbHash pointA) 0)
-        ]
+        ( IntMap.fromList
+            [ (0, MkTxLocation pointA 1)
+            , (1, MkTxLocation pointA 0)
+            ]
+        )
     result @?= [0]
     retrieved <- rwBatchRetrieveTxs con pointB [0, 1]
     retrieved @?= [(0, Just (txBytesFor ebA 1)), (1, Nothing)]
@@ -684,15 +691,17 @@ test_fillWithoutSourceBytes db = do
   withRW db $ \con -> do
     rwInsertEbBody con pointA ebA
     -- The first source holds the body but not its txs; the second is unknown.
-    -- So the first source's tx is not written.
+    -- So neither tx is written.
     result <-
       rwInsertEbBodyFilling
         con
         pointB
         ebB
-        [ (0, MkTxLocation (pointEbHash pointA) 1)
-        , (0, MkTxLocation (mkTestEbHash 9) 0)
-        ]
+        ( IntMap.fromList
+            [ (0, MkTxLocation pointA 1)
+            , (1, MkTxLocation (mkTestPoint (SlotNo 1) 9) 0)
+            ]
+        )
     result @?= []
 
 test_fillCompletesClosure :: LeiosDbHandle IO -> IO ()
@@ -702,7 +711,7 @@ test_fillCompletesClosure db = do
       ebB = mkEndorserBlock [(testTxHash 1 101, 101)]
   withRW db $ \con -> do
     writeWholeEb con [pointA] ebA
-    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation (pointEbHash pointA) 1)]
+    result <- rwInsertEbBodyFilling con pointB ebB (IntMap.singleton 0 (MkTxLocation pointA 1))
     result @?= [0]
     rwScanComplete con 0 >>= (@?= [pointA, pointB])
 
@@ -715,7 +724,11 @@ test_fillFromAnotherPoint db = withRW db $ \con -> do
       younger = mkTestPoint 2 1
   writeWholeEb con [older] eb
   result <-
-    rwInsertEbBodyFilling con younger eb [(off, MkTxLocation (mkTestEbHash 1) off) | off <- [0, 1]]
+    rwInsertEbBodyFilling
+      con
+      younger
+      eb
+      (IntMap.fromList [(off, MkTxLocation older off) | off <- [0, 1]])
   result @?= [0, 1]
   rwLookupEbClosure con younger >>= (@?= Just (map snd (allTxsFor eb)))
 
@@ -726,7 +739,7 @@ test_fillOfMisstatedSize db = do
       ebB = mkEndorserBlock [(testTxHash 1 101, 102)]
   withRW db $ \con -> do
     writeWholeEb con [pointA] ebA
-    result <- rwInsertEbBodyFilling con pointB ebB [(0, MkTxLocation (pointEbHash pointA) 1)]
+    result <- rwInsertEbBodyFilling con pointB ebB (IntMap.singleton 0 (MkTxLocation pointA 1))
     result @?= []
     rwBatchRetrieveTxs con pointB [0] >>= (@?= [(0, Nothing)])
 
@@ -953,6 +966,13 @@ test_promoteIncompleteFails db = withRW db $ \con -> do
   collectBefore db 6
   holdsClosure con (mkTestPoint 4 2) >>= (@?= False)
 
+-- | An EB with its body but none of its txs.
+test_promoteNothingWrittenFails :: LeiosDbHandle IO -> IO ()
+test_promoteNothingWrittenFails db = withRW db $ \con -> do
+  rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
+  assertPromoteFails db [mkTestPoint 5 1]
+  isImmutable (rwReader con) (mkTestPoint 5 1) >>= (@?= False)
+
 -- | Promoting the points up to slot 6 fails.
 assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
 assertPromoteFails db points =
@@ -1071,7 +1091,7 @@ test_schemaAtHandleCreation volDbPath immDbPath =
     vol <- schemaObjects volDbPath
     imm <- schemaObjects immDbPath
     forM_ [(vol, "vol"), (imm, "imm")] $ \(objs, file) ->
-      forM_ ["ebs", "idx_ebs_ebHashBytes"] $ \name ->
+      forM_ ["ebs"] $ \name ->
         assertBool (file <> " has " <> name) (name `elem` objs)
 
 -- | A file that exists without a schema, as a crash between creating the file
@@ -1133,7 +1153,7 @@ queryCount path query =
 -- | An operation on the database: a write, or what the ChainDB has it do as
 -- blocks become immutable.
 data Op
-  = OpBody LeiosPoint [LocalFill]
+  = OpBody LeiosPoint LocalFills
   | OpTxs LeiosPoint [TxOffset]
   | OpPromote EndorserBlockHash
   | OpGc SlotNo
@@ -1216,11 +1236,16 @@ genOps bodies = listOf genOp
   -- from anywhere.
   genFill point =
     frequency $
-      (1, (,) <$> chooseInt (0, 4) <*> (MkTxLocation <$> elements (Map.keys bodies) <*> chooseInt (0, 4)))
-        : [ (3, elements matching)
+      (1, (,) <$> chooseInt (0, 4) <*> (MkTxLocation <$> genPointOf <*> chooseInt (0, 4)))
+        : [ ( 3
+            , do
+                (dstOff, src, srcOff) <- elements matching
+                slot <- genSlot
+                pure (dstOff, MkTxLocation (MkLeiosPoint slot src) srcOff)
+            )
           | let indices = snd (bodies Map.! pointEbHash point)
                 matching =
-                  [ (dstOff, MkTxLocation src srcOff)
+                  [ (dstOff, src, srcOff)
                   | (dstOff, i) <- zip [0 ..] indices
                   , (src, (_, srcIndices)) <- Map.toList bodies
                   , (srcOff, j) <- zip [0 ..] srcIndices
@@ -1230,7 +1255,7 @@ genOps bodies = listOf genOp
           ]
   genOp =
     frequency
-      [ (3, genPointOf >>= \point -> OpBody point <$> listOf (genFill point))
+      [ (3, genPointOf >>= \point -> OpBody point . IntMap.fromList <$> listOf (genFill point))
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> elements (Map.keys bodies))
       , (1, OpGc . (+ 1) <$> genSlot)

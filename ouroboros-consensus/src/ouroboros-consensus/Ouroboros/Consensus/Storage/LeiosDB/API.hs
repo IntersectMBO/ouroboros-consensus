@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , storeForgedEb
-  , LocalFill
+  , LocalFills
   , TxOffset
   ) where
 
@@ -29,6 +29,7 @@ import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (toList, traverse_)
+import Data.IntMap.Strict (IntMap)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
@@ -126,13 +127,13 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> [LocalFill] -> m (Promise m [TxOffset])
+      LeiosPoint -> EndorserBlock -> LocalFills -> m (Promise m [TxOffset])
   -- ^ Persist an EB body at this point, recording the point. Every point holds
   -- its own body and txs, even when another point names the same EB.
   --
-  -- Then fill what it can from the bytes the LeiosDB holds: each 'LocalFill'
-  -- pairs an offset in this body with the 'TxLocation' of the same tx in
-  -- another EB, at any point of it, copied in the same transaction. A fill
+  -- Then fill what it can from the bytes the LeiosDB holds: 'LocalFills' maps
+  -- an offset in this body to the 'TxLocation' of the same tx at another
+  -- point, copied in the same transaction. A fill
   -- lands only if the source's bytes hash to the tx this body lists at its
   -- offset, so a stale or wrong location fills nothing, and that tx stays
   -- fetchable.
@@ -180,9 +181,9 @@ newtype Promise m a = Promise {await :: m a}
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
 awaitAll = traverse_ await
 
--- | A fill from local bytes: fill the EB's tx at 'TxOffset' from the tx's
--- 'TxLocation' in another EB. See 'writeEbBody'.
-type LocalFill = (TxOffset, TxLocation)
+-- | Fills from local bytes: fill the EB's tx at each offset from the tx's
+-- 'TxLocation' at another point. See 'writeEbBody'.
+type LocalFills = IntMap {- TxOffset -} TxLocation
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader
@@ -207,7 +208,7 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 -- header before the endorser block is stored.
 storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
 storeForgedEb writer slot forgedEb = do
-  _ <- writeEbBody writer point body []
+  _ <- writeEbBody writer point body mempty
   void $ writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
  where
   body = forgedEbBody forgedEb

@@ -41,20 +41,14 @@ erDiagram
     }
 ```
 
-- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: the LeiosFetch fetches and writes each on its own, so one point's writes never need to touch other points' rows. In the same SQL transaction that writes the body, whichever of its Cardano transactions the node holds at another point, of this EB or another, are copied from there, each only if its bytes hash and length match the body's claim.
+- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: the LeiosFetch fetches and writes each on its own, so one point's writes never need to touch other points' rows. In the same SQL transaction that writes the body, whichever of its Cardano transactions the node holds at another point, of this EB or another, are copied from there, the caller naming that point, each only if its bytes hash and length match the body's claim.
 - Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
 - Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. This scan decodes no body and checks no hash for it, since hashes were confirmed when the transactions were originally written.
 - Reads take the row at the requested point: in the immutable partition if the point is older than the promoted slot (see below), else in the volatile one, and never fall back to the other. A read of the volatile partition that a promotion and a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which that promotion filled.
-- Serving a body reads `body` only. Serving transactions reads the requested transactions' slice of `txBounds`, then only their bytes from `txs`, one read per run of consecutive offsets. Neither read decodes the EB.
+- LeiosFetch serves a body by only reading `body`. LeiosFetch serves requested transactions once per contiguous run of requested offsets, for each: it reads that run's slice out of `txBounds`, then reads the slice from `txs`. Neither task re-decodes the body's bytes.
 - Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
 
-Indexes:
-
-| Index                 | On                 | Used for                  |
-|-----------------------|--------------------|---------------------------|
-| `idx_ebs_ebHashBytes` | `ebs(ebHashBytes)` | Looking up an EB by hash  |
-
-The primary key `(ebSlot, ebHashBytes)` serves the lookups by point, the garbage collection's scan by slot, and finding the newest promoted point. The blob API opens a row by its implicit rowid.
+There is no index but the primary key: `(ebSlot, ebHashBytes)` serves the lookups by point, local fills included, the garbage collection's scan by slot, and finding the newest promoted point. The blob API opens a row by its implicit rowid.
 
 ### Promotion and garbage collection
 
@@ -83,4 +77,4 @@ Until then it is the one after the newest point in the immutable partition, whic
 
 The immutable partition has the same `ebs` table.
 Promotion copies only EBs whose certificate is on the chain, and only once each of their transactions is written, and GC never removes EBs from this partition.
-Thus every row holds its whole EB.
+Thus every row holds its whole EB, and its `txWritten` is all set: redundant, but kept so both partitions share one schema.

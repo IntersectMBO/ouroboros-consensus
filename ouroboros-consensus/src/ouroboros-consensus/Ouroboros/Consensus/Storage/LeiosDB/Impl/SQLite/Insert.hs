@@ -15,9 +15,11 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
@@ -30,7 +32,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , serialiseEndorserBlock
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFill)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -67,7 +69,7 @@ sqlInsertEbBody ::
   Conn ->
   LeiosPoint ->
   EndorserBlock ->
-  [LocalFill] ->
+  LocalFills ->
   IO [TxOffset]
 sqlInsertEbBody conn point eb fills = do
   when (null refs) $
@@ -99,8 +101,8 @@ sqlInsertEbBody conn point eb fills = do
   -- ascending offsets, as each blob handle walks the blob's pages from its
   -- start.
   readLocalFills =
-    fmap IntMap.unions $ forM (Map.toList bySource) $ \(srcEbHash, wanted) -> do
-      srcTxs <- readFromSource srcEbHash (IntMap.keysSet wanted)
+    fmap IntMap.unions $ forM (Map.toList bySource) $ \(srcPoint, wanted) -> do
+      srcTxs <- readFromSource srcPoint (IntMap.keysSet wanted)
       pure $
         IntMap.fromList
           [ (txOffset, tx)
@@ -113,35 +115,23 @@ sqlInsertEbBody conn point eb fills = do
 
   -- The fills by source, then by offset in the source, excluding the fills
   -- that are beyond the end of the body.
+  bySource :: Map LeiosPoint (IntMap [TxOffset])
   bySource =
     Map.fromListWith
       (IntMap.unionWith (<>))
-      [ (srcEbHash, IntMap.singleton srcOffset [txOffset])
-      | (txOffset, MkTxLocation srcEbHash srcOffset) <- fills
+      [ (srcPoint, IntMap.singleton srcOffset [txOffset])
+      | (txOffset, MkTxLocation srcPoint srcOffset) <- IntMap.toList fills
       , srcOffset >= 0
       , IntMap.member txOffset refsByOffset
       ]
 
-  -- The written txs at these offsets of the EB, from the first of its points
-  -- that holds each.
-  readFromSource srcEbHash wanted = do
-    rows <- withStmt db "SELECT rowid, length(txWritten) FROM ebs WHERE ebHashBytes = ?1" $ \stmt -> do
-      dbBindHash stmt 1 srcEbHash
-      let loop acc =
-            dbStep stmt >>= \case
-              DB.Done -> pure (reverse acc)
-              DB.Row -> do
-                eiRowid <- DB.columnInt64 stmt 0
-                eiTxCount <- fromIntegral <$> DB.columnInt64 stmt 1
-                loop (EbIndex{eiRowid, eiTxCount} : acc)
-      loop []
-    let go found _ | IntSet.null found = pure IntMap.empty
-        go _ [] = pure IntMap.empty
-        go remaining (ix@EbIndex{eiTxCount} : rest) = do
-          txs <- readTxBytes db ix (IntSet.toAscList (IntSet.filter (< eiTxCount) remaining))
-          let here = IntMap.fromList [(o, tx) | (o, Just tx) <- txs]
-          (here <>) <$> go (remaining `IntSet.difference` IntMap.keysSet here) rest
-    go wanted rows
+  -- The written txs at these offsets of the source point.
+  readFromSource srcPoint wanted =
+    lookupEbIndex db srcPoint >>= \case
+      Nothing -> pure IntMap.empty
+      Just ix@EbIndex{eiTxCount} -> do
+        txs <- readTxBytes db ix (IntSet.toAscList (IntSet.filter (< eiTxCount) wanted))
+        pure $ IntMap.fromList [(o, tx) | (o, Just tx) <- txs]
 
   refsByOffset = IntMap.fromList (zip [0 ..] refs)
 

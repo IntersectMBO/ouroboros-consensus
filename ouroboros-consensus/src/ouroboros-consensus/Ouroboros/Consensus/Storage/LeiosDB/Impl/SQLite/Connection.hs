@@ -3,7 +3,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Opening, configuring and closing connections to the LeiosDB partition
--- files, and 'Conn': a reader's (or the writer's) pair of connections.
+-- files, and 'Conn': a reader's (or the writer's) connections to both
+-- partitions.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( -- * Partition files
     initialiseLeiosDbFiles
@@ -11,7 +12,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   , closeChecked
 
-    -- * Pairs of connections
+    -- * Connections
   , Conn (..)
   , mkConn
   , closeConn

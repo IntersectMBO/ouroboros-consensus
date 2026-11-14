@@ -340,7 +340,7 @@ drainWith q k = loop
 writeBody :: LeiosDbWriter IO -> LeiosPoint -> BenchEb -> Record -> IO ()
 writeBody w point eb@BenchEb{beEb} record =
   timedStep eb FetchBody record $
-    void . await =<< writeEbBody w point beEb []
+    void . await =<< writeEbBody w point beEb mempty
 
 -- | Write a chunk of an EB's Txs, as the fetch logic does on receiving it.
 writeChunk :: LeiosDbWriter IO -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()

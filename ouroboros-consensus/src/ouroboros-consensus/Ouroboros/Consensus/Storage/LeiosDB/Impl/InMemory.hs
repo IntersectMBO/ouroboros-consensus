@@ -46,7 +46,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
-  , LocalFill
+  , LocalFills
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -238,7 +238,7 @@ imInsertEbBody ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   EndorserBlock ->
-  [LocalFill] ->
+  LocalFills ->
   m [TxOffset]
 imInsertEbBody stateVar point eb fills = do
   when (null refs) $
@@ -255,22 +255,15 @@ imInsertEbBody stateVar point eb fills = do
         pure (IntMap.keys (rowTxs row'))
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
-  -- declares, at its declared size, from a volatile point of the source holding
-  -- bytes that hash to the tx this body lists there, the first of the fills
-  -- winning an offset.
+  -- declares, at its declared size, from the source's volatile row holding
+  -- bytes that hash to the tx this body lists there.
   filled s =
-    IntMap.fromListWith
-      (\_new old -> old)
+    IntMap.fromList
       [ (off, bytes)
-      | (off, MkTxLocation srcEbHash srcOff) <- fills
+      | (off, MkTxLocation srcPoint srcOff) <- IntMap.toList fills
       , Just (txHash, size) <- [IntMap.lookup off refs]
-      , bytes : _ <-
-          [ [ tx
-            | (p, row) <- Map.toList (imVolatile s)
-            , pointEbHash p == srcEbHash
-            , Just tx <- [IntMap.lookup srcOff (rowTxs row)]
-            ]
-          ]
+      , Just row <- [Map.lookup srcPoint (imVolatile s)]
+      , Just bytes <- [IntMap.lookup srcOff (rowTxs row)]
       , hashLeiosTx (MkLeiosTx bytes) == txHash
       , fromIntegral (BS.length bytes) == size
       ]
