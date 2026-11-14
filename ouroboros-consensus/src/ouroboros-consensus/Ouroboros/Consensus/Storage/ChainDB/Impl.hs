@@ -93,7 +93,8 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbReader (..)
+  ( LeiosDbHandle (leiosDbTruncateImmutable)
+  , LeiosDbReader (..)
   , withReader
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -192,6 +193,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
+    -- Before anything reads the LeiosDB, as its reads dispatch by the slot.
+    leiosDbTruncateImmutable leiosDb (fromWithOrigin 0 (pointSlot immutableDbTipPoint))
 
     traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
     volatileDB <- VolatileDB.openDB argsVolatileDb

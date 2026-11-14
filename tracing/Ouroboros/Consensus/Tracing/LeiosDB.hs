@@ -7,6 +7,7 @@
 module Ouroboros.Consensus.Tracing.LeiosDB () where
 
 import Cardano.Logging
+import Cardano.Slotting.Slot (SlotNo (..))
 import Data.Aeson (Value (String), (.=))
 import qualified Data.Text as Text
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
@@ -36,6 +37,12 @@ instance LogFormatting TraceLeiosDb where
       mconcat ["kind" .= String "LeiosDbCopiedToImmutable", "copiedEbs" .= copiedEbs]
     TraceLeiosDbEvicted evictedEbs ->
       mconcat ["kind" .= String "LeiosDbEvicted", "evictedEbs" .= evictedEbs]
+    TraceLeiosDbTruncatedImmutable slot deletedEbs ->
+      mconcat
+        [ "kind" .= String "LeiosDbTruncatedImmutable"
+        , "slot" .= unSlotNo slot
+        , "deletedEbs" .= deletedEbs
+        ]
 
   forHuman = \case
     TraceLeiosDbInsertCollision table key ->
@@ -58,6 +65,12 @@ instance LogFormatting TraceLeiosDb where
       "Copied " <> showT copiedEbs <> " EBs to the LeiosDB's immutable partition"
     TraceLeiosDbEvicted evictedEbs ->
       "Evicted " <> showT evictedEbs <> " EB rows from the LeiosDB's volatile partition"
+    TraceLeiosDbTruncatedImmutable slot deletedEbs ->
+      "Truncated the LeiosDB's immutable partition to the ImmutableDB tip at slot "
+        <> showT (unSlotNo slot)
+        <> ", deleting "
+        <> showT deletedEbs
+        <> " EBs"
 
   asMetrics = \case
     TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
@@ -74,6 +87,7 @@ instance LogFormatting TraceLeiosDb where
     TraceLeiosDbInsertCollision{} -> []
     TraceLeiosDbWriterQueueFull{} -> []
     TraceLeiosDbWriteJobDone{} -> []
+    TraceLeiosDbTruncatedImmutable{} -> []
 
 instance MetaTrace TraceLeiosDb where
   namespaceFor = \case
@@ -84,6 +98,7 @@ instance MetaTrace TraceLeiosDb where
     TraceLeiosDbStats{} -> Namespace [] ["Stats"]
     TraceLeiosDbCopiedToImmutable{} -> Namespace [] ["Copied"]
     TraceLeiosDbEvicted{} -> Namespace [] ["Evicted"]
+    TraceLeiosDbTruncatedImmutable{} -> Namespace [] ["TruncatedImmutable"]
 
   severityFor (Namespace _ ["InsertCollision"]) _ = Just Info
   severityFor (Namespace _ ["WriterQueueFull"]) _ = Just Info
@@ -92,6 +107,7 @@ instance MetaTrace TraceLeiosDb where
   severityFor (Namespace _ ["Stats"]) _ = Just Info
   severityFor (Namespace _ ["Copied"]) _ = Just Info
   severityFor (Namespace _ ["Evicted"]) _ = Just Info
+  severityFor (Namespace _ ["TruncatedImmutable"]) _ = Just Info
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["InsertCollision"]) =
@@ -110,6 +126,9 @@ instance MetaTrace TraceLeiosDb where
     Just "A promotion committed EBs' closures to the immutable partition."
   documentFor (Namespace _ ["Evicted"]) =
     Just "A garbage collection deleted EB rows from the volatile partition."
+  documentFor (Namespace _ ["TruncatedImmutable"]) =
+    Just
+      "When the ChainDB opened, the immutable partition dropped the EBs announced at or after the ImmutableDB tip's slot, and the promoted slot was set to it."
   documentFor _ = Nothing
 
   metricsDocFor (Namespace _ ["Stats"]) =
@@ -136,6 +155,7 @@ instance MetaTrace TraceLeiosDb where
     , Namespace [] ["Stats"]
     , Namespace [] ["Copied"]
     , Namespace [] ["Evicted"]
+    , Namespace [] ["TruncatedImmutable"]
     ]
 
 -- | A duration in seconds, in milliseconds.

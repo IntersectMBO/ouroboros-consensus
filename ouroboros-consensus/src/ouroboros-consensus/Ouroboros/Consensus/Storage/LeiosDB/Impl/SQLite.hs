@@ -139,6 +139,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       , openWriter = implOpenWriter writeQueue
       , garbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar
+      , leiosDbTruncateImmutable = sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where

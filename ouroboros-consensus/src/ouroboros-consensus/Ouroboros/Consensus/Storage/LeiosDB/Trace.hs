@@ -1,5 +1,6 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
+import Cardano.Slotting.Slot (SlotNo)
 import Control.Monad.Class.MonadTime.SI (DiffTime)
 
 -- | In-memory LeiosDb counters: seeded from the database files once per
@@ -48,5 +49,13 @@ data TraceLeiosDb
   | -- | A garbage collection deleted rows from the volatile partition.
     TraceLeiosDbEvicted
       -- | number of rows evicted
+      Int
+  | -- | The immutable partition was truncated to the ImmutableDB tip, when
+    -- the ChainDB opened.
+    TraceLeiosDbTruncatedImmutable
+      -- | the slot the EBs at or after which were deleted, and the new
+      -- promoted slot
+      SlotNo
+      -- | number of EBs deleted
       Int
   deriving Show

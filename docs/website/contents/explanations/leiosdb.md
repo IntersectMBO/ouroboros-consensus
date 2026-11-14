@@ -68,17 +68,16 @@ An EB whose closure is incomplete fails the promotion, and the node stops: Chain
 
 Neither the ImmutableDB nor the LeiosDB syncs its writes to disk, so a power loss can drop the newest writes of either, and leave the ImmutableDB with a block certifying an EB that the immutable partition lacks.
 After such an unclean shutdown, the ImmutableDB validates all its chunks when it opens, and checks each block against its predecessor: it truncates before the first block that certifies an EB the immutable partition does not hold, and the node fetches the blocks after it again.
-Promotion commits in chain order, so the LeiosDB loses only the newest EBs.
+Then, before anything reads the LeiosDB, the ChainDB truncates the immutable partition to the ImmutableDB tip: it deletes the EBs announced at or after the tip's slot, which no block of the ImmutableDB certifies, and sets the promoted slot to it.
+So the immutable partition does not run ahead of the ImmutableDB either, after a crash between a promotion and the appends of its blocks, a truncation of the ImmutableDB, or a row lost from the middle of the partition.
+An EB it deletes that the volatile partition still holds is promoted again, and any other is fetched again.
 
 A garbage collection deletes the rows before the promoted slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
 So it never deletes a row that reads still go to, nor one that a promotion still needs.
 The point and body writes of a point before the promoted slot are dropped, as a collection would delete them anyway: such a point is promoted or not certified, and the fetch logic ignores announcements older than the ImmutableDB tip.
 
-The promoted slot is kept in memory only, and never goes back while the LeiosDB is open.
-At startup it is the one after the newest point in the immutable partition, which the primary key finds without a scan.
-That may lag the slot the latest promotion reached, but no point at or after it is promoted, so its reads lose nothing by going to the volatile partition.
-It is ahead of the ImmutableDB tip only if a crash came between a promotion and the appends of its blocks; the points in between then were not collected yet, and the next start copies the same blocks again.
-Truncating the immutable partition, as the db-truncater does, lowers it at the next start.
+The promoted slot is kept in memory only, and goes back only when the ChainDB opens and truncates the immutable partition.
+Until then it is the one after the newest point in the immutable partition, which the primary key finds without a scan.
 
 ## Immutable partition
 

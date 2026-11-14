@@ -57,17 +57,25 @@ data LeiosDbHandle m = LeiosDbHandle
   , garbageCollect :: HasCallStack => m ()
   -- ^ Delete the volatile EBs announced before the promoted slot.
   --
-  --   See 'sqlGarbageCollect' for the SQL backend implementation.
+  -- See 'sqlGarbageCollect' for the SQL backend implementation.
   , leiosDbPromoteToImmutable :: HasCallStack => SlotNo -> [LeiosPoint] -> m ()
   -- ^ Copy the given EBs' bodies and tx closures from volatile into immutable
-  --   LeiosDb, then advance the promoted slot to the given one, the ImmutableDB
-  --   tip's once the blocks certifying them are appended. Takes a batch: the
-  --   caller holds the ImmutableDB write lock, so this is one transaction per
-  --   'copyToImmutableDB' pass, not one per certified EB. Throws if an EB's
-  --   closure is incomplete, advancing nothing.
+  -- LeiosDb, then advance the promoted slot to the given one, the ImmutableDB
+  -- tip's once the blocks certifying them are appended. Takes a batch: the
+  -- caller holds the ImmutableDB write lock, so this is one transaction per
+  -- 'copyToImmutableDB' pass, not one per certified EB. Throws if an EB's
+  -- closure is incomplete, advancing nothing.
   --
-  --   The promoted slot never goes back while the LeiosDB is open. Reopened, it
-  --   is the one after the newest promoted point.
+  -- The promoted slot goes back only by 'leiosDbTruncateImmutable'. Reopened,
+  -- it is the one after the newest promoted point.
+  , leiosDbTruncateImmutable :: HasCallStack => SlotNo -> m ()
+  -- ^ Delete the immutable EBs announced at or after the slot, the ImmutableDB
+  -- tip's, and set the promoted slot to it: a block of the ImmutableDB
+  -- certifies only an EB announced before its tip. Restores, when the ChainDB
+  -- opens, that the immutable partition does not run ahead of the ImmutableDB,
+  -- which a crash, a truncation or a lost row can break. The volatile partition
+  -- keeps its EBs, so a deleted EB that is still there is promoted again, and
+  -- any other fetched again.
   , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
   -- ^ Sample 'LeiosDbStats' counters.
   }

@@ -30,7 +30,8 @@ import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbReader (..)
+  ( LeiosDbHandle (..)
+  , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
   , withReader
@@ -81,6 +82,9 @@ tests =
         "after a crash, the ImmutableDB keeps a block starting a chunk that certifies an endorser block the LeiosDB holds"
         $ runSimOrThrow (afterCrash chunkStartChain chunkStartPointA KeptA)
           @?= (blockPoint (chunkStartChain !! 13), True)
+    , testCase
+        "after losing an endorser block's row, the LeiosDB drops the later ones and takes it again"
+        $ runSimOrThrow lostRowBeforeAnother @?= (blockPoint announcingA, False, True)
     ]
 
 -- | The node holds endorser blocks A and B, with their transactions. The
@@ -146,6 +150,49 @@ afterCrash chain point aOnRestart = do
     withWriter db $ \writer -> do
       void $ await =<< writeEbBody writer point ebA []
       void $ await =<< writeTxs writer point [(0, txA)]
+
+-- | The node adds 'twoCertifiedChain' over a LeiosDB holding the closures of
+-- A and B, so both are promoted, and restarts after a crash over a LeiosDB that
+-- lost A's row but kept B's promoted one, as from a damaged file. The
+-- ImmutableDB tip after the restart, whether the immutable partition still
+-- holds B, and whether A's closure lands when fetched again.
+lostRowBeforeAnother :: IOSim s (Point LeiosTestBlock, Bool, Bool)
+lostRowBeforeAnother = do
+  nodeDBs <- emptyNodeDBs
+  leiosDb <- newLeiosDBInMemory
+  writeClosure leiosDb pointA ebA txA
+  writeClosure leiosDb pointB ebB txB
+  withNodeOverDBs nodeDBs leiosDb $ \node -> do
+    -- Let the slots of the chain's blocks pass, so none is from the future.
+    threadDelay 30
+    addBlocks node twoCertifiedChain
+    -- Long enough for the copy to the ImmutableDB and for the delayed GC.
+    threadDelay 100
+  damaged <- newLeiosDBInMemory
+  writeClosure damaged pointB ebB txB
+  leiosDbPromoteToImmutable damaged (blockSlot certifyingB) [pointB]
+  withNodeOverDBsAfterUncleanShutdown nodeDBs damaged $ \node -> do
+    immTip <- atomically (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain (nodeChainDB node))
+    keptB <- withReader damaged (\reader -> isImmutable reader pointB)
+    writeClosure damaged pointA ebA txA
+    landedA <- withReader damaged (\reader -> isJust <$> lookupEbClosure reader pointA)
+    pure (immTip, keptB, landedA)
+ where
+  writeClosure db point eb tx =
+    withWriter db $ \writer -> do
+      void $ await =<< writeEbBody writer point eb []
+      void $ await =<< writeTxs writer point [(0, tx)]
+
+-- | 'immutableChain', but its fourth block certifies B. With sixteen blocks,
+-- the immutable tip is past both certificates.
+twoCertifiedChain :: [LeiosTestBlock]
+twoCertifiedChain =
+  [announcingA, certifyingA, announcingB, certifyingB]
+    ++ take 12 (drop 1 (iterate successorLeiosBlock certifyingB))
+
+certifyingB :: LeiosTestBlock
+certifyingB =
+  setLeiosCert (certOf (rbHashOf announcingB) [0, 1, 2]) (successorLeiosBlock announcingB)
 
 -- | 'immutableChain', but announcing A in slot 9 and certifying it in slot 10,
 -- where the ImmutableDB's second chunk starts, as its chunks span ten slots.

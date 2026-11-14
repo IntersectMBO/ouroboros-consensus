@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   , openPromoter
   , closePromoter
   , sqlPromoteToImmutable
+  , sqlTruncateImmutable
 
     -- * Garbage collection
   , sqlGarbageCollect
@@ -34,6 +35,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , modifyTVar
   , readTVarIO
+  , writeTVar
   )
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Monad (forever, unless, when)
@@ -163,6 +165,28 @@ sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
         dbBindHash stmt 2 ebHash
         dbStep1Safe stmt
     DB.changes db
+
+-- | Implements 'leiosDbTruncateImmutable': delete the immutable rows at or
+-- after the slot in one transaction, then set the promoted slot to it.
+sqlTruncateImmutable ::
+  HasCallStack =>
+  Tracer IO TraceLeiosDb ->
+  StrictTVar IO LeiosDbStats ->
+  MVar Promoter ->
+  StrictTVar IO SlotNo ->
+  SlotNo ->
+  IO ()
+sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar slot =
+  withMVar promoterVar $ \(Promoter db) -> do
+    deleted <-
+      dbWithTransaction db $
+        withStmt db "DELETE FROM main.ebs WHERE ebSlot >= ?1" $ \stmt -> do
+          dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
+          dbStep1Safe stmt
+          DB.changes db
+    bumpImmutableStats statsVar (negate deleted)
+    atomically $ writeTVar promotedSlotVar slot
+    traceWith tracer $ TraceLeiosDbTruncatedImmutable slot deleted
 
 -- * Garbage collection of the volatile partition
 

@@ -14,6 +14,7 @@ import Cardano.Prelude (Generic, unless, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
+  , modifyTVar
   , newTVarIO
   , readTVar
   , writeTVar
@@ -73,7 +74,8 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- ^ The immutable partition: the rows 'leiosDbPromoteToImmutable' copied, at
   -- the points they were promoted at. Never collected.
   , imPromotedSlot :: !SlotNo
-  -- ^ The slot the latest promotion reached. The writes of a point before it
+  -- ^ The slot the latest promotion or truncation reached. The writes of a
+  -- point before it
   -- are dropped, its reads go to 'imImmutable', and the garbage collection
   -- deletes its volatile row.
   }
@@ -111,6 +113,11 @@ newLeiosDBInMemoryWith stateVar =
         closeLeiosDbHandle = pure ()
       , garbageCollect = imGarbageCollect stateVar
       , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
+      , leiosDbTruncateImmutable = \slot -> atomically $ modifyTVar stateVar $ \s ->
+          s
+            { imImmutable = Map.filterWithKey (\p _ -> pointSlotNo p < slot) (imImmutable s)
+            , imPromotedSlot = slot
+            }
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
