@@ -8,11 +8,13 @@ module Test.Consensus.Leios.LeiosFetch.Replies
   ( tests
   , fixture
   , tryEnqueueRequest
+  , submitFixtureForge
   , assignRequests
   , expireRuntimeHeads
   , newContext
   , newContextHolding
   , newContextAt
+  , newContextOver
   , awaitNotes
   , processLeiosBlock
   , processLeiosBlockTxs
@@ -35,7 +37,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , tryPutTMVar
   )
-import Control.Exception (bracket_, try)
+import Control.Exception (bracket, bracket_, try)
 import Control.Monad (void)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
@@ -58,9 +60,11 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache
-  ( defaultLeiosTxCacheShift
+  ( LeiosTxCache (..)
+  , defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
+import qualified Ouroboros.Consensus.Leios.TxCache.API as Cache
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
@@ -80,10 +84,10 @@ import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
+  , ExnLeiosForgedWriteIncomplete (..)
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
   , ReplyOwnership (..)
-  , acquireForgedEb
   , withBodyWorkers
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies as Replies
@@ -101,6 +105,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
   , markReceivingFromForge
+  , isFocusedPoint
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
@@ -123,6 +128,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , newLeiosDBInMemory
+  , withLeiosDBSQLite
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( BodyWriteReceipt (..)
@@ -132,6 +138,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.IOLike (IOLike, modifyMVar_, readMVar)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewMVar)
+import System.IO.Temp (withSystemTempDirectory)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
 import Test.Tasty (TestTree, testGroup)
@@ -144,6 +151,16 @@ tryEnqueueRequest ::
   R.Client m peer -> IOLike.Time -> LeiosFetchRequest -> IOLike.STM m (Maybe (L.AttemptKey peer))
 tryEnqueueRequest client at request =
   either (const Nothing) Just <$> R.enqueueRequest client at request
+
+-- | Submit a fixture's full forged payload without silently accepting shutdown.
+-- The surrounding receipt scope owns completion; this only checks admission.
+submitFixtureForge ::
+  IOLike m => LeiosFetchClientContext m peer -> LeiosPoint -> Leios.ForgedEndorserBlock -> m ()
+submitFixtureForge ctx point forged = do
+  result <- Replies.submitForgedEb ctx point forged
+  case result of
+    Nothing -> IOLike.throwIO (userError "fixture forge admission rejected")
+    Just _ -> pure ()
 
 -- | Ignore detached reports when a scenario checks assignment state directly.
 assignRequests ::
@@ -172,10 +189,34 @@ tests :: TestTree
 tests =
   testGroup
     "replies"
-    [ testCase "retired forged callbacks cannot recreate coverage" test_forgePrunedCoverage
+    [ testCase
+        "serialized body validation keeps exact bytes and rejects invalid payloads"
+        test_serializedValidation
+    , testCase "absent body receipt retires work without acquisition or locations" test_bodyUnavailable
+    , testCase "absent tx target retires jobs without closure acquisition" test_txsUnavailable
+    , testCase "retired forged callbacks cannot recreate coverage" $
+        test_forgePrunedCoverage Nothing
+    , testCase "retired forged partial callbacks are ignored before classification" $
+        test_forgePrunedCoverage (Just (BodyPresent (Set.singleton 0)))
+    , testCase "retired forged unavailable callbacks cannot recreate state" $
+        test_forgePrunedCoverage (Just BodyUnavailable)
     , testCase
-        "incomplete combined forge confirmation cannot announce a phantom closure"
+        "incomplete forged confirmation is a supervised local invariant failure"
         test_forgeIncompleteConfirmation
+    , testGroup "forged backend confirmations"
+        [ testGroup label
+            [ testCase name (withDb (test_forgeBackend mode))
+            | (name, mode) <-
+                [ ("complete local write confirms body and closure", ForgeComplete)
+                , ("existing immutable copy confirms another full write", ForgeImmutable)
+                , ("unavailable local target leaves the temporary forge state", ForgeUnavailable)
+                , ("retirement removes existing body coverage", ForgeUnavailableAfterBody)
+                , ("local acquisition survives a different election focus", ForgeUnfocused)
+                ]
+            ]
+        | (label, withDb) <-
+            [("InMemory", (newLeiosDBInMemory >>=)), ("SQLite", withForgeSQLite)]
+        ]
     , testCase "closure summaries count confirmed network payload once" test_summary
     , testCase "mixed local and network receipts produce one exact closure summary" test_mixedSummary
     , testCase "forge summaries keep locally produced bytes local" test_forgeSummary
@@ -481,7 +522,7 @@ test_forgedAfterBody = do
     processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
     awaitNotes notes 1 >>= (@?= [AcquiredBody point])
     modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-    acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+    submitFixtureForge ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
     awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
     -- Long enough for any further emission to have landed.
     threadDelay 100000
@@ -496,7 +537,7 @@ test_forgedAgain = do
   (ctx, notes) <- newContext
   let forgeAndSettle = do
         modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-        acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+        submitFixtureForge ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
         Timeout.timeout 5000000 (atomically (W.awaitReadiness (lfcReady ctx)))
           >>= maybe (assertFailure "timed out waiting for the forge's writes to settle") pure
   forgeAndSettle
@@ -770,6 +811,7 @@ unitOwnership ctx point =
     , bodyWon = const (pure ())
     , settledReceipt = \_ -> pure (pure ())
     , abandonUnsubmitted = pure ()
+    , abandonAccepted = pure ()
     }
 
 processLeiosBlock ::
@@ -889,38 +931,220 @@ test_forgeSummary = do
             }
     modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
     Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
-      acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+      submitFixtureForge ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
     let total = fromIntegral (sum (map (BS8.length . leiosTxBytes) txs))
     readTVarIO summaries >>= (@?= [ClosureSummary total total 0 0 Nothing True])
 
--- The mocked combined body write confirms no target offsets. Submission alone
--- must not establish acquisition; this does not execute backend GC.
+-- Inject a partial confirmation after a real full write was accepted. This
+-- checks the invariant handling; it does not model a normal backend outcome.
 test_forgeIncompleteConfirmation :: Assertion
 test_forgeIncompleteConfirmation = do
   let (point, _, _) = fixture
-  db <- newLeiosDBInMemory
-  (base, notes) <- newContextOver db point (pure (pure ()))
-  withBodyWorkers base $ do
-    let original = lfcWriter base
-        ctx =
-          base{lfcWriter = original{writeEbBody = \_ _ _ _ -> pure (Promise (pure (BodyPresent Set.empty)))}}
+  (base, notes) <- newContext
+  locations <- newTVarIO (0 :: Int)
+  let original = lfcWriter base
+      cache = lfcTxCache base
+      ctx =
+        base
+          { lfcWriter = original
+              { writeEbBody = \p eb fills txs -> do
+                  written <- writeEbBody original p eb fills txs
+                  pure $ Promise $ await written >> pure (BodyPresent (Set.singleton 0))
+              }
+          , lfcTxCache = cache
+              { setTxLocations = \p locs -> do
+                  atomically $ modifyTVar locations (+ 1)
+                  setTxLocations cache p locs
+              }
+          }
+  withBodyWorkers ctx $ do
     modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-    Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
-      acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+    result <- try $ Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+      submitFixtureForge ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+    case result of
+      Left (ExnLeiosForgedWriteIncomplete p expected held) -> (p, expected, held) @?= (point, 2, 1)
+      Right () -> assertFailure "incomplete current forged write did not reach supervision"
     readTVarIO notes >>= (@?= [])
+    readTVarIO locations >>= (@?= 0)
+    out <- readMVar (lfcOutstanding ctx)
+    Map.null (closureCoverage out) @?= True
 
-test_forgePrunedCoverage :: Assertion
-test_forgePrunedCoverage = do
+-- Check pruning before interpreting either a real positive receipt or injected
+-- exceptional outcomes. The cache still holds references here, so an erroneous
+-- location publication would remain observable after logical pruning.
+test_forgePrunedCoverage :: Maybe BodyWriteReceipt -> Assertion
+test_forgePrunedCoverage replacement = do
   let (point, _, _) = fixture
   gate <- newEmptyTMVarIO
-  (ctx, notes) <- newContextHolding (atomically (readTMVar gate))
+  (base, notes) <- newContextHolding (atomically (readTMVar gate))
+  locations <- newTVarIO (0 :: Int)
+  summaries <- newTVarIO (0 :: Int)
+  let writer = lfcWriter base
+      cache = lfcTxCache base
+      ctx =
+        base
+          { lfcWriter = writer
+              { writeEbBody = \p eb fills txs -> do
+                  written <- writeEbBody writer p eb fills txs
+                  pure $ Promise $ do
+                    receipt <- await written
+                    pure (maybe receipt id replacement)
+              }
+          , lfcTxCache = cache
+              { setTxLocations = \p locs -> do
+                  atomically $ modifyTVar locations (+ 1)
+                  setTxLocations cache p locs
+              }
+          , lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientClosureSummary{} -> atomically $ modifyTVar summaries (+ 1)
+              _ -> pure ()
+          }
   withBodyWorkers ctx $ do
     modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
     Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
-      acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
+      submitFixtureForge ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
       modifyMVar_ (lfcOutstanding ctx) (pure . pruneOutstandingToImmTip (SlotNo 6))
       atomically (putTMVar gate ())
     readTVarIO notes >>= (@?= [])
+    readTVarIO locations >>= (@?= 0)
+    readTVarIO summaries >>= (@?= 0)
     out <- readMVar (lfcOutstanding ctx)
     Map.null (closureCoverage out) @?= True
     Map.null (ebState out) @?= True
+
+data ForgeReceiptCase
+  = ForgeComplete
+  | ForgeImmutable
+  | ForgeUnavailable
+  | ForgeUnavailableAfterBody
+  | ForgeUnfocused
+  deriving Eq
+
+withForgeSQLite :: (LeiosDbHandle IO -> Assertion) -> Assertion
+withForgeSQLite action =
+  withSystemTempDirectory "leios-forge-receipt" $ \dir ->
+    withLeiosDBSQLite nullTracer (dir <> "/volatile.db") (dir <> "/immutable.db") action
+
+-- The same policy consumes actual receipts from each backend. In particular,
+-- another full write to a complete immutable point must confirm all offsets,
+-- whereas supplying every TX cannot resurrect an omitted retired target.
+test_forgeBackend :: ForgeReceiptCase -> LeiosDbHandle IO -> Assertion
+test_forgeBackend mode db =
+  bracket
+    (newContextOver db point (pure (pure ())))
+    (closeWriter . lfcWriter . fst)
+    $ \(ctx, notes) -> withBodyWorkers ctx $ do
+      case mode of
+        ForgeImmutable -> do
+          receipt <- await =<< writeEbBody (lfcWriter ctx) point eb Map.empty supplied
+          receipt @?= BodyPresent (Set.fromList [0, 1])
+          leiosDbPromoteToImmutable db (SlotNo 6) [point]
+          garbageCollect db
+        ForgeUnavailable -> retireTarget
+        ForgeUnavailableAfterBody -> do
+          let request = MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound
+          processLeiosBlock ctx peer request eb
+          _ <- awaitNotes notes 1
+          atomically $
+            IOLike.readTVar (R.runtimeFacts (lfcRuntime ctx)) >>= check . Map.null . R.pending
+          out <- readMVar (lfcOutstanding ctx)
+          assertBool "body acquisition established coverage" $
+            Map.member point (closureCoverage out)
+          retireTarget
+        ForgeUnfocused ->
+          modifyMVar_ (lfcOutstanding ctx) $ \out ->
+            pure out{elFocus = Map.map (const otherHash) (elFocus out)}
+        ForgeComplete -> pure ()
+      modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+      Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ submitFixtureForge ctx point forged
+      if mode == ForgeUnavailable || mode == ForgeUnavailableAfterBody
+        then do
+          let expectedNotes = if mode == ForgeUnavailableAfterBody then [AcquiredBody point] else []
+          readTVarIO notes >>= (@?= expectedNotes)
+          assertRetired ctx point eb
+        else do
+          reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+          out <- readMVar (lfcOutstanding ctx)
+          assertNoJobLeft point out
+          if mode == ForgeUnfocused
+            then assertBool "fixture selects another EB for network fetch" $
+              not (isFocusedPoint point out)
+            else pure ()
+          (_, locations) <-
+            Cache.insertBody (lfcTxCache ctx) point (Cache.packEndorserBlock eb)
+              [] (\acc _ _ _ loc -> loc : acc)
+          locations @?= [Just (Leios.MkTxLocation point 1), Just (Leios.MkTxLocation point 0)]
+ where
+  (point, eb, txs) = fixture
+  forged = forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs)
+  supplied = Map.fromList (zip [0 ..] (map leiosTxBytes txs))
+  otherHash = endorserBlockHash (endorserBlockFromTxBytes (BS8.pack "other closure" :| []))
+  retireTarget = leiosDbPromoteToImmutable db (SlotNo 6) [] >> garbageCollect db
+
+-- The pure validation seam is exercised directly. Its caller's explicit
+-- successful-body evaluation before locking is a source-level invariant;
+-- a gated writer alone would not establish that evaluation order.
+test_serializedValidation :: Assertion
+test_serializedValidation = do
+  let (point, eb, _) = fixture
+      bytes = serialiseEndorserBlock eb
+      req = MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound
+  case Replies.validateLeiosBlock req bytes of
+    Right decoded -> Leios.endorserBlockBytes decoded @?= Leios.endorserBlockBytes eb
+    Left err -> assertFailure (show err)
+  let malformed = Leios.Serialised (Leios.unSerialised bytes <> Leios.unSerialised bytes)
+      malformedPoint = point{pointEbHash = Leios.hashSerialisedEndorserBlock malformed}
+  case Replies.validateLeiosBlock req{lbrPoint = malformedPoint} malformed of
+    Left ExnLeiosBlockUndecodable{} -> pure ()
+    other -> assertFailure ("invalid inner encoding accepted: " <> show other)
+  let bounds = MkLeiosEbByteSizes (encodeEndorserBlockSize eb - 1) maxBound
+  case Replies.validateLeiosBlock req{lbrEbBounds = bounds} bytes of
+    Left ExnLeiosBlockTooBig{} -> pure ()
+    other -> assertFailure ("oversized body accepted: " <> show other)
+  case Replies.validateLeiosBlock req{lbrEbBounds = MkLeiosEbByteSizes maxBound 0} bytes of
+    Left ExnLeiosClosureTooBig{} -> pure ()
+    other -> assertFailure ("oversized closure accepted: " <> show other)
+
+test_bodyUnavailable :: Assertion
+test_bodyUnavailable = do
+  let (point, eb, _) = fixture
+  db <- newLeiosDBInMemory
+  leiosDbPromoteToImmutable db (SlotNo 6) []
+  (ctx, notes) <- newContextOver db point (pure (pure ()))
+  withBodyWorkers ctx $
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  readTVarIO notes >>= (@?= [])
+  assertRetired ctx point eb
+
+test_txsUnavailable :: Assertion
+test_txsUnavailable = do
+  let (point, eb, txs) = fixture
+  db <- newLeiosDBInMemory
+  (ctx, notes) <- newContextOver db point (pure (pure ()))
+  withBodyWorkers ctx $ do
+    processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    _ <- awaitNotes notes 1
+    req <- closureRequest ctx point
+    leiosDbPromoteToImmutable db (SlotNo 6) []
+    garbageCollect db
+    processLeiosBlockTxs ctx peer req (V.fromList txs)
+  readTVarIO notes >>= (@?= [AcquiredBody point])
+  assertRetired ctx point eb
+
+assertRetired :: LeiosFetchClientContext IO Int -> LeiosPoint -> EndorserBlock -> Assertion
+assertRetired ctx point eb = do
+  out <- readMVar (lfcOutstanding ctx)
+  case Map.lookup point (ebState out) of
+    Just (MkEbState _ (BodyAcquired jobs)) -> assertBool "no repeated obsolete fetches" (Jobs.nullJobPool jobs)
+    other -> assertFailure ("retired target did not terminate: " <> show other)
+  Map.member point (closureCoverage out) @?= False
+  facts <- atomically (IOLike.readTVar (R.runtimeFacts (lfcRuntime ctx)))
+  Map.null (R.pending facts) @?= True
+  (_, locations) <-
+    Cache.insertBody
+      (lfcTxCache ctx)
+      point
+      (Cache.packEndorserBlock eb)
+      []
+      (\acc _ _ _ loc -> loc : acc)
+  locations @?= replicate (length (Leios.endorserBlockReferences eb)) Nothing

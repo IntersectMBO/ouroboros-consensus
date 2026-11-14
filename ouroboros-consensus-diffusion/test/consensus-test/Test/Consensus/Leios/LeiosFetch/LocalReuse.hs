@@ -39,6 +39,7 @@ import Test.Consensus.Leios.LeiosFetch.Replies
   , newContextHolding
   , processLeiosBlock
   , processLeiosBlockTxs
+  , submitFixtureForge
   )
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -85,9 +86,11 @@ testReceiptDrain = bounded $ do
     ( Receipts.withReceiptSubmission tasks $ do
         atomically $ putTMVar entered ()
         atomically $ readTMVar accepted
-        Receipts.forkReceipt tasks $ do
-          atomically $ readTMVar durable
-          atomically $ writeTVar callback True
+        transferred <- Receipts.withReceiptTransfer tasks (pure ()) $
+          Receipts.forkReceipt tasks $ do
+            atomically $ readTMVar durable
+            atomically $ writeTVar callback True
+        transferred @?= Just ()
     )
     $ \producer -> do
       atomically $ readTMVar entered
@@ -216,7 +219,11 @@ testForgeBodyOwner = bounded $ do
     withAsync
       ( Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
           withAsync
-            (acquireForgedEb ctx point forged >> atomically (S.putTMVar entered ()) >> atomically retry)
+            ( do
+                submitFixtureForge ctx point forged
+                atomically (S.putTMVar entered ())
+                atomically retry
+            )
             $ \producer -> do
               atomically (S.readTMVar entered)
               cancel producer
@@ -269,7 +276,7 @@ testCachedBody = bounded $ do
         (\w _ _ _ _ -> w)
     let local = newLocalReuse (sourceOf txs)
     Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
-      acquireCachedBody ctx{lfcLocalReuse = local} point maxBound
+      atomically $ queueCachedBody ctx{lfcLocalReuse = local} point maxBound
       void $ awaitNotes notes 2
 
 testPreparationComparison :: IO ()

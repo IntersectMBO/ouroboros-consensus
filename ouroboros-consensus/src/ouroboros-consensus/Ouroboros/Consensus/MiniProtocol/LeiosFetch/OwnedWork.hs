@@ -141,16 +141,24 @@ withOwnedWork ::
   (key -> payload -> m (m Bool)) ->
   m a ->
   m a
-withOwnedWork = withOwnedWorkN 1
+withOwnedWork work = withOwnedWorkN 1 work (\_ _ -> pure ())
 
 -- | A fixed worker group sharing the same queued/running capacity. The group
 -- has one supervised parent: the first failure cancels and joins its siblings
--- before propagating, even when several handlers fail concurrently.
+-- before propagating, even when several handlers fail concurrently. The
+-- nonblocking abandonment callback releases entry-scoped ownership on abort,
+-- including payloads no worker started. It must be idempotent with running
+-- handlers' finalizers and must not retry or reenter this queue.
 withOwnedWorkN ::
   forall m key payload a.
   (IOLike m, Ord key) =>
-  Int -> OwnedWork m key payload -> (key -> payload -> m (m Bool)) -> m a -> m a
-withOwnedWorkN count work process action
+  Int ->
+  OwnedWork m key payload ->
+  (key -> payload -> STM m ()) ->
+  (key -> payload -> m (m Bool)) ->
+  m a ->
+  m a
+withOwnedWorkN count work abandon process action
   | count <= 0 = error "withOwnedWorkN: non-positive worker count"
   | otherwise = mask $ \restore ->
       bracket (asyncWithUnmask (\unmask -> unmask (workers count))) cancel $ \child -> do
@@ -194,11 +202,15 @@ withOwnedWorkN count work process action
               (state work)
               (\st -> st{stopped = True, failure = case failure st of Nothing -> Just err; existing -> existing})
           throwIO err
-  abort = atomically $ modifyTVar (state work) $ \st ->
-    st
-      { stopped = True
-      , failure = Just (toException WorkClosed)
-      , entries = Map.empty
-      , queued = Seq.empty
-      , completed = Set.empty
-      }
+  abort = atomically $ do
+    st <- readTVar (state work)
+    mapM_ (\(key, (payload, _)) -> abandon key payload) (Map.toList (entries st))
+    writeTVar
+      (state work)
+      st
+        { stopped = True
+        , failure = Just (toException WorkClosed)
+        , entries = Map.empty
+        , queued = Seq.empty
+        , completed = Set.empty
+        }
