@@ -36,9 +36,11 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockHash
   , endorserBlockReferences
   , forgeLeiosEb
@@ -178,11 +180,11 @@ rwInsertTxsDropped rw point txs = Set.toAscList <$> (await =<< writeTxs (rwWrite
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
 
-rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe BS.ByteString)
+rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
 rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
-rwLookupEbClosure = lookupEbClosure . rwReader
+rwLookupEbClosure con point = fmap (map leiosTxBytes) <$> lookupEbClosure (rwReader con) point
 
 rwBatchRetrieveTxs :: RW -> LeiosPoint -> [TxOffset] -> IO (Map.Map TxOffset BS.ByteString)
 rwBatchRetrieveTxs rw point = batchRetrieveTxs (rwReader rw) point . Set.fromList
@@ -369,10 +371,6 @@ txBytesFor eb off = testTxBytes off size
 allTxsFor :: EndorserBlock -> [(TxOffset, BS.ByteString)]
 allTxsFor eb = [(off, txBytesFor eb off) | off <- [0 .. length (endorserBlockReferences eb) - 1]]
 
--- | The bytes the EB arrived in, as 'lookupEbBody' returns them.
-bodyBytes :: EndorserBlock -> BS.ByteString
-bodyBytes = serialiseEndorserBlock
-
 -- * Test fixtures for unit tests
 
 -- | Create a simple test EndorserBlockHash from a seed byte.
@@ -441,7 +439,7 @@ prop_pointsAccumulate impl =
           snd <$> timed (rwInsertEbBody con p (mkTestEb 1))
         (bodies, lookupTime) <- timed $ mapM (rwLookupEbBody con) points
         pure $
-          bodies === map (const (Just (bodyBytes (mkTestEb 1)))) points
+          bodies === map (const (Just (serialiseEndorserBlock (mkTestEb 1)))) points
             & tabulate "insertEbBody" [timeBucket $ maximum insertTimes]
             & tabulate "lookupEbBody" [timeBucket lookupTime]
 
@@ -453,7 +451,7 @@ prop_ebsInsertThenLookup impl =
   forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-        let expected = Just (bodyBytes eb)
+        let expected = Just (serialiseEndorserBlock eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
         (result, lookupTime) <- timed $ rwLookupEbBody con point
         pure $
@@ -756,7 +754,7 @@ test_readsDispatchBySlot impl = withFreshDb impl $ \db -> withRW db $ \con -> do
   rwBatchRetrieveTxs con again [0, 1] >>= (@?= Map.singleton 0 (txBytesFor eb 0))
   rwLookupEbClosure con again >>= (@?= Nothing)
   rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
-  rwLookupEbBody con promoted >>= (@?= Just (bodyBytes eb))
+  rwLookupEbBody con promoted >>= (@?= Just (serialiseEndorserBlock eb))
   rwScanComplete con 0 >>= (@?= [promoted])
 
 -- | A crash can lose the volatile writes that completed a promoted EB, but not
@@ -828,7 +826,7 @@ test_readOvertakenByCollection volDbPath immDbPath db = do
       let overtaken readDb = do
             atomically $ writeTVar promotedSlotVar 6
             lookupBlob readDb point
-      readPartition conn point overtaken >>= (@?= Just (bodyBytes eb))
+      readPartition conn point overtaken >>= (@?= Just (endorserBlockBytes eb))
 
 -- | Whether the reader sees the EB's whole closure.
 holdsClosure :: RW -> LeiosPoint -> IO Bool
@@ -888,7 +886,7 @@ test_gcBoundsPointsOfReannouncedEb volDbPath _immDbPath db = withRW db $ \con ->
     rwInsertEbBody con (mkTestPoint (10 * n) 1) eb
     collectBefore db (10 * n)
   ebRows volDbPath >>= (@?= 1)
-  rwLookupEbBody con (mkTestPoint 100 1) >>= (@?= Just (bodyBytes eb))
+  rwLookupEbBody con (mkTestPoint 100 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
 test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
@@ -906,7 +904,7 @@ test_gcCollectsManyPoints volDbPath _immDbPath db = withRW db $ \con -> do
     rwInsertEbBody con (mkTestPoint (fromIntegral slot) 1) eb
   collectBefore db (fromIntegral n)
   ebRows volDbPath >>= (@?= 1)
-  rwLookupEbBody con (mkTestPoint (fromIntegral n) 1) >>= (@?= Just (bodyBytes eb))
+  rwLookupEbBody con (mkTestPoint (fromIntegral n) 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
 test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
 test_gcKeepsPromotedEb db = withRW db $ \con -> do
@@ -1040,7 +1038,7 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     rwScanComplete con 0 >>= (@?= [MkLeiosPoint 5 keptHash])
     rwLookupEbBody con (MkLeiosPoint 15 keptHash) >>= (@?= Nothing)
     keptBody <- rwLookupEbBody con (MkLeiosPoint 5 keptHash)
-    keptBody @?= Just (bodyBytes eb)
+    keptBody @?= Just (serialiseEndorserBlock eb)
     droppedBody <- rwLookupEbBody con (MkLeiosPoint 15 droppedHash)
     droppedBody @?= Nothing
     keptClosure <- rwLookupEbClosure con (MkLeiosPoint 5 keptHash)
@@ -1101,7 +1099,7 @@ test_reopenKeepsData volDbPath immDbPath = do
     withRW db $ \con -> rwInsertEbBody con (MkLeiosPoint 5 ebHash) eb
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
     withRW db $ \con ->
-      rwLookupEbBody con (MkLeiosPoint 5 ebHash) >>= (@?= Just (bodyBytes eb))
+      rwLookupEbBody con (MkLeiosPoint 5 ebHash) >>= (@?= Just (serialiseEndorserBlock eb))
 
 -- | Open a database file on a connection of its own.
 withSqlFile :: FilePath -> (SQL.Database -> IO a) -> IO a
@@ -1168,7 +1166,7 @@ prop_storeForgedEbThenLookup impl =
           withReader db $ \reader ->
             (,)
               <$> scanCompleteEbClosuresNotOlderThanSlot reader 0
-              <*> lookupEbClosure reader (MkLeiosPoint slot ebHash)
+              <*> (fmap (map leiosTxBytes) <$> lookupEbClosure reader (MkLeiosPoint slot ebHash))
         pure $
           conjoin
             [ counterexample "the point is not the slot and the hash of the body" $
@@ -1278,7 +1276,7 @@ observe ::
   IO
     ( (Int, Int)
     , ( [[TxOffset]]
-      , ( [ ( Maybe BS.ByteString
+      , ( [ ( Maybe (Serialised EndorserBlock)
             , Maybe [BS.ByteString]
             , Map.Map TxOffset BS.ByteString
             )

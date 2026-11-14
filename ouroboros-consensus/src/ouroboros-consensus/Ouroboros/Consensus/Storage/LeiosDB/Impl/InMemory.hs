@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (guard)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -33,11 +34,12 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
@@ -223,10 +225,10 @@ isPromoted :: InMemoryLeiosDb -> LeiosPoint -> Bool
 isPromoted s point = pointSlotNo point < imPromotedSlot s
 
 imLookupEbBody ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe ByteString)
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe (Serialised EndorserBlock))
 imLookupEbBody stateVar point = atomically $ do
   state <- readTVar stateVar
-  pure $ rowBody <$> rowAt state point
+  pure $ Serialised . BSL.fromStrict . rowBody <$> rowAt state point
 
 -- | Mirrors the SQLite backend: the row of the point, unless an earlier
 -- delivery wrote it, then the fills, returning the offsets the point holds.
@@ -268,7 +270,7 @@ imInsertEbBody stateVar point eb fills = do
   refs = Map.fromList (zip [0 ..] (endorserBlockReferences eb))
   newRow =
     EbRow
-      { rowBody = serialiseEndorserBlock eb
+      { rowBody = endorserBlockBytes eb
       , rowTxSizes = fmap snd refs
       , rowTxs = Map.empty
       }
@@ -320,12 +322,12 @@ imBatchRetrieveTxs stateVar point offsets = atomically $ do
     Just row -> rowTxs row `Map.restrictKeys` offsets
 
 imLookupEbClosure ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [ByteString])
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [LeiosTx])
 imLookupEbClosure stateVar point = atomically $ do
   state <- readTVar stateVar
   pure $ do
     row <- rowAt state point
-    traverse (`Map.lookup` rowTxs row) (Map.keys (rowTxSizes row))
+    traverse (fmap MkLeiosTx . (`Map.lookup` rowTxs row)) (Map.keys (rowTxSizes row))
 
 -- | Whether reads of the point go to the immutable partition: it is older
 -- than the slot the latest promotion reached.

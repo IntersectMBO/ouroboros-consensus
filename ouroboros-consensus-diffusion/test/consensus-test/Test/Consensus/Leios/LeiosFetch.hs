@@ -1,4 +1,4 @@
--- | Tests of LeiosFetch's codec, and of its client and server as the node runs
+-- | Tests of LeiosFetch's codec, and of its server as the node runs
 -- them.
 module Test.Consensus.Leios.LeiosFetch (tests) where
 

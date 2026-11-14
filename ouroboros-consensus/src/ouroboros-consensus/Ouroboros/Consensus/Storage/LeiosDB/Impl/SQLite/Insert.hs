@@ -27,9 +27,9 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosTx (..)
   , TxLocation (..)
   , TxOffset
+  , endorserBlockBytes
   , endorserBlockReferences
   , hashLeiosTx
-  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
@@ -148,7 +148,7 @@ sqlInsertEbBody conn point eb fills = do
         dbStep1 stmt
         DB.changes db
 
-  bodyBytes = serialiseEndorserBlock eb
+  bodyBytes = endorserBlockBytes eb
   refs = endorserBlockReferences eb
   Conn{conVolDb = db} = conn
 

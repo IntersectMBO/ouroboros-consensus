@@ -2,14 +2,18 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests of the node's LeiosFetch client and server, over real connections,
 -- against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
+import qualified Codec.CBOR.Encoding as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (timeout)
@@ -21,7 +25,9 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
 import qualified Data.Vector.Strict as V
+import Data.Word (Word32)
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
@@ -29,8 +35,11 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxHash
+  , deserialiseEndorserBlock
   , mkEndorserBlock
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
@@ -43,7 +52,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import Ouroboros.Network.Channel (Channel)
-import Ouroboros.Network.Driver.Simple (runAnnotatedPeer)
+import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -62,7 +71,13 @@ tests =
         runSimFinishing (nodeServerAgainst doneClient) >>= (@?= ServerEnded)
     , testCase "the node serves an endorser block it holds" $
         runSimFinishing (nodeAnswers (requestBlock heldPoint))
-          >>= (@?= (Just (ReplyBlock heldEb), ServerEnded))
+          >>= (@?= (Just (ReplyBlock (serialiseEndorserBlock heldEb)), ServerEnded))
+    , testCase "the node serves an endorser block in the bytes it received" $ do
+        -- Otherwise a server re-encoding it would pass the test above.
+        assertBool "the bytes are canonical" $
+          nonCanonicalBytes /= serialiseEndorserBlock (mkEndorserBlock nonCanonicalReferences)
+        runSimFinishing (nodeAnswers (requestBlock nonCanonicalPoint))
+          >>= (@?= (Just (ReplyBlock nonCanonicalBytes), ServerEnded))
     , testCase "the node serves the transactions it holds" $
         runSimFinishing (nodeAnswers (requestTxs heldPoint (bitmapsNaming [0, 63, 64])))
           >>= (@?= (Just (ReplyTxs (map heldTx [0, 63, 64])), ServerEnded))
@@ -95,7 +110,13 @@ data ServerOutcome = ServerEnded | ServerFailed String
   deriving (Eq, Show)
 
 type EnvClient s =
-  Peer (LeiosFetch LeiosPoint EndorserBlock LeiosTx) AsClient NonPipelined StIdle (IOSim s) ()
+  Peer
+    (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)
+    AsClient
+    NonPipelined
+    StIdle
+    (IOSim s)
+    ()
 
 -- | Run the node's server, with 'heldEb' in its LeiosDB, against a peer that
 -- runs this client.
@@ -116,12 +137,12 @@ nodeServerAgainst client = withNode $ \node -> do
       Left e -> pure $ ServerFailed (show e)
 
 runEnvClient :: NodeUnderTest (IOSim s) -> EnvClient s -> Channel (IOSim s) ByteString -> IOSim s ()
-runEnvClient node client chan = fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan client
+runEnvClient node client chan = fst <$> runPeer nullTracer (envLeiosFetchCodec node) chan client
 
 doneClient :: EnvClient s
 doneClient = Yield ReflClientAgency MsgDone $ Done ReflNobodyAgency ()
 
-data Reply = ReplyBlock EndorserBlock | ReplyTxs [LeiosTx]
+data Reply = ReplyBlock (Serialised EndorserBlock) | ReplyTxs [LeiosTx]
   deriving (Eq, Show)
 
 -- | The node's reply to the client's one request, if it replied, and how its
@@ -184,11 +205,35 @@ heldTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 heldTx :: Int -> LeiosTx
 heldTx = MkLeiosTx . heldTxBytes
 
--- | Write 'heldEb' and all its transactions but the last.
+-- | The references of an endorser block received in bytes the node would not
+-- write itself.
+nonCanonicalReferences :: [(TxHash, Word32)]
+nonCanonicalReferences = [(heldTxHash i, fromIntegral (BS.length (heldTxBytes i))) | i <- [0 .. 2]]
+
+-- | Those references as an indefinite-length map, which the ledger decodes but
+-- never encodes.
+nonCanonicalBytes :: Serialised EndorserBlock
+nonCanonicalBytes =
+  Serialised . CBOR.toLazyByteString $
+    CBOR.encodeMapLenIndef
+      <> foldMap
+        (\(txHash, size) -> CBOR.encodeBytes (hashToBytes txHash) <> CBOR.encodeWord32 size)
+        nonCanonicalReferences
+      <> CBOR.encodeBreak
+
+nonCanonicalPoint :: LeiosPoint
+nonCanonicalPoint = MkLeiosPoint 2 (UnsafeHash (SBS.replicate 32 3))
+
+-- | Write 'heldEb' and all its transactions but the last, and the endorser
+-- block of 'nonCanonicalBytes'.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
   _ <- await =<< writeEbBody writer heldPoint heldEb mempty
   _ <- await =<< writeTxs writer heldPoint (Map.fromList [(i, heldTxBytes i) | i <- [0 .. 68]])
+  nonCanonicalEb <-
+    either (throwIO . userError . show) pure $
+      deserialiseEndorserBlock (Proxy @DijkstraEra) nonCanonicalBytes
+  _ <- await =<< writeEbBody writer nonCanonicalPoint nonCanonicalEb mempty
   pure ()
 
 {-------------------------------------------------------------------------------

@@ -1575,6 +1575,7 @@ test-suite consensus-diffusion-test
     cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-binary,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,

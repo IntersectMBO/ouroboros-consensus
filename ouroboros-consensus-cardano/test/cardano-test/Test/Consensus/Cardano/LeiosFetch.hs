@@ -5,29 +5,35 @@
 module Test.Consensus.Cardano.LeiosFetch (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Ledger.Core (bodyTxL, certsTxBodyL)
+import Cardano.Ledger.Dijkstra.TxBody (subTransactionsTxBodyL)
 import Codec.CBOR.Read (DeserialiseFailure)
-import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString, toStrict)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Vector.Strict as V
-import Network.TypedProtocol.Codec (AnnotatedCodec, AnyMessage (..), CodecF (..))
+import Lens.Micro ((&), (.~))
+import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..))
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , decodeEndorserBlock
+  , Serialised
   , decodeLeiosPoint
   , decodeLeiosTx
-  , encodeEndorserBlock
+  , decodeSerialisedEndorserBlock
   , encodeLeiosPoint
   , encodeLeiosTx
+  , encodeSerialisedEndorserBlock
   , maxTxsPerEndorserBlock
   , mkEndorserBlock
+  , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
+import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
+import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraTx)
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Serialisation.CDDL (cddlTest, isCDDLCDisabled)
@@ -52,14 +58,14 @@ prop_nodeCodecMatchesCDDL =
       pure $ either (`counterexample` False) (const $ property True) result
  where
   nodeCodec ::
-    AnnotatedCodec (LeiosFetch LeiosPoint EndorserBlock LeiosTx) DeserialiseFailure IO ByteString
+    Codec (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) DeserialiseFailure IO ByteString
   nodeCodec =
     codecLeiosFetch
       maxTxsPerEndorserBlock
       encodeLeiosPoint
       decodeLeiosPoint
-      encodeEndorserBlock
-      decodeEndorserBlock
+      encodeSerialisedEndorserBlock
+      decodeSerialisedEndorserBlock
       encodeLeiosTx
       decodeLeiosTx
 
@@ -69,7 +75,7 @@ prop_nodeCodecMatchesCDDL =
       , AnyMessage . MsgLeiosBlockRequest <$> genPoint
       , AnyMessage . MsgLeiosBlock <$> genEb
       , fmap AnyMessage $ MsgLeiosBlockTxsRequest <$> genPoint <*> genBitmaps
-      , AnyMessage . MsgLeiosBlockTxs . V.fromList <$> listOf genTx
+      , AnyMessage . MsgLeiosBlockTxs . V.fromList <$> listOf (pure tx)
       ]
 
   genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> genHash
@@ -80,8 +86,17 @@ prop_nodeCodecMatchesCDDL =
     indices <- Set.toAscList . Set.fromList <$> arbitrary
     traverse (\i -> (,) i . getPositive <$> arbitrary) indices
 
-  genEb = mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
+  genEb = serialiseEndorserBlock . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 
-  genTx = MkLeiosTx . BS.pack <$> arbitrary
+  -- As the forge writes it, but without certificates and sub-transactions.
+  --
+  -- FIXME Workaround for a cuddle bug: it rejects an optional entry in a group
+  -- spliced into an array, as the bls_key of the pool registrations, here and
+  -- in the sub-transactions, although they match the CDDL.
+  tx =
+    MkLeiosTx . serializeTxForLeios $
+      exampleDijkstraTx
+        & bodyTxL . certsTxBodyL .~ mempty
+        & bodyTxL . subTransactionsTxBodyL .~ mempty
 
   genHash = UnsafeHash . SBS.pack <$> vectorOf 32 arbitrary
