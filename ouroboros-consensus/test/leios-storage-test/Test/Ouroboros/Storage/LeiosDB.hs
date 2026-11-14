@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests for the "Ouroboros.Consensus.Storage.LeiosDB" interface.
 --
@@ -9,7 +10,8 @@
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
-import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToStringAsHex)
+import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes, hashToStringAsHex)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, newTVarIO, writeTVar)
 import Control.DeepSeq (force)
@@ -18,6 +20,7 @@ import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
@@ -26,6 +29,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
@@ -36,10 +40,11 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
-  , Serialised
+  , Serialised (..)
   , TxHash
   , TxLocation (..)
   , TxOffset
+  , deserialiseEndorserBlock
   , endorserBlockBytes
   , endorserBlockHash
   , endorserBlockReferences
@@ -245,6 +250,8 @@ mkTestGroups impl =
       "ebs"
       [ testProperty "insert then lookup" $ prop_ebsInsertThenLookup impl
       , testProperty "lookup missing returns empty" $ prop_ebsLookupMissing impl
+      , testCase "a body keeps the bytes it was received in" $
+          withFreshDb impl test_bodyKeepsReceivedBytes
       ]
   , testGroup
       "transactions"
@@ -469,6 +476,26 @@ prop_ebsLookupMissing impl =
       pure $
         result === Nothing
           & tabulate "lookupEbBody (missing)" [timeBucket lookupTime]
+
+-- | A body is stored in the bytes it was received in, even when those are not
+-- the ledger's encoding of its references.
+test_bodyKeepsReceivedBytes :: LeiosDbHandle IO -> IO ()
+test_bodyKeepsReceivedBytes db = do
+  let
+    -- A map of one reference, whose size takes five bytes where the ledger
+    -- would write two.
+    received =
+      Serialised . BSL.fromStrict $
+        BS.concat
+          [BS.pack [0xa1, 0x58, 0x20], hashToBytes (testTxHash 0 101), BS.pack [0x1a, 0, 0, 0, 101]]
+    point = mkTestPoint (SlotNo 1) 1
+  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @DijkstraEra) received
+  assertBool
+    "the ledger encodes these references in other bytes"
+    (serialiseEndorserBlock (mkEndorserBlock (endorserBlockReferences eb)) /= received)
+  withRW db $ \con -> do
+    rwInsertEbBody con point eb
+    rwLookupEbBody con point >>= (@?= Just received)
 
 -- * Property tests for transactions
 
