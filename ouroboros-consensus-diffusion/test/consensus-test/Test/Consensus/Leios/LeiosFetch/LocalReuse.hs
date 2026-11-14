@@ -32,6 +32,7 @@ import Test.Consensus.Leios.LeiosFetch.Replies
   ( awaitNotes
   , fixture
   , newContext
+  , newContextAt
   , newContextHolding
   , processLeiosBlock
   , processLeiosBlockTxs
@@ -75,7 +76,8 @@ tests :: TestTree
 tests =
   testGroup
     "bounded local reuse and receipts"
-    [ testCase "DB-filled closures do not wait on a missing mempool" $ bounded $ withLocal txs $ \p eb _ writer -> do
+    [ testCase "whole EB preparation comparison fixture" testPreparationComparison
+    , testCase "DB-filled closures do not wait on a missing mempool" $ bounded $ withLocal txs $ \p eb _ writer -> do
         _ <- await =<< writeTxs writer p (Map.fromList [(i, leiosTxBytes tx) | (i, tx) <- zip [0 ..] txs])
         local <- newLocalReuse (pure False) (LocalSource (const retry) (\() -> pure Nothing)) writer
         resolve local p eb (IntSet.fromList [0, 1]) >>= (@?= IntSet.fromList [0, 1])
@@ -90,6 +92,21 @@ tests =
         forM_ [pure (Just (MkLeiosTx (BS.replicate 7 0))), pure Nothing] $ \project -> do
           local <- newLocalReuse (pure False) ((sourceOf txs){localBytes = const project}) writer
           resolve local p eb IntSet.empty >>= (@?= IntSet.empty)
+    , testCase "projection is checked before even a non-strict writer is entered" $ bounded $ withLocal txs $ \p eb _ writer -> do
+        entered <- S.newTVarIO False
+        let bad = (sourceOf txs){localBytes = const (pure (Just (MkLeiosTx (error "bad projection"))))}
+            counted =
+              writer
+                { writeTxs = \_ _ ->
+                    atomically (S.writeTVar entered True)
+                      >> pure (Promise (pure (TxWriteReceipt Set.empty Set.empty True)))
+                }
+        local <- newLocalReuse (pure False) bad counted
+        result <- try (resolve local p eb IntSet.empty)
+        case result of
+          Left (_ :: SomeException) -> pure ()
+          Right _ -> assertFailure "unevaluated projection escaped"
+        S.readTVarIO entered >>= (@?= False)
     , testCase "unconfirmed imports do not suppress work" $ bounded $ withLocal txs $ \p eb _ writer -> do
         let unconfirmed = writer{writeTxs = \_ _ -> pure (Promise (pure (TxWriteReceipt Set.empty Set.empty True)))}
         local <- newLocalReuse (pure False) (sourceOf txs) unconfirmed
@@ -123,7 +140,7 @@ tests =
     , testCase "local receipt survives peer removal" testPeerRemoval
     , testCase "retirement between slices stops further optional imports" testRetireBetweenSlices
     , testCase "accepted TX settlement survives post-acceptance tracing failure" testTraceFailure
-    , testCase "interrupted forge TX submission still owns its accepted body" testForgeBodyOwner
+    , testCase "interrupted forge caller still owns its combined receipt" testForgeBodyOwner
     ]
  where
   (_, _, txs) = fixture
@@ -482,3 +499,38 @@ testRetireBetweenSlices = bounded $ withLocal txs $ \point eb _ writer -> do
   S.readTVarIO calls >>= (@?= 1)
  where
   txs = [MkLeiosTx (BS.replicate 19000 i) | i <- [0 .. 2]]
+
+-- Identical payload and overlap inputs are used for the saved reference and
+-- whole-EB candidate. Report operation counts, not timing or heap claims.
+testPreparationComparison :: IO ()
+testPreparationComparison = bounded $ forM_ [0, 100, 200] $ \overlap -> do
+  let txs = [MkLeiosTx (BS.replicate 3000 i) | i <- [0 .. 199]]
+      eb = endorserBlockFromTxBytes (case map leiosTxBytes txs of x : xs -> x :| xs; [] -> error "fixture")
+      point = MkLeiosPoint 5 (endorserBlockHash eb)
+  (base, notes) <- newContextAt point (pure ())
+  counts <- S.newTVarIO (0 :: Int, 0 :: Int, 0 :: Int)
+  let original = lfcWriter base
+      writer =
+        original
+          { writeEbBody = \p body fills given -> do
+              atomically $ S.modifyTVar counts (\(b, t, l) -> (b + 1, t, l))
+              writeEbBody original p body fills given
+          , writeTxs = \p given -> do
+              atomically $ S.modifyTVar counts (\(b, t, l) -> (b, t + 1, l))
+              writeTxs original p given
+          }
+      source =
+        (sourceOf (take overlap txs))
+          { localLookup = \requested -> do
+              S.modifyTVar counts (\(b, t, l) -> (b, t, l + 1))
+              localLookup (sourceOf (take overlap txs)) requested
+          }
+  local <- newLocalReuse (Receipts.receiptClosing (lfcReceiptTasks base)) source writer
+  let ctx = base{lfcWriter = writer, lfcLocalReuse = local}
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    processLeiosBlock ctx 0 (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+    void $ awaitNotes notes (if overlap == 200 then 2 else 1)
+  result <- S.readTVarIO counts
+  putStrLn ("PREPARATION overlap=" ++ show overlap ++ " body,tx,lookup=" ++ show result)
+  case result of
+    (bodyWrites, _, _) -> bodyWrites @?= 1

@@ -859,6 +859,7 @@ test-suite consensus-test
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.LocalReuse
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
@@ -2114,7 +2115,7 @@ test-suite cardano-test
     cardano-ledger-babbage:testlib,
     cardano-ledger-binary:testlib,
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
-    cardano-ledger-conway:testlib,
+    cardano-ledger-conway:{cardano-ledger-conway, testlib},
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-mary:testlib,

@@ -447,8 +447,8 @@ decodePause completeInput = do
       peer =
         toLeiosFetchClientPeerPipelined
           (leiosFetchClientPeerPipelined 150 (awaitTerminate (readTVar control)) (nextLeiosFetchJob ctx client))
-  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
-    withAsync
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx)
+    $ withAsync
       ( runLeiosFetchClient
           nullTracer
           slowCodec
@@ -457,7 +457,8 @@ decodePause completeInput = do
           client
           peer
           channel
-      ) $ \downstream -> do
+      )
+    $ \downstream -> do
       SI.threadDelay 1.1
       state <- atomically (readTVar (R.runtimeFacts rt))
       let expired = expireRuntimeHeads (Time 1.1) (const True) state

@@ -7,14 +7,15 @@
 module Test.Consensus.Leios.LeiosFetch.Replies
   ( tests
   , fixture
-  , newContext
-  , newContextHolding
-  , awaitNotes
-  , processLeiosBlock
-  , processLeiosBlockTxs
   , tryEnqueueRequest
   , assignRequests
   , expireRuntimeHeads
+  , newContext
+  , newContextHolding
+  , newContextAt
+  , awaitNotes
+  , processLeiosBlock
+  , processLeiosBlockTxs
   ) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))

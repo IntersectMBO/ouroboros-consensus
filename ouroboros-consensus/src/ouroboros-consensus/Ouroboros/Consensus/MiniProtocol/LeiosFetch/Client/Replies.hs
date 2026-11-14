@@ -113,6 +113,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , FetchPhase (..)
   , FetchRoutine (..)
+  , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchDetailEvent (..)
   , fetchArrivalEvicted
@@ -418,9 +420,9 @@ processLeiosBlock ownership ctx peer req bytes =
                 if not claimed
                   then pure (outstanding, BodyDiscarded (fetchArrivalExtra ebBytesSize))
                   else do
-                    (_summary, fills) <-
+                    (summary, fills) <-
                       insertBodyAndFoldl' lfcTxCache point (packEndorserBlock eb) Map.empty snocLocated
-                    pure (outstanding, BodyToWrite eb fills)
+                    pure (outstanding, BodyToWrite eb summary fills)
         atomically $ W.notifyReadiness lfcReady
         case delivery of
           BodyTooBig exn -> do
@@ -428,7 +430,7 @@ processLeiosBlock ownership ctx peer req bytes =
               TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
             throwIO exn
           BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-          BodyToWrite eb fills -> do
+          BodyToWrite eb summary fills -> do
             written <- writeEbBody lfcWriter point eb fills Map.empty
             acceptedAt <- getMonotonicTime
             emitAccepted <- atomically (acceptedReply ownership acceptedAt ebBytesSize)
@@ -439,6 +441,11 @@ processLeiosBlock ownership ctx peer req bytes =
                   `finally` finishReplyReceipt ownership
               )
             emitAccepted
+            traceWith lfcTracer $
+              TraceLeiosFetchClientBlockTxSources
+                point
+                (MkLeiosBlockTxSources (length fills) 0 (length (endorserBlockReferences eb) - length fills))
+                summary
         -- Accept a valid body even if its offer understated its size.
         when (ebBytesSize /= lbrOfferedSize req) $
           throwIO $
@@ -477,7 +484,7 @@ data BodyDelivery
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite !EndorserBlock !LocalFills
+    BodyToWrite !EndorserBlock !(Maybe LeiosTxCacheInsertBodySummary) !LocalFills
 
 -- | Record the body as acquired at its point, now that its write is durable,
 -- with jobs for the txs the point does not hold yet, and emit what is acquired.
@@ -586,9 +593,8 @@ settleBody ctx peer point eb now bodyWritten = do
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
 -- one that arrived with no peer: take its body into the LeiosTxCache, write it
--- together with all its txs, take those into the LeiosTxCache as validated,
--- wait for the write to be durable, and then settle the point
--- ('settleForgedEb').
+-- with all its txs, take those into the LeiosTxCache as validated, and
+-- settle the point once the combined write is durable ('settleForgedEb').
 --
 -- Its txs go to 'writeEbBody' with the body, rather than 'writeTxs', since
 -- they have not passed the MsgLeiosBlockTxs commitment check. Their bytes are
@@ -596,7 +602,7 @@ settleBody ctx peer point eb now bodyWritten = do
 -- point, since all of them are written.
 --
 -- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- write in the same transaction as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -634,7 +640,7 @@ submitForgedEb ctx point forged = Receipts.withReceiptSubmissionResult (lfcRecei
   eb = forgedEbBody forged
 
 -- | Record the forge's endorser block as acquired at this point, with no job
--- left, now that its writes are durable, and emit what of its acquisition the
+-- left, now that its write is durable, and emit what of its acquisition the
 -- node had not already emitted there ('settleReceivingFromForge').
 settleForgedEb ::
   IOLike m =>
