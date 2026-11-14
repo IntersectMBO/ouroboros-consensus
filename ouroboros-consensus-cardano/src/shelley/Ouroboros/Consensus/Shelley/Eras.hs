@@ -49,8 +49,13 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
 import qualified Cardano.Ledger.Conway.State as CG
-import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import Cardano.Ledger.Dijkstra
+  ( ApplyTxError (DijkstraApplyTxError)
+  , DijkstraApplyBlock
+  , DijkstraEra
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (DijkstraEraBlockBody)
+import Cardano.Ledger.Dijkstra.PParams (DijkstraEraPParams)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -61,6 +66,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure, ValidationPolicy (ValidateAll))
 import Data.ByteString (ByteString)
@@ -161,7 +167,11 @@ data LeiosEraDict era where
   LeiosEraDict ::
     ( SafeToHash (Core.Tx TopTx era)
     , HashAnnotated (Core.Tx TopTx era) EraIndependentTx
+    , DecCBOR (Annotator (Core.Tx TopTx era))
     , DijkstraEraBlockBody era
+    , DijkstraApplyBlock (LeiosLedger.Header StandardCrypto) era
+    , DijkstraEraPParams era
+    , Show (Dijkstra.EbPredFailure era)
     ) =>
     LeiosEraDict era
 
