@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Mempool.API
     -- * Transaction adding
   , AddTxOnBehalfOf (..)
   , MempoolAddTxResult (..)
+  , MempoolAdmissionError (..)
   , addLocalTxs
   , addTxs
   , isMempoolTxAdded
@@ -174,6 +175,23 @@ data Mempool m blk = Mempool
   -- As long as we keep the mempool entirely in-memory this could live in
   -- @STM m@; we keep it in @m@ instead to leave open the possibility of
   -- persistence.
+  , tryAddLocalTx :: GenTx blk -> m (Either MempoolAdmissionError (MempoolAddTxResult blk))
+  -- ^ Attempt to add a local transaction without waiting for the admission FIFO
+  -- or for mempool capacity. Uses the same validation and capacity checks as
+  -- 'addTx' with 'AddTxForLocalClient'.
+  --
+  -- 'Left' means this attempt neither added nor queued the transaction. It will
+  -- not add the transaction later when capacity becomes available. Another
+  -- submission of the same transaction, including from a peer, is independent
+  -- of this result. 'Right' contains the usual admission or validation result.
+  --
+  -- 'MempoolBusy' can occur even when there is spare capacity. Callers that retry
+  -- should back off; unlike 'addTx', retries have no FIFO fairness guarantee.
+  -- Existing queued 'addTx' callers retain their place in the admission FIFO.
+  --
+  -- This is not a wall-clock deadline: once admission is acquired, ledger
+  -- synchronization, ledger I/O and validation can still take time. An exception
+  -- or cancellation does not provide the same guarantee as a returned 'Left'.
   , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
   -- ^ Manually remove the given transactions from the mempool.
   , getSnapshot :: STM m (MempoolSnapshot blk)
@@ -308,6 +326,9 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
 -------------------------------------------------------------------------------}
 
 -- | The result of attempting to add a transaction to the mempool.
+--
+-- Admission failures that are not ledger validation errors are represented
+-- separately by 'MempoolAdmissionError'.
 data MempoolAddTxResult blk
   = -- | The transaction was added to the mempool.
     MempoolTxAdded !(Validated (GenTx blk)) !(LedgerTables blk DiffMK)
@@ -331,6 +352,15 @@ deriving instance
   , Show (TxOut blk)
   ) =>
   Show (MempoolAddTxResult blk)
+
+-- | A local submission could not proceed with admission. These are transient
+-- conditions, independent of the transaction's validity and the ledger era.
+data MempoolAdmissionError
+  = -- | Another submission owns or is queued for the admission FIFO.
+    MempoolBusy
+  | -- | The transaction does not fit the current mempool capacity.
+    MempoolFull
+  deriving (Eq, Show, Generic, NoThunks)
 
 mempoolTxAddedToMaybe :: MempoolAddTxResult blk -> Maybe (Validated (GenTx blk))
 mempoolTxAddedToMaybe (MempoolTxAdded vtx _) = Just vtx

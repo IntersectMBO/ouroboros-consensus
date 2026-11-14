@@ -15,7 +15,11 @@ import Data.Functor.Identity (runIdentity)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Mempool.API (Mempool (..), MempoolTimeoutConfig)
+import Ouroboros.Consensus.Mempool.API
+  ( AddTxOnBehalfOf (AddTxForLocalClient)
+  , Mempool (..)
+  , MempoolTimeoutConfig
+  )
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
@@ -112,6 +116,7 @@ mkMempool ::
 mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
+    , tryAddLocalTx = implAddTx mpEnv TryAddTx AddTxForLocalClient
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
