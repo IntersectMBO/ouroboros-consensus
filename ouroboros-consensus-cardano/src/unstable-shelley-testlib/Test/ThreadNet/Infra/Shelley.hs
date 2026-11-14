@@ -32,6 +32,7 @@ module Test.ThreadNet.Infra.Shelley
   , mkSetDecentralizationParamTxs
   , mkVerKey
   , networkId
+  , signTx
   , tpraosSlotLength
   ) where
 
@@ -124,6 +125,7 @@ import Quiet (Quiet (..))
 import System.FS.API (SomeHasFS)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
+  , mkWitnessVKey
   , mkWitnessesVKey
   )
 import qualified Test.Cardano.Ledger.Shelley.Generator.Core as Gen
@@ -608,6 +610,17 @@ mkKeyHashVrf = hashVerKeyVRF @c . deriveVerKeyVRF
 
 networkId :: SL.Network
 networkId = SL.Testnet
+
+-- | Witness a transaction with the given key, replacing any other witnesses.
+signTx ::
+  SL.EraTx era =>
+  SignKeyDSIGN LK.DSIGN ->
+  SL.Tx SL.TopTx era ->
+  SL.Tx SL.TopTx era
+signTx sk tx =
+  tx
+    & SL.witsTxL . SL.addrTxWitsL
+      .~ Set.fromList [TL.mkWitnessVKey (hashAnnotated (tx ^. SL.bodyTxL)) (mkKeyPair sk)]
 
 {-------------------------------------------------------------------------------
   Temporary Workaround
