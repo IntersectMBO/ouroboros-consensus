@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Maintenance of LeiosDB's volatile and immutable partitions.
 --
@@ -10,22 +9,21 @@
 --   * the in-memory 'LeiosDbStats'.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   ( -- * Promotion to the immutable partition
-    sqlPromoteToImmutable
-  , startCopier
+    Promoter
+  , openPromoter
+  , closePromoter
+  , sqlPromoteToImmutable
+  , sqlTruncateImmutable
+  , deleteEbsFrom
 
-    -- * GC mark
+    -- * Garbage collection
   , sqlGarbageCollect
-  , gcMark
-
-    -- * GC sweep
-  , SweeperConn (..)
-  , sweepEbBatch
-
-    -- * GC batch sizes
-  , defaultGcBatchSize
+  , gcBatchSize
+  , deleteEbsBefore
 
     -- * Stats
   , initialStats
+  , initialPromotedSlot
   , startVolatileStatsSampler
   , bumpVolatileStats
   , bumpVolatileStatsVar
@@ -36,38 +34,25 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
-  , check
   , modifyTVar
-  , readTVar
   , readTVarIO
   , writeTVar
   )
-import Control.Monad (filterM, forever, unless, void)
-import Control.Monad.Class.MonadThrow
-  ( bracket
-  , catch
-  , displayException
-  )
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
+import Control.Monad (forever, unless, when)
 import Control.ResourceRegistry
   ( ResourceRegistry
   , Thread
   , forkLinkedThread
   )
 import Control.Tracer (Tracer, traceWith)
-import Data.Int (Int64)
+import qualified Data.ByteString as BS
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
-import qualified GHC.Conc as IO (atomically)
 import GHC.Stack (HasCallStack)
-import Ouroboros.Consensus.Leios.Types
-  ( EndorserBlockHash
-  , LeiosPoint (..)
-  )
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
-import Ouroboros.Consensus.Storage.LeiosDB.Exception
-  ( LeiosDbException (..)
-  , throwLeiosDbException
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
   , closeChecked
@@ -75,8 +60,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , withReadOnlyConn
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
   ( WriteJob (..)
   , WriteQueue
@@ -88,262 +71,178 @@ import System.Directory (doesFileExist, getFileSize)
 
 -- * Copying EBs to the immutable partition
 
--- | Implements 'leiosDbPromoteToImmutable':
---   - synchronously pin the EB rows in the volatile partition for promotion (@status@ 0 -> 1),
---     through the writer ('PinEb');
---   - ring the copier's doorbell.
-sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> [LeiosPoint] -> IO ()
-sqlPromoteToImmutable writeQueue copierDoorbell points = unless (null points) $ do
-  await =<< submitJob writeQueue (PinEb [pointEbHash p | p <- points])
-  -- notify the copier thread that there's work to be done
-  atomically $ writeTVar copierDoorbell True
+-- | The connection that copies EBs into the immutable partition: main is the
+-- immutable partition, @vol@ the attached volatile one. One promotion at a
+-- time uses it.
+newtype Promoter = Promoter DB.Database
 
--- | The copier's connection and its prepared statements.
-data CopierConn = CopierConn
-  { ccDb :: !DB.Database
-  -- ^ main = immutable partition, @vol@ = attached volatile partition
-  , ccStmts :: !CopierStmts
-  -- ^ Precompiled statements used by the copier.
-  }
+-- | Open the promoter's connection to the immutable partition, with the
+-- volatile partition attached.
+openPromoter :: FilePath -> FilePath -> IO (MVar Promoter)
+openPromoter volPath immPath = do
+  db <- openRawConnection immPath
+  orCloseOnError db $
+    withStmt db "ATTACH ? AS vol" $ \stmt -> do
+      dbBindUtf8 stmt 1 (fromString volPath)
+      dbStep1Safe stmt
+  newMVar (Promoter db)
 
--- | Copy one pinned EB's closure into the immutable partition. 'True' when
--- it landed, so the caller may have its volatile rows marked as copied.
-copyEbToImmutable ::
-  Tracer IO TraceLeiosDb ->
-  StrictTVar IO LeiosDbStats ->
-  CopierConn ->
-  EndorserBlockHash ->
-  IO Bool
-copyEbToImmutable tracer statsVar conn ebHash =
-  appendToImmutable >>= \case
-    Nothing -> do
-      -- EB is not ready to be copied
-      traceWith tracer $
-        TraceLeiosDbCopyError
-          (show ebHash)
-          "pinned EB has no complete closure in the volatile partition"
-      pure False
-    Just _copiedTxs -> do
-      -- successfully copied, bump the stats
-      bumpImmutableStats statsVar 1
-      traceWith tracer $ TraceLeiosDbCopiedToImmutable 1
-      pure True
- where
-  CopierConn{ccDb, ccStmts} = conn
-  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
+-- | Close the promoter's connection, once no promotion is using it.
+closePromoter :: MVar Promoter -> IO ()
+closePromoter promoterVar =
+  withMVar promoterVar $ \(Promoter db) -> closeChecked db
 
-  -- Attempt to do the actual copying.
-  --
-  -- Returns the number of copied body rows, or Nothing if
-  -- the volatile partition does not hold the full closure.
-  appendToImmutable :: IO (Maybe Int)
-  appendToImmutable =
-    dbWithTransaction ccDb $ do
-      -- the cert-RB is on our chain, hence the EB must be complete by this point.
-      -- Still check if it is, as a defensive programming measure, as it's very cheap.
-      (bodyCount, closureCount) <-
-        useStmt ccCompleteness $ do
-          dbBindHash ccCompleteness 1 ebHash
-          -- step the first time, expecting a single result row
-          dbStepSafe ccCompleteness >>= \case
-            DB.Done ->
-              -- no row: critical error, fail fast and loud.
-              -- this should not happen.
-              throwLeiosDbException "sql_copy_completeness: expected a row"
-            DB.Row -> do
-              n <- DB.columnInt64 ccCompleteness 0
-              m <- DB.columnInt64 ccCompleteness 1
-              -- step again, expecting no more row
-              dbStepSafe ccCompleteness >>= \case
-                DB.Done ->
-                  -- we have our result
-                  pure (n, m)
-                DB.Row ->
-                  -- another row: critical error, fail fast and loud.
-                  -- this should not happen.
-                  throwLeiosDbException "sql_copy_completeness: expected exactly one row"
-      if bodyCount == 0 || bodyCount /= closureCount
-        then
-          -- the EB is incomplete, don't copy
-          pure Nothing
-        else do
-          -- the EB is complete: body is non-empty and bodyCounty matches closureCount
-          --
-          -- copy the EB
-          useStmt ccInsertEb $ do
-            dbBindHash ccInsertEb 1 ebHash
-            dbStep1Safe ccInsertEb
-          -- copy the eb-to-transactions mapping
-          useStmt ccInsertEbTxs $ do
-            dbBindHash ccInsertEbTxs 1 ebHash
-            dbStep1Safe ccInsertEbTxs
-          nTxs <- DB.changes ccDb
-          -- copy the tx bytes
-          useStmt ccInsertEbTxBytes $ do
-            dbBindHash ccInsertEbTxBytes 1 ebHash
-            dbStep1Safe ccInsertEbTxBytes
-          pure (Just nTxs)
-
--- | The copier: the only writer into the immutable partition.
+-- | Implements 'leiosDbPromoteToImmutable': copy the EBs into the immutable
+-- partition, at the given points, in one transaction, then advance the
+-- promoted slot to the given one.
 --
--- Returns the copier's thread: cancelling it closes its connection.
-startCopier ::
-  ResourceRegistry IO ->
+-- The blocks certifying them are on the chain, hence the fetch logic completed
+-- the EBs. Still check that each of their txs is marked written, since the
+-- immutable partition is never collected and the startup scan takes any EB
+-- there as complete. An EB without its closure throws an exception, and
+-- nothing is copied.
+sqlPromoteToImmutable ::
+  HasCallStack =>
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
-  StrictTVar IO Bool ->
-  WriteQueue ->
-  FilePath ->
-  FilePath ->
-  IO (Thread IO ())
-startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
-  forkLinkedThread registry "leiosdb-copier" $
-    bracket (openRawConnection immPath) closeChecked $ \db -> do
-      withStmt db "ATTACH ? AS vol" $ \stmt -> do
-        dbBindUtf8 stmt 1 (fromString volPath)
-        dbStep1Safe stmt
-      bracket (prepareCopierStmts db) finalizeCopierStmts $ \stmts ->
-        bracket (dbPrepare db (fromString sql_next_pinned_eb)) dbFinalize $
-          runCopier (CopierConn db stmts)
+  MVar Promoter ->
+  StrictTVar IO SlotNo ->
+  SlotNo ->
+  [LeiosPoint] ->
+  IO ()
+sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar slot points =
+  withMVar promoterVar $ \(Promoter db) -> do
+    unless (null points) $ do
+      -- Deferred, not 'dbWithWriteTransactionRaw': @BEGIN IMMEDIATE@ takes the
+      -- write lock of every database on the connection, the attached volatile
+      -- partition too, and would hold off the writer for the whole promotion.
+      -- Promotion only reads the volatile partition, and the immutable one has
+      -- no other writer, so taking its lock at the first insert cannot fail.
+      copied <-
+        dbWithTransaction db $
+          sum <$> mapM (copyEbToImmutable db) points
+      bumpImmutableStats statsVar copied
+      traceWith tracer $ TraceLeiosDbCopiedToImmutable copied
+    -- Only once the copies are committed, so the reads it sends to the
+    -- immutable partition find them.
+    atomically $ modifyTVar promotedSlotVar (max slot)
  where
-  runCopier ::
-    CopierConn ->
-    -- 'sql_next_pinned_eb'
-    DB.Statement ->
-    IO ()
-  runCopier copierConn nextPinnedStmt = loop
-   where
-    CopierConn{ccDb} = copierConn
+  copyEbToImmutable db point = do
+    let ebHash = pointEbHash point
+    -- Check for the immutable copy first: a crash can lose the volatile writes
+    -- that completed the EB, and nothing fetches them again, since the startup
+    -- scan takes the immutable copy as complete.
+    promoted <-
+      withStmt db "SELECT 1 FROM ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2" $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+        dbBindHash stmt 2 ebHash
+        dbStepSafe stmt >>= \case
+          DB.Done -> pure False
+          DB.Row -> pure True
+    if promoted then pure 0 else copyFromVolatile db point ebHash
 
-    nextPinnedBatch = do
-      dbBindInt64 nextPinnedStmt 1 (fromIntegral copyBatchSize)
-      useStmt nextPinnedStmt $
-        let rows acc =
-              dbStepSafe nextPinnedStmt >>= \case
-                DB.Done -> pure (reverse acc)
-                DB.Row -> do
-                  h <- dbColumnHash nextPinnedStmt 0
-                  rows (h : acc)
-         in rows []
+  copyFromVolatile db point ebHash = do
+    complete <-
+      withStmt
+        db
+        "SELECT txWritten FROM vol.ebs WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+        $ \stmt -> do
+          dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+          dbBindHash stmt 2 ebHash
+          dbStepSafe stmt >>= \case
+            DB.Done -> pure False
+            DB.Row -> BS.all (/= 0) <$> DB.columnBlob stmt 0
+    unless complete $
+      throwLeiosDbException $
+        "leiosDbPromoteToImmutable: no complete closure in the volatile partition: " <> show point
+    withStmt
+      db
+      "INSERT OR IGNORE INTO ebs\n\
+      \  (ebSlot, ebHashBytes, txWritten, txBounds, body, txs)\n\
+      \SELECT ebSlot, ebHashBytes, txWritten, txBounds, body, txs FROM vol.ebs\n\
+      \WHERE ebSlot = ?1 AND ebHashBytes = ?2"
+      $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+        dbBindHash stmt 2 ebHash
+        dbStep1Safe stmt
+    DB.changes db
 
-    -- 'True' when the EB is in the immutable partition and its pin can be
-    -- retired. The EB stays pinned either way, so it is still next to copy.
-    -- Backing off is what keeps a closure that never completes -- or a
-    -- partition that keeps refusing the write -- from spinning here.
-    copyOne ebHash =
-      copyEbToImmutable tracer statsVar copierConn ebHash
-        `catch` \(e :: LeiosDbException) -> do
-          _ <- DB.exec ccDb "ROLLBACK"
-          traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
-          pure False
+-- | Implements 'leiosDbTruncateImmutable': delete the immutable rows at or
+-- after the slot in one transaction, then set the promoted slot to it.
+sqlTruncateImmutable ::
+  HasCallStack =>
+  Tracer IO TraceLeiosDb ->
+  StrictTVar IO LeiosDbStats ->
+  MVar Promoter ->
+  StrictTVar IO SlotNo ->
+  SlotNo ->
+  IO ()
+sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar slot =
+  withMVar promoterVar $ \(Promoter db) -> do
+    -- The connection's main database is the immutable partition, which
+    -- unqualified table names resolve to before the attached volatile one.
+    deleted <- deleteEbsFrom db slot
+    bumpImmutableStats statsVar (negate deleted)
+    atomically $ writeTVar promotedSlotVar slot
+    when (deleted > 0) $
+      traceWith tracer $
+        TraceLeiosDbTruncatedImmutable slot deleted
 
-    -- One 'MarkCopied' for the batch: the mark is what makes a copied EB
-    -- evictable, and under sync a queue round-trip per EB queues behind
-    -- saturated inserts.
-    copyBatch ebHashes = do
-      copied <- filterM copyOne ebHashes
-      if null copied
-        then threadDelay copyRetryMicros
-        else void . await =<< submitJob writeQueue (MarkCopied copied)
-
-    loop = do
-      -- Clear the copier doorbell before looking if there's any copying work to do,
-      -- so a pin that lands while we look rings again instead of being lost.
-      atomically $ writeTVar copierDoorbell False
-      nextPinnedBatch >>= \case
-        batch@(_ : _) -> copyBatch batch >> loop
-        [] -> do
-          IO.atomically $ readTVar copierDoorbell >>= check
-          loop
-
--- | How long the copier waits before trying a pinned EB again.
-copyRetryMicros :: Int
-copyRetryMicros = 1000000
-
--- | How many pinned EBs the copier takes per pass, and so per 'MarkCopied'.
-copyBatchSize :: Int
-copyBatchSize = 32
+-- | Delete the EBs announced at or after the slot, in one transaction. Returns
+-- how many. Either partition, as both have the @ebs@ table.
+deleteEbsFrom :: HasCallStack => DB.Database -> SlotNo -> IO Int
+deleteEbsFrom db slot =
+  dbWithTransaction db $
+    withStmt db "DELETE FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
+      dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
+      dbStep1Safe stmt
+      DB.changes db
 
 -- * Garbage collection of the volatile partition
 
--- | How many EBs one sweep transaction takes, by default.
-defaultGcBatchSize :: Int64
-defaultGcBatchSize = 4
+-- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect', as
+-- 'GarbageCollect' jobs on the writer, each deleting up to 'gcBatchSize' rows
+-- before the promoted slot, until none is left. The writes queued meanwhile run
+-- in between.
+sqlGarbageCollect :: WriteQueue -> IO ()
+sqlGarbageCollect writeQueue = do
+  more <- await =<< submitJob writeQueue GarbageCollect
+  when more $ sqlGarbageCollect writeQueue
 
--- | Implements 'Ouroboros.Consensus.Storage.LeiosDB.API.garbageCollect': the MARK phase of GC mark-and-sweep,
--- as a 'GcMark' job on the writer (see 'gcMark').
-sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
-sqlGarbageCollect writeQueue gcSlot =
-  void . await =<< submitJob writeQueue (GcMark gcSlot)
+-- | How many rows a 'GarbageCollect' job deletes at most, which bounds how
+-- long a write waits behind it: sixteen rows of 12.5 MB closures take about
+-- 50 ms to delete.
+gcBatchSize :: Int
+gcBatchSize = 16
 
--- | The MARK phase of GC mark-and-sweep: mark for GC (@status = 3@) every EB
--- hash all of whose announcements are older than the given slot and not
--- pinned (@status = 1@). Returns the number of 'ebs' rows marked.
---
--- Runs on the writer. It does not do much work, but rather primes the state
--- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
--- marked EBs one batch per turn, so an insert waits for a batch at most.
-gcMark ::
-  HasCallStack =>
-  DB.Database ->
-  GcStmts ->
-  SlotNo ->
-  IO Int
-gcMark db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
-  -- check if GC has any work to do
-  hasWork <-
-    useStmt gsHasWork $ do
-      dbBindInt64 gsHasWork 1 slot
-      (/= 0) <$> readSingleInt64 gsHasWork
-  if hasWork
-    then
-      -- mark EBs that are ready to be garbage collected
-      dbWithWriteTransactionRaw db $ do
-        useStmt gsMarkEbForGC $ do
-          dbBindInt64 gsMarkEbForGC 1 slot
-          dbStep1Safe gsMarkEbForGC
-        DB.changes db
-    else pure 0
- where
-  slot = fromIntegral (unSlotNo gcSlot)
-
--- * Sweeping GC-marked rows out of the volatile partition
-
--- | The sweeper's connection and its prepared statements.
-data SweeperConn = SweeperConn
-  { swDb :: !DB.Database
-  -- ^ The writer's connection to the volatile partition.
-  , swStmts :: !SweeperStmts
-  -- ^ Precompiled statements used by the sweeper.
-  }
-
--- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
--- EBs, with their body and tx bytes -- three range deletes on the EBs' hashes.
--- Returns the number of evicted 'ebs' rows. Runs on the writer.
-sweepEbBatch :: SweeperConn -> Int64 -> IO Int
-sweepEbBatch conn batchSize = do
-  let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxBytes, swEvictEbTxs, swEvictEbs} = swStmts
-  dbWithWriteTransactionRaw swDb $ do
-    -- check if any EBs are ready to be evicted
-    evictableEbs <- useStmt swPickMarked $ do
-      -- batchSize will never be negative, but we handle a negative batch size
-      -- gracefully here with a negative LIMIT, which means no limit in SQLite.
-      dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
-      collectBlobs swPickMarked
-    -- evict EBs if any are ready to be GCed
-    if null evictableEbs
-      then pure 0
-      else do
-        let evictableEbsJson = jsonHexArray evictableEbs
-        execJson swEvictEbTxBytes evictableEbsJson
-        execJson swEvictEbTxs evictableEbsJson
-        -- last, so 'DB.changes' counts the evicted 'ebs' rows
-        execJson swEvictEbs evictableEbsJson
-        DB.changes swDb
+-- | Delete up to the given number of rows before the slot, in one
+-- transaction. Returns how many.
+deleteEbsBefore :: HasCallStack => DB.Database -> Int -> SlotNo -> IO Int
+deleteEbsBefore db limit slot =
+  withStmt
+    db
+    "DELETE FROM ebs WHERE rowid IN\n\
+    \  (SELECT rowid FROM ebs WHERE ebSlot < ?1 LIMIT ?2)"
+    $ \stmt -> dbWithWriteTransactionRaw db $ do
+      dbBindInt64 stmt 1 (fromIntegral (unSlotNo slot))
+      dbBindInt64 stmt 2 (fromIntegral limit)
+      dbStep1Safe stmt
+      DB.changes db
 
 -- * Stats
+
+-- | The promoted slot at startup: the one after the newest point the immutable
+-- partition holds. It may lag the slot the latest promotion reached, which is
+-- not on disk, but no point at or after it is promoted, so its reads lose
+-- nothing by going to the volatile partition.
+--
+-- Promotion copies at most one EB per slot, as it copies only those an
+-- immutable block certifies, and each is announced by a block of its own slot.
+-- So no promotion leaves an EB of the newest promoted slot behind.
+initialPromotedSlot :: HasCallStack => FilePath -> IO SlotNo
+initialPromotedSlot immPath =
+  withReadOnlyConn immPath $ \db ->
+    SlotNo . fromIntegral <$> queryInt64 db "SELECT COALESCE(MAX(ebSlot) + 1, 0) FROM ebs"
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.
@@ -359,7 +258,8 @@ initialStats volPath immPath = do
       }
  where
   countEbs path =
-    fromIntegral <$> withReadOnlyConn path (\db -> queryInt64 db "SELECT COUNT(*) FROM ebs")
+    withReadOnlyConn path $ \db ->
+      fromIntegral <$> queryInt64 db "SELECT COUNT(*) FROM ebs"
 
 -- * Stats sampling
 

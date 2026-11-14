@@ -1,35 +1,37 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | The insert writes behind
 -- 'Ouroboros.Consensus.Storage.LeiosDB.API.LeiosDbWriter'. They run on the
 -- single writer, which calls them from its
 -- 'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue.WriteJob's.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
-  ( sqlInsertEbPoint
-  , sqlInsertEbBody
+  ( sqlInsertEbBody
   , sqlInsertTxs
   ) where
 
-import Cardano.Crypto.Hash (hashToBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (foldM, forM_, when)
-import Control.Tracer (Tracer)
+import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
-import Data.Int (Int64)
+import qualified Data.ByteString as BS
+import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EndorserBlock
+  ( EndorserBlock
   , LeiosPoint (..)
+  , LeiosTx (..)
+  , TxLocation (..)
   , TxOffset
-  , encodeEndorserBlockSize
   , endorserBlockReferences
+  , hashLeiosTx
+  , serialiseEndorserBlock
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( CompletedEbs
-  , LeiosEbNotification (..)
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( Conn (..)
@@ -37,150 +39,165 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (bumpVolatileStats)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
-import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..))
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
+  ( EbIndex (..)
+  , boundAt
+  , consecutiveRuns
+  , encodeTxBounds
+  , isWritten
+  , lookupEbIndex
+  , readTxBounds
+  , readTxBytes
+  , readTxWritten
+  , withBlob
+  )
 
-sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-    dbBindHash stmt 2 (pointEbHash point)
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-    DB.changes db
-  bumpVolatileStats conn inserted
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint = stmt}} = conn
-
--- | Persist an EB body. The point MUST already be present (inserted
--- via 'sqlInsertEbPoint' on the announcement path).
+-- | Persist an EB body at its point, recording the point: the bytes it arrived
+-- in, where each of its txs will be in the closure, and the closure and the
+-- markers of its written txs, zeroes. Each point holds its own copy, so a write
+-- never touches another point's row. Then fill what it can from the bytes
+-- other EBs hold, in the same transaction.
+--
+-- A fill copies the source's bytes only if they hash to the tx this body lists
+-- at the fill's offset, so a stale or wrong location fills nothing.
+--
+-- Returns the offsets the point then holds: those filled, or written since an
+-- earlier delivery of the body, which its markers tell without reading the
+-- closure.
 sqlInsertEbBody ::
-  Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   EndorserBlock ->
-  IO CompletedEbs
-sqlInsertEbBody tracer conn notify point eb = do
-  when (null items) $
+  LocalFills ->
+  IO (Set TxOffset)
+sqlInsertEbBody conn point eb fills = do
+  when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  completedNow <- dbWithWriteTransaction conn $ do
-    forM_ items $ \(txOffset, (txHash, txBytesSize)) -> useStmt stInsertEbTxsRow $ do
-      dbBindHash stInsertEbTxsRow 1 (pointEbHash point)
-      dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
-      dbBindHash stInsertEbTxsRow 3 txHash
-      dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
-      dbStepInsertOrTrace
-        tracer
-        "ebTxs"
-        (show (pointEbHash point) <> "@" <> show txOffset)
-        stInsertEbTxsRow
-    -- Allocate this body's tx-bytes rows, then count the unfilled ones. Both
-    -- in this transaction, so a fill can never see the rows without the count
-    -- or the other way round.
-    useStmt stPreallocEbTxBytes $ do
-      dbBindHash stPreallocEbTxBytes 1 (pointEbHash point)
-      dbStep1 stPreallocEbTxBytes
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above. If this EB's
-    -- body was already written for another point, then the inserts above
-    -- changed nothing, and the new count accounts for every tx already
-    -- written for this EB hash, including those written while this row's
-    -- count was NULL.
-    missingCount <- useStmt stInitMissingCount $ do
-      dbBindHash stInitMissingCount 1 (pointEbHash point)
-      dbBindHash stInitMissingCount 2 (pointEbHash point)
-      dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo (pointSlotNo point))
-      readReturningInt64 stInitMissingCount
-    if missingCount == 0
-      then do
-        useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo (pointSlotNo point))
-          dbBindHash stMarkPointNotified 2 (pointEbHash point)
-          dbStep1 stMarkPointNotified
-        pure [point]
-      else pure []
-  notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
-  pure completedNow
+  (inserted, held) <- dbWithWriteTransaction conn $ do
+    inserted <- insertWithBody
+    -- Nothing inserted: the point holds the body of an earlier delivery, and
+    -- the txs written since.
+    atPoint <- if inserted > 0 then pure Set.empty else markedAtPoint
+    filled <- readLocalFills
+    let toWrite = filled `Map.withoutKeys` atPoint
+    dropped <- writeTxBytes conn point toWrite
+    pure (inserted, atPoint <> (Map.keysSet toWrite `Set.difference` dropped))
+  bumpVolatileStats conn inserted
+  pure held
  where
-  items = zip [0 :: Int ..] (endorserBlockReferences eb)
-  ebBytesSize = encodeEndorserBlockSize eb
-  Conn{connVolStmts} = conn
-  VolStmts
-    { stInsertEbTxsRow
-    , stPreallocEbTxBytes
-    , stInitMissingCount
-    , stMarkPointNotified
-    } = connVolStmts
+  -- The offsets of the txs marked written at the point.
+  markedAtPoint =
+    lookupEbIndex db point >>= \case
+      Nothing -> pure Set.empty
+      Just ix@EbIndex{eiTxCount = n} -> do
+        txWritten <- readTxWritten db ix 0 (n - 1)
+        pure $ Set.fromDistinctAscList [o | o <- [0 .. n - 1], isWritten txWritten o]
 
--- | Persist tx bytes for one EB by filling the rows 'sqlInsertEbBody'
--- pre-allocated.
+  -- The bytes of the fills, by offset in this body: those the node holds that
+  -- hash to the tx this body lists there. Writing them drops those of another
+  -- size than the body lists. Each source is read once, in
+  -- ascending offsets, as each blob handle walks the blob's pages from its
+  -- start.
+  readLocalFills =
+    fmap Map.unions $ forM (Map.toList bySource) $ \(srcPoint, wanted) -> do
+      srcTxs <- readFromSource srcPoint (Map.keysSet wanted)
+      pure $
+        Map.fromList
+          [ (txOffset, tx)
+          | (srcOffset, txOffsets) <- Map.toList wanted
+          , Just tx <- [Map.lookup srcOffset srcTxs]
+          , txOffset <- txOffsets
+          , Just (txHash, _size) <- [Map.lookup txOffset refsByOffset]
+          , hashLeiosTx (MkLeiosTx tx) == txHash
+          ]
+
+  -- The fills by source, then by offset in the source, excluding the fills
+  -- that are beyond the end of the body.
+  bySource :: Map LeiosPoint (Map TxOffset [TxOffset])
+  bySource =
+    Map.fromListWith
+      (Map.unionWith (<>))
+      [ (srcPoint, Map.singleton srcOffset [txOffset])
+      | (txOffset, MkTxLocation srcPoint srcOffset) <- Map.toList fills
+      , srcOffset >= 0
+      , Map.member txOffset refsByOffset
+      ]
+
+  -- The written txs at these offsets of the source point.
+  readFromSource srcPoint wanted =
+    lookupEbIndex db srcPoint >>= \case
+      Nothing -> pure Map.empty
+      Just ix@EbIndex{eiTxCount} ->
+        readTxBytes db ix (Set.toAscList (Set.filter (< eiTxCount) wanted))
+
+  refsByOffset = Map.fromList (zip [0 ..] refs)
+
+  insertWithBody =
+    withStmt
+      db
+      "INSERT OR IGNORE INTO ebs\n\
+      \  (ebSlot, ebHashBytes, txWritten, txBounds, body, txs)\n\
+      \VALUES (?1, ?2, zeroblob(?3), ?4, ?5, zeroblob(?6))"
+      $ \stmt -> do
+        dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+        dbBindHash stmt 2 (pointEbHash point)
+        dbBindInt64 stmt 3 (fromIntegral (length refs))
+        dbBindBlob stmt 4 (encodeTxBounds eb)
+        dbBindBlob stmt 5 bodyBytes
+        dbBindInt64 stmt 6 (fromIntegral (sum (map snd refs)))
+        dbStep1 stmt
+        DB.changes db
+
+  bodyBytes = serialiseEndorserBlock eb
+  refs = endorserBlockReferences eb
+  Conn{conVolDb = db} = conn
+
+-- | Persist tx bytes for the EB at one point, in place in its closure. How many
+-- txs a write carries is the caller's to decide; whether the
+-- EB is complete, too.
 --
 -- PREREQ: each tx's bytes hash to the tx hash the body lists at its offset.
+-- So a tx written twice is the same bytes, and overwriting it is harmless.
 --
--- A transaction is dropped if:
---
--- * its offset is not in the body;
--- * its offset is already filled (@filled = 1@);
--- * or its size is not the declared one.
+-- Returns the offsets of the txs dropped for their size.
 sqlInsertTxs ::
-  Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
   -- | The EB the txs belong to
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
-  [(TxOffset, ByteString)] ->
-  IO CompletedEbs
-sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
-  completed <- dbWithWriteTransaction conn $ do
-    -- Fill the pre-allocated rows of the ebTxBytes table.
-    -- Count how many txs were successfully filled (i.e. not dropped).
-    nFilled <-
-      foldM
-        ( \acc (txOffset, txBytes) -> do
-            useStmt stFillEbTxBytes $ do
-              dbBindBlob stFillEbTxBytes 1 ebHash
-              dbBindInt64 stFillEbTxBytes 2 (fromIntegral txOffset)
-              dbBindBlob stFillEbTxBytes 3 txBytes
-              dbStep1 stFillEbTxBytes
-            changed <- DB.changes db
-            pure (acc + fromIntegral changed)
-        )
-        (0 :: Int64)
-        txBytesWithOffsets
-    if nFilled == 0
-      then pure []
-      else do
-        -- Decrement the missingTxCount of every ebs row with this EB hash and
-        -- collect the ones this batch completed.
-        completedSlots <- useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 ebHash
-          dbBindInt64 stDecrMissingCount 2 nFilled
-          let loop acc =
-                dbStep stDecrMissingCount >>= \case
-                  DB.Done -> pure (reverse acc)
-                  DB.Row -> do
-                    slot <- SlotNo . fromIntegral <$> DB.columnInt64 stDecrMissingCount 0
-                    left <- DB.columnInt64 stDecrMissingCount 1
-                    loop (if left == 0 then slot : acc else acc)
-          loop []
-        -- Mark them notified so they are not completed twice.
-        forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
-          dbBindBlob stMarkPointNotified 2 ebHash
-          dbStep1 stMarkPointNotified
-        pure [MkLeiosPoint slot (pointEbHash point) | slot <- completedSlots]
-  -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \p -> notify (AcquiredEbTxs p)
-  pure completed
+  Map TxOffset ByteString ->
+  IO (Set TxOffset)
+sqlInsertTxs conn point txBytesByOffset =
+  dbWithWriteTransaction conn $
+    writeTxBytes conn point txBytesByOffset
+
+-- | Write txs into the closure of the EB at the point, and mark them written,
+-- within the caller's transaction, and return the offsets of those dropped for
+-- their size. A
+-- transaction is dropped if:
+--
+-- * the EB's body is not stored;
+-- * its offset is not in the body;
+-- * or its size is not the declared one.
+writeTxBytes :: Conn -> LeiosPoint -> Map TxOffset ByteString -> IO (Set TxOffset)
+writeTxBytes conn point txBytesByOffset =
+  lookupEbIndex db point >>= \case
+    Nothing -> pure Set.empty
+    Just ix@EbIndex{eiRowid, eiTxCount = n} -> do
+      bounds <- readTxBounds db ix 0 (n - 1)
+      let start i = boundAt bounds i
+          end i = boundAt bounds (i + 1)
+          inBody = Map.filterWithKey (\txOffset _ -> txOffset >= 0 && txOffset < n) txBytesByOffset
+          sized txOffset txBytes = BS.length txBytes == end txOffset - start txOffset
+          (accepted, missized) = Map.partitionWithKey sized inBody
+          runs = consecutiveRuns fst (Map.toAscList accepted)
+      unless (Map.null accepted) $ do
+        withBlob db "ebs" "txs" eiRowid True $ \blob ->
+          forM_ runs $ \run ->
+            withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) (start (fst (NE.head run))))
+        withBlob db "ebs" "txWritten" eiRowid True $ \blob ->
+          forM_ runs $ \run ->
+            withDie db (DB.blobWrite blob (BS.replicate (NE.length run) 1) (fst (NE.head run)))
+      pure (Map.keysSet missized)
  where
-  ebHash = hashToBytes (pointEbHash point)
-  Conn{conVolDb = db, connVolStmts} = conn
-  VolStmts
-    { stFillEbTxBytes
-    , stDecrMissingCount
-    , stMarkPointNotified
-    } = connVolStmts
+  Conn{conVolDb = db} = conn

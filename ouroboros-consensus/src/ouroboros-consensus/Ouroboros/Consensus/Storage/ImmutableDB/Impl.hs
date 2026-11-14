@@ -91,6 +91,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl
     -- * Re-exported
   , ChunkFileError (..)
   , Index.CacheConfig (..)
+  , Parent (..)
   , TraceChunkValidation (..)
   , TraceEvent (..)
   , ValidationPolicy (..)
@@ -145,13 +146,15 @@ import System.FS.CRC
 data ImmutableDbArgs f m blk = ImmutableDbArgs
   { immCacheConfig :: Index.CacheConfig
   , immCheckIntegrity :: HKD f (blk -> Bool)
-  -- ^ Predicate to check for integrity of
-  -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
-  -- extracting them from the ImmutableDB.
-  , -- \^ Predicate to check for integrity of
-    -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
-    -- extracting them from the ImmutableDB.
-    immChunkInfo :: HKD f ChunkInfo
+  -- ^ Predicate to judge integrity of the block itself. Checked on open when
+  -- checksum does not match its secondary index, where 'False' truncates the
+  -- ImmutableDB before the block.
+  , immCheckExternalCompleteness :: Parent (Header blk) -> Header blk -> m Bool
+  -- ^ Predicate to judge whether we should keep the block identified by this
+  -- header. This is useful to reconcile the immutable db with related storages.
+  -- The parent header is also provided for context. Checked, when blocks are
+  -- validated on open, where 'False' truncates before the block.
+  , immChunkInfo :: HKD f ChunkInfo
   , immCodecConfig :: HKD f (CodecConfig blk)
   , immHasFS :: HKD f (SomeHasFS m)
   , immRegistry :: HKD f (ResourceRegistry m)
@@ -171,6 +174,7 @@ defaultArgs =
     { immCacheConfig = cacheConfig
     , immCheckIntegrity = noDefault
     , immChunkInfo = noDefault
+    , immCheckExternalCompleteness = \_ _ -> pure True
     , immCodecConfig = noDefault
     , immHasFS = noDefault
     , immRegistry = noDefault
@@ -270,6 +274,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} = do
           , cacheConfig = immCacheConfig
           , codecConfig = immCodecConfig
           , checkIntegrity = immCheckIntegrity
+          , checkExternalCompleteness = immCheckExternalCompleteness
           }
   ost <- validateAndReopen validateEnv immRegistry immValidationPolicy
 

@@ -38,6 +38,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeForecastingOnly
   , withNodeOver
   , withNodeOverDBs
+  , withNodeOverDBsAfterUncleanShutdown
   , withNodeUnderTest
   ) where
 
@@ -158,6 +159,9 @@ data NodeUnderTestConfig = NodeUnderTestConfig
   , nodeConfigRandomness :: StdGen
   -- ^ The root of all the test's randomness; see 'Seeds'.
   , nodeConfigAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
+  , nodeConfigLastShutDownWasClean :: Bool
+  -- ^ If not, the ChainDB validates all it holds when it opens, as a node's
+  -- does after a crash.
   }
 
 defaultNodeUnderTestConfig :: SecurityParam -> LeiosTestLedgerConfig -> NodeUnderTestConfig
@@ -167,6 +171,7 @@ defaultNodeUnderTestConfig nodeConfigSecurityParam nodeConfigLedger =
     , nodeConfigLedger
     , nodeConfigRandomness = mkStdGen 0
     , nodeConfigAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
+    , nodeConfigLastShutDownWasClean = True
     }
 
 -- | All the randomness of a Leios node-vs-environment test.
@@ -293,7 +298,9 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             (fst (mkInMemoryArgs ()))
             leiosDB
             ChainDB.defaultArgs
-            updateChainDbArgs
+            ( (if nodeConfigLastShutDownWasClean cfg then id else ChainDB.ensureValidateAll)
+                . updateChainDbArgs
+            )
       )
       ChainDB.closeDB
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
@@ -423,6 +430,19 @@ withNodeOverDBs ::
 withNodeOverDBs =
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+    nullTracers
+
+-- | 'withNodeOverDBs', after a crash of the node that last used the databases.
+withNodeOverDBsAfterUncleanShutdown ::
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverDBsAfterUncleanShutdown =
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+      { nodeConfigLastShutDownWasClean = False
+      }
     nullTracers
 
 -- | The configuration of a node whose ledger view has this committee and quorum

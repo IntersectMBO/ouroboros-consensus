@@ -110,6 +110,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
             -- done in @extractBlockComponent@ in the iterator for the
             -- ImmutableDB, and in @getBlockComponent@ for the VolatileDB.
             immChunkInfo = mcdbChunkInfo
+          , immCheckExternalCompleteness = \_ _ -> pure True
           , immHasFS = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs)
           , immRegistry = mcdbRegistry
           , immTracer = nullTracer

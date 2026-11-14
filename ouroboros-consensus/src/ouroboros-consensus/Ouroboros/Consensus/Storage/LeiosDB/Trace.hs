@@ -1,5 +1,8 @@
 module Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
+import Cardano.Slotting.Slot (SlotNo)
+import Control.Monad.Class.MonadTime.SI (DiffTime)
+
 -- | In-memory LeiosDb counters: seeded from the database files once per
 -- handle, bumped by the write, copy and GC paths, never written back.
 --
@@ -35,28 +38,23 @@ data TraceLeiosDb
     TraceLeiosDbWriteJobDone
       -- | the job
       String
+      -- | how long the writer spent on it
+      DiffTime
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
-  | -- | The background copier committed EBs' closures to the immutable
-    -- partition.
+  | -- | A promotion committed EBs' closures to the immutable partition.
     TraceLeiosDbCopiedToImmutable
       -- | number of EBs copied
       Int
-  | -- | A sweep pass evicted EB announcement rows from the volatile
-    -- partition.
+  | -- | A garbage collection deleted rows from the volatile partition.
     TraceLeiosDbEvicted
       -- | number of rows evicted
       Int
-  | -- | The background sweeper failed a sweep pass; the connection is
-    -- dropped and the pass retried.
-    TraceLeiosDbGCError
-      -- | the error
-      String
-  | -- | Copying an EB failed. It stays pinned, so it is still the next one
-    -- to copy.
-    TraceLeiosDbCopyError
-      -- | the EB hash
-      String
-      -- | the reason
-      String
+  | -- | The immutable partition dropped EBs at or after the ImmutableDB tip.
+    TraceLeiosDbTruncatedImmutable
+      -- | the slot the EBs at or after which were deleted, and the new
+      -- promoted slot
+      SlotNo
+      -- | number of EBs deleted
+      Int
   deriving Show

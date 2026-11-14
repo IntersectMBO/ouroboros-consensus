@@ -6,11 +6,10 @@
 -- 'Ouroboros.Consensus.Storage.LeiosDB.API.LeiosDbHandle', so they
 -- must not run against a file that a node has open.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
-  ( truncateLeiosDbAfterSlot
+  ( withExistingLeiosDbFile
   , vacuumLeiosDb
   ) where
 
-import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (void)
 import Control.Monad.Class.MonadThrow (bracket)
 import Data.String (fromString)
@@ -23,39 +22,6 @@ import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
--- | Delete the EBs announced after the given slot.
---
--- For internal tooling. Works for both the volatile and the immutable
--- partition files.
-truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
-truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
-  withExistingLeiosDbFile dbPath $ \db ->
-    -- One transaction, so a crash cannot leave an EB that is still announced
-    -- but has no body.
-    dbWithTransactionAs "BEGIN IMMEDIATE" db $
-      dbExec db (fromString deletes)
- where
-  deletes =
-    unlines
-      [ "DELETE FROM ebTxBytes WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
-      ]
-
-  -- The EBs whose bodies the truncation drops.
-  --
-  -- 'ebs' holds one row per announcement, so the same EB hash can appear at
-  -- several slots. 'ebTxs' and 'ebTxBytes' hold one copy per hash and carry
-  -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
-  -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
-  -- announced after the cut, then remove the ones also announced at or before
-  -- it.
-  droppedHashes =
-    "SELECT ebHashBytes FROM ebs WHERE ebSlot > "
-      <> show slot
-      <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
-      <> show slot
-
 -- | Shrink a LeiosDb file to the space its rows need.
 --
 -- A delete frees pages inside the file without returning them to the
@@ -64,7 +30,7 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
 vacuumLeiosDb :: HasCallStack => FilePath -> IO ()
 vacuumLeiosDb dbPath =
   withExistingLeiosDbFile dbPath $ \db ->
-    dbExec db (fromString "VACUUM")
+    dbExec db "VACUUM"
 
 -- | Open the LeiosDb file at the given path, which must already exist.
 --

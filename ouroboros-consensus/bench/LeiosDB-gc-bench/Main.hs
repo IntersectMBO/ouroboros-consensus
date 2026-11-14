@@ -31,25 +31,18 @@
 --     with 1 typical);
 --   * @catchup@ --- 5 phases of 180 GC'able EBs each (the backlog of a ~1h
 --     outage): the first GC tick after downtime or during sync, where
---     everything that aged out meanwhile is marked at once.
+--     everything that aged out meanwhile is collected at once.
 --
--- A phase takes the next N EBs of the schedule, so the GC frontier passed to
--- 'garbageCollect' makes exactly N EBs collectable. Per phase, in
--- order:
+-- A phase takes the next N EBs of the schedule, so the frontier the promotion
+-- advances to makes exactly N EBs collectable. Per phase, in order:
 --
 --   1. insert 5 fresh full EBs (announcement + body + txs) at the current
 --      load, reporting the median wall time (@insertEbSeconds@);
---   2. promote half of the N EBs and wait for the background copier to land
---      them (@promoteSeconds@, @copyWaitSeconds@) --- the rest are evicted
---      un-copied, as un-certified EBs are on a real node;
---   3. call 'garbageCollect' --- which only MARKS (@markSeconds@) ---
---      and wait for the background sweeper to drain the marks
---      (@sweepSeconds@).
---
--- @--gc-pacing@ selects the sweeper pacing: @default@ is what the node runs
--- (4-EB eviction batches with 100ms pauses in between, trading drain time
--- for short write-lock holds); @zero@ removes both bounds (one unbounded
--- eviction transaction, no pauses), measuring the raw sweep work.
+--   2. promote half of the N EBs, which copies them and advances to the
+--      frontier (@promoteSeconds@) --- the rest are evicted un-copied, as
+--      un-certified EBs are on a real node;
+--   3. call 'garbageCollect', which deletes the rows before the frontier
+--      (@gcSeconds@).
 --
 -- Reported per phase, as one CSV row on stdout (everything else goes to
 -- stderr).
@@ -68,9 +61,6 @@
 -- -- point at a disk with ~100 GB free, not a tmpfs; runs for hours)
 -- TMPDIR=\/scratch cabal run bench:leios-gc-bench -- \\
 --   --scenario catchup --load eb-no-sharing --txs-per-eb 13000 --tx-bytes 923
---
--- -- raw sweep work and unprotected lock holds: no batching, no pauses
--- cabal run bench:leios-gc-bench -- --scenario catchup --gc-pacing zero
 --
 -- -- a production volatile partition instead of the synthetic population
 -- cabal run bench:leios-gc-bench -- --scenario steady leios.vol.db
@@ -91,6 +81,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List as List (foldl', group, intercalate, isSuffixOf, nub, sort)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
@@ -102,8 +93,10 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash
   , encodeEndorserBlockSize
+  , hashLeiosTx
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
@@ -113,7 +106,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , TraceLeiosDb (..)
   , awaitAll
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteWithGcBatchSize
   , withWriter
   )
 import System.Directory (copyFile, doesFileExist)
@@ -139,9 +131,7 @@ main = do
     let benchVol = tmpDir <> "/bench.vol.db"
         benchImm = tmpDir <> "/bench.imm.db"
     (tracer, flushEvents) <- mkCollectingTracer
-    let mkDb = case optGcPacing opts of
-          GcPacingDefault -> newLeiosDBSQLite registry tracer benchVol benchImm
-          GcPacingZero -> newLeiosDBSQLiteWithGcBatchSize registry tracer benchVol benchImm 0
+    let mkDb = newLeiosDBSQLite registry tracer benchVol benchImm
     -- get the series of (slot, ebHash)
     (db, schedule) <- case optDbPath opts of
       Just path -> do
@@ -191,15 +181,8 @@ main = do
         [ ""
         , "Scheduled EBs       : " <> show (length schedule)
         , "Phases              : " <> describeSeries
-        , "GC pacing           : " <> gcPacingName (optGcPacing opts)
         , ""
         ]
-    -- Await the sweeper's startup self-heal (resume of persisted marks), so
-    -- it is not attributed to phase 1.
-    sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
-    initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
-    (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
-    hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
     before <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "before" before)
     latRef <- newIORef 0
@@ -207,7 +190,7 @@ main = do
     phaseStats <-
       withAsync mutator $ \_ ->
         withAsync (tickProbe latRef) $ \_ ->
-          runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
+          runPhases opts db flushEvents latRef schedule
     after <- leiosDbSampleStats db
     hPutStrLn stderr (renderStats "after " after)
     hPutStr stderr (renderSummary opts phaseStats)
@@ -243,19 +226,6 @@ loadDupPreset = \case
 
 data Scenario = Steady | Catchup
 
-data GcPacing = GcPacingDefault | GcPacingZero
-
-gcPacingName :: GcPacing -> String
-gcPacingName = \case
-  GcPacingDefault -> "default"
-  GcPacingZero -> "zero"
-
-readGcPacing :: String -> Either String GcPacing
-readGcPacing = \case
-  "default" -> Right GcPacingDefault
-  "zero" -> Right GcPacingZero
-  s -> Left ("expected default|zero, got: " <> s)
-
 readScenario :: String -> Either String Scenario
 readScenario = \case
   "steady" -> Right Steady
@@ -266,7 +236,6 @@ data Opts = Opts
   { optDbPath :: Maybe FilePath
   , optLoad :: Load
   , optScenario :: Scenario
-  , optGcPacing :: GcPacing
   , optTxsPerEb :: Int
   , optTxBytes :: Int
   }
@@ -345,18 +314,6 @@ optsParser =
             \180 EBs, the backlog of a ~1h outage)"
       )
     <*> option
-      (eitherReader readGcPacing)
-      ( long "gc-pacing"
-          <> metavar "default|zero"
-          <> value GcPacingDefault
-          <> showDefaultWith gcPacingName
-          <> help
-            "Sweep batching: default (4-EB eviction batches, with the \
-            \writer's other work interleaved between them) or zero (one \
-            \unbounded eviction transaction) --- zero measures raw sweep \
-            \work and the unprotected worst-case write-lock hold"
-      )
-    <*> option
       auto
       ( long "txs-per-eb"
           <> metavar "N"
@@ -401,11 +358,10 @@ populateDb opts db =
           hashBytes = hashToBytes ebHash
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
-          txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
-      pointWritten <- writeEbPoint writer point (encodeEndorserBlockSize eb)
-      bodyWritten <- writeEbBody writer point eb
+          txs = Map.fromList (zip [0 ..] (ebTxsFor opts ebIdx))
+      bodyWritten <- writeEbBody writer point eb mempty
       txsWritten <- writeTxs writer point txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      awaitAll [void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- * Deterministic data generation (as in leios-db-bench)
@@ -419,6 +375,10 @@ genEbHash i = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 32 0)
 -- | The txs of a synthetic EB: the first @dup-fraction@ of them come from a
 -- pool shared between EBs (a rotating slice, so consecutive EBs overlap),
 -- the rest are unique to this EB. With dup fraction 0 every tx is unique.
+ebTxsFor :: Opts -> Int -> [BS.ByteString]
+ebTxsFor opts ebIdx = map (genTx opts) (ebTxHashesFor opts ebIdx)
+
+-- | The hashes 'ebTxsFor' generates the txs from.
 ebTxHashesFor :: Opts -> Int -> [TxHash]
 ebTxHashesFor opts ebIdx =
   [genSharedTxHash ((ebIdx * nShared + k) `mod` poolSize) | k <- [0 .. nShared - 1]]
@@ -427,12 +387,12 @@ ebTxHashesFor opts ebIdx =
   nShared = floor (effDup opts * fromIntegral (optTxsPerEb opts) :: Double)
   poolSize = max 1 (4 * optTxsPerEb opts)
 
--- | 'EndorserBlock' over 'ebTxHashesFor' with 'optTxBytes' per transaction.
+-- | 'EndorserBlock' naming the txs of 'ebTxsFor' by their hashes.
 genEb :: Opts -> Int -> EndorserBlock
 genEb opts ebIdx =
   mkEndorserBlock $
-    [ (h, fromIntegral (optTxBytes opts) :: BytesSize)
-    | h <- ebTxHashesFor opts ebIdx
+    [ (hashLeiosTx (MkLeiosTx tx), fromIntegral (BS.length tx) :: BytesSize)
+    | tx <- ebTxsFor opts ebIdx
     ]
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
@@ -447,7 +407,7 @@ genSharedTxHash j = UnsafeHash $ SBS.toShort $ BS.take 32 (tag <> BS.replicate 3
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
--- | Generate a TX payload: the TX hash bytes padded with zeros to 'optTxBytes'.
+-- | Generate a TX payload: the hash's bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
 genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
  where
@@ -459,16 +419,13 @@ genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
 -- below the GC frontier.
 data PhaseResult = PhaseResult
   { prScenario :: !String
-  , prPacing :: !String
   , prGcable :: !Int
   , prResident :: !Int
   , prPromoted :: !Int
   , prInsertEbWall :: !DiffTime
   -- ^ median over the phase's timed full-EB insertions
   , prPromoteWall :: !DiffTime
-  , prCopyWaitWall :: !DiffTime
-  , prMarkWall :: !DiffTime
-  , prSweepWall :: !DiffTime
+  , prGcWall :: !DiffTime
   , prStats :: !CycleStats
   , prTickLat :: !DiffTime
   }
@@ -478,14 +435,11 @@ runPhases ::
   LeiosDbHandle IO ->
   IO [TraceLeiosDb] ->
   IORef DiffTime ->
-  IO Int ->
   [(Word64, BS.ByteString)] ->
-  Int ->
   IO [PhaseResult]
-runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
+runPhases opts db flushEvents latRef schedule =
   withWriter db $ \writer -> do
     remainingRef <- newIORef schedule
-    promotedRef <- newIORef (0 :: Int)
     freshRef <- newIORef (0 :: Int)
     -- Time one fresh full-EB insertion (announcement + body + txs) through the
     -- given connection; the fresh EBs live at slots no frontier ever reaches.
@@ -494,15 +448,14 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
+              txs = Map.fromList (zip [0 ..] (ebTxsFor opts ebIdx))
           snd
             <$> timed
               ( do
-                  pointWritten <- writeEbPoint w point (encodeEndorserBlockSize eb)
-                  bodyWritten <- writeEbBody w point eb
+                  bodyWritten <- writeEbBody w point eb mempty
                   txsWritten <- writeTxs w point txs
-                  -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  -- Awaiting both times them to durability.
+                  awaitAll [void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup
@@ -529,103 +482,42 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           -- 1. quiescent full-EB insertion latency at the current load
           insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
           resident <- volatileEbs <$> leiosDbSampleStats db
-          -- 2. promote a fraction, wait for the copier to land them
+          -- 2. promote a fraction
           let nPromote =
                 -- ceiling, so the 1-EB steady phases promote their EB and
-                -- exercise the copier (floor would promote none)
+                -- exercise the promotion (floor would promote none)
                 ceiling (promoteFraction * fromIntegral (length due) :: Double)
           -- One batched call, as 'copyToImmutableDB' does it.
           (_, promoteWall) <-
             timed $
               leiosDbPromoteToImmutable
                 db
+                (SlotNo frontier)
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]
-          promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
-          (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
-          -- 3. GC: mark, then wait for the sweeper to drain
-          (_, markWall) <- timed $ garbageCollect db (SlotNo frontier)
-          (_, sweepWall) <- timed $ awaitZero "sweep" sweepBacklog
+          -- 3. GC
+          (_, gcWall) <- timed $ garbageCollect db
           tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
           evs <- flushEvents
           let stats = List.foldl' addEvent emptyCycleStats evs
               result =
                 PhaseResult
                   { prScenario = scenario
-                  , prPacing = gcPacingName (optGcPacing opts)
                   , prGcable = length due
                   , prResident = resident
                   , prPromoted = nPromote
                   , prInsertEbWall = medianTime insertWalls
                   , prPromoteWall = promoteWall
-                  , prCopyWaitWall = copyWaitWall
-                  , prMarkWall = markWall
-                  , prSweepWall = sweepWall
+                  , prGcWall = gcWall
                   , prStats = stats
                   , prTickLat = tickLat
                   }
           putStrLn (renderPhase i result)
           pure (Just result)
     pure (catMaybes results)
- where
-  awaitCopier target = go (0 :: Int)
-   where
-    go n = do
-      stats <- leiosDbSampleStats db
-      if immutableEbs stats >= target
-        then pure ()
-        else
-          if n > 3_600_000
-            then
-              die $
-                "copy wait timed out: immutableEbs = "
-                  <> show (immutableEbs stats)
-                  <> ", expected "
-                  <> show target
-            else do
-              threadDelay 1_000
-              go (n + 1)
 
 medianTime :: [DiffTime] -> DiffTime
 medianTime [] = 0
 medianTime ts = List.sort ts !! (length ts `div` 2)
-
--- * Sweep backlog probes
-
--- | What the sweeper still owes: GC-marked rows.
-sqlSweepBacklog :: T.Text
-sqlSweepBacklog =
-  "SELECT COUNT(*) FROM ebs WHERE status = 3"
-
--- | What the sweeper owes at startup: the marks a previous run persisted.
-sqlInitialBacklog :: T.Text
-sqlInitialBacklog = sqlSweepBacklog
-
--- | A reusable single-integer probe on its own connection (WAL readers do
--- not block the sweeper's writes; the reset after each poll releases the
--- read snapshot).
-mkBacklogProbe :: FilePath -> T.Text -> IO (IO Int)
-mkBacklogProbe path sql = do
-  db <- SQL.open (T.pack path)
-  stmt <- SQL.prepare db sql
-  pure $ do
-    _ <- SQL.step stmt
-    n <- SQL.columnInt64 stmt 0
-    SQL.reset stmt
-    pure (fromIntegral n)
-
--- | Poll a backlog probe until it reaches zero.
-awaitZero :: String -> IO Int -> IO ()
-awaitZero what probe = go (0 :: Int)
- where
-  go n =
-    probe >>= \case
-      0 -> pure ()
-      k ->
-        if n > 3_600_000
-          then die (what <> " timed out; backlog = " <> show k)
-          else do
-            threadDelay 1_000
-            go (n + 1)
 
 -- * Event collection
 
@@ -640,12 +532,10 @@ data CycleStats = CycleStats
   { csCopied :: !Int
   , csEvicted :: !Int
   , csCollisions :: !Int
-  , csCopyErrors :: !Int
-  , csSweepErrors :: !Int
   }
 
 emptyCycleStats :: CycleStats
-emptyCycleStats = CycleStats 0 0 0 0 0
+emptyCycleStats = CycleStats 0 0 0
 
 addEvent :: CycleStats -> TraceLeiosDb -> CycleStats
 addEvent cs = \case
@@ -654,8 +544,6 @@ addEvent cs = \case
   TraceLeiosDbEvicted evictedEbs ->
     cs{csEvicted = csEvicted cs + evictedEbs}
   TraceLeiosDbInsertCollision{} -> cs{csCollisions = csCollisions cs + 1}
-  TraceLeiosDbCopyError{} -> cs{csCopyErrors = csCopyErrors cs + 1}
-  TraceLeiosDbGCError{} -> cs{csSweepErrors = csSweepErrors cs + 1}
   _ -> cs
 
 -- * RTS health probe
@@ -688,14 +576,14 @@ tickProbe latRef = forever $ do
 
 -- * Fixture inspection
 
--- | Distinct volatile EB hashes with their newest announcement slot, ascending.
+-- | Distinct EB hashes with their newest announcement slot, ascending.
 readEbSchedule :: FilePath -> IO [(Word64, BS.ByteString)]
 readEbSchedule path = do
   db <- SQL.open (T.pack path)
   stmt <-
     SQL.prepare
       db
-      "SELECT MAX(ebSlot) AS s, ebHashBytes FROM ebs WHERE status = 0 GROUP BY ebHashBytes ORDER BY s"
+      "SELECT MAX(ebSlot) AS s, ebHashBytes FROM ebs GROUP BY ebHashBytes ORDER BY s"
   let loop acc =
         SQL.step stmt >>= \case
           SQL.Row -> do
@@ -716,17 +604,14 @@ csvHeader =
     ","
     [ "phase"
     , "scenario"
-    , "gcPacing"
     , "gcableEbs"
     , "residentEbs"
     , "promotedEbs"
     , "copiedEbRows"
     , "insertEbSeconds"
     , "promoteSeconds"
-    , "copyWaitSeconds"
     , "evictedEbRows"
-    , "markSeconds"
-    , "sweepSeconds"
+    , "gcSeconds"
     ]
 
 renderPhase :: Int -> PhaseResult -> String
@@ -734,32 +619,26 @@ renderPhase
   i
   PhaseResult
     { prScenario
-    , prPacing
     , prGcable
     , prResident
     , prPromoted
     , prInsertEbWall
     , prPromoteWall
-    , prCopyWaitWall
-    , prMarkWall
-    , prSweepWall
+    , prGcWall
     , prStats = cs
     } =
     List.intercalate
       ","
       [ show i
       , prScenario
-      , prPacing
       , show prGcable
       , show prResident
       , show prPromoted
       , show (csCopied cs)
       , showSeconds prInsertEbWall
       , showSeconds prPromoteWall
-      , showSeconds prCopyWaitWall
       , show (csEvicted cs)
-      , showSeconds prMarkWall
-      , showSeconds prSweepWall
+      , showSeconds prGcWall
       ]
 
 renderStats :: String -> LeiosDbStats -> String
@@ -779,8 +658,6 @@ renderSummary opts results =
          , "  copied ebs            = " <> show (sum (map (csCopied . prStats) results))
          , "  evicted ebs           = " <> show (sum (map (csEvicted . prStats) results))
          , "  insert collisions     = " <> show (sum (map (csCollisions . prStats) results))
-         , "  copy errors           = " <> show (sum (map (csCopyErrors . prStats) results))
-         , "  sweep errors          = " <> show (sum (map (csSweepErrors . prStats) results))
          ]
       <> concatMap scenarioBlock (List.nub (map prScenario results))
  where
@@ -794,9 +671,7 @@ renderSummary opts results =
         <> " EBs GC'd):"
     , stat "insert eb (median)" (map prInsertEbWall rs)
     , stat "promote           " (map prPromoteWall rs)
-    , stat "copy wait         " (map prCopyWaitWall rs)
-    , stat "mark              " (map prMarkWall rs)
-    , stat "sweep             " (map prSweepWall rs)
+    , stat "gc                " (map prGcWall rs)
     , stat "tick latency      " (map prTickLat rs)
     ]
    where

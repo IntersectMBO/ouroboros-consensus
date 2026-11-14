@@ -1266,6 +1266,7 @@ test cacheConfig chunkInfo cmds = do
             { immCacheConfig = cacheConfig
             , immCheckIntegrity = testBlockIsValid
             , immChunkInfo = chunkInfo
+            , immCheckExternalCompleteness = \_ _ -> pure True
             , immCodecConfig = TestBlockCodecConfig
             , immHasFS = SomeHasFS hasFS
             , immRegistry = registry

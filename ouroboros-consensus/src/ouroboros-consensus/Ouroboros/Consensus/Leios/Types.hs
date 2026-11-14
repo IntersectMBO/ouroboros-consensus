@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Transactions
   , LeiosTx (..)
+  , hashLeiosTx
   , encodeLeiosTx
   , decodeLeiosTx
 
@@ -41,6 +42,7 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , EndorserBlock -- opaque
   , TxOffset
+  , TxLocation (..)
   , mkEndorserBlock
   , endorserBlockFromTxBytes
   , ForgedEndorserBlock
@@ -51,6 +53,8 @@ module Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , encodeEndorserBlock
   , decodeEndorserBlock
+  , serialiseEndorserBlock
+  , deserialiseEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
   , referencesCapacity
@@ -94,7 +98,7 @@ import Cardano.Ledger.Hashes
   , EraIndependentEbReferences
   , EraIndependentTx
   , HASH
-  , SafeToHash (originalBytesSize)
+  , SafeToHash (originalBytes, originalBytesSize)
   , extractHash
   , hashAnnotated
   , unsafeMakeSafeHash
@@ -106,6 +110,7 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -177,6 +182,10 @@ newtype LeiosTx = MkLeiosTx {leiosTxBytes :: ByteString}
   deriving stock (Eq, Show)
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
+
+-- | The hash an endorser block names this transaction by.
+hashLeiosTx :: LeiosTx -> TxHash
+hashLeiosTx (MkLeiosTx bytes) = castHash $ hashWith @HASH id bytes
 
 encodeLeiosTx :: LeiosTx -> Encoding
 encodeLeiosTx (MkLeiosTx bytes) = encodeNestedCborBytes (BSL.fromStrict bytes)
@@ -294,10 +303,18 @@ endorserBlockFromTxBytes =
   mkEndorserBlock . map reference . toList
  where
   reference :: ByteString -> (TxHash, BytesSize)
-  reference bytes = (castHash $ hashWith @HASH id bytes, fromIntegral $ BS.length bytes)
+  reference bytes = (hashLeiosTx (MkLeiosTx bytes), fromIntegral $ BS.length bytes)
 
 -- | The position of a transaction in its endorser block.
 type TxOffset = Int
+
+-- | Where a transaction's durable bytes live: the point of an endorser block
+-- that references it, and its offset there. A later endorser block referencing
+-- the same transaction copies the bytes from there rather than fetching them
+-- again. A stale location is harmless: if the bytes are gone, nothing is
+-- copied and the transaction is fetched.
+data TxLocation = MkTxLocation !LeiosPoint !TxOffset
+  deriving stock (Eq, Show)
 
 -- | An endorser block that this node forged, with the bytes of its
 -- transactions. Only 'forgeLeiosEb' builds it, so that the bytes always match
@@ -390,6 +407,22 @@ decodeEndorserBlock = do
         <> " bytes exceeds "
         <> show maxEndorserBlockBytesSize
   pure eb
+
+-- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
+-- received in, or the ledger's encoding of one this node built.
+serialiseEndorserBlock :: EndorserBlock -> ByteString
+serialiseEndorserBlock (MkEndorserBlock references) = originalBytes references
+
+-- | The inverse of 'serialiseEndorserBlock', with 'decodeEndorserBlock'.
+deserialiseEndorserBlock :: ByteString -> Either String EndorserBlock
+deserialiseEndorserBlock bytes =
+  case deserialiseFromBytes decodeEndorserBlock lazyBytes of
+    Left err -> Left (show err)
+    Right (rest, eb)
+      | BSL.null rest -> Right (eb lazyBytes)
+      | otherwise -> Left (show (BSL.length rest) <> " bytes after the endorser block")
+ where
+  lazyBytes = BSL.fromStrict bytes
 
 -- | The most bytes 'encodeEndorserBlock' writes besides the references, for an
 -- endorser block that 'mkEndorserBlock' built: its map header. Each

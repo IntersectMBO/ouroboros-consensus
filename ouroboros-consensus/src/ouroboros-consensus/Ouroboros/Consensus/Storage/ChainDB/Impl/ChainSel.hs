@@ -93,7 +93,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
-  ( AcquiredLeiosEbs
+  ( AcquiredEbs
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
   , insertLeiosValidClaim
@@ -138,8 +138,8 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
-  -- | The endorser blocks whose closure is acquired ('cdbAcquiredLeiosEbs').
-  STM m AcquiredLeiosEbs ->
+  -- | The endorser blocks whose closure is acquired ('cdbAcquiredEbs').
+  STM m AcquiredEbs ->
   LoE () ->
   PerasWeightSnapshot blk ->
   m (AnchoredFragment (HeaderWithTime blk))
@@ -150,7 +150,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
-  getAcquiredLeiosEbs
+  getAcquiredEbs
   loE
   weights = do
     -- TODO: Improve the user experience by trimming any potential
@@ -174,7 +174,7 @@ initialChainSelection
     -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
-      acquired <- getAcquiredLeiosEbs
+      acquired <- getAcquiredEbs
       lookupBlockInfo <- VolatileDB.getBlockInfo volatileDB
       (,)
         <$> ImmutableDB.getTipAnchor immutableDB
@@ -818,7 +818,7 @@ constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     -- Parked blocks ('ignoreParkedCertRB') are absent as invalid ones are, but
     -- only until the closure they wait for is acquired.
-    acquired <- readTVar cdbAcquiredLeiosEbs
+    acquired <- readTVar cdbAcquiredEbs
     rawLookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
     rawSuccsOf <- VolatileDB.filterByPredecessor cdbVolatileDB
     pure

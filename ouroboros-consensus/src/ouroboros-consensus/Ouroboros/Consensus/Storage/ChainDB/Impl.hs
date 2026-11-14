@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -84,8 +83,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
-  ( emptyLeiosValidClaims
-  , mkAcquiredLeiosEbs
+  ( certifiesPromotedEb
+  , emptyLeiosValidClaims
+  , mkAcquiredEbs
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -93,7 +93,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( LeiosDbHandle (leiosDbTruncateImmutable)
   , LeiosDbReader (..)
   , withReader
   )
@@ -179,7 +179,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     ) <- lift $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningDB
     traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
-    immutableDB <- ImmutableDB.openDB argsImmutableDb
+    immutableDB <-
+      withReader leiosDb $ \reader ->
+        ImmutableDB.openDB
+          argsImmutableDb
+            { ImmutableDB.immCheckExternalCompleteness =
+                certifiesPromotedEb (configBlock (Args.cdbsTopLevelConfig cdbSpecificArgs)) reader
+            }
     immutableDbTip <- atomically $ ImmutableDB.getTip immutableDB
     let immutableDbTipPoint = ImmutableDB.tipToPoint immutableDbTip
         immutableDbTipChunk =
@@ -187,6 +193,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
+    -- Before anything reads the LeiosDB, as its reads dispatch by the slot.
+    leiosDbTruncateImmutable leiosDb (fromWithOrigin 0 (pointSlot immutableDbTipPoint))
 
     traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
     volatileDB <- VolatileDB.openDB argsVolatileDb
@@ -240,16 +248,22 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
-    -- Subscribe before seeding, so that no closure acquired in between is
-    -- missed. The seed is every closure the LeiosDB holds that a block the
-    -- initial chain selection could select may certify.
-    nextLeiosEbNotification <- readTChan <$> subscribeEbNotifications leiosDb
-    initialAcquiredLeiosEbs <-
+    -- The seed is every closure the LeiosDB holds that a block the initial
+    -- chain selection could select may certify.
+    --
+    -- FIXME Grow it as the node acquires closures. The LeiosDB no longer tells
+    -- what is written to it, so nothing does until LeiosFetch announces its
+    -- acquisitions, which the open follow-up PRs of #2490 add. Then also key 'AcquiredEbs' by point, as the LeiosDB
+    -- is: a closure acquired at one point of an endorser block is not one at
+    -- another. Promotion copies the certified point's closure only, and fails
+    -- the node if it is incomplete.
+    let nextAcquiredEbClosure = retry
+    initialAcquiredEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
-    varAcquiredLeiosEbs <- newTVarIO (mkAcquiredLeiosEbs initialAcquiredLeiosEbs)
+    varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
     varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
     chainWithTime <-
       ChainSel.initialChainSelection
@@ -259,7 +273,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
-        (readTVar varAcquiredLeiosEbs)
+        (readTVar varAcquiredEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
@@ -315,7 +329,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
-            , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
             }
 
@@ -409,7 +423,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env nextLeiosEbNotification
+    when launchBgTasks $ Background.launchBgTasks env nextAcquiredEbClosure
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually

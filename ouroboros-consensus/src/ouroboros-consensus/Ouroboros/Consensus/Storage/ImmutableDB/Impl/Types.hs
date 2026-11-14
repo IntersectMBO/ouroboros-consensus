@@ -7,6 +7,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     BlockOrEBB (..)
   , WithBlockSize (..)
   , isBlockOrEBB
+  , Parent (..)
 
     -- * Validation policy
   , ValidationPolicy (..)
@@ -49,6 +50,9 @@ data WithBlockSize a = WithBlockSize
   , withoutBlockSize :: !a
   }
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
+
+-- | Indicate a parent relationship of some type.
+newtype Parent a = Parent a
 
 {------------------------------------------------------------------------------
   Validation policy
@@ -103,6 +107,9 @@ data ChunkFileError blk
   | -- | The integrity verification of the block with the given point returned
     -- 'False', indicating that the block got corrupted.
     ChunkErrCorrupt (Point blk)
+  | -- | The external completeness check of the block with the given point
+    -- returned 'False'.
+    ChunkErrIncomplete (Point blk)
   deriving (Eq, Show)
 
 {------------------------------------------------------------------------------

@@ -49,15 +49,15 @@ unit_storesForgedEbs :: Assertion
 unit_storesForgedEbs = do
   let ForgeOutcome{announcedEbs, storedPoints} = runSimOrThrow forgedEbs
   assertBool "the node forged no block" (not (null announcedEbs))
-  sort storedPoints @?= sort [(announcedSlot eb, announcedHash eb) | eb <- announcedEbs]
+  sort storedPoints @?= sort [MkLeiosPoint (announcedSlot eb) (announcedHash eb) | eb <- announcedEbs]
   map storedTxs announcedEbs @?= map (Just . forgedTxs) announcedEbs
 
 -- | What the chain and the LeiosDB hold after the node forges.
 data ForgeOutcome = ForgeOutcome
   { announcedEbs :: [AnnouncedEb]
   -- ^ The endorser blocks that the blocks on the chain announce, oldest first.
-  , storedPoints :: [(SlotNo, EndorserBlockHash)]
-  -- ^ The points in the LeiosDB.
+  , storedPoints :: [LeiosPoint]
+  -- ^ The points whose closures the LeiosDB holds.
   }
 
 -- | An endorser block that a block on the chain announces.
@@ -83,12 +83,11 @@ forgedEbs = withNode $ \node -> do
     announcedEbs <-
       sequence
         [ AnnouncedEb (blockSlot hdr) ebHash [txInSlot (blockSlot hdr)]
-            . fmap (map snd)
-            <$> lookupEbClosure reader ebHash
+            <$> lookupEbClosure reader (MkLeiosPoint (blockSlot hdr) ebHash)
         | hdr <- AF.toOldestFirst chain
         , Just (ebHash, _size) <- [lthAnnouncement hdr]
         ]
-    storedPoints <- testScanEbPoints reader
+    storedPoints <- scanCompleteEbClosuresNotOlderThanSlot reader 0
     pure ForgeOutcome{announcedEbs, storedPoints}
 
 -- | A forging that leads in every slot. Each block extends the ledger tip and

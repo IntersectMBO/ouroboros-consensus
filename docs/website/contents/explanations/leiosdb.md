@@ -6,13 +6,26 @@ Its SQLite backend keeps them in two files, called partitions:
 - **Volatile partition** stores fresh EB announcements, bodies and transaction that the node downloads or forges.
 - **Immutable partition** stores complete EBs (and their closure transactions) that a certificate on the immutable chain refers to.
 
-The EBs and their closures are copied from the volatile to the immutable partition when they become older than [`k`](../references/glossary.md#security-parameter) (the Praos security parameter). See also the [ImmutableDB](../references/glossary.md#chaindb) glossary entry.
+The EBs and their closures are copied from the volatile to the immutable partition when the blocks certifying them become older than [`k`](../references/glossary.md#security-parameter) (the Praos security parameter). See also the [ImmutableDB](../references/glossary.md#chaindb) glossary entry.
 
 ## Database schema
 
-- `ebs` has one row for each pair of slot and EB hash that an announcement named; announcements that name the same pair share the row, and its `ebBytesSize` is the size claimed by the first one written. Thus one EB hash can occur at several slots.
-- `ebTxs` is the EB body. It has one row for each transaction of the EB, in order. It stores each EB body only once, however many `ebs` rows name its hash.
-- `ebTxBytes` stores the transaction bytes of the EB closure, one row for each `ebTxs` row, with the same key. The EB owns these bytes: a transaction that belongs to two EBs is stored twice (ie duplicated aka denormalized.)
+Both partitions have one table, `ebs`, with one row for each pair of slot and EB hash that an announcement named.
+Announcements that name the same pair share the row.
+Each row holds the whole EB:
+
+- `txWritten` is a byte per transaction the body lists, set once the transaction is written.
+- `txBounds` is where each transaction is in the closure: n + 1 positions as 32-bit big-endian words, transaction `i` being the closure's bytes from position `i` up to position `i + 1`, and the last position the closure's size. For two transactions of 64 and 1024 bytes, it is the 12 bytes `00000000 00000040 00000440`: the first spans bytes 0 to 63, the second bytes 64 to 1087.
+- `body` is the body in the bytes it was received in.
+- `txs` is the closure: the bytes of the EB's transactions, concatenated.
+
+The table is fully denormalized; we're essentially using SQLite only for its durability and concurrency control.
+A transaction that belongs to two EBs is stored twice, and an EB announced at several slots is stored at each.
+The worst case, every slot naming a different EB, shares nothing anyway, so the partition's size depends only on how many points it holds, however often EBs repeat.
+And reads and writes touch one row, with no joins.
+
+The columns go from small to large, as reading one walks the overflow pages of every column before it.
+Once its body is written, a row changes only through SQLite's incremental blob API: an `UPDATE` reads, and may rewrite, the whole row.
 
 ## Volatile partition
 
@@ -21,89 +34,47 @@ erDiagram
     ebs {
         INTEGER ebSlot PK
         BLOB ebHashBytes PK
-        INTEGER ebBytesSize
-        INTEGER missingTxCount "NULL: no body yet; >0: txs missing; 0: just completed; <0: notified"
-        INTEGER status "0: volatile; 1: pinned for copy; 2: copied; 3: marked for GC"
+        BLOB txWritten "a byte per tx, set once written"
+        BLOB txBounds "n + 1 u32 positions in txs"
+        BLOB body "as received"
+        BLOB txs "zeroes until written"
     }
-    ebTxs {
-        BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        BLOB txHashBytes
-        INTEGER txBytesSize
-    }
-    ebTxBytes {
-        BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        INTEGER filled "0: not yet arrived; 1: arrived"
-        BLOB txBytes
-    }
-
-    ebs }|--o{ ebTxs : "ebHashBytes"
-    ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
 ```
 
-The queries join the tables on the EB hash (`ebHashBytes`) and the transaction offset (`txOffset`).
+- When an EB body arrives at a point, the point's row is inserted, with a closure and markers of zeroes. Points share nothing, even when they name the same EB: the LeiosFetch fetches and writes each on its own, so one point's writes never need to touch other points' rows. In the same SQL transaction that writes the body, whichever of its Cardano transactions the node holds at another point, of this EB or another, are copied from there, the caller naming that point, each only if its bytes hash and length match the body's claim.
+- Each transaction write fills its transactions in place, in the point's row, through SQLite's incremental blob API, and sets their bytes in `txWritten` the same way. A transaction is dropped if the body is not stored, its offset is not in the body, or its size is not the declared one. LeiosDB does not track whether an EB is complete: the fetch logic, which requested the transactions, knows that. A read tells which transactions are written from `txWritten`, without reading their bytes.
+- Only at startup, to seed what the node holds, does LeiosDB judge completeness: a point is complete if each of its transactions is marked written, or, for a point read from the immutable partition, if that holds it. This scan decodes no body and checks no hash for it, since hashes were confirmed when the transactions were originally written.
+- Reads take the row at the requested point: in the immutable partition if the point is older than the promoted slot (see below), else in the volatile one, and never fall back to the other. A read of the volatile partition that a promotion and a collection overtook, deleting the row after the read chose the partition, reads the immutable one instead, which that promotion filled.
+- LeiosFetch serves a body by only reading `body`. LeiosFetch serves requested transactions once per contiguous run of requested offsets, for each: it reads that run's slice out of `txBounds`, then reads the slice from `txs`. Neither task re-decodes the body's bytes.
+- Resolving the closure, for voting and applying, splits `txs` at `txBounds`. Checking the transactions against the body's hashes is the caller's.
 
-- When an EB body arrives, rows are inserted in `ebTxs`. In the same transaction, one `ebTxBytes` row is allocated for each of them: a zero-filled blob of the declared size, with `filled = 0`. Then `missingTxCount` is set to the number of unfilled rows.
-- When transactions arrive, they overwrite their rows in place and set `filled = 1`. A write is dropped if its row does not exist, is already filled, or has a different size. Also, the `missingTxCount` of every `ebs` row whose EB has already arrived and references the arriving transactions is decreased by the number of `ebTxBytes` rows filled for that EB. Note that a tx will decrement the `missingTxCount` columns only of EBs that referred to that tx with the correct size.
-- The GC sweep phase deletes the `ebTxBytes`, `ebTxs` and `ebs` rows of an EB by its hash: three range deletes.
+There is no index but the primary key: `(ebSlot, ebHashBytes)` serves the lookups by point, local fills included, the garbage collection's scan by slot, and finding the newest promoted point. The blob API opens a row by its implicit rowid.
 
-Indexes:
+### Promotion and garbage collection
 
-| Index                           | On                                   | Used for                                                                 |
-|---------------------------------|--------------------------------------|--------------------------------------------------------------------------|
-| `idx_ebs_ebHashBytes`           | `ebs(ebHashBytes)`                   | Looking up an EB by hash                                                 |
-| `idx_ebs_sweepable`             | `ebs(ebSlot) WHERE status IN (0, 2)` | The GC mark scan                                                         |
-| `idx_ebs_markedForGc`           | `ebs(ebHashBytes) WHERE status = 3`  | The sweeper picking EBs to evict                                         |
-| `idx_ebs_pinned`                | `ebs(ebSlot) WHERE status = 1`       | The copier picking EBs to copy                                           |
+Before the ChainDB appends blocks to the ImmutableDB, it promotes the EBs they certify: it copies each into the immutable partition, at its certified point, in one transaction.
+It then advances the promoted slot to the slot of the newest of those blocks, even if they certify nothing.
+Only reads of a point older than the promoted slot go to the immutable partition, and every point there that the immutable chain certifies is promoted.
+An EB the immutable partition holds already is not copied again: a crash can lose the volatile writes that completed it, and nothing fetches them again.
+So every block in the ImmutableDB has the EB it certifies in the immutable partition.
+A crash before the blocks are appended leaves only the EBs copied, and the next start copies them again.
+An EB whose closure is incomplete fails the promotion, and the node stops: ChainSel adopts a block certifying an EB only once the EB's closure is complete.
 
-### Lifecycle of an EB row
+Neither the ImmutableDB nor the LeiosDB syncs its writes to disk, so a power loss can drop the newest writes of either, and leave the ImmutableDB with a block certifying an EB that the immutable partition lacks.
+After such an unclean shutdown, the ImmutableDB validates all its chunks when it opens, and checks each block against its predecessor: it truncates before the first block that certifies an EB the immutable partition does not hold, and the node fetches the blocks after it again.
+Whenever the ChainDB opens, before anything reads the LeiosDB, it truncates the immutable partition to the ImmutableDB tip: it deletes the EBs announced at or after the tip's slot, which no block of the ImmutableDB certifies, and sets the promoted slot to it.
+So the immutable partition does not run ahead of the ImmutableDB either, after a crash between a promotion and the appends of its blocks, a truncation of the ImmutableDB, or a row lost from the middle of the partition.
+An EB it deletes that the volatile partition still holds is promoted again, and any other is fetched again.
 
-The `status` column records where an `ebs` row is in promotion and garbage collection:
+A garbage collection deletes the rows before the promoted slot, in writer jobs of a bounded number of rows each, so the writes queued meanwhile wait for one job at most.
+So it never deletes a row that reads still go to, nor one that a promotion still needs.
+The point and body writes of a point before the promoted slot are dropped, as a collection would delete them anyway: such a point is promoted or not certified, and the fetch logic ignores announcements older than the ImmutableDB tip.
 
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> Volatile : announce
-    Volatile --> Pinned : promote to become immutable
-    Pinned --> Copied : copy to the immutable partition
-    Volatile --> MarkedForGC : GC mark
-    Copied --> MarkedForGC : GC mark
-    MarkedForGC --> Pinned : re-promote before the sweep
-    MarkedForGC --> [*] : GC sweep
-
-    Volatile : 0 — volatile
-    Pinned : 1 — pinned, awaiting copy
-    Copied : 2 — copied, evictable
-    MarkedForGC : 3 — marked for GC
-```
+The promoted slot is kept in memory only, and goes back only when the ChainDB opens and truncates the immutable partition.
+Until then it is the one after the newest point in the immutable partition, which the primary key finds without a scan.
 
 ## Immutable partition
 
-```mermaid
-erDiagram
-    ebs {
-        INTEGER ebSlot PK
-        BLOB ebHashBytes PK
-        INTEGER ebBytesSize
-    }
-    ebTxs {
-        BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        BLOB txHashBytes
-        INTEGER txBytesSize
-    }
-    ebTxBytes {
-        BLOB ebHashBytes PK
-        INTEGER txOffset PK
-        INTEGER filled
-        BLOB txBytes
-    }
-
-    ebs }|--|{ ebTxs : "ebHashBytes"
-    ebTxs ||--|| ebTxBytes : "ebHashBytes, txOffset"
-```
-
-The copier copies only complete EBs, and GC never removes EBs from this partition.
-Thus every `ebs` row has its full body in `ebTxs`, and every `ebTxs` row has its filled `ebTxBytes` row.
-For the same reason, the immutable partition does not have `missingTxCount`, `status`, or any index other than `idx_ebs_ebHashBytes`.
+The immutable partition has the same `ebs` table.
+Promotion copies only EBs whose certificate is on the chain, and only once each of their transactions is written, and GC never removes EBs from this partition.
+Thus every row holds its whole EB, and its `txWritten` is all set: redundant, but kept so both partitions share one schema.
