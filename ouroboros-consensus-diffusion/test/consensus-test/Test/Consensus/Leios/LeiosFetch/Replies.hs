@@ -208,9 +208,9 @@ newContextGated point gate = do
  where
   holdingBodies writer =
     writer
-      { writeEbBody = \p eb -> do
+      { writeEbBody = \p eb fills -> do
           release <- gate
-          written <- writeEbBody writer p eb
+          written <- writeEbBody writer p eb fills
           pure $ Promise $ release >> await written
       }
 

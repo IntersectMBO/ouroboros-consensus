@@ -30,6 +30,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
@@ -281,7 +283,7 @@ processLeiosBlock ctx peer req eb = do
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
     BodyToWrite -> do
-      bodyWritten <- writeEbBody lfcWriter point eb
+      bodyWritten <- writeEbBody lfcWriter point eb mempty
       -- A failed write brings the node down, since the SQLite LeiosDB's writer
       -- is linked to it. This worker runs off this thread but is linked to it,
       -- so a failure also disconnects the peer, if its client still runs. Like
@@ -352,7 +354,7 @@ settleBody ::
   EndorserBlock ->
   -- | when the body arrived
   RelativeTime ->
-  Promise m [TxOffset] ->
+  Promise m (Set TxOffset) ->
   m ()
 settleBody ctx peer point eb now bodyWritten = do
   heldOffs <- await bodyWritten
@@ -363,7 +365,7 @@ settleBody ctx peer point eb now bodyWritten = do
       Just (MkEbState onset NoBody) -> do
         let
           jobPool =
-            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` IntSet.fromList heldOffs)
+            newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` toIntSet heldOffs)
         atomically $ do
           lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
           when (Jobs.nullJobPool jobPool) $
@@ -436,7 +438,8 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       IntMap.traverseWithKey
         (\i job -> checkJobCommitment point aligned (Jobs.MkLeiosJobId i) job)
         pendingJobs
-  txsWritten <- writeTxs lfcWriter point [(off, bytes) | (off, _txHash, bytes) <- toIngest]
+  txsWritten <-
+    writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
   let arrival =
         fetchArrivalGood $
           sum [fromIntegral (BS.length bytes) | (_off, _txHash, bytes) <- toIngest]
@@ -504,10 +507,10 @@ settleTxs ::
   -- | when the txs arrived
   RelativeTime ->
   -- | the offsets of the txs the LeiosDB dropped
-  Promise m [TxOffset] ->
+  Promise m (Set TxOffset) ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now txsWritten = do
-  wrongSize <- IntSet.fromList <$> await txsWritten
+  wrongSize <- toIntSet <$> await txsWritten
   completed <- modifyMVar lfcOutstanding $ \outstanding -> do
     let outstanding' = completeTxRequest peer req outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
@@ -591,3 +594,6 @@ checkJobCommitment point aligned jid (Jobs.MkLeiosJob offs _expectedBytes commit
     [ (off, hashLeiosTx tx, leiosTxBytes tx)
     | (off, tx) <- IntMap.toAscList (IntMap.restrictKeys aligned offs)
     ]
+
+toIntSet :: Set TxOffset -> IntSet.IntSet
+toIntSet = IntSet.fromDistinctAscList . Set.toAscList
