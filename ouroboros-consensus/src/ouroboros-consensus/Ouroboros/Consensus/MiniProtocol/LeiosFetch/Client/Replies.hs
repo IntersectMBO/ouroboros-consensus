@@ -413,7 +413,7 @@ settleBody ctx source point eb bodyWritten = do
           )
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
+  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- Set.toList heldOffs]
   void $ tryPutMVar lfcReady ()
   -- Read after emitting, so that the acquisitions' ages run until then.
   now <- systemTimeCurrent lfcSystemTime
