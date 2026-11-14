@@ -562,7 +562,14 @@ openLedgerDB flavArgs env cfg fs = do
                   (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
-          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          let initDb =
+                V2.mkInitDb
+                  args
+                  getBlock
+                  (\_ _ -> error "These tests do not use Leios certificates")
+                  snapManager
+                  (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+                  res
           -- These tests do not use EBBs.
           lift $ openDBInternal args initDb snapManager stream replayGoal IsNotEBB
   case NE.nonEmpty volBlocks of
