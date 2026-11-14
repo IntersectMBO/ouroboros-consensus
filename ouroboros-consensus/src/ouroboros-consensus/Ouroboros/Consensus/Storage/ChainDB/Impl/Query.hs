@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Queries
@@ -45,6 +46,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getAnyBlockComponent
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
+  , getKnownEndorserBlock
   , getChainSelStarvation
   ) where
 
@@ -104,6 +106,8 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle, lookupLeiosClosure)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
@@ -560,6 +564,25 @@ getAnyKnownBlock ::
   m blk
 getAnyKnownBlock immutableDB volatileDB =
   getAnyKnownBlockComponent immutableDB volatileDB GetBlock
+
+-- | The endorser block a block on the chain certifies, which must be stored
+-- whole and decode.
+--
+-- If it does not, this indicates disk failure.
+getKnownEndorserBlock ::
+  forall m blk.
+  ( IOLike m
+  , BlockSupportsLeios blk
+  , HasHeader blk
+  ) =>
+  LeiosDbHandle m ->
+  ResolveEndorserBlock m blk
+getKnownEndorserBlock leiosDb point blk =
+  lookupLeiosClosure leiosDb point >>= \case
+    Nothing -> throwIO $ ChainDbMissingEndorserBlock @blk point
+    Just closure ->
+      either (throwIO . ChainDbUndecodableEndorserBlock @blk point) pure $
+        decodeLedgerEndorserBlock blk closure
 
 -- | Wrapper around 'getAnyBlockComponent' for blocks we know should exist.
 --

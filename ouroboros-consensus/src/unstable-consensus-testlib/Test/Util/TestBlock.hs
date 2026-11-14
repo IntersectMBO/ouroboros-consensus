@@ -1143,7 +1143,13 @@ deriving via
     BlockSupportsDiffusionPipelining (TestBlockWith ptype)
 
 instance BlockSupportsLeios (TestBlockWith ptype) where
+  data LedgerEndorserBlock (TestBlockWith ptype)
+
   blockLeiosCert = defaultBlockLeiosCert
+  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
+  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
+  getEndorserBlockKeySets eb = case eb of {}
+  applyLedgerEndorserBlock _cfg eb = case eb of {}
 
 -----
 
