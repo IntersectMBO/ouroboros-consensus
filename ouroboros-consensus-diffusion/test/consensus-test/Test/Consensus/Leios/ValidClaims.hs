@@ -3,6 +3,7 @@ module Test.Consensus.Leios.ValidClaims (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import qualified Data.ByteString.Short as SBS
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Types (RankingBlockHash (..))
@@ -28,9 +29,9 @@ tests =
     ]
  where
   claims =
-    insertLeiosValidClaim (LeiosClaim (SlotNo 2) rbC) $
-      insertLeiosValidClaim (LeiosClaim (SlotNo 1) rbB) $
-        insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) emptyLeiosValidClaims
+    insertLeiosValidClaim (LeiosClaim (SlotNo 2) rbC) SNothing $
+      insertLeiosValidClaim (LeiosClaim (SlotNo 1) rbB) SNothing $
+        insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) SNothing emptyLeiosValidClaims
 
 rbA, rbB, rbC, rbD :: RankingBlockHash
 rbA = MkRankingBlockHash (UnsafeHash (SBS.replicate 32 1))

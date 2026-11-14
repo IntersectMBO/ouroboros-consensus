@@ -25,6 +25,7 @@ import Control.Tracer
 import Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (mapMaybe)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Set as Set
 import Data.Time (secondsToDiffTime)
 import Data.Traversable (for)
@@ -157,6 +158,7 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
       Punishment.noPunishment
       predecessorSlot
       (trivialLeiosLedgerView (Proxy @TestBlock))
+      SNothing
       blk
     threadDelay 1
     pure $ AddBlockCount (if isNotSnapshotting then 0 else 1) 1
@@ -387,6 +389,7 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
       Punishment.noPunishment
       predecessorSlot
       (trivialLeiosLedgerView (Proxy @TestBlock))
+      SNothing
       blk
     threadDelay 1
     atomically $ isEmptyTMVar isSnapshottingTMVar >>= guard

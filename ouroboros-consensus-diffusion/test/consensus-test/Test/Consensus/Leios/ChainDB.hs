@@ -19,6 +19,7 @@ import Data.Maybe (isJust)
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
+  , SlotNo
   , WithOrigin (..)
   , blockHash
   , blockPoint
@@ -28,6 +29,10 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
@@ -38,6 +43,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Util.IOLike (readMVar)
 import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.Committee (certOf)
@@ -86,7 +92,25 @@ tests =
     , testCase
         "after losing an endorser block's row, the LeiosDB drops the later ones and takes it again"
         $ runSimOrThrow lostRowBeforeAnother @?= (blockPoint announcingA, False, True)
+    , testCase "a verified certificate has LeiosFetch fetch the endorser block it certifies" $
+        runSimOrThrow certifiedIsFetched @?= ([(blockSlot announcingA, pointEbHash pointA)], True)
     ]
+
+-- | The node adds 'announcingA' and 'certifyingA', whose certificate ChainSel
+-- verifies. Which endorser blocks the ChainDB then says are certified, by the
+-- slot of their election, and whether LeiosFetch is fetching A.
+certifiedIsFetched :: IOSim s ([(SlotNo, EndorserBlockHash)], Bool)
+certifiedIsFetched = withNode $ \node -> do
+  -- Let the slots of the chain's blocks pass, so none is from the future.
+  threadDelay 20
+  addBlocks node [announcingA, certifyingA]
+  threadDelay 1
+  certified <- atomically $ ChainDB.getLeiosCertifiedEbs (nodeChainDB node)
+  outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nodeKernel node))))
+  pure
+    ( [(electionSlot elId, ebHash) | (elId, ebHash) <- Map.toList certified]
+    , isFocusedPoint pointA outstanding
+    )
 
 -- | The node holds endorser blocks A and B, with their transactions. The
 -- chain's first block announces A, its second certifies A, and its third
@@ -264,7 +288,7 @@ heldAcrossRestart whatOfA = do
     holds node
   withNodeOverDBs nodeDBs leiosDb $ \node -> do
     afterRestart <- holds node
-    addBlocksAfter node (NotOrigin (blockSlot announcingA)) [certifyingA]
+    addBlocksAfter node (NotOrigin announcingA) [certifyingA]
     threadDelay 1
     afterAddingAgain <- holds node
     pure (beforeRestart, afterRestart, afterAddingAgain)
@@ -293,7 +317,7 @@ minoritySibling =
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling node = do
   addBlocks node [announcingA, certifyingA]
-  addBlocksAfter node (NotOrigin (blockSlot announcingA)) [minoritySibling]
+  addBlocksAfter node (NotOrigin announcingA) [minoritySibling]
 
 rbHashOf :: LeiosTestBlock -> RankingBlockHash
 rbHashOf = toRankingBlockHash (Proxy @LeiosTestBlock) . blockHash

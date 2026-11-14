@@ -99,6 +99,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Ord (Down (..))
 import Data.Proxy
 import Data.Ratio ((%))
@@ -544,6 +545,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
         InvalidBlockPunishment.noPunishment
         predSlot
         (trivialLeiosLedgerView (Proxy @blk))
+        SNothing
         blk
     return $ case res of
       FailedToAddBlock f -> error $ "advanceAndAdd: block not added - " ++ f
