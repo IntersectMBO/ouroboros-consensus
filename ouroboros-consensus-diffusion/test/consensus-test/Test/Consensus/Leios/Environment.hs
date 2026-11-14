@@ -399,7 +399,7 @@ envLeiosFetchCodec node = NTN.cLeiosFetchCodec (envCodecs node maxBound)
 -- does not serve.
 silentLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
 silentLeiosFetchServer node chan =
-  fst <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer silent)
+  fst <$> runPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer silent)
  where
   silent = MkLeiosFetchRequestHandler $ \_request -> atomically retry
 
