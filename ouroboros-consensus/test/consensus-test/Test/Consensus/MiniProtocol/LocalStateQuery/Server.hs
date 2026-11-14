@@ -260,6 +260,7 @@ initLedgerDB s c = do
               -- These tests do not use EBBs.
               IsNotEBB
               (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+              (\_ _ -> error "These tests do not use Leios certificates")
               (LedgerDB.praosGetVolatileSuffix s)
           pure (db, ())
       )

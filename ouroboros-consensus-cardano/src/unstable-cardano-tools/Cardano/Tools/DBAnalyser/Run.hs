@@ -73,6 +73,7 @@ openLedgerDB ::
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , InspectLedger blk
+  , BlockSupportsLeios blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->
@@ -110,6 +111,9 @@ openLedgerDB args immutableDB replayGoal =
                 LedgerDB.V2.mkInitDb
                   args
                   (\_ -> pure (error "no stream"))
+                  -- TODO Resolve endorser blocks from the node's LeiosDB, to
+                  -- analyse blocks containing Leios certificates.
+                  (\_ _ -> error "no LeiosDB")
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res

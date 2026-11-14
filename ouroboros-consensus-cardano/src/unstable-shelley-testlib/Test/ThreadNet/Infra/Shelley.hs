@@ -66,6 +66,7 @@ import Cardano.Ledger.Hashes
   )
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Val as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
@@ -513,7 +514,7 @@ mkSetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock (TPraos c) ShelleyEra)]
 mkSetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkShelleyTx . UnsafeMkMempoolTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction
@@ -634,7 +635,7 @@ mkMASetDecentralizationParamTxs ::
   [GenTx (ShelleyBlock proto era)]
 mkMASetDecentralizationParamTxs coreNodes pVer ttl dNew =
   (: []) $
-    mkShelleyTx $
+    mkShelleyTx . UnsafeMkMempoolTx $
       SL.mkBasicTx body & SL.witsTxL .~ witnesses
  where
   -- The funds touched by this transaction assume it's the first transaction

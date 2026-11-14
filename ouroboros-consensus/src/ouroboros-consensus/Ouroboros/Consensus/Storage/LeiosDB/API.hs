@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbReader (..)
   , withReader
   , allocateReader
+  , lookupLeiosClosure
 
     -- * Writing
   , LeiosDbWriter (..)
@@ -37,6 +38,7 @@ import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , ForgedEndorserBlock
+  , LeiosClosure (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised
@@ -194,6 +196,13 @@ withWriter db = bracket (openWriter db) closeWriter
 
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
 allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) closeReader
+
+-- | Read the closure at a point, if it is stored whole.
+lookupLeiosClosure :: MonadThrow m => LeiosDbHandle m -> LeiosPoint -> m (Maybe LeiosClosure)
+lookupLeiosClosure db point = withReader db $ \reader -> do
+  body <- lookupEbBody reader point
+  txs <- lookupEbClosure reader point
+  pure $ MkLeiosClosure <$> body <*> (map MkLeiosTx <$> txs)
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter

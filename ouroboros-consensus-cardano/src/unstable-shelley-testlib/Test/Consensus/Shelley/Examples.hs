@@ -27,6 +27,7 @@ import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Core
 import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (EraGov, unPoolDistr)
 import Cardano.Protocol.Crypto (StandardCrypto)
@@ -222,7 +223,7 @@ fromShelleyLedgerExamples
     blk = mkShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = mkSerialised (encodeDisk ccfg) blk
-    tx = mkShelleyTx emptyTx
+    tx = mkShelleyTx (UnsafeMkMempoolTx emptyTx)
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))
@@ -361,7 +362,7 @@ fromShelleyLedgerExamplesPolyPraos
 
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = mkSerialised (encodeDisk ccfg) blk
-    tx = mkShelleyTx emptyTx
+    tx = mkShelleyTx (UnsafeMkMempoolTx emptyTx)
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))

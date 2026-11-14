@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 
 import Cardano.Ledger.BaseTypes
 import Data.Function (on)
+import Data.Functor.Identity (Identity (..))
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -57,8 +58,10 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsLeios (ApplyEndorserBlock)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock, applyWithEndorserBlock)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -233,30 +236,38 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk) =>
+  (IOLike m, ApplyEndorserBlock l blk) =>
+  ResolveEndorserBlock m blk ->
   LedgerDbCfg l blk ->
   blk ->
   LedgerSeq m l blk ->
   m (LedgerSeq m l blk)
-reapplyThenPush cfg ap db = do
-  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush doResolveEb cfg ap db = do
+  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) doResolveEb ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
 
 reapplyBlock ::
-  (ApplyBlock l blk, IOLike m) =>
+  (ApplyEndorserBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
+  ResolveEndorserBlock m blk ->
   blk ->
   LedgerSeq m l blk ->
   m (StateRef m l blk)
-reapplyBlock evs cfg b db = do
-  let ks = getBlockKeySets b
-      StateRef st tbs = currentHandle db
-  vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
-      newst = forgetLedgerTables st'
+reapplyBlock evs cfg doResolveEb b db = do
+  let StateRef st tbs = currentHandle db
+  st' <-
+    runIdentity
+      <$> applyWithEndorserBlock
+        cfg
+        doResolveEb
+        (read tbs st)
+        (Identity . tickThenReapply evs cfg b)
+        b
+        st
+  let newst = forgetLedgerTables st'
 
   newtbs <- duplicateWithDiffs tbs st st'
   pure (StateRef newst newtbs)

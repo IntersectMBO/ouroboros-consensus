@@ -314,6 +314,60 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLe
         applyBlockLedgerResultWithValidation doValidate opts cfg block st
 
 {-------------------------------------------------------------------------------
+  BlockSupportsLeios
+-------------------------------------------------------------------------------}
+
+instance
+  ( CanHardFork xs
+  , HasCanonicalTxIn xs
+  , HasHardForkTxOut xs
+  ) =>
+  BlockSupportsLeios (HardForkBlock xs)
+  where
+  -- An endorser block of the era it was announced in.
+  newtype LedgerEndorserBlock (HardForkBlock xs)
+    = HardForkLedgerEndorserBlock (NS LedgerEndorserBlock xs)
+
+  blockLeiosCert =
+    hcollapse
+      . hcmap proxySingle (K . blockLeiosCert . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+  decodeLedgerEndorserBlock (HardForkBlock (OneEraBlock block)) closure =
+    fmap HardForkLedgerEndorserBlock . hsequence' $
+      hcmap proxySingle (\(I blk) -> Comp $ decodeLedgerEndorserBlock blk closure) block
+
+  getEndorserBlockKeySets (HardForkLedgerEndorserBlock eb) =
+    hcollapse $
+      hcimap proxySingle (\idx eb' -> K $ injectLedgerTables idx $ getEndorserBlockKeySets eb') eb
+
+  ledgerAnnouncedEb =
+    hcollapse
+      . hcmap proxySingle (K . ledgerAnnouncedEb . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
+
+  applyLedgerEndorserBlock cfg (HardForkLedgerEndorserBlock eb) (HardForkLedgerState st) =
+    case State.match eb st of
+      Left _mismatch ->
+        -- The endorser block decoded in the era of the block certifying it,
+        -- which is that of the state announcing it.
+        error "applyLedgerEndorserBlock: certification never crosses eras"
+      Right matched ->
+        HardForkLedgerState $ hczipWith proxySingle applyOne cfgs matched
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    applyOne ::
+      SingleEraBlock x =>
+      WrapLedgerConfig x ->
+      Product LedgerEndorserBlock (Flip LedgerState ValuesMK) x ->
+      Flip LedgerState DiffMK x
+    applyOne (WrapLedgerConfig cfg') (Pair eb' (Flip st')) =
+      Flip $ applyLedgerEndorserBlock cfg' eb' st'
+
+{-------------------------------------------------------------------------------
   UpdateLedger
 -------------------------------------------------------------------------------}
 

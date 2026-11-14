@@ -2,10 +2,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Shelley.Serialisation (tests) where
 
 import qualified Cardano.Ledger.MemoBytes.Internal as SL
+import qualified Cardano.Ledger.MempoolTx as SL
 import qualified Cardano.Ledger.Shelley.Tx as SL
 import qualified Cardano.Ledger.Shelley.TxWits as SL
 import qualified Codec.CBOR.Write as CBOR
@@ -32,7 +34,10 @@ import Test.Util.Serialisation.Roundtrip
 import Test.Util.Serialisation.TxWireSize
 
 getTxBytes :: GenTx Block -> Maybe String
-getTxBytes (ShelleyTx _txId (SL.MkShelleyTx (SL.ShelleyTx _ (SL.MkShelleyTxWits memoBytes) _))) =
+getTxBytes ( ShelleyTx
+               _txId
+               (SL.unwrapMempoolTx -> SL.MkShelleyTx (SL.ShelleyTx _ (SL.MkShelleyTxWits memoBytes) _))
+             ) =
   Just $ show (SL.mbBytes memoBytes)
 
 tests :: TestTree

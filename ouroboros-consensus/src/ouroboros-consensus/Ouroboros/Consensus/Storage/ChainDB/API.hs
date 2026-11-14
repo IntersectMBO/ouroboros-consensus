@@ -92,6 +92,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , LoE (..)
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
 import Control.Monad (void)
 import Control.ResourceRegistry
 import Data.Map (Map)
@@ -112,6 +113,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosProtocol
   , trivialLeiosLedgerView
   )
+import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision
   , PerasCertInclusionView
@@ -1116,6 +1118,12 @@ data ChainDbFailure blk
     --
     -- Thrown when we are not sure in which DB the block /should/ have been.
     ChainDbMissingBlock (RealPoint blk)
+  | -- | The closure of an endorser block that a block on the chain certifies
+    -- is missing from the LeiosDB
+    ChainDbMissingEndorserBlock LeiosPoint
+  | -- | The closure of an endorser block that a block on the chain certifies
+    -- does not decode
+    ChainDbUndecodableEndorserBlock LeiosPoint DecoderError
 
 deriving instance StandardHash blk => Show (ChainDbFailure blk)
 
@@ -1123,6 +1131,8 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbFailure blk) wher
   displayException = \case
     LgrDbFailure fse -> fsError fse
     ChainDbMissingBlock{} -> corruption
+    ChainDbMissingEndorserBlock{} -> corruption
+    ChainDbUndecodableEndorserBlock{} -> corruption
    where
     corruption =
       "The database got corrupted, full validation will be enabled for the next startup"

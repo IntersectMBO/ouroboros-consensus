@@ -889,9 +889,18 @@ instance BlockSupportsMetrics LeiosTestBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios LeiosTestBlock where
+  data LedgerEndorserBlock LeiosTestBlock
+
   blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
     NoLeiosTestCert -> Nothing
     HasLeiosTestCert cert -> Just cert
+
+  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
+  getEndorserBlockKeySets eb = case eb of {}
+
+  -- The ledger records no announcement: there is nothing to apply.
+  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
+  applyLedgerEndorserBlock _cfg eb = case eb of {}
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

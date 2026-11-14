@@ -39,7 +39,7 @@ import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (Annotator, DecCBOR, EncCBOR)
 import Cardano.Ledger.Conway (ApplyTxError (ConwayApplyTxError), ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
@@ -47,18 +47,24 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
 import qualified Cardano.Ledger.Conway.State as CG
-import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import Cardano.Ledger.Dijkstra
+  ( ApplyTxError (DijkstraApplyTxError)
+  , DijkstraApplyBlock
+  , DijkstraEra
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (DijkstraEraBlockBody)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
   )
 import Cardano.Ledger.Mary (MaryEra)
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
@@ -119,6 +125,8 @@ class
   , NoThunks (Core.TranslationContext era)
   , ToCBOR (Core.TranslationContext era)
   , FromCBOR (Core.TranslationContext era)
+  , EncCBOR (SL.MempoolTx era)
+  , DecCBOR (Annotator (SL.MempoolTx era))
   ) =>
   ShelleyBasedEra era
   where
@@ -127,7 +135,7 @@ class
     SL.LedgerEnv era ->
     SL.LedgerState era ->
     WhetherToIntervene ->
-    Core.Tx TopTx era ->
+    SL.MempoolTx era ->
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
@@ -155,7 +163,13 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict ::
+    ( SafeToHash (Core.Tx TopTx era)
+    , DecCBOR (Annotator (Core.Tx TopTx era))
+    , DijkstraEraBlockBody era
+    , DijkstraApplyBlock (LeiosLedger.Header StandardCrypto) era
+    ) =>
+    LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
@@ -169,7 +183,7 @@ defaultApplyShelleyBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx TopTx era ->
+  SL.MempoolTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
@@ -268,7 +282,7 @@ applyAlonzoBasedTx ::
   SL.LedgerEnv era ->
   SL.LedgerState era ->
   WhetherToIntervene ->
-  Core.Tx TopTx era ->
+  SL.MempoolTx era ->
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
@@ -286,8 +300,12 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   pure (mempoolState', vtx)
  where
   intervenedTx = case wti of
-    DoNotIntervene -> tx & Core.isPhase2ValidTxL .~ L.Phase2Valid
+    DoNotIntervene -> withPhase2Validity L.Phase2Valid
     Intervene -> tx
+
+  -- Changing the flag alone keeps it the transaction the mempool received.
+  withPhase2Validity validity =
+    UnsafeMkMempoolTx $ SL.unwrapMempoolTx tx & Core.isPhase2ValidTxL .~ validity
 
   handler e = case (wti, e) of
     (DoNotIntervene, err)
@@ -306,7 +324,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            (tx & Core.isPhase2ValidTxL .~ L.Phase2Invalid)
+            (withPhase2Validity L.Phase2Invalid)
     _ -> throwError e
 
 -- reject the transaction, protecting the local wallet
