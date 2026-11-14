@@ -85,7 +85,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( certifiesPromotedEb
   , emptyLeiosValidClaims
-  , mkAcquiredLeiosEbs
+  , mkAcquiredEbs
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -253,17 +253,17 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     --
     -- FIXME Grow it as the node acquires closures. The LeiosDB no longer tells
     -- what is written to it, so nothing does until LeiosFetch announces its
-    -- acquisitions, which the open follow-up PRs of #2490 add. Then also key 'AcquiredLeiosEbs' by point, as the LeiosDB
+    -- acquisitions, which the open follow-up PRs of #2490 add. Then also key 'AcquiredEbs' by point, as the LeiosDB
     -- is: a closure acquired at one point of an endorser block is not one at
     -- another. Promotion copies the certified point's closure only, and fails
     -- the node if it is incomplete.
-    let nextAcquiredLeiosClosure = retry
-    initialAcquiredLeiosEbs <-
+    let nextAcquiredEbClosure = retry
+    initialAcquiredEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
-    varAcquiredLeiosEbs <- newTVarIO (mkAcquiredLeiosEbs initialAcquiredLeiosEbs)
+    varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
     varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
     chainWithTime <-
       ChainSel.initialChainSelection
@@ -273,7 +273,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
-        (readTVar varAcquiredLeiosEbs)
+        (readTVar varAcquiredEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
@@ -329,7 +329,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
-            , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
             }
 
@@ -423,7 +423,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env nextAcquiredLeiosClosure
+    when launchBgTasks $ Background.launchBgTasks env nextAcquiredEbClosure
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually

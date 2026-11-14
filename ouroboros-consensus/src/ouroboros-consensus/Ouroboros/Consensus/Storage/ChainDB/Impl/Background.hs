@@ -78,9 +78,9 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( chainSelSync
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
-  ( insertAcquiredLeiosEb
-  , isAcquiredLeiosEb
-  , pruneAcquiredLeiosEbs
+  ( insertAcquiredEb
+  , isAcquiredEb
+  , pruneAcquiredEbs
   , pruneLeiosValidClaims
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -118,10 +118,10 @@ launchBgTasks ::
   ) =>
   ChainDbEnv m blk ->
   -- | The point of the next closure the node acquires, subscribed to before
-  -- seeding 'cdbAcquiredLeiosEbs', so that none is missed in between.
+  -- seeding 'cdbAcquiredEbs', so that none is missed in between.
   STM m LeiosPoint ->
   m ()
-launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
+launchBgTasks cdb@CDB{..} nextAcquiredEbClosure = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -146,9 +146,9 @@ launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
     launch "ChainDB.snapshotRunner" $
       snapshotRunner cdb
 
-  !leiosAcquiredEbsThread <-
-    launch "ChainDB.leiosAcquiredEbsRunner" $
-      leiosAcquiredEbsRunner cdb nextAcquiredLeiosClosure
+  !acquiredEbsThread <-
+    launch "ChainDB.acquiredEbsRunner" $
+      acquiredEbsRunner cdb nextAcquiredEbClosure
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -158,28 +158,28 @@ launchBgTasks cdb@CDB{..} nextAcquiredLeiosClosure = do
         , gcThread
         , copyToImmutableDBThread
         , snapshotThread
-        , leiosAcquiredEbsThread
+        , acquiredEbsThread
         ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
 
--- | Grow 'cdbAcquiredLeiosEbs' from the points of the acquired closures, and
+-- | Grow 'cdbAcquiredEbs' from the points of the acquired closures, and
 -- enqueue a reprocess of the blocks parked on each endorser block the first
 -- time its closure is acquired.
 --
 -- REVIEW: Would the fetch logic rather keep a fingerprinted set of the points
 -- it acquired closures at? ChainSel could read that set directly, and this
 -- runner would only reprocess what is new since the last fingerprint.
-leiosAcquiredEbsRunner ::
+acquiredEbsRunner ::
   IOLike m => ChainDbEnv m blk -> STM m LeiosPoint -> m Void
-leiosAcquiredEbsRunner CDB{..} nextAcquiredClosure =
+acquiredEbsRunner CDB{..} nextAcquiredClosure =
   forever $ do
     point <- atomically nextAcquiredClosure
     novel <- atomically $ do
-      acquired <- readTVar cdbAcquiredLeiosEbs
-      writeTVar cdbAcquiredLeiosEbs (insertAcquiredLeiosEb point acquired)
-      pure $ not (isAcquiredLeiosEb (pointEbHash point) acquired)
+      acquired <- readTVar cdbAcquiredEbs
+      writeTVar cdbAcquiredEbs (insertAcquiredEb point acquired)
+      pure $ not (isAcquiredEb (pointEbHash point) acquired)
     -- The set has already grown, so ChainSel sees the closure even while
     -- this enqueue blocks on a full queue.
     when novel $ addReprocessLeiosEb cdbChainSelQueue (pointEbHash point)
@@ -369,7 +369,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
   scheduleGC' Origin = return ()
   scheduleGC' (NotOrigin slotNo) = do
     atomically $ do
-      modifyTVar cdbAcquiredLeiosEbs (pruneAcquiredLeiosEbs slotNo)
+      modifyTVar cdbAcquiredEbs (pruneAcquiredEbs slotNo)
       modifyTVar cdbLeiosValidClaims (pruneLeiosValidClaims slotNo)
     scheduleGC
       (contramap TraceGCEvent cdbTracer)

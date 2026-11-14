@@ -121,7 +121,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredLeiosEbs, LeiosValidClaims)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredEbs, LeiosValidClaims)
 import Ouroboros.Consensus.Storage.ImmutableDB
   ( ImmutableDB
   , ImmutableDbSerialiseConstraints
@@ -400,7 +400,7 @@ data ChainDbEnv m blk = CDB
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   , cdbLeiosDb :: !(LeiosDbHandle m)
   -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
-  , cdbAcquiredLeiosEbs :: !(StrictTVar m AcquiredLeiosEbs)
+  , cdbAcquiredEbs :: !(StrictTVar m AcquiredEbs)
   -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
   -- can park the blocks certifying the others. Seeded from the LeiosDB at
   -- open, then grown from its notifications.
