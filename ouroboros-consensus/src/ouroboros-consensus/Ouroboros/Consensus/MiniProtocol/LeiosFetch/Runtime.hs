@@ -13,6 +13,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
   , AdmissionRejection (..)
   , PendingOwner (..)
   , claimLocalBody
+  , transferBodyClaim
   , claimLocalForge
   , releaseLocalForge
   , acceptLocalBody
@@ -835,6 +836,27 @@ claimLocalBody rt point = do
         st{pending = Map.insert work (LocalOwner token, False) (pending st), nextLocalOwner = token + 1}
       W.notifyReadiness (runtimeReady rt)
       pure (Just token)
+
+-- | Atomically detach this exact useful network-body claim from its peer and
+-- install a fresh local owner. Compose this transaction with bounded node-work
+-- admission; rollback then restores the network claim if capacity is unavailable.
+-- Peer finalizers cannot erase the resulting token before writer acceptance.
+transferBodyClaim ::
+  (IOLike m, Ord peer) => Runtime m peer -> L.AttemptKey peer -> STM m (Maybe Natural)
+transferBodyClaim rt key = do
+  st <- readTVar (runtimeFacts rt)
+  case Map.lookup key (attempts st) of
+    Just attempt
+      | work@(L.Body _) <- attemptWork attempt
+      , Just (NetworkOwner owner, False) <- Map.lookup work (pending st)
+      , owner == key -> do
+          let token = nextLocalOwner st
+          writeTVar
+            (runtimeFacts rt)
+            st{pending = Map.insert work (LocalOwner token, False) (pending st), nextLocalOwner = token + 1}
+          W.notifyReadiness (runtimeReady rt)
+          pure (Just token)
+    _ -> pure Nothing
 
 -- | After writer acceptance, transfer the matching local body claim to receipt
 -- ownership. It must survive ordinary caller cleanup until its receipt task

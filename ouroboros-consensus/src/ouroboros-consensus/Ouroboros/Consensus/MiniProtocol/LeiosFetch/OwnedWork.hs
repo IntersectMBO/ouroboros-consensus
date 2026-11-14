@@ -14,6 +14,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork
   , trySubmitWork
   , pruneCompleted
   , withOwnedWork
+  , withOwnedWorkN
+  , canSubmitWork
   ) where
 
 import Control.Monad (forever, unless, void)
@@ -51,7 +53,9 @@ data Admission m = Admission
   , awaitAdmission :: STM m ()
   }
 
--- | Admission or a join was interrupted by the enclosing lifetime closing.
+-- | The enclosing lifetime cannot admit or finish this dependent operation.
+-- Callers receive closure; the worker's supervisor retains its original failure.
+-- Normal drain still completes joins for already-admitted operations.
 data WorkClosed = WorkClosed deriving Show
 
 instance Exception WorkClosed
@@ -72,7 +76,7 @@ submitWork work key payload = do
   closing <- externallyClosing work
   unless (not closing && not (stopped st)) (throwSTM WorkClosed)
   case failure st of
-    Just err -> throwSTM err
+    Just _ -> throwSTM WorkClosed
     Nothing -> pure ()
   case Map.lookup key (entries st) of
     Just (_, accepted) -> pure (Admission False (awaitResult work accepted))
@@ -84,6 +88,24 @@ submitWork work key payload = do
         (state work)
         st{entries = Map.insert key (payload, accepted) (entries st), queued = queued st |> key}
       pure (Admission True (awaitResult work accepted))
+
+-- | Nonblocking admission predicate. Callers that must also hold an MVar can
+-- release it before waiting for capacity, then recheck all ownership facts.
+-- Existing entries are not capacity for a different payload of the same key.
+-- False means temporary pressure; closing or failed work throws 'WorkClosed'
+-- so a caller cannot remain parked waiting for capacity that will never return.
+canSubmitWork :: (IOLike m, Ord key) => OwnedWork m key payload -> key -> STM m Bool
+canSubmitWork work key = do
+  st <- readTVar (state work)
+  closing <- externallyClosing work
+  unless (not closing && not (stopped st)) (throwSTM WorkClosed)
+  case failure st of
+    Just _ -> throwSTM WorkClosed
+    Nothing ->
+      pure
+        ( Map.notMember key (entries st)
+            && Map.size (entries st) < capacity work
+        )
 
 -- | Optional cache lookup must never park the metadata dispatcher behind slow
 -- producer capacity. A miss here leaves ordinary network fetching eligible.
@@ -97,7 +119,9 @@ awaitResult :: IOLike m => OwnedWork m key payload -> StrictTMVar m () -> STM m 
 awaitResult work accepted = do
   st <- readTVar (state work)
   case failure st of
-    Just err -> throwSTM err
+    Just _ -> throwSTM WorkClosed
+    -- Closing admission alone does not abandon accepted operations. Their
+    -- first-phase result may still arrive while the scope normally drains.
     Nothing -> readTMVar accepted
 
 -- | Forget only completion evidence. Queued/running owners survive pruning
@@ -117,17 +141,30 @@ withOwnedWork ::
   (key -> payload -> m (m Bool)) ->
   m a ->
   m a
-withOwnedWork work process action = mask $ \restore ->
-  bracket (asyncWithUnmask (\unmask -> unmask worker)) cancel $ \child -> do
-    link child
-    result <- restore action `onException` abort
-    ( do
-        atomically $ modifyTVar (state work) (\st -> st{stopped = True})
-        restore $ atomically $ readTVar (state work) >>= check . Map.null . entries
-      )
-      `onException` abort
-    pure result
+withOwnedWork = withOwnedWorkN 1
+
+-- | A fixed worker group sharing the same queued/running capacity. The group
+-- has one supervised parent: the first failure cancels and joins its siblings
+-- before propagating, even when several handlers fail concurrently.
+withOwnedWorkN ::
+  forall m key payload a.
+  (IOLike m, Ord key) =>
+  Int -> OwnedWork m key payload -> (key -> payload -> m (m Bool)) -> m a -> m a
+withOwnedWorkN count work process action
+  | count <= 0 = error "withOwnedWorkN: non-positive worker count"
+  | otherwise = mask $ \restore ->
+      bracket (asyncWithUnmask (\unmask -> unmask (workers count))) cancel $ \child -> do
+        link child
+        result <- restore action `onException` abort
+        ( do
+            atomically $ modifyTVar (state work) (\st -> st{stopped = True})
+            restore $ atomically $ readTVar (state work) >>= check . Map.null . entries
+          )
+          `onException` abort
+        pure result
  where
+  workers 1 = worker
+  workers n = concurrently_ worker (workers (n - 1))
   worker = do
     labelThisThread (workerLabel work)
     forever $ do
@@ -152,7 +189,10 @@ withOwnedWork work process action = mask $ \restore ->
               }
         )
         `catch` \(err :: SomeException) -> do
-          atomically $ modifyTVar (state work) (\st -> st{stopped = True, failure = Just err})
+          atomically $
+            modifyTVar
+              (state work)
+              (\st -> st{stopped = True, failure = case failure st of Nothing -> Just err; existing -> existing})
           throwIO err
   abort = atomically $ modifyTVar (state work) $ \st ->
     st

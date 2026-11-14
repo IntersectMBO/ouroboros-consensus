@@ -26,13 +26,15 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlock
   , processLeiosBlockTxs
   , acquireCachedBody
+  , queueCachedBody
+  , withBodyWorkers
   , acquireForgedEb
   , submitForgedEb
   ) where
 
+import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import Control.Monad (foldM, forM_, unless, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
@@ -49,6 +51,7 @@ import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
+import Numeric.Natural (Natural)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime
   , SystemTime (..)
@@ -105,7 +108,12 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , settleTxRequest
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse (LocalReuse, reuseMempool)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
+  ( LocalReuse
+  , PreparedTxs (..)
+  , prepareBodyTxs
+  )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork as Owned
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
@@ -114,7 +122,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , FetchPhase (..)
   , FetchRoutine (..)
   , LeiosBlockTxSources (..)
-  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchDetailEvent (..)
   , fetchArrivalEvicted
@@ -140,6 +147,7 @@ import Ouroboros.Consensus.Util.IOLike
   , atomically
   , labelThisThread
   , catch
+  , check
   , finally
   , getMonotonicTime
   , labelThisThread
@@ -154,23 +162,28 @@ import Ouroboros.Consensus.Util.IOLike
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 
--- | Attempt-scoped ownership of an admitted reply. Accepted work transfers to
--- the node's receipt tasks before any later cache/tracing work can interrupt it.
--- The callbacks contain no payload, and cleanup affects only this attempt.
+-- | Attempt-scoped callbacks containing no payload. TX submissions transfer
+-- to receipt tasks; complete bodies atomically transfer to the bounded node
+-- pool before preparation. Original request identity remains available for
+-- audit after its peer handler and physical credit have finished.
 data ReplyOwnership m = ReplyOwnership
   { claimUsefulReply :: STM m Bool
-  -- ^ Exclusively own submission of this still-needed body/job. A competing
-  -- accepted receipt can keep ownership even after its peer disappears.
-  , acceptedReply :: Time -> BytesSize -> STM m (m ())
-  -- ^ Record writer acceptance and release physical request credit. Return
-  -- detached observation work to run only after registering the receipt's
-  -- node-owned callback, outside STM and the outstanding-state lock.
+  -- ^ Exclusively own this TX job's submission, unless another delivery owns it.
+  , claimBodyReply :: STM m (Maybe Natural)
+  -- ^ Convert this exact network-body claim to a local token. Compose with
+  -- pool admission so neither ownership nor a slot can escape alone.
+  , acceptedReply :: Time -> STM m (m ())
+  -- ^ Observe actual writer acceptance and idempotently release any remaining
+  -- physical credit. Emit the detached observation outside locks.
+  , bodyWon :: BytesSize -> m ()
+  -- ^ The owned body worker reports its useful write under the original
+  -- request identity. Its byte count is unrelated to ordinary TX acceptance.
   , settledReceipt :: Time -> STM m (m ())
-  -- ^ Retire only this callback's pending ownership and return its observation;
-  -- a late callback must not clear another attempt's claim of the same work.
+  -- ^ Settle this network receipt's claim and return its audit event. Bodies
+  -- separately release their exact local token when their worker finishes.
   , abandonUnsubmitted :: STM m ()
-  -- ^ Failure cleanup for a claim not accepted by the writer. Accepted work
-  -- remains the receipt callback's responsibility.
+  -- ^ Clear only this attempt's unaccepted network claims. Transferred local
+  -- body claims remain the node worker's responsibility, even before its write.
   }
 
 requestReplyOwnership ::
@@ -179,20 +192,20 @@ requestReplyOwnership ::
 requestReplyOwnership ctx key req =
   ReplyOwnership
     { claimUsefulReply = R.claimUseful rt key
-    , acceptedReply = \at actual -> do
+    , claimBodyReply = do
+        useful <- R.claimUseful rt key
+        if useful then R.transferBodyClaim rt key else pure Nothing
+    , acceptedReply = \at -> do
         before <- readTVar (R.runtimeFacts rt)
         let released = Map.member key (L.leases (R.ledger before))
-            useful = case Map.lookup (R.workOf req) (R.pending before) of
-              Just (R.NetworkOwner owner, False) -> owner == key
-              _ -> False
-            won = case R.workOf req of
-              L.Body{} | useful -> [A.Routine key (FetchBodyWon (A.requestSummaryOf key req) actual)]
-              _ -> []
         R.acceptReply rt key (R.workOf req)
         accepted <- A.transition rt key req FetchWriterAccepted at
         refunded <- A.transition rt key req FetchResourceSettled at
-        let !events = A.forceObservations (won ++ [accepted] ++ [refunded | released])
+        let !events = A.forceObservations ([accepted] ++ [refunded | released])
         pure (emitContextObservations ctx events)
+    , bodyWon = \actual ->
+        let !events = A.forceObservations [A.Routine key (FetchBodyWon (A.requestSummaryOf key req) actual)]
+         in emitContextObservations ctx events
     , settledReceipt = \at -> do
         R.settleReceipt rt key (R.workOf req)
         event <- A.transition rt key req FetchReceiptSettled at
@@ -224,6 +237,11 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcReceiptTasks :: !(Receipts.ReceiptTasks m)
   -- ^ Node-owned submissions and accepted callbacks, independent of peer lifetime.
   , lfcLocalReuse :: !(LocalReuse m)
+  , lfcBodyWork :: !(Owned.OwnedWork m LeiosPoint (m ()))
+  -- ^ Two shared entries, including queued, running and receipt-waiting bodies.
+  , lfcBodyRetired :: !(LeiosPoint -> STM m Bool)
+  -- ^ Retirement frontier used to wake capacity waits without holding the
+  -- outstanding-state MVar. Logical relevance is rechecked before admission.
   -- ^ One node-wide bounded mempool pass after DB body fills.
   , lfcWriter :: !(LeiosDbWriter m)
   , lfcNotify :: !(LeiosAcquisition -> STM m ())
@@ -366,15 +384,8 @@ nextLeiosFetchJob ctx client =
   unpick (LeiosBlockTxsRequest req) = settleTxRequest peer req IntSet.empty
   unpick _ = id
 
--- | Take in an endorser block that arrived in reply to this request.
---
--- The hash is the whole of it: these bytes either are the endorser block we
--- asked for or they are not, and no announcement gets a say. Bytes that are
--- the right block but not the size the peer offered still cost the peer its
--- connection, but only once we have taken the body: throwing them away would
--- let a peer deny us an endorser block just by lowballing its own offer. Bytes
--- larger than the ledger allows, or referencing more transaction bytes than it
--- allows, are never written, so the node never offers them onward.
+-- | Validate a complete body, then hand useful work to the bounded node pool.
+-- A peer's false declared size is enforced only after preserving its valid body.
 processLeiosBlock ::
   forall peer m.
   IOLike m =>
@@ -389,104 +400,178 @@ processLeiosBlock ownership ctx peer req bytes =
     Left failure -> throwIO $ ExnLeiosBlockUndecodable (lbrPoint req) failure
     Right eb ->
       mask_ $
-        ( Receipts.withReceiptSubmission (lfcReceiptTasks ctx) $ do
-            now <- systemTimeCurrent lfcSystemTime
-            when (endorserBlockHash eb /= ebHash) $ do
-              traceWith lfcTracer $
-                TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
-              throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
-            -- Claim pending ownership under the same lock as assignment and removal.
-            -- The claim survives peer death until submission or its receipt settles.
-            delivery <- modifyMVar lfcOutstanding $ \outstanding -> do
-              -- Answered, so this request is no longer in flight.
-              let cleaned = outstanding
-              case Map.lookup point (ebState outstanding) of
-                _
-                  | Just exn <- tooBig ->
-                      -- Held with nothing to fetch, so that neither its closure nor a
-                      -- re-send of the same bytes costs us anything more at this point.
-                      -- It is not written, so it is never emitted as acquired.
-                      pure (acquireEbBody point Jobs.emptyJobPool cleaned, BodyTooBig exn)
-                -- Pruned meanwhile.
-                Nothing -> pure (cleaned, BodyDiscarded (fetchArrivalEvicted ebBytesSize))
-                -- Another delivery's write settled first.
-                Just (MkEbState _onset BodyAcquired{}) ->
-                  pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
-                -- Our own forge is writing it.
-                Just (MkEbState _onset ReceivingFromForge{}) ->
-                  pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
-                Just (MkEbState _onset NoBody) -> do
-                  -- Register the body's transactions in the tx cache, and read where
-                  -- some recent point durably holds any of them, so that the body
-                  -- write copies those rather than us fetching them again.
-                  claimed <- atomically (claimUsefulReply ownership)
-                  if not claimed
-                    then pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
-                    else do
-                      (summary, located) <- insertBody lfcTxCache point (packEndorserBlock eb) [] snocLocated
-                      pure (cleaned, BodyToWrite summary located)
-            atomically $ W.notifyReadiness lfcReady
-            case delivery of
-              BodyTooBig exn -> do
-                traceWith lfcTracer $
-                  TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
-                throwIO exn
-              BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-              BodyToWrite summary localFills -> do
-                bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills) Map.empty
-                acceptedAt <- getMonotonicTime
-                emitAccepted <- atomically (acceptedReply ownership acceptedAt ebBytesSize)
-                -- Acceptance transfers immediately, before later observations can fail.
-                Receipts.forkReceipt
-                  (lfcReceiptTasks ctx)
-                  ( settleBody ctx (DeliveredBy peer) point eb now bodyWritten
-                      `finally` finishReplyReceipt ownership
-                  )
-                emitAccepted
-                traceWith lfcTracer $
-                  TraceLeiosFetchClientBlockTxSources
-                    point
-                    (MkLeiosBlockTxSources (length localFills) 0 (length (endorserBlockReferences eb) - length localFills))
-                    summary
-            when (ebBytesSize /= lbrOfferedSize req) $
-              throwIO $
-                ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
-        )
+        Receipts.withReceiptSubmission
+          (lfcReceiptTasks ctx)
+          ( do
+              when (endorserBlockHash eb /= pointEbHash point) $ do
+                traceWith (lfcTracer ctx) $
+                  TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid actual)
+                throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
+              now <- systemTimeCurrent (lfcSystemTime ctx)
+              let enqueue = do
+                    delivery <- modifyMVar (lfcOutstanding ctx) $ \out -> do
+                      result <- case Map.lookup point (ebState out) of
+                        _ | Just exn <- tooBig -> pure (BodyTooBig exn)
+                        Nothing -> pure (BodyDiscarded (fetchArrivalEvicted actual))
+                        Just (MkEbState _ NoBody) -> atomically $ do
+                          stopped <- R.runtimeClosing (lfcRuntime ctx)
+                          retired <- lfcBodyRetired ctx point
+                          facts <- readTVar (R.runtimeFacts (lfcRuntime ctx))
+                          if stopped || retired
+                            then pure (BodyDiscarded (fetchArrivalEvicted actual))
+                            else
+                              if Map.member (L.Body point) (R.pending facts) || Set.member point (R.localForges facts)
+                                then pure (BodyDiscarded (fetchArrivalExtra actual))
+                                else do
+                                  available <- Owned.canSubmitWork (lfcBodyWork ctx) point
+                                  if not available
+                                    then pure BodyWaiting
+                                    else do
+                                      token <- claimBodyReply ownership
+                                      case token of
+                                        Nothing -> pure (BodyDiscarded (fetchArrivalExtra actual))
+                                        Just local -> do
+                                          _ <-
+                                            Owned.submitWork
+                                              (lfcBodyWork ctx)
+                                              point
+                                              ( runUsefulBody ctx (DeliveredBy peer) point eb now local (Just ownership)
+                                                  `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point local)
+                                              )
+                                          pure BodyQueued
+                        _ -> pure (BodyDiscarded (fetchArrivalExtra actual))
+                      pure ((case result of BodyTooBig _ -> acquireEbBody point Jobs.emptyJobPool out; _ -> out), result)
+                    case delivery of
+                      BodyWaiting -> waitForBodyCapacity ctx point >> enqueue
+                      BodyQueued -> atomically $ W.notifyReadiness (lfcReady ctx)
+                      BodyTooBig exn -> do
+                        traceWith (lfcTracer ctx) $
+                          TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid actual)
+                        throwIO exn
+                      BodyDiscarded arrival -> traceWith (lfcTracer ctx) $ TraceLeiosFetchClientBlockArrived peer point arrival
+              enqueue
+              when (actual /= lbrOfferedSize req) $
+                throwIO $
+                  ExnLeiosBlockWrongSize point (lbrOfferedSize req) actual
+          )
           `finally` atomically (abandonUnsubmitted ownership)
      where
-      MkLeiosFetchClientContext
-        { lfcOutstanding
-        , lfcReady
-        , lfcTxCache
-        , lfcWriter
-        , lfcSystemTime
-        , lfcTracer
-        } = ctx
-
       point = lbrPoint req
-      ebHash = pointEbHash point
       sizes = leiosEbByteSizes eb
-      ebBytesSize = lebBodySize sizes
-      closureBytesSize = lebTxsSize sizes
-      -- TODO The node does not vote yet. Voting must check the endorser block
-      -- against the limits of the election it votes in: these are the limits of
-      -- whichever election the request was made for.
+      actual = lebBodySize sizes
       MkLeiosEbByteSizes{lebBodySize = bodyLimit, lebTxsSize = closureLimit} = lbrEbBounds req
       tooBig
-        | ebBytesSize > bodyLimit =
-            Just $ ExnLeiosBlockTooBig point ebBytesSize bodyLimit
-        | closureBytesSize > closureLimit =
-            Just $ ExnLeiosClosureTooBig point closureBytesSize closureLimit
+        | actual > bodyLimit = Just (ExnLeiosBlockTooBig point actual bodyLimit)
+        | lebTxsSize sizes > closureLimit =
+            Just (ExnLeiosClosureTooBig point (lebTxsSize sizes) closureLimit)
         | otherwise = Nothing
 
--- | What 'processLeiosBlock' does with a body, decided under the lock.
+-- | No capacity wait occurs under the outstanding-state MVar. A useful owner,
+-- forge, retirement or closing can end the wait even while unrelated entries
+-- remain full. Admission always rechecks logical state under the MVar.
+waitForBodyCapacity :: IOLike m => LeiosFetchClientContext m peer -> LeiosPoint -> m ()
+waitForBodyCapacity ctx point = atomically $ do
+  stopped <- R.runtimeClosing (lfcRuntime ctx)
+  retired <- lfcBodyRetired ctx point
+  facts <- readTVar (R.runtimeFacts (lfcRuntime ctx))
+  available <- Owned.canSubmitWork (lfcBodyWork ctx) point
+  check
+    ( stopped
+        || retired
+        || available
+        || Map.member (L.Body point) (R.pending facts)
+        || Set.member point (R.localForges facts)
+    )
+
 data BodyDelivery
-  = -- | Beyond its point's bounds, so never written.
-    BodyTooBig !ExnLeiosFetchInvalidReply
-  | -- | No longer wanted, its bytes classified so.
-    BodyDiscarded !FetchArrivalBytes
-  | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite !(Maybe LeiosTxCacheInsertBodySummary) ![(TxOffset, TxLocation)]
+  = BodyTooBig !ExnLeiosFetchInvalidReply
+  | BodyDiscarded !FetchArrivalBytes
+  | BodyWaiting
+  | BodyQueued
+
+-- | All admitted body work shares the two-entry bound through durable receipt
+-- reconciliation. The action stored in an entry owns its immutable input and
+-- exact local token; there is no second body receipt callback retaining it.
+withBodyWorkers :: IOLike m => LeiosFetchClientContext m peer -> m a -> m a
+withBodyWorkers ctx = Owned.withOwnedWorkN 2 (lfcBodyWork ctx) (\_ operation -> operation >> pure (pure False))
+
+runUsefulBody ::
+  IOLike m =>
+  LeiosFetchClientContext m peer ->
+  BodySource peer ->
+  LeiosPoint ->
+  EndorserBlock ->
+  RelativeTime ->
+  Natural ->
+  Maybe (ReplyOwnership m) ->
+  m ()
+runUsefulBody ctx source point eb now token ownership = do
+  needed <- bodyStillNeeded ctx point
+  if not needed
+    then traceUnusedBody ctx source point eb
+    else do
+      PreparedTxs{preparedBytes, preparedValidated} <-
+        prepareBodyTxs
+          (lfcLocalReuse ctx)
+          (R.runtimeClosing (lfcRuntime ctx))
+          (zip [0 ..] (endorserBlockReferences eb))
+      -- A point may retire while waiting for the source. Never enter the writer
+      -- for an operation already known to have lost its logical relevance.
+      current <- bodyStillNeeded ctx point
+      if not current
+        then traceUnusedBody ctx source point eb
+        else do
+          let supplied = IntSet.fromList (map fst preparedBytes)
+              collect acc off h size loc
+                | IntSet.member off supplied = acc
+                | otherwise = snocLocated acc off h size loc
+          -- Retain this body-bearing point after preparation and the relevance
+          -- recheck. Its cache entry is not proof that the write below landed.
+          -- See @docs/fetch-policy/leiosfetch-improved.md#cache-retention@.
+          (summary, fills) <-
+            insertBody (lfcTxCache ctx) point (packEndorserBlock eb) [] collect
+          withLockedInsertAppliedTx (lfcTxCache ctx) $ \initial step ->
+            foldM (\acc (h, parity) -> step acc h parity) initial preparedValidated
+          written <- writeEbBody (lfcWriter ctx) point eb (Map.fromList fills) (Map.fromList preparedBytes)
+          forM_ ownership $ \owner -> do
+            at <- getMonotonicTime
+            emit <- atomically (acceptedReply owner at)
+            bodyWon owner (lebBodySize (leiosEbByteSizes eb))
+            emit
+          atomically $ R.acceptLocalBody (lfcRuntime ctx) point token
+          traceWith (lfcTracer ctx) $
+            TraceLeiosFetchClientBlockTxSources
+              point
+              ( MkLeiosBlockTxSources
+                  (length fills)
+                  (length preparedBytes)
+                  (length (endorserBlockReferences eb) - length fills - length preparedBytes)
+              )
+              summary
+          settleBody ctx source point eb now written
+          forM_ ownership finishReplyReceipt
+
+bodyStillNeeded :: IOLike m => LeiosFetchClientContext m peer -> LeiosPoint -> m Bool
+bodyStillNeeded ctx point = do
+  out <- readMVar (lfcOutstanding ctx)
+  pure $ case Map.lookup point (ebState out) of
+    Just (MkEbState _ NoBody) -> True
+    _ -> False
+
+-- A queued valid body can lose relevance before preparation starts. Its arrival
+-- still needs a disposition even though no storage receipt was created.
+traceUnusedBody ::
+  IOLike m => LeiosFetchClientContext m peer -> BodySource peer -> LeiosPoint -> EndorserBlock -> m ()
+traceUnusedBody ctx source point eb = case source of
+  CachedBody -> pure ()
+  DeliveredBy peer -> do
+    out <- readMVar (lfcOutstanding ctx)
+    let bucket = case Map.lookup point (ebState out) of
+          Just (MkEbState _ BodyAcquired{}) -> fetchArrivalExtra
+          Just (MkEbState _ ReceivingFromForge{}) -> fetchArrivalExtra
+          _ -> fetchArrivalEvicted
+    traceWith (lfcTracer ctx) $
+      TraceLeiosFetchClientBlockArrived peer point (bucket (lebBodySize (leiosEbByteSizes eb)))
 
 -- | Where a body that 'settleBody' settles came from.
 data BodySource peer
@@ -533,14 +618,7 @@ settleBody ctx source point eb now bodyWritten = do
   case receipt of
     BodyUnavailable -> pure ()
     BodyPresent confirmed -> do
-      let heldAtCommit = toIntSet confirmed
-      held <-
-        reuseMempool
-          (lfcLocalReuse ctx)
-          stillNeeded
-          point
-          heldAtCommit
-          (zip [0 ..] (endorserBlockReferences eb))
+      let held = toIntSet confirmed
       let heldOffs = IntSet.toAscList held
       traces <- modifyMVar lfcOutstanding $ \outstanding ->
         case Map.lookup point (ebState outstanding) of
@@ -590,11 +668,6 @@ settleBody ctx source point eb now bodyWritten = do
     , lfcNotify
     , lfcTracer
     } = ctx
-  stillNeeded = do
-    outstanding <- readMVar lfcOutstanding
-    pure $ case Map.lookup point (ebState outstanding) of
-      Just (MkEbState _ NoBody) -> True
-      _ -> False
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   arrived from bucket =
     TraceLeiosFetchClientBlockArrived from point (bucket (lebBodySize (leiosEbByteSizes eb)))
@@ -611,44 +684,32 @@ settleBody ctx source point eb now bodyWritten = do
 -- durably held, and settle them as an arrival would.
 -- Nothing if the cache holds no body for it, as after a restart, or if these
 -- bounds do not admit it; the point is then fetched like any other.
+-- | Optional cache discovery uses the same two-entry pool. A queued lookup is
+-- not a useful-body claim; only its validated result can install a local owner.
 acquireCachedBody ::
-  IOLike m =>
-  LeiosFetchClientContext m peer ->
-  LeiosPoint ->
-  LeiosEbByteSizes SizeLimit ->
-  m ()
-acquireCachedBody ctx point bounds =
-  mask_ $
-    Receipts.withReceiptSubmission (lfcReceiptTasks ctx) $
-      lookupBody lfcTxCache (pointEbHash point) >>= \case
-        Nothing -> pure ()
-        Just packed -> case deserialiseEndorserBlock (Proxy @DijkstraEra) (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
-          -- They decoded when the body arrived. The point is then fetched like any
-          -- other.
-          Left _failure -> pure ()
-          Right eb
-            | not (admitsSizes bounds (leiosEbByteSizes eb)) -> pure ()
-            | otherwise -> do
-                claim <- modifyMVar (lfcOutstanding ctx) $ \out -> do
-                  token <- case Map.lookup point (ebState out) of
-                    Just (MkEbState _ NoBody) -> atomically (R.claimLocalBody (lfcRuntime ctx) point)
-                    _ -> pure Nothing
-                  pure (out, token)
-                forM_ claim $ \token ->
-                  ( do
-                      now <- systemTimeCurrent lfcSystemTime
-                      (_noSummary, localFills) <- insertBody lfcTxCache point packed [] snocLocated
-                      bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills) Map.empty
-                      atomically (R.acceptLocalBody (lfcRuntime ctx) point token)
-                      Receipts.forkReceipt
-                        (lfcReceiptTasks ctx)
-                        ( settleBody ctx CachedBody point eb now bodyWritten
-                            `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point token)
-                        )
-                  )
-                    `finally` atomically (R.clearLocalBody (lfcRuntime ctx) token)
- where
-  MkLeiosFetchClientContext{lfcTxCache, lfcWriter, lfcSystemTime} = ctx
+  IOLike m => LeiosFetchClientContext m peer -> LeiosPoint -> (LeiosEbByteSizes SizeLimit) -> m ()
+acquireCachedBody ctx point bounds = atomically (queueCachedBody ctx point bounds)
+
+queueCachedBody ::
+  IOLike m => LeiosFetchClientContext m peer -> LeiosPoint -> (LeiosEbByteSizes SizeLimit) -> STM m ()
+queueCachedBody ctx point bounds = Owned.trySubmitWork (lfcBodyWork ctx) point $ do
+  found <- lookupBody (lfcTxCache ctx) (pointEbHash point)
+  forM_ found $ \packed -> case deserialiseEndorserBlock (Proxy @DijkstraEra) (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
+    Right eb
+      | endorserBlockHash eb == pointEbHash point
+      , admitsSizes bounds (leiosEbByteSizes eb) -> do
+          claim <- modifyMVar (lfcOutstanding ctx) $ \out -> do
+            token <- case Map.lookup point (ebState out) of
+              Just (MkEbState _ NoBody) -> atomically (R.claimLocalBody (lfcRuntime ctx) point)
+              _ -> pure Nothing
+            pure (out, token)
+          forM_ claim $ \token ->
+            ( do
+                now <- systemTimeCurrent (lfcSystemTime ctx)
+                runUsefulBody ctx CachedBody point eb now token Nothing
+            )
+              `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point token)
+    _ -> pure ()
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
 -- one that arrived with no peer: take its body into the LeiosTxCache, write it
@@ -708,23 +769,22 @@ settleForgedEb ::
   EndorserBlock ->
   -- | when the forge handed it over
   RelativeTime ->
-  -- | the offsets of the txs the point holds once the writes are durable
+  -- | the offsets of the txs the point holds once the write is durable
   Promise m BodyWriteReceipt ->
   m Bool
 settleForgedEb ctx point eb now written = do
+  labelThisThread "LeiosFetch.settleForgedEb"
   receipt <- await written
   case receipt of
     BodyUnavailable -> pure False
     BodyPresent confirmed -> do
-      labelThisThread "LeiosFetch.settleForgedEb"
       let heldOffs = Set.toAscList confirmed
       let complete = IntMap.keysSet refs `IntSet.isSubsetOf` IntSet.fromList heldOffs
       (current, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
-        -- A successful submission is not proof that all target rows survived to
-        -- the TX commit: GC can run between the body's and TXs' transactions. The
-        -- forge supplies every exact TX, so an incomplete receipt cannot establish
-        -- acquisition. Its collected point is retired by the ordinary pruner; no
-        -- receipt task waits for that bookkeeping entry to disappear.
+        -- Submission alone does not prove complete target possession. The forge
+        -- supplies every exact TX in one transaction; an incomplete confirmation
+        -- must not establish acquisition. Retirement still fences a receipt that
+        -- is reconciled after its point was pruned.
         let (outstanding', toEmit) =
               if complete then settleReceivingFromForge point outstanding else (outstanding, Nothing)
             age = ageAt now $ maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
@@ -835,13 +895,7 @@ processLeiosBlockTxs ownership ctx peer req@(MkLeiosBlockTxsRequest point jobs) 
         owner <- myThreadId
         txsWritten <- writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
         acceptedAt <- getMonotonicTime
-        emitAccepted <-
-          atomically
-            ( acceptedReply
-                ownership
-                acceptedAt
-                (sum [fromIntegral (BS.length bytes) | (_, _, bytes) <- toIngest])
-            )
+        emitAccepted <- atomically (acceptedReply ownership acceptedAt)
         -- The writer accepted this immutable job. Its node-owned callback survives
         -- subsequent cache/tracer waits and peer death. Protocol faults retain the
         -- original connection owner; storage failures go to node supervision.

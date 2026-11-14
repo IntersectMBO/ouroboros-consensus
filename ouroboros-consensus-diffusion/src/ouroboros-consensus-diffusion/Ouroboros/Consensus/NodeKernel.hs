@@ -287,7 +287,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Root whose left split seeds fetch decisions. Early cache allocation
   -- takes only its right split for salts; neither consumer uses the root directly.
   , leiosTxCache :: NodeLeiosTxCache m
-  -- ^ Allocated before opening ChainDB, with eviction wired before database GC.
+  -- ^ Allocated before opening ChainDB, with eviction wired before database promotion.
   , leiosFetchConfig :: LeiosFetchStaticEnv
   -- ^ Validated ordinary fetch credit and patience settings.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
@@ -318,10 +318,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
 
--- | Cache shared by forging, fetching, validation and database GC.
+-- | Cache shared by forging, fetching, validation and database retirement.
 type NodeLeiosTxCache m = LeiosTxCache m () ProtVerParity PackedEndorserBlock
 
--- | Allocate before opening ChainDB so no background GC can predate cache
+-- | Allocate before opening ChainDB so no background promotion can predate cache
 -- retirement. Supply the same LeiosFetch root passed in 'NodeKernelArgs':
 -- decisions use its left split and the cache exclusively consumes its right.
 -- Peers choose the keys, so keep the salted mutable table.
@@ -506,8 +506,7 @@ initNodeKernel
     let (leiosFetchPrng, _) = splitGen leiosFetchRng
     receiptTasks <- Receipts.newReceiptTasks
     leiosWriter <- allocateWriter registry leiosDB
-    localReuse <-
-      newLocalReuse (Receipts.receiptClosing receiptTasks) (mempoolLocalSource mempool) leiosWriter
+    let localReuse = newLocalReuse (mempoolLocalSource mempool)
     leiosFetchKernel <-
       newLeiosFetchKernel
         chainDB
@@ -515,7 +514,7 @@ initNodeKernel
         leiosFetchConfig
         (Receipts.receiptClosing receiptTasks)
         leiosFetchPrng
-        $ \outstanding ready runtime ->
+        $ \outstanding ready runtime bodies retired ->
           MkLeiosFetchClientContext
             { lfcStaticEnv = leiosFetchConfig
             , lfcOutstanding = outstanding
@@ -524,6 +523,8 @@ initNodeKernel
             , lfcTxCache = leiosTxCache
             , lfcReceiptTasks = receiptTasks
             , lfcLocalReuse = localReuse
+            , lfcBodyWork = bodies
+            , lfcBodyRetired = retired
             , lfcWriter = leiosWriter
             , lfcNotify = emitLeiosAcquisition leiosAcquisitions
             , lfcSystemTime = systemTime

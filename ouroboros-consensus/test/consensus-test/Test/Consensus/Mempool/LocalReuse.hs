@@ -9,13 +9,14 @@ module Test.Consensus.Mempool.LocalReuse (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import qualified Cardano.Slotting.Time as Time
-import Control.Monad (foldM, void)
+import Control.Monad (foldM, forM_, void)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Word (Word8)
 import Ouroboros.Consensus.Block.SupportsPeras (pattern PerasEnabled)
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
@@ -27,9 +28,12 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Mempool.Init (openMempoolWithoutSyncThread)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mempool.Update
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.LocalReuse
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
 import Ouroboros.Consensus.Util.STM (withTMVarAnd)
@@ -48,29 +52,31 @@ newEnv =
     (mkCapacityBytesOverride (ByteSize32 100000))
     Nothing
     nullTracer
- where
-  ledger =
-    LedgerInterface $
-      pure $
-        MempoolLedgerDBView
-          (testInitLedgerWithState NoPayLoadDependentState)
-          ( pure $
-              Right $
-                ReadOnlyForker
-                  { roforkerClose = pure ()
-                  , roforkerReadTables = const (pure emptyLedgerTables)
-                  , roforkerRangeReadTables = const (pure (emptyLedgerTables, Nothing))
-                  , roforkerGetLedgerState = pure (testInitLedgerWithState NoPayLoadDependentState)
-                  , roforkerReadStatistics = pure (Statistics 0)
-                  }
-          )
-  cfg =
-    testBlockLedgerConfigFrom
-      ( HardFork.defaultEraParams
-          (SecurityParam (knownNonZeroBounded @10))
-          (Time.slotLengthFromSec 2)
-          (PerasEnabled ())
-      )
+
+ledger :: IOLike m => LedgerInterface m TestBlock
+ledger =
+  LedgerInterface $
+    pure $
+      MempoolLedgerDBView
+        (testInitLedgerWithState NoPayLoadDependentState)
+        ( pure $
+            Right $
+              ReadOnlyForker
+                { roforkerClose = pure ()
+                , roforkerReadTables = const (pure emptyLedgerTables)
+                , roforkerRangeReadTables = const (pure (emptyLedgerTables, Nothing))
+                , roforkerGetLedgerState = pure (testInitLedgerWithState NoPayLoadDependentState)
+                , roforkerReadStatistics = pure (Statistics 0)
+                }
+        )
+cfg :: LedgerConfig TestBlock
+cfg =
+  testBlockLedgerConfigFrom
+    ( HardFork.defaultEraParams
+        (SecurityParam (knownNonZeroBounded @10))
+        (Time.slotLengthFromSec 2)
+        (PerasEnabled ())
+    )
 
 add :: (IOLike m, MonadTimer m) => MempoolEnv m TestBlock -> Int -> m ()
 add env n = void $ implAddTx env ProductionAddTx AddTxForRemotePeer (mkGenTx n (ByteSize32 100))
@@ -87,7 +93,9 @@ tests :: TestTree
 tests =
   testGroup
     "Mempool local reuse"
-    [ testProperty "index agrees with ordinary TX sequence through add/remove scripts" prop_indexCoherent
+    [ testCase "real mempool selection survives removal and confirms only requested bytes" $
+        assertBool "adapter, immutable selection and target confirmation" (runSimOrThrow realAdapter)
+    , testProperty "index agrees with ordinary TX sequence through add/remove scripts" prop_indexCoherent
     , testCase "exact serialized hash and size follow insertion/removal" $
         assertBool "coherent source index" $
           runSimOrThrow $ do
@@ -210,3 +218,64 @@ prop_indexCoherent actions = runSimOrThrow $ do
     )
     True
     actions
+
+-- Cross the actual index/adapter/materialization boundary, then the combined
+-- writer. Removing a live entry after selection must not invalidate its capture.
+realAdapter :: forall m. (IOLike m, MonadTimer m) => m Bool
+realAdapter = do
+  pool <-
+    openMempoolWithoutSyncThread
+      ledger
+      cfg
+      (mkCapacityBytesOverride (ByteSize32 100000))
+      Nothing
+      nullTracer
+  let canonical n = mkGenTx n (ByteSize32 100)
+      project tx = maybe (error "fixture projection") MkLeiosTx (txLeiosBytes @TestBlock tx)
+      wanted = map (project . canonical) [1, 2, 4]
+      references = [(hashLeiosTx tx, fromIntegral (BS.length (leiosTxBytes tx))) | tx <- wanted]
+      body = mkEndorserBlock references
+      point = MkLeiosPoint 5 (endorserBlockHash body)
+  (_, capturedVersion) <- atomically $ getLeiosTxIndex pool
+  forM_ [mkRectifyingGenTx 1 (ByteSize32 100), canonical 2, canonical 3] $ \tx ->
+    void $ addTx pool AddTxForRemotePeer tx
+  indexReads <- uncheckedNewTVarM (0 :: Int)
+  selected <- newEmptyTMVarIO
+  release <- newEmptyTMVarIO
+  let counted = pool{getLeiosTxIndex = modifyTVar indexReads (+ 1) >> getLeiosTxIndex pool}
+      source = mempoolLocalSource counted
+      gated =
+        source
+          { localBytes = \tx -> do
+              atomically $ void (tryPutTMVar selected ())
+              atomically $ readTMVar release
+              localBytes source tx
+          }
+  (prepared, removed) <- withAsync
+    (prepareBodyTxs (newLocalReuse gated) (pure False) (zip [0 ..] references))
+    $ \worker -> do
+      atomically $ readTMVar selected
+      removeTxsEvenIfValid pool (txId (canonical 1) NE.:| [])
+      (current, _) <- atomically $ getLeiosTxIndex pool
+      atomically $ putTMVar release ()
+      result <- wait worker
+      pure (result, Map.notMember (hashLeiosTx (head wanted)) current)
+  count <- atomically $ readTVar indexReads
+  let expected = zip [0, 1] (map leiosTxBytes (take 2 wanted))
+      version = maybe (error "fixture protocol version") protVerParity capturedVersion
+      valid = [(hashLeiosTx tx, version) | tx <- take 2 wanted]
+  bracket newLeiosDBInMemory closeLeiosDbHandle $ \db ->
+    withWriter db $ \writer -> do
+      confirmed <-
+        await =<< writeEbBody writer point body Map.empty (Map.fromList (preparedBytes prepared))
+      withReader db $ \reader -> do
+        stored <- batchRetrieveTxs reader point (Set.fromList [0, 1, 2])
+        closure <- lookupEbClosure reader point
+        pure $
+          removed
+            && count == 1
+            && Map.fromList (preparedBytes prepared) == Map.fromList expected
+            && Map.fromList (preparedValidated prepared) == Map.fromList valid
+            && confirmed == BodyPresent (Set.fromList [0, 1])
+            && stored == Map.fromList expected
+            && closure == Nothing
