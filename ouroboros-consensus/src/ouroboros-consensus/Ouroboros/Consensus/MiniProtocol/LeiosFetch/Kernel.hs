@@ -497,8 +497,8 @@ onNewLeiosAnnouncement kernel valid = do
 -- The point is marked 'ReceivingFromForge' at once, before any peer could relay the
 -- announcement back, so the node never fetches it, and its election is focused
 -- on it. Then 'acquireForgedEb' writes and acquires it. Nothing here waits for
--- the writes to land, though submitting them can wait for room in the
--- LeiosDB's write queue.
+-- the write to land, though submitting it can wait for room in the LeiosDB's
+-- write queue.
 --
 -- The header must announce this endorser block.
 onForgedLeiosEb ::

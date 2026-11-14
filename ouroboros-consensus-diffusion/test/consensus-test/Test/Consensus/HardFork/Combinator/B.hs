@@ -396,6 +396,8 @@ instance LedgerSupportsMempool BlockB where
   getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+  txLeiosBytes = nothingTxLeiosBytes
+  tickedLedgerProtVer = nothingTickedLedgerProtVer
 
 instance TxLimits BlockB where
   type TxMeasurePhase1 BlockB = IgnoringOverflow ByteSize32

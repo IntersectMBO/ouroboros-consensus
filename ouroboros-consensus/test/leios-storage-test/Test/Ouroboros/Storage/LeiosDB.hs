@@ -165,7 +165,14 @@ rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb mempty
 
 -- | Also fill from local bytes, and return the offsets the point holds.
 rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> LocalFills -> IO [TxOffset]
-rwInsertEbBodyFilling rw point eb fills = Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills)
+rwInsertEbBodyFilling rw point eb fills = rwInsertEbBodyWithTxs rw point eb fills []
+
+-- | Also write these txs with the body, as the node writes those its mempool
+-- holds.
+rwInsertEbBodyWithTxs ::
+  RW -> LeiosPoint -> EndorserBlock -> LocalFills -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
+rwInsertEbBodyWithTxs rw point eb fills txs =
+  Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills (Map.fromList txs))
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
 rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
@@ -266,6 +273,10 @@ mkTestGroups impl =
           withFreshDb impl test_fillFromAnotherPoint
       , testCase "a body that misstates a tx's size fills nothing for it" $
           withFreshDb impl test_fillOfMisstatedSize
+      , testCase "a body writes the txs given with it, at the sizes it lists" $
+          withFreshDb impl test_bodyWithTxs
+      , testCase "a second write of a body reports all txs the point already holds" $
+          withFreshDb impl test_secondBodyWriteReportsHeld
       ]
   , testGroup
       "completion"
@@ -739,6 +750,38 @@ test_fillOfMisstatedSize db = do
 
 -- * Garbage collection
 
+-- | Txs given with a body are written with it, unless the body lists another
+-- size at their offset, and the write reports those the point then holds.
+test_bodyWithTxs :: LeiosDbHandle IO -> IO ()
+test_bodyWithTxs db = do
+  let (pointA, ebA, _, _) = fillFixtures
+  withRW db $ \con -> do
+    -- The second tx's bytes are one byte short.
+    result <-
+      rwInsertEbBodyWithTxs
+        con
+        pointA
+        ebA
+        mempty
+        [(0, txBytesFor ebA 0), (1, BS.drop 1 (txBytesFor ebA 1))]
+    result @?= [0]
+    holdsClosure con pointA >>= (@?= False)
+    rwInsertTxs con pointA [(1, txBytesFor ebA 1)]
+    holdsClosure con pointA >>= (@?= True)
+
+-- | A second write of a body at a point, with no fills of its own, reports the
+-- txs the point holds, as the settlement of whichever write settles first
+-- needs.
+test_secondBodyWriteReportsHeld :: LeiosDbHandle IO -> IO ()
+test_secondBodyWriteReportsHeld db = do
+  let (pointA, ebA, pointB, ebB) = fillFixtures
+  withRW db $ \con -> do
+    writeWholeEb con [pointA] ebA
+    rwInsertEbBodyFilling con pointB ebB (Map.singleton 0 (MkTxLocation pointA 1)) >>= (@?= [0])
+    rwInsertEbBodyFilling con pointB ebB mempty >>= (@?= [0])
+    rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
+    rwInsertEbBodyFilling con pointB ebB mempty >>= (@?= [0, 1])
+
 -- | Write the EB at these points, with its body and all its transactions.
 writeWholeEb :: RW -> [LeiosPoint] -> EndorserBlock -> IO ()
 writeWholeEb con points eb = do
@@ -1147,7 +1190,9 @@ queryCount path query =
 -- | An operation on the database: a write, or what the ChainDB has it do as
 -- blocks become immutable.
 data Op
-  = OpBody LeiosPoint LocalFills
+  = -- | A body, with where to fill txs from, and the offsets of txs written
+    -- with it, as the node writes those its mempool holds
+    OpBody LeiosPoint LocalFills [TxOffset]
   | OpTxs LeiosPoint [TxOffset]
   | OpPromote EndorserBlockHash
   | OpGc SlotNo
@@ -1175,7 +1220,7 @@ prop_implementationsAgree =
         pure $
           tabulate "endorser blocks promoted" [bucket nPromoted] $
             tabulate "endorser blocks evicted" [bucket nEvicted] $
-              tabulate "local fills landed" [bucket (sum (map length (fst inMemory)))] $
+              tabulate "txs held after a body write" [bucket (sum (map length (fst inMemory)))] $
                 inMemory === sqlite
  where
   bucket n = if n >= 3 then "3+" else show n
@@ -1224,11 +1269,17 @@ genOps bodies = listOf genOp
           ]
   genOp =
     frequency
-      [ (3, genPointOf >>= \point -> OpBody point . Map.fromList <$> listOf (genFill point))
+      [
+        ( 3
+        , genPointOf >>= \point ->
+            OpBody point . Map.fromList <$> listOf (genFill point) <*> genGiven
+        )
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> elements (Map.keys bodies))
       , (1, OpGc . (+ 1) <$> genSlot)
       ]
+  -- Txs written with a body, up to one past the largest body.
+  genGiven = frequency [(1, pure []), (1, sublistOf [0 .. 4])]
 
 -- | A transaction's bytes, by its index in the pool.
 poolTxBytes :: Int -> BS.ByteString
@@ -1283,20 +1334,15 @@ observe db bodies ops = withRW db $ \rw -> do
  where
   go _rw _promotedSlot _points _bodied promoted nEvicted [] = pure ((length promoted, nEvicted), [])
   go rw promotedSlot points bodied promoted nEvicted (op : rest) = case op of
-    OpBody point fills
+    OpBody point fills given
       | point `notElem` bodied -> do
-          held <- rwInsertEbBodyFilling rw point (fst (bodies Map.! pointEbHash point)) fills
+          held <-
+            rwInsertEbBodyWithTxs rw point (fst (bodies Map.! pointEbHash point)) fills (txsAt point given)
           let bodied' = if collected point then bodied else point : bodied
           fmap (held :) <$> go rw promotedSlot (written point points) bodied' promoted nEvicted rest
       | otherwise -> go rw promotedSlot points bodied promoted nEvicted rest
     OpTxs point offsets -> do
-      let indices = snd (bodies Map.! pointEbHash point)
-      rwInsertTxs
-        rw
-        point
-        [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
-        | offset <- offsets
-        ]
+      rwInsertTxs rw point (txsAt point offsets)
       go rw promotedSlot points bodied promoted nEvicted rest
     OpPromote ebHash -> case [p | p <- points, pointEbHash p == ebHash, ebHash `notElem` promoted] of
       point : _ -> do
@@ -1324,10 +1370,17 @@ observe db bodies ops = withRW db $ \rw -> do
         rest
    where
     collected point = pointSlotNo point < promotedSlot
+    -- Each offset's tx bytes from the pool, as the body lists it there, and
+    -- some tx's for an offset past the body's end.
+    txsAt point offsets =
+      let indices = snd (bodies Map.! pointEbHash point)
+       in [ (offset, poolTxBytes (if offset < length indices then indices !! offset else 1))
+          | offset <- offsets
+          ]
     written point ps
       | collected point || point `elem` ps = ps
       | otherwise = point : ps
   opPoint = \case
-    OpBody point _ -> Just point
+    OpBody point _ _ -> Just point
     OpTxs point _ -> Just point
     _ -> Nothing

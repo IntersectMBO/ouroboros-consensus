@@ -65,6 +65,8 @@ data WriteJob
       !EndorserBlock
       -- | the txs to fill from local bytes
       !LocalFills
+      -- | the txs the writer holds, with their bytes
+      !(Map TxOffset ByteString)
       -- | where the worker puts the offsets the point holds
       !(ResolveWriteJob (Set TxOffset))
   | WriteTxs
@@ -152,7 +154,7 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 -- never its payload.
 describeJob :: WriteJob -> String
 describeJob = \case
-  WriteEbBody point eb _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
+  WriteEbBody point eb _ _ _ -> "WriteEbBody " <> show point <> " (" <> show (length (endorserBlockReferences eb)) <> " txs)"
   WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   GarbageCollect _ -> "GarbageCollect"

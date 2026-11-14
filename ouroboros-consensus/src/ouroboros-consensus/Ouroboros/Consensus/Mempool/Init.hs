@@ -116,6 +116,9 @@ mkMempool mpEnv =
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
+    , getLeiosTxIndex = do
+        is <- readTMVar istate
+        pure (isLeiosTxs is, tickedLedgerProtVer (isLedgerState is))
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
