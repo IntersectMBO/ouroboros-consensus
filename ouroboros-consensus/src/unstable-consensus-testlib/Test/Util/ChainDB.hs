@@ -22,6 +22,7 @@ import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), noLeiosAcquisitions)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -158,5 +159,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsLoE = pure LoEDisabled
           , cdbsSnapshotDelayRNG = mkStdGen 0
           , cdbsLeiosDb = mcdbLeiosDb
+          , -- These tests fetch no endorser block, so none is acquired.
+            cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions noLeiosAcquisitions
           }
     }
