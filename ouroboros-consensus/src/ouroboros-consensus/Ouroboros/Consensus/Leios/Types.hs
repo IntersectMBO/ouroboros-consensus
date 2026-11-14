@@ -432,8 +432,8 @@ encodeSerialisedEndorserBlock :: Serialised EndorserBlock -> Encoding
 encodeSerialisedEndorserBlock (Serialised bytes) = encodeNestedCborBytes bytes
 
 -- | The inverse of 'encodeSerialisedEndorserBlock'. It rejects bytes exceeding
--- 'maxEndorserBlockBytesSize', which the byte string's header tells before
--- they are read, and decodes nothing within them.
+-- 'maxEndorserBlockBytesSize' after reading them, which 'byteLimitsLeiosFetch'
+-- bounds, and decodes nothing within them.
 decodeSerialisedEndorserBlock :: Decoder s (Serialised EndorserBlock)
 decodeSerialisedEndorserBlock = do
   bytes <- decodeNestedCborBytes
