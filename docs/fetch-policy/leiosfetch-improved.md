@@ -18,11 +18,21 @@ An EB body offer says that the peer holds the complete body. It says nothing
 about closure possession. A full-closure offer separately authorizes requests
 for the EB's transactions.
 
-After validating and storing a body, first use the database's existing fills
-from confirmed local source locations, then make one bounded pass over matching
-mempool transactions. Match the exact serialized transaction's hash and size.
-Only confirmed target presence removes transactions from network work. Later
-mempool arrivals may still be fetched: local discovery is one pass.
+After checking a complete body's hash and trusted size bounds, transfer useful
+work to the shared bounded body-preparation pool. Select matching mempool TXs
+once, capturing their validation version in the same STM transaction. The
+current index read waits while a mempool writer owns its state; this wait
+occupies a bounded preparation worker, outside fetch/cache locks. Closing
+wakes the transaction and allows optional reuse to be skipped. Serialize
+and verify their actual hash and size outside locks. Prefer these verified
+mempool bytes; use DB fill proposals for the other offsets. An unverified
+mempool hit must not displace a usable DB fill.
+
+Write the body, remaining DB fills and verified mempool bytes in one transaction.
+Only the receipt's confirmed target offsets remove transactions from network
+work. Stale fills are misses. Later mempool arrivals can still be fetched: there
+is no second scan or continuous resolver. Full-closure offers independently
+authorize requests for the remaining transactions.
 
 Keep upstream election focus, certified-EB selection, ChainSync offers and
 locally forged acquisitions. These determine which EBs matter; source ranking
@@ -32,6 +42,22 @@ The ledger can disable non-empty EB capacity when the committee's registered
 voting keys cannot reach its configured quorum. A diffusion-only fixture without
 those keys must label any quorum override explicitly; it is not certification
 validation or a change to production quorum policy.
+
+## Serialized bodies and local validation
+
+The upstream wire codec carries the body's original bytes as CBOR-in-CBOR. Hash
+those exact bytes and decode them with the era-aware inner decoder. Inspect the
+validation result before taking the outstanding-state lock; on success, force
+the decoded body and its size metadata before admission. Invalid inner encoding
+or trusted-bound violations suppress repeated fetching without announcing an
+acquisition. A valid body offered at the wrong size is still preserved before
+reporting that peer's error.
+
+The decoded body retains its original encoding, so queued work needs no second
+serialized copy. The plain codec is adapted once at the observed driver. The
+complete outer message's original receipt remains the network timing event;
+inner decoding is local handling. The body-message limit includes ten bytes of
+outer framing; the inner payload ceiling is unchanged.
 
 ## Requests and admission
 
@@ -156,15 +182,32 @@ the announcing peer cannot erase admitted work. The metadata worker registers
 cache references and election/fetch state without waiting for database submission.
 It retains each obligation until that bookkeeping completes.
 
-Metadata, optional cache lookups and known forged payloads have separate queues
-and workers. The current hard bounds are 128 queued/running metadata entries,
-four cache lookups and four forged payloads. Keeping bounded validated headers
-also preserves their onset/bounds and distinct cache references; the global
-announcement set alone does not retain all of that processing context. A blocked
-payload submission cannot occupy the metadata dispatch turn. When optional cache
-capacity is full, fetching remains available rather than queuing unlimited local
-work. Queued metadata or lookup does not establish possession. An active cache
-hit claims only its exact body, not missing closure transactions.
+Metadata and known forged payloads retain separate queues, bounded at 128 and
+four queued/running entries respectively. Keeping bounded validated headers
+preserves their onset/bounds and distinct cache references; the global
+announcement set alone does not retain all that processing context. A blocked
+payload submission cannot occupy the metadata dispatch turn.
+
+Received bodies and optional cache discovery share two entries and two fixed
+workers. Entries remain charged while queued, preparing, waiting for writer
+admission and reconciling receipts. Admission transfers a useful network claim
+to an exact local-owner token in the same STM transaction that reserves its
+entry. The peer handler returns after that handoff; it does not await preparation
+or the writer. Its ordinary completion releases physical request credit, while
+the local claim survives disconnect and peer cleanup.
+
+When full, received-body handlers wait outside the outstanding-state MVar and
+cache locks. Retirement, another useful owner, a forge claim or closing can end
+that wait without unrelated entries finishing. Optional cache admission never
+blocks the metadata dispatcher. A queued lookup is not useful possession: a
+valid received body waits for an unresolved candidate, and can take ownership
+if the candidate misses or is invalid. A verified cache hit claims only its
+exact body, not missing closure transactions.
+
+Body workers directly reconcile their write receipts under the same entry;
+there is no extra body receipt task retaining the operation. Completed body
+keys are not remembered separately from logical acquisition. Generic receipt
+tasks remain for TX responses and other producers.
 
 Forge admission is independent of whether a peer announced the header first.
 Admission installs a known local-payload claim for the full EB point, suppressing
@@ -191,15 +234,40 @@ registration. Logical jobs and physical outstanding exchanges have distinct
 ownership.
 
 A complete-message observation stops network timing; it does not by itself
-return credit. Return credit when a validated reply's storage submission is
-accepted, or when its handler finishes without submitting work. Accepted receipt
-ownership remains until its callback settles.
+return credit. TX replies return credit at writer acceptance, or when their
+handler finishes without submitting work. A body handler can instead finish
+after transferring to its bounded node entry, before actual writer acceptance.
+Its normal completion returns physical credit; the local operation remains owned.
 
-A handler owns validated work while submitting it. Transfer accepted work to a
-node-owned receipt task before interruption or post-acceptance tracing can lose
-its owner. Peer teardown does not erase an in-progress submission or accepted
-receipt. Complete only fully confirmed immutable jobs; relevant unconfirmed jobs
-remain fetchable.
+A TX handler owns validated work while submitting it, then transfers accepted
+work to a registered receipt task before later observations can lose its owner.
+A receipt task waits for the database's write confirmation, reconciles the
+logical jobs and releases its exact pending claim independently of the peer
+connection. The submission scope records that transfer explicitly: a fast receipt
+may finish before the handler, so current pending state cannot establish whether
+the transfer happened. Later cache or tracing failures leave transferred work
+with that task.
+
+If a reply has no useful transactions left, it still undergoes the cheap count
+and job-size checks, but submits no empty writer operation or receipt task. Its
+logical assignment is released while its original physical lease still guards
+re-admission; only its own unsubmitted claim is cleared. A successful receipt
+instead reconciles the logical assignment before releasing the accepted pending
+owner. These orderings prevent old cleanup from unpicking a newer assignment.
+
+Writer acceptance precedes receipt-task installation. If that transfer fails
+before installation, the receipt supervisor records the first fault and closes
+runtime admission atomically with exact accepted-claim cleanup. Fatal teardown
+owns the accepted operation; cleanup does not confirm acquisition or wait inline
+for storage. Existing exceptional teardown keeps its original cause. An admitted
+producer can still install its receipt task during healthy normal drain.
+
+Body workers already own their preparation and directly await their receipts.
+Aborting the pool also invokes exact-owner cleanup for queued operations that
+no worker started. A cached candidate installs cleanup under masking when it
+later acquires a useful claim, then runs preparation unmasked. Peer teardown
+cannot erase these local owners. Complete only fully confirmed immutable jobs;
+relevant unconfirmed jobs remain fetchable.
 
 Normal shutdown stops admission and optional local imports, wakes local waiters,
 and joins submitting handlers and accepted receipt callbacks before storage
@@ -208,15 +276,58 @@ failures reach node supervision; peer protocol faults retain their original
 connection ownership. One failed callback must not cause repeated exception
 delivery during teardown.
 
+Owned-worker failure reaches its supervisor with the original cause. Dependent
+admission, capacity and join callers receive a closed-work signal, which wakes
+waiters and terminates their operation. Normal drain still completes admitted
+joins. A late complete body is discarded through its usual request finalizers
+when local admission has closed; a forge waiting on failed metadata abandons its
+claim. These dependent operations do not report the worker's storage failure as
+a new peer fault or a second worker failure. The original supervisor still owns
+fatal teardown.
+
 ## Durable confirmation and garbage collection
 
-A receipt confirms presence at its successful write boundary, including bytes
-already present. It adds no pin lasting until notification consumption; existing
-certified-data pins remain unchanged. Reject logical updates to retired work.
-Notification consumers and caches use their monotonic retirement frontiers, with
-pruning before physical GC. Late cache publication cannot replace a newer usable
-transaction source with a retired location. A stale guarded DB fill is a miss,
-not target possession.
+A body receipt distinguishes a present body with no held transactions from
+an unavailable target. TX receipts separately report positively confirmed
+submitted offsets, wrong-size diagnostics and target-body presence. An empty
+wrong-size set never proves that a write landed. An absent retired target stops
+further fetching without acquisition, coverage, location publication or a peer
+failure charge. Emptying its jobs is cleanup, not successful closure delivery.
+
+Confirmation proves presence in the authoritative partition after commit,
+including legitimate existing immutable copies. The SQLite writer commits its
+volatile transaction, then holds a separate confirmation mutex while selecting
+the partition and reading its markers/bounds. Bulk promotion owns its maintenance
+connection while copying and committing, and takes the confirmation mutex only
+to publish the new boundary. Truncation holds it across deletion and the matching
+boundary update. Maintenance acquires its connection mutex first; confirmation
+uses the writer's own connections. Tracer IO stays outside the confirmation lock.
+This removes the mutex dependency on copying; SQLite/disk contention remains.
+If promotion already passed an omitted target, a stale volatile row confirms
+nothing. This does not restore a fallback between partitions. The memory backend
+establishes the same proof with its promotion state in one STM transaction.
+
+For a TX job, SQLite reads markers and size boundaries only across its valid
+submitted offset span, including the last TX's end boundary. An empty or entirely
+invalid submission still checks target presence but needs no marker/boundary
+read. Sparse spans can include gaps; only submitted offsets may be confirmed.
+Whole-body receipts still inspect every marker because they report all held TXs.
+
+A receipt is evidence at that proof boundary, not a pin until notification
+consumption. Later retirement can remove its target; logical fetch state,
+notification consumers and cache publication independently reject retired work.
+Certified closures persist in immutable storage.
+
+The shared storage wrapper prunes cache metadata before forwarding promotion,
+releasing the cache lock before storage IO. Its fence remains monotonic after a
+failed, interrupted or older promotion. This can remove reuse hints early; it
+does not delete stored bytes. Physical GC uses the database's own promoted slot.
+Startup truncation precedes population of the fresh cache.
+
+Late cache publication cannot replace a newer usable transaction source with a
+retired location. Already-captured fill descriptors remain hints, not pins: the
+writer verifies the available source bytes, and an unavailable or stale fill
+leaves the target transaction fetchable.
 
 The mutable cache draws its two salt words from a dedicated, previously unused
 branch of the LeiosFetch RNG root. Fetch decisions keep the other branch;
@@ -306,7 +417,9 @@ handler readiness, omitting unavailable predecessors. Add `max(T, W)` for a
 fresh request, or `max(T, R)` for a continuous pipeline. A later RTT sample or
 payload dribble never renews this allowance. An early reply may precede send
 return; reconciliation preserves its original receipt and releases no credit
-twice. Local handler/storage time delays eligibility of the following head.
+twice. Local handler time, including a wait for bounded body admission, delays
+eligibility of the following head. Preparation and storage after body handoff
+run independently and do not hold that peer handler open.
 
 While known input is being decoded locally, defer expiry reconciliation: that
 input may establish an earlier complete-message receipt. This does not extend
@@ -321,27 +434,48 @@ A terminal receipt clears wire blockage even while its local handler runs.
 
 ## Local materialization and confirmation
 
-The Leios transaction cache supplies reusable bodies and confirmed transaction
-locations. The body writer fills target offsets from usable stored locations,
-then the bounded mempool pass imports exact matching serialized transactions.
-Materialization uses a 20,000 B target and at most 128 entries per slice, allowing
-one indivisible transaction to overhang. A shared gate bounds optional local
-work; no full mempool snapshot or payload vector is retained across its IO.
+The transaction cache supplies packed bodies, validation facts and proposed
+source locations. Membership is not target durability. Whole-EB preparation
+makes one strict selection from upstream's maintained hash index and captures
+its protocol version, then checks every selected transaction's actual serialized
+hash and size before invoking the writer. Removal from the mempool afterwards
+does not invalidate the selected immutable value. Unsupported projections or
+missing validation metadata never fabricate validated status.
 
-The writer's receipt states which submitted target offsets are present at the
-successful transaction boundary, including rows already present or held in the
-immutable partition. Submission alone is insufficient. Fully confirmed immutable
-jobs retire; partly confirmed relevant jobs remain fetchable. The locally forged
-path also requires every reference to be confirmed before announcing acquisition.
-An incomplete forge receipt cannot establish acquisition. A callback for a
-point already pruned from fetching cannot recreate coverage.
+Whole-EB names the local selection/write scope; remaining network requests keep
+the existing job partition and full-closure-offer requirement.
 
-This implementation uses the ordinary writer and its existing queue. It does
-not introduce an additional storage handoff or capacity reservation. Actual
-storage failure reaches node supervision; invalid network data belongs to the
-original peer. Normal drain joins submitting producers and accepted callbacks;
-exceptional drain cancels and joins them. Neither peer removal nor a failed
-post-acceptance observation transfers an old claim to a replacement request.
+Two admitted whole-EB operations replace the former slice gate, 20,000 B target,
+128-reference slicing and residual TX writes. Trusted ledger body/closure maxima
+B and C bound their admitted logical encoded payload by 2*(B+C), independently
+of a peer's announced size. This is not a whole-node heap bound: decoded selected
+TX graphs and encoding buffers have representation overhead; ingress, peer handlers, forged work
+and the existing DB writer have their own bounds.
+
+Each operation writes its body, remaining DB fills and verified mempool bytes
+once. The receipt proves body presence and held target offsets after commit,
+including existing blob rows or immutable-partition copies.
+Only confirmed offsets establish coverage or reusable target locations. Missing
+fills remain fetchable. Body acquisition follows that combined commit; closure
+acquisition follows it only if every offset is confirmed. The forged path also
+uses one body/all-TX write and requires complete, still-relevant confirmation.
+
+Source-selection counts and the cache insertion summary describe captured
+choices/cache state, separately from confirmed durable origins in the closure
+summary. A proposed fill or selected mempool TX is not confirmed target data.
+Actual writer acceptance is traced when it happens, after node-work handoff.
+
+The ordinary DB writer and its queue remain in use. Normal shutdown closes
+admission before draining owned operations; that closing signal also wakes a
+blocked mempool selection, allowing optional local reuse to be skipped while
+essential body/DB-fill writes finish. Generic TX receipts drain afterwards.
+Exceptional shutdown cancels and joins the fixed workers and receipt tasks
+before storage closes. One supervised body-worker group delivers a failure
+once, even if both preparations fail concurrently. Exact tokens prevent late
+network or local cleanup from erasing another operation's claim.
+
+[Ownership and shutdown](#ownership-and-shutdown) describes admission,
+saturation, retirement and cleanup.
 
 ## Practical limits and follow-ups
 
