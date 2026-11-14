@@ -38,6 +38,7 @@ import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , ForgedEndorserBlock
   , LeiosPoint (..)
+  , LeiosTx (..)
   , Serialised
   , TxLocation
   , TxOffset
@@ -98,7 +99,7 @@ data LeiosDbReader m = LeiosDbReader
   -- ('Ouroboros.Consensus.Leios.Types.serialiseEndorserBlock'), or 'Nothing'
   -- if the LeiosDB does not hold it there. Decoding them is for the caller,
   -- who knows the era ('Ouroboros.Consensus.Leios.Types.deserialiseEndorserBlock').
-  , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [ByteString])
+  , lookupEbClosure :: HasCallStack => LeiosPoint -> m (Maybe [LeiosTx])
   -- ^ The EB "closure" at this point: the bytes of its txs in body order, or
   -- 'Nothing' unless each of them is written. The body lists their hashes.
   , batchRetrieveTxs ::

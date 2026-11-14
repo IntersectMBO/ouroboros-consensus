@@ -322,12 +322,12 @@ imBatchRetrieveTxs stateVar point offsets = atomically $ do
     Just row -> rowTxs row `Map.restrictKeys` offsets
 
 imLookupEbClosure ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [ByteString])
+  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [LeiosTx])
 imLookupEbClosure stateVar point = atomically $ do
   state <- readTVar stateVar
   pure $ do
     row <- rowAt state point
-    traverse (`Map.lookup` rowTxs row) (Map.keys (rowTxSizes row))
+    traverse (fmap MkLeiosTx . (`Map.lookup` rowTxs row)) (Map.keys (rowTxSizes row))
 
 -- | Whether reads of the point go to the immutable partition: it is older
 -- than the slot the latest promotion reached.

@@ -184,6 +184,7 @@ type TxHash = Hash HASH EraIndependentTx
 -- was announced in.
 newtype LeiosTx = MkLeiosTx {leiosTxBytes :: ByteString}
   deriving stock (Eq, Show)
+  deriving newtype NFData
 
 instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
 

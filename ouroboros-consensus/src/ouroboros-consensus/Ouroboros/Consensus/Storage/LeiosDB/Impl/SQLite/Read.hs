@@ -48,6 +48,7 @@ import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
+  , LeiosTx (..)
   , Serialised (..)
   , TxOffset
   , endorserBlockReferences
@@ -174,9 +175,9 @@ sqlIsImmutable Conn{conImmDb = immDb} point =
 
 -- | The bytes of the txs of the EB at the point in body order, or 'Nothing'
 -- unless each of them is written.
-sqlLookupEbClosure :: Conn -> LeiosPoint -> IO (Maybe [ByteString])
+sqlLookupEbClosure :: Conn -> LeiosPoint -> IO (Maybe [LeiosTx])
 sqlLookupEbClosure conn point =
-  readPartition conn point (`completeClosureAt` point)
+  fmap (map MkLeiosTx) <$> readPartition conn point (`completeClosureAt` point)
 
 -- * Lookups
 

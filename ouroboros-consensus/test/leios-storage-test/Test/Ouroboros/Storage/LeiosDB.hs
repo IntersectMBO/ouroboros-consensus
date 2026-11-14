@@ -184,7 +184,7 @@ rwLookupEbBody :: RW -> LeiosPoint -> IO (Maybe (Serialised EndorserBlock))
 rwLookupEbBody = lookupEbBody . rwReader
 
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
-rwLookupEbClosure = lookupEbClosure . rwReader
+rwLookupEbClosure con point = fmap (map leiosTxBytes) <$> lookupEbClosure (rwReader con) point
 
 rwBatchRetrieveTxs :: RW -> LeiosPoint -> [TxOffset] -> IO (Map.Map TxOffset BS.ByteString)
 rwBatchRetrieveTxs rw point = batchRetrieveTxs (rwReader rw) point . Set.fromList
@@ -1166,7 +1166,7 @@ prop_storeForgedEbThenLookup impl =
           withReader db $ \reader ->
             (,)
               <$> scanCompleteEbClosuresNotOlderThanSlot reader 0
-              <*> lookupEbClosure reader (MkLeiosPoint slot ebHash)
+              <*> (fmap (map leiosTxBytes) <$> lookupEbClosure reader (MkLeiosPoint slot ebHash))
         pure $
           conjoin
             [ counterexample "the point is not the slot and the hash of the body" $
