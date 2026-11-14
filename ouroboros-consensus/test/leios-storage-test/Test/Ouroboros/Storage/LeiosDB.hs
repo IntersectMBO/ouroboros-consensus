@@ -54,7 +54,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , Promise (..)
   , newLeiosDBInMemory
   , storeForgedEb
-  , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
   , withReader
   , withWriter
@@ -65,8 +64,13 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   , mkConn
   , openRawConnection
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (gcBatchSize, initialStats)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
+  ( deleteEbsFrom
+  , gcBatchSize
+  , initialStats
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (lookupBlob, readPartition)
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling (withExistingLeiosDbFile)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
@@ -99,7 +103,7 @@ tests =
     forEachImplementation mkTestGroups
       <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
          , testGroup
-             "truncateLeiosDbAfterSlot"
+             "deleteEbsFrom on a partition file"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
              , testCase "runs on the immutable partition" $
@@ -193,7 +197,7 @@ withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 
 -- | Create a fresh SQLite database and hand its paths to the action, which
--- 'truncateLeiosDbAfterSlot' needs. The database is torn down -- writes
+-- the tests that read the files directly need. The database is torn down -- writes
 -- flushed, threads stopped, connections closed -- before the directory is
 -- removed; a still-open connection makes the removal flaky (a hard failure
 -- on Windows, where deleting an open WAL is a sharing violation).
@@ -292,6 +296,8 @@ mkTestGroups impl =
           withFreshDb impl test_promoteIncompleteFails
       , testCase "promotes an EB promoted at another point" $
           withFreshDb impl test_promoteAtEachPoint
+      , testCase "a truncation drops the promoted EBs at or after its slot, which can be written again" $
+          withFreshDb impl test_truncateImmutable
       ]
   , testGroup
       "lookupEbClosure"
@@ -771,26 +777,25 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
     leiosDbPromoteToImmutable db 6 [point]
     rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))
 
--- | An EB promoted at slot 100 up to slot 110 and collected, before the
--- ImmutableDB is truncated back to slot 100, and the LeiosDB with it. Reopened,
--- the promoted slot is the one after the EB's, so its reads still go to the
--- immutable partition, and a point after it can be written again.
+-- | EBs promoted at slots 90 and 100 up to slot 110, and collected, before the
+-- immutable partition is truncated to slot 100, as when the ChainDB opens on
+-- an ImmutableDB whose tip is there. Reopened, the EB at slot 90 is still read
+-- from the immutable partition, and the one at slot 100 can be written again.
 test_truncateKeepsPromotedEb :: FilePath -> FilePath -> IO ()
 test_truncateKeepsPromotedEb volDbPath immDbPath = do
   let eb = mkTestEb 2
-      promoted = mkTestPoint 100 1
-      after = mkTestPoint 105 2
+      kept = mkTestPoint 90 1
+      dropped = mkTestPoint 100 2
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    writeWholeEb con [promoted] eb
-    leiosDbPromoteToImmutable db 110 [promoted]
+    writeWholeEb con [kept, dropped] eb
+    leiosDbPromoteToImmutable db 110 [kept, dropped]
     garbageCollect db
-  truncateLeiosDbAfterSlot volDbPath 100
-  truncateLeiosDbAfterSlot immDbPath 100
+    leiosDbTruncateImmutable db 100
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
-    rwScanComplete con 100 >>= (@?= [promoted])
-    writeWholeEb con [after] eb
-    rwLookupEbClosure con after >>= (@?= Just (map snd (allTxsFor eb)))
+    rwLookupEbClosure con kept >>= (@?= Just (map snd (allTxsFor eb)))
+    rwScanComplete con 0 >>= (@?= [kept])
+    writeWholeEb con [dropped] eb
+    rwLookupEbClosure con dropped >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | An EB announced again after the announcement that gets certified: the
 -- immutable copy is at the certified slot.
@@ -921,6 +926,23 @@ test_promoteAtEachPoint db = withRW db $ \con -> do
   holdsClosure con earlier >>= (@?= True)
   holdsClosure con later >>= (@?= True)
 
+-- | EBs promoted at slots 4 and 5 up to slot 6 and collected, then the
+-- immutable partition truncated to slot 5.
+test_truncateImmutable :: LeiosDbHandle IO -> IO ()
+test_truncateImmutable db = withRW db $ \con -> do
+  let eb = mkTestEb 2
+      kept = mkTestPoint 4 1
+      dropped = mkTestPoint 5 2
+  writeWholeEb con [kept, dropped] eb
+  leiosDbPromoteToImmutable db 6 [kept, dropped]
+  garbageCollect db
+  leiosDbTruncateImmutable db 5
+  mapM (isImmutable (rwReader con)) [kept, dropped] >>= (@?= [True, False])
+  rwLookupEbClosure con kept >>= (@?= Just (map snd (allTxsFor eb)))
+  rwLookupEbClosure con dropped >>= (@?= Nothing)
+  writeWholeEb con [dropped] eb
+  rwLookupEbClosure con dropped >>= (@?= Just (map snd (allTxsFor eb)))
+
 -- | A complete EB promoted along with one whose closure lacks a tx, up to slot 6.
 test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
 test_promoteIncompleteFails db = withRW db $ \con -> do
@@ -988,7 +1010,7 @@ prop_completedEbNoBody impl =
           & counterexample "Expected Nothing for EB with no body inserted"
           & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
 
--- * truncateLeiosDbAfterSlot
+-- * deleteEbsFrom on a partition file
 
 test_truncateDropsEbsAfterSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
@@ -1003,7 +1025,7 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     rwInsertTxs con (MkLeiosPoint 5 keptHash) (allTxsFor eb)
     rwInsertTxs con (MkLeiosPoint 15 droppedHash) (allTxsFor eb)
 
-  truncateLeiosDbAfterSlot volDbPath 10
+  void $ withExistingLeiosDbFile volDbPath (`deleteEbsFrom` 11)
   ebBodyRows volDbPath droppedHash >>= (@?= 0)
 
   withRW db $ \con -> do
@@ -1021,7 +1043,7 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
 test_truncateImmutablePartition :: FilePath -> FilePath -> IO ()
 test_truncateImmutablePartition volDbPath immDbPath = do
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \_db -> pure ()
-  truncateLeiosDbAfterSlot immDbPath 10
+  void $ withExistingLeiosDbFile immDbPath (`deleteEbsFrom` 11)
 
 -- * File initialisation
 
@@ -1084,11 +1106,11 @@ withSqlFile path k =
 sqlBlob :: EndorserBlockHash -> String
 sqlBlob ebHash = "x'" <> hashToStringAsHex ebHash <> "'"
 
--- | How many rows of the file hold the EB.
 -- | The file's rows, of any EB.
 ebRows :: FilePath -> IO Int
 ebRows path = queryCount path "SELECT COUNT(*) FROM ebs"
 
+-- | How many rows of the file hold the EB.
 ebBodyRows :: FilePath -> EndorserBlockHash -> IO Int
 ebBodyRows path ebHash =
   queryCount

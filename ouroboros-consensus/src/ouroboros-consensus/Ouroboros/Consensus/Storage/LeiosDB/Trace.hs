@@ -50,8 +50,7 @@ data TraceLeiosDb
     TraceLeiosDbEvicted
       -- | number of rows evicted
       Int
-  | -- | The immutable partition was truncated to the ImmutableDB tip, when
-    -- the ChainDB opened.
+  | -- | The immutable partition dropped EBs at or after the ImmutableDB tip.
     TraceLeiosDbTruncatedImmutable
       -- | the slot the EBs at or after which were deleted, and the new
       -- promoted slot

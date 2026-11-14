@@ -128,7 +128,7 @@ instance MetaTrace TraceLeiosDb where
     Just "A garbage collection deleted EB rows from the volatile partition."
   documentFor (Namespace _ ["TruncatedImmutable"]) =
     Just
-      "When the ChainDB opened, the immutable partition dropped the EBs announced at or after the ImmutableDB tip's slot, and the promoted slot was set to it."
+      "The immutable partition dropped the EBs announced at or after the ImmutableDB tip's slot, as after a crash or a truncation of the ImmutableDB."
   documentFor _ = Nothing
 
   metricsDocFor (Namespace _ ["Stats"]) =

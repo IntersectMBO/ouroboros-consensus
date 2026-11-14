@@ -68,7 +68,7 @@ An EB whose closure is incomplete fails the promotion, and the node stops: Chain
 
 Neither the ImmutableDB nor the LeiosDB syncs its writes to disk, so a power loss can drop the newest writes of either, and leave the ImmutableDB with a block certifying an EB that the immutable partition lacks.
 After such an unclean shutdown, the ImmutableDB validates all its chunks when it opens, and checks each block against its predecessor: it truncates before the first block that certifies an EB the immutable partition does not hold, and the node fetches the blocks after it again.
-Then, before anything reads the LeiosDB, the ChainDB truncates the immutable partition to the ImmutableDB tip: it deletes the EBs announced at or after the tip's slot, which no block of the ImmutableDB certifies, and sets the promoted slot to it.
+Whenever the ChainDB opens, before anything reads the LeiosDB, it truncates the immutable partition to the ImmutableDB tip: it deletes the EBs announced at or after the tip's slot, which no block of the ImmutableDB certifies, and sets the promoted slot to it.
 So the immutable partition does not run ahead of the ImmutableDB either, after a crash between a promotion and the appends of its blocks, a truncation of the ImmutableDB, or a row lost from the middle of the partition.
 An EB it deletes that the volatile partition still holds is promoted again, and any other is fetched again.
 

@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   , closePromoter
   , sqlPromoteToImmutable
   , sqlTruncateImmutable
+  , deleteEbsFrom
 
     -- * Garbage collection
   , sqlGarbageCollect
@@ -178,15 +179,24 @@ sqlTruncateImmutable ::
   IO ()
 sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar slot =
   withMVar promoterVar $ \(Promoter db) -> do
-    deleted <-
-      dbWithTransaction db $
-        withStmt db "DELETE FROM main.ebs WHERE ebSlot >= ?1" $ \stmt -> do
-          dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
-          dbStep1Safe stmt
-          DB.changes db
+    -- The connection's main database is the immutable partition, which
+    -- unqualified table names resolve to before the attached volatile one.
+    deleted <- deleteEbsFrom db slot
     bumpImmutableStats statsVar (negate deleted)
     atomically $ writeTVar promotedSlotVar slot
-    traceWith tracer $ TraceLeiosDbTruncatedImmutable slot deleted
+    when (deleted > 0) $
+      traceWith tracer $
+        TraceLeiosDbTruncatedImmutable slot deleted
+
+-- | Delete the EBs announced at or after the slot, in one transaction. Returns
+-- how many. Either partition, as both have the @ebs@ table.
+deleteEbsFrom :: HasCallStack => DB.Database -> SlotNo -> IO Int
+deleteEbsFrom db slot =
+  dbWithTransaction db $
+    withStmt db "DELETE FROM ebs WHERE ebSlot >= ?1" $ \stmt -> do
+      dbBindInt64 stmt 1 (fromIntegral $ unSlotNo slot)
+      dbStep1Safe stmt
+      DB.changes db
 
 -- * Garbage collection of the volatile partition
 

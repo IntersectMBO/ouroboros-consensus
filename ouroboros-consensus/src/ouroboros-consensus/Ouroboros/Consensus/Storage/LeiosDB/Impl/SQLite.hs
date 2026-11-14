@@ -7,10 +7,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   , newLeiosDBSQLite
   , withLeiosDBSQLite
 
-    -- * Re-exported for internal tooling
-  , truncateLeiosDbAfterSlot
-  , vacuumLeiosDb
-
     -- * SQL strings (re-exported for leios-schedule-gen)
   , sql_schema_vol
   , sql_schema_imm
@@ -67,7 +63,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema
-import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.WriteQueue
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import Ouroboros.Consensus.Util.IOLike (atomically)
