@@ -7,10 +7,10 @@
 module Test.Consensus.Leios.LeiosFetch.Preparation (tests) where
 
 import qualified Control.Concurrent.Class.MonadSTM.Strict as S
-import Control.Monad (unless, void)
+import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
-import Control.Monad.IOSim (IOSim, exploreSimTrace, traceResult)
+import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (mkTracer)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
@@ -30,6 +30,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Rec
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
 import Ouroboros.Consensus.Storage.LeiosDB.API
+import Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Fixtures
 import Test.Tasty
@@ -49,6 +50,7 @@ ownership ctx point =
     , bodyWon = const (pure ())
     , settledReceipt = const (pure (pure ()))
     , abandonUnsubmitted = pure ()
+    , abandonAccepted = pure ()
     }
 
 receive :: IOLike m => LeiosFetchClientContext m Int -> Int -> LeiosPoint -> EndorserBlock -> m ()
@@ -149,7 +151,7 @@ testVerifyBeforeWriter = bounded $ do
           { lfcLocalReuse = newLocalReuse source
           , lfcWriter =
               original
-                { writeEbBody = \_ _ _ _ -> atomically (S.writeTVar called True) >> pure (Promise (pure (BodyPresent Set.empty)))
+                { writeEbBody = \_ _ _ _ -> atomically (S.writeTVar called True) >> pure (Promise (pure (BodyPresent mempty)))
                 }
           }
   result <-
@@ -205,10 +207,23 @@ tests :: TestTree
 tests =
   testGroup
     "whole-EB integration"
-    [ testCase "understated offer preserves useful body before disconnect" testUnderdeclared
+    [ testCase
+        "abort before worker startup abandons queued body claims"
+        (runSimOrThrow queuedAbort @?= True)
+    , testProperty "received body transfer installs cleanup before cancellation" propQueuedAbort
+    , testCase "understated offer preserves useful body before disconnect" testUnderdeclared
     , testCase "verified mempool hit replaces its DB fill" (testFillPriority False False)
     , testCase "unverified hit preserves a usable DB fill" (testFillPriority False True)
     , testCase "stale fill is a miss, distinct from chosen-source counts" (testFillPriority True False)
+    , testGroup
+        "captured fills after capacity eviction"
+        [ testCase
+            (name <> if retired then "/collected source" else "/live source")
+            (testEvictedFill makeCache retired)
+        | (name, makeCache) <-
+            [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
+        , retired <- [False, True]
+        ]
     , testProperty
         "exact selected bytes and validation version under generated source cases"
         propSelection
@@ -266,7 +281,7 @@ testFillPriority stale badProjection = bounded $ do
   Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ withBodyWorkers ctx $ do
     receive ctx 0 point eb
     void $ Fixtures.awaitNotes notes (if complete then 2 else 1)
-  S.readTVarIO writes >>= (@?= [if badProjection then ([1, 0], []) else ([1], [0])])
+  S.readTVarIO writes >>= (@?= [if badProjection then ([0, 1], []) else ([1], [0])])
   S.readTVarIO choices >>= (@?= [if badProjection then (2, 0, 0) else (1, 1, 0)])
   out <- readMVar (lfcOutstanding ctx)
   case Map.lookup point (ebState out) of
@@ -308,3 +323,77 @@ testUnderdeclared = bounded $ do
       Right () -> assertFailure "understated offer was accepted"
     atomically $ R.closePeer (lfcRuntime ctx) 0
     void $ Fixtures.awaitNotes notes 2
+
+-- Admission can commit before a newly launched worker gets scheduled. Aborting
+-- that lifetime must abandon queued claims as well as running operations.
+queuedAbort :: IOSim s Bool
+queuedAbort = do
+  (base, _) <- Fixtures.newContext
+  let (first, eb, _) = Fixtures.fixture
+      second = first{pointSlotNo = 6}
+      ctx = base{lfcLocalReuse = newLocalReuse (LocalSource (const retry) (\() -> pure Nothing))}
+  modifyMVar_ (lfcOutstanding ctx) $ \out -> pure out{ebState = Map.insert second (MkEbState SNothing NoBody) (ebState out)}
+  receive ctx 0 first eb
+  receive ctx 1 second eb
+  result <-
+    try @_ @SomeException $
+      Receipts.withReceiptTasks (lfcReceiptTasks ctx) $
+        withBodyWorkers ctx $
+          throwIO (userError "startup after body admission")
+  pending <- atomically $ R.pending <$> readTVar (R.runtimeFacts (lfcRuntime ctx))
+  pure (either (const True) (const False) result && Map.null pending)
+
+propQueuedAbort :: Property
+propQueuedAbort = exploreSimTrace id (exploreRaces >> queuedAbort) $ \_ trace ->
+  case traceResult False trace of
+    Left err -> counterexample (show err) False
+    Right ok -> property ok
+
+-- Capture real cache locations, then evict their metadata before the writer
+-- consumes them. Only collecting the source bytes may turn those fills into
+-- misses; a miss must leave jobs fetchable rather than imply possession.
+testEvictedFill ::
+  IO (Cache.LeiosTxCache IO () VersionWord16 Cache.PackedEndorserBlock) -> Bool -> Assertion
+testEvictedFill makeCache retired = bounded $ do
+  db <- newLeiosDBInMemory
+  cache <- makeCache
+  let (point, eb, txs) = Fixtures.fixture
+      source = point{pointSlotNo = pointSlotNo point - 1}
+      filler = endorserBlockFromTxBytes (BS.pack [99] :| [])
+      insert p body = void $ Cache.insertBody cache p (Cache.packEndorserBlock body)
+  (base, notes) <- Fixtures.newContextOver db point (pure (pure ()))
+  let original = lfcWriter base
+      writer =
+        original
+          { writeEbBody = \p body fills given -> do
+              Map.keys fills @?= [0, 1]
+              forM_ [1 .. 129 :: Int] $ \n ->
+                insert (MkLeiosPoint (pointSlotNo point + fromIntegral n) (endorserBlockHash filler)) filler
+              Cache.classifyTxs cache point (endorserBlockReferences eb)
+                >>= (@?= fetchArrivalEvicted (fromIntegral (lebTxsSize (leiosEbByteSizes eb))))
+              when retired $ leiosDbPromoteToImmutable db (pointSlotNo point) [] >> garbageCollect db
+              writeEbBody original p body fills given
+          }
+      ctx = base{lfcWriter = writer, lfcTxCache = cache}
+  ( await
+      =<< writeEbBody original source eb Map.empty (Map.fromList (zip [0 ..] (leiosTxBytes <$> txs)))
+    )
+    >>= (@?= BodyPresent (Set.fromList [0, 1]))
+  insert source eb
+  _ <-
+    Cache.insertLandedTxs
+      cache
+      source
+      [ Cache.MkLandedTx off h size (Cache.TxInserted ())
+      | (off, (h, size)) <- zip [0 ..] (endorserBlockReferences eb)
+      ]
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ withBodyWorkers ctx $ do
+    receive ctx 0 point eb
+    void $ Fixtures.awaitNotes notes (if retired then 1 else 2)
+  out <- readMVar (lfcOutstanding ctx)
+  case Map.lookup point (ebState out) of
+    Just (MkEbState _ (BodyAcquired jobs)) -> Jobs.nullJobPool jobs @?= not retired
+    _ -> assertFailure "body acquisition was lost after cache eviction"
+  withReader db $ \reader -> do
+    held <- batchRetrieveTxs reader point (Set.fromList [0, 1])
+    Map.keys held @?= if retired then [] else [0, 1]

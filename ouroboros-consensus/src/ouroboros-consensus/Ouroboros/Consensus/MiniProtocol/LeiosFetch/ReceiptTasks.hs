@@ -3,6 +3,8 @@
 
 -- | Node lifetime ownership for ordinary fetch submissions and receipt tasks.
 -- A peer may disappear while its accepted database write is still settling.
+-- A receipt task waits for write confirmation, reconciles logical work and
+-- releases the pending claim independently of that peer's reply handler.
 -- Normal shutdown stops admission, drains producers and joins their receipts;
 -- exceptional shutdown cancels and joins both before storage can close.
 -- See @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
@@ -12,6 +14,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks
   , receiptClosing
   , withReceiptSubmission
   , withReceiptSubmissionResult
+  , withReceiptTransfer
   , forkReceipt
   , withReceiptTasks
   ) where
@@ -79,20 +82,38 @@ withReceiptSubmissionResult ReceiptTasks{state} action = mask_ $ do
     )
     token
 
+-- | Transfer a writer-accepted operation to its receipt owner while still in a
+-- registered producer. The action may record acceptance and install the child,
+-- then must return without tracing or other work after installation. Returning
+-- successfully means that owner is installed, even if it already finished.
+--
+-- An exception before installation closes admission and reports the first fault
+-- through this scope's supervisor. In the same transaction, release the exact
+-- accepted claim: the cleanup must not retry or throw, or imply confirmation.
+-- 'Nothing' means fatal teardown owns the accepted write, never non-submission.
+-- Already-aborting scopes keep their original cause and still run that cleanup.
+withReceiptTransfer :: IOLike m => ReceiptTasks m -> STM m () -> m a -> m (Maybe a)
+withReceiptTransfer tasks abandonAccepted transfer = mask_ $
+  (Just <$> transfer) `catch` \(err :: SomeException) -> do
+    atomically $ recordFailure tasks err >> abandonAccepted
+    pure Nothing
+
+recordFailure :: IOLike m => ReceiptTasks m -> SomeException -> STM m ()
+recordFailure ReceiptTasks{state} err =
+  S.modifyTVar state $ \st ->
+    if aborting st || isJust (failure st) then st else st{closing = True, failure = Just err}
+
 -- | Called within a registered submission, after writer acceptance. A start
 -- latch prevents a fast child finishing before its handle is installed. A
 -- closed scope still accepts this transfer from an already admitted producer.
 forkReceipt :: IOLike m => ReceiptTasks m -> m () -> m ()
-forkReceipt ReceiptTasks{state} action = mask_ $ do
+forkReceipt tasks@ReceiptTasks{state} action = mask_ $ do
   started <- S.newEmptyTMVarIO
   child <- asyncWithUnmask $ \unmask -> do
     labelThisThread "LeiosFetch.receipt"
     atomically $ S.readTMVar started
     unmask action `catch` \(err :: SomeException) ->
-      atomically
-        ( S.modifyTVar state $ \st ->
-            if aborting st || isJust (failure st) then st else st{closing = True, failure = Just err}
-        )
+      atomically (recordFailure tasks err)
   ( do
       atomically $ do
         st <- S.readTVar state

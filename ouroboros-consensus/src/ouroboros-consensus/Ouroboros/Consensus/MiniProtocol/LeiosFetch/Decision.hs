@@ -27,6 +27,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , AlreadyEmitted (..)
   , markReceivingFromForge
   , settleReceivingFromForge
+  , retireReceivingFromForge
   , recordReferencedPoint
   , focusElectionIfUnfocused
   , focusCertifiedEb
@@ -265,7 +266,8 @@ data EbFetchState
     -- It overrides whatever the point was in ('markReceivingFromForge'), recording
     -- what of its acquisition the node had already emitted, and only the
     -- forge's writes settle it ('settleReceivingFromForge'), into 'BodyAcquired' with
-    -- no job left, once the whole closure is durable. So there is no state in
+    -- no job left, once the whole closure is durable. Unavailable forge writes
+    -- retire it without acquisition ('retireReceivingFromForge'). So there is no state in
     -- which the body is held and its txs are still to fetch.
     ReceivingFromForge !AlreadyEmitted
   | -- | The job pool: the jobs whose txs are not yet durably written.
@@ -384,6 +386,18 @@ settleReceivingFromForge point outstanding =
       , Just emitted
       )
     _ -> (outstanding, Nothing)
+
+-- | Retire a tracked target whose own forge write reports it unavailable.
+-- Leave the temporary forge state for the terminal empty pool without emitting
+-- acquisition or retaining partial coverage. Unlike an ordinary network reply,
+-- the forge's own confirmation can retire 'ReceivingFromForge'. An absent point
+-- stays absent; an empty pool here does not establish possession.
+retireReceivingFromForge :: LeiosPoint -> LeiosOutstanding peer -> LeiosOutstanding peer
+retireReceivingFromForge point =
+  abandonClosure point
+    . alterEbState point (fmap retired)
+ where
+  retired (MkEbState onset _) = MkEbState onset (BodyAcquired Jobs.emptyJobPool)
 
 -- | Record that this point is referenced --- announced, or named by a verified
 -- certificate --- along with its slot's wall-clock onset if known. A
