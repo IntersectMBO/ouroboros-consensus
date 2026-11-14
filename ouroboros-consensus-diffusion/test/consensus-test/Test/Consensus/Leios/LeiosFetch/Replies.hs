@@ -390,7 +390,11 @@ test_forgedAfterBody :: Assertion
 test_forgedAfterBody = do
   let (point, eb, _txs) = fixture
   (ctx, notes) <- newContext
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
   acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
@@ -617,10 +621,10 @@ test_bodyWhileForging = do
       req = MkLeiosBlockRequest point size maxBound
   written <- newEmptyTMVarIO
   (ctx, notes, traces) <- withTraces $ newContextHolding (atomically (readTMVar written))
-  processLeiosBlock ctx peer req eb
+  processLeiosBlock ctx peer req (serialiseEndorserBlock eb)
   modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
   atomically $ putTMVar written ()
-  processLeiosBlock ctx otherPeer req eb
+  processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)
   awaitBlockArrivals traces 2
     >>= (@?= [(peer, point, fetchArrivalExtra size), (otherPeer, point, fetchArrivalExtra size)])
   readTVarIO notes >>= (@?= [])
@@ -630,7 +634,11 @@ test_txsWhileForging = do
   let (point, eb, txs) = fixture
       closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
   (ctx, notes, traces) <- withTraces newContext
-  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   req <- closureRequest ctx point
   modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)

@@ -22,11 +22,8 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
-import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.List (nub)
-import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy (..))
@@ -46,10 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , deserialiseEndorserBlock
   , endorserBlockBytes
-  , endorserBlockHash
   , endorserBlockReferences
-  , forgeLeiosEb
-  , forgedEbBody
   , hashLeiosTx
   , mkEndorserBlock
   , serialiseEndorserBlock
@@ -61,7 +55,6 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LocalFills
   , Promise (..)
   , newLeiosDBInMemory
-  , storeForgedEb
   , withLeiosDBSQLite
   , withReader
   , withWriter
@@ -85,7 +78,6 @@ import Test.QuickCheck
   ( Gen
   , Property
   , chooseInt
-  , conjoin
   , counterexample
   , elements
   , forAll
@@ -317,11 +309,6 @@ mkTestGroups impl =
       , testProperty "an EB with txs missing returns Nothing" $ prop_completedEbPartialTxs impl
       , testProperty "no body returns Nothing" $ prop_completedEbNoBody impl
       ]
-  , testGroup
-      "storeForgedEb"
-      [ testProperty "stores the point, the body and the txs of the endorser block" $
-          prop_storeForgedEbThenLookup impl
-      ]
   ]
 
 -- * QuickCheck generators
@@ -346,12 +333,6 @@ genEb numTxs = ebOfSizes <$> replicateM numTxs (fromIntegral <$> chooseInt (50, 
 -- | Generate a LeiosPoint and EndorserBlock together with the given number of transactions.
 genPointAndEb :: Int -> Gen (LeiosPoint, EndorserBlock)
 genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
-
--- | Transaction bytes, distinct from each other.
-genDistinctTxBytes :: Gen (NonEmpty BS.ByteString)
-genDistinctTxBytes = NE.nub <$> ((:|) <$> genTxBytes <*> listOf genTxBytes)
- where
-  genTxBytes = chooseInt (1, 32) >>= fmap BS.pack . vector
 
 -- | The bytes of the test tx at this offset: of this size, and distinct per
 -- offset.
@@ -1176,31 +1157,6 @@ data Op
 -- pool of each transaction it references: the same hash always names the same
 -- body, as it would on the wire.
 type Bodies = Map.Map EndorserBlockHash (EndorserBlock, [Int])
-
--- | 'storeForgedEb' writes the endorser block at the point of the given slot
--- and the hash of the body. After the writer closes, a reader sees that point
--- and the bytes of all its txs.
-prop_storeForgedEbThenLookup :: DbImpl -> Property
-prop_storeForgedEbThenLookup impl =
-  forAll genSlotNo $ \slot ->
-    forAll genDistinctTxBytes $ \txs ->
-      ioProperty $ withFreshDb impl $ \db -> do
-        let forged = forgeLeiosEb txs
-            body = forgedEbBody forged
-            ebHash = endorserBlockHash body
-        withWriter db $ \writer -> storeForgedEb (\_ -> pure ()) writer slot forged
-        (points, closure) <-
-          withReader db $ \reader ->
-            (,)
-              <$> scanCompleteEbClosuresNotOlderThanSlot reader 0
-              <*> (fmap (map leiosTxBytes) <$> lookupEbClosure reader (MkLeiosPoint slot ebHash))
-        pure $
-          conjoin
-            [ counterexample "the point is not the slot and the hash of the body" $
-                points === [MkLeiosPoint slot ebHash]
-            , counterexample "the stored txs are not the forged ones" $
-                closure === Just (toList txs)
-            ]
 
 -- | Property: running the same operations against both implementations, a
 -- reader sees the same in each, each body write holds the same offsets, and

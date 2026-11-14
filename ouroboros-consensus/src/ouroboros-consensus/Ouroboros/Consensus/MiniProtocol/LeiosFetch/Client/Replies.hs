@@ -444,8 +444,8 @@ acquireForgedEb ::
   m ()
 acquireForgedEb ctx point forged = do
   now <- systemTimeCurrent lfcSystemTime
-  bodyWritten <- writeEbBody lfcWriter point eb
-  txsWritten <- writeTxs lfcWriter point (zip [0 ..] (toList (forgedEbTxs forged)))
+  bodyWritten <- writeEbBody lfcWriter point eb mempty
+  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   -- Unmasked, since this may run uninterruptibly ('onValidAnnouncement' says
   -- why), which a plain 'async' would pass on to the worker for its whole
   -- life, its wait for the writes included.

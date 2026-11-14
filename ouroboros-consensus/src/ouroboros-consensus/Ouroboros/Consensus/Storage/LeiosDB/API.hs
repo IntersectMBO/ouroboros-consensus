@@ -33,11 +33,9 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
-  , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised
-  , TxHash
   , TxLocation
   , TxOffset
   )
