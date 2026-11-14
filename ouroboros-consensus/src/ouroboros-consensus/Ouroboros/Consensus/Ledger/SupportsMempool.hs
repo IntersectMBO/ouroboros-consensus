@@ -185,7 +185,7 @@ class
     TickedLedgerState blk ValuesMK ->
     ReapplyTxsResult extra blk wtd
   reapplyTxs cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
+    (\(err, val, st') -> ReapplyTxsResult err (reverse val) st') $
       foldReapplyTxs fst3 txs
    where
     fst3 (a, _, _) = a
@@ -267,7 +267,7 @@ data ReapplyTxsResult extra blk wtd
   , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk EmptyMK)
+  , resultingState :: !(TickedLedgerState blk ValuesMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
