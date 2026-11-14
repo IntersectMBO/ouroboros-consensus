@@ -114,6 +114,26 @@ tests =
         state <- atomically (readTVar (R.runtimeFacts rt))
         L.usage 0 (R.ledger state) @?= L.Usage 0 0 150
         Map.size (L.leases (R.ledger state)) @?= 150
+    , testCase "old network or local cleanup cannot erase a transferred replacement owner" $ withClient $ \rt client -> do
+        key <- admit client 0
+        state <- atomically (readTVar (R.runtimeFacts rt))
+        let point = case R.attemptWork (R.attempts state Map.! key) of L.Body p -> p; _ -> error "body fixture"
+        atomically (R.claimUseful rt key) >>= (@?= True)
+        token <- atomically (R.transferBodyClaim rt key) >>= maybe (fail "transfer") pure
+        atomically $ do
+          R.clearUnsubmitted rt key (bodyWork 0)
+          R.settleReceipt rt key (bodyWork 0)
+          R.closePeer rt 0
+        atomically (Map.lookup (L.Body point) . R.pending <$> readTVar (R.runtimeFacts rt))
+          >>= (@?= Just (R.LocalOwner token, False))
+        atomically $ R.settleLocalBody rt point token
+        replacement <- atomically (R.claimLocalBody rt point) >>= maybe (fail "replacement") pure
+        assertBool "owner identities must never repeat" (replacement /= token)
+        atomically $ R.settleLocalBody rt point token
+        atomically (Map.lookup (L.Body point) . R.pending <$> readTVar (R.runtimeFacts rt))
+          >>= (@?= Just (R.LocalOwner replacement, False))
+        atomically $ R.settleLocalBody rt point replacement
+        atomically (Map.null . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)
     , testCase "local pending owner survives peer removal and blocks another writer" $ withClient $ \rt client -> do
         key <- admit client 0
         state <- atomically (readTVar (R.runtimeFacts rt))
@@ -124,7 +144,7 @@ tests =
           R.closePeer rt 0
           R.closePeer rt 0
           R.acceptLocalBody rt point token
-          R.clearLocalBody rt token
+          R.clearUnsubmitted rt key (bodyWork 0)
         atomically (Map.size . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= 1)
         atomically (R.settleLocalBody rt point token)
         atomically (Map.null . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)

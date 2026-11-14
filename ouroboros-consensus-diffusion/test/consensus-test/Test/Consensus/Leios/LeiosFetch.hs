@@ -11,6 +11,7 @@ import qualified Test.Consensus.Leios.LeiosFetch.LocalReuse as LocalReuse
 import qualified Test.Consensus.Leios.LeiosFetch.Node as Node
 import qualified Test.Consensus.Leios.LeiosFetch.Ownership as Ownership
 import qualified Test.Consensus.Leios.LeiosFetch.PeerPenalty as PeerPenalty
+import qualified Test.Consensus.Leios.LeiosFetch.Preparation as Preparation
 import qualified Test.Consensus.Leios.LeiosFetch.Replies as Replies
 import qualified Test.Consensus.Leios.LeiosFetch.RequestState as RequestState
 import qualified Test.Consensus.Leios.LeiosFetch.Runtime as Runtime
@@ -23,7 +24,8 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosFetch"
-    [ Ownership.tests
+    [ Preparation.tests
+    , Ownership.tests
     , Coverage.tests
     , Assignment.tests
     , Wire.tests

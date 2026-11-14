@@ -19,44 +19,29 @@
 -- 'newPureLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Reference" and
 -- 'newHashTableLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Optimized".
 --
--- == Invariants
+-- == Availability, validation and durability
 --
--- (TODO This is written as if LeiosFetch took a body in only once its write to
--- the LeiosDb lands, but it takes the body in first.)
+-- The cache retains the bodies taken in at the 128 freshest body-bearing
+-- points. Announcements do not retain cache points. Several points may share
+-- one body, and distinct bodies may share TX references. See
+-- @docs/fetch-policy/leiosfetch-improved.md#cache-retention@.
 --
--- - INVARIANT: a point in the LeiosTxCacheIndex is in the LeiosDb
+-- Packed bodies and validation facts are not proof that an individual target
+-- point durably holds a body or closure. A verified body
+-- can enter this cache before its database write; a mempool transaction can be
+-- known valid without having a target location in LeiosDB.
 --
--- - INVARIANT: a held EB body is in the LeiosDb /and pinned/
+-- Fetch settlement publishes target locations only from confirmed writes,
+-- subject to retirement fencing. Locations are fill proposals rather than
+-- storage pins: GC can make a source unavailable before the target write runs.
+-- A missing fill leaves that offset fetchable; only the target write's receipt
+-- establishes which transactions the target holds.
 --
--- - INVARIANT: an already inserted tx is in the LeiosDb /and pinned/
---
--- These invariants are maintained as follows.
---
--- - LeiosFetch\/the block forge inserts a point\/body\/tx into the LeiosDb /before/ it inserts into the
---   LeiosTxCacheIndex.
---
--- - A point\/body is inserted into the LeiosDb\/LeiosTxCacheIndex before its
---   body\/txs are inserted (unless it's shared with an earlier point\/body).
---
--- - Within the LeiosDb, points\/bodies pin the bodies\/txs they refer to.
---
--- - The ChainDB evicts "too old" points from the LeiosTxCacheIndex
---   /before/ it prunes them from the LeiosDb.
---
--- That ensures an object's lifetime inside the LeiosTxCacheIndex is contained
--- within that object's lifetime within the LeiosDb.
---
--- LeiosFetch checks the LeiosTxCacheIndex to see if it needs to fetch an EB
--- body\/closure promised by some EB announcement\/body. If the
--- LeiosTxCacheIndex reports an inserted body\/tx, then LeiosFetch won't fetch
--- it. Therefore, it's crucial that the body\/tx is actually in the LeiosDb.
---
--- It is still possible to see a LeiosTxCache hit when processing some
--- announcement\/body and then later fail to read it from the LeiosDb. But
--- because of the LeiosDb pinning, the only way a LeiosTxCacheIndex hit could
--- precede a failed LeiosDb read is if /the point itself has also been pruned/
--- from the LeiosDb, in which case whatever logic issued the failed read
--- can soundly short-circuit: it was attempting to process an orphaned EB.
+-- Logical acquisition and its subscribers also filter retirement. Cache hits
+-- alone must never announce target-body or closure acquisition. See
+-- @docs/fetch-policy/leiosfetch-improved.md#offers-and-local-possession@
+-- and @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@
+-- for the ordinary fetch ownership path.
 module Ouroboros.Consensus.Leios.TxCache
   ( module Ouroboros.Consensus.Leios.TxCache.API
   , newPureLeiosTxCache

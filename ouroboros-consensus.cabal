@@ -1595,6 +1595,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.LeiosFetch.Ownership
     Test.Consensus.Leios.LeiosFetch.Wait
     Test.Consensus.Leios.LeiosFetch.PeerPenalty
+    Test.Consensus.Leios.LeiosFetch.Preparation
     Test.Consensus.Leios.LeiosFetch.Timing
     Test.Consensus.Leios.LeiosFetch.RequestState
     Test.Consensus.Leios.LeiosFetch.Runtime
