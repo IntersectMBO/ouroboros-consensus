@@ -32,7 +32,7 @@ import Ouroboros.Consensus.Leios.Types
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
-import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (serializeTxForLeios)
 import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraTx)
 import Test.Tasty
 import Test.Tasty.QuickCheck

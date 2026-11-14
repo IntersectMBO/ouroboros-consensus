@@ -291,7 +291,7 @@ test_closureFromMempool = do
     (withMempool txs ctx)
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    eb
+    (serialiseEndorserBlock eb)
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
   readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
   forM_ txs $ \tx ->
@@ -308,7 +308,7 @@ test_partFromMempool = do
     (withMempool (drop 1 txs) ctx)
     peer
     (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    eb
+    (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList (take 1 txs))
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])

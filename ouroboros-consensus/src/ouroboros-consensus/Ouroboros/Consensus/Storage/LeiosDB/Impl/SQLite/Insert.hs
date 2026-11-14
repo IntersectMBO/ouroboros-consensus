@@ -71,7 +71,7 @@ sqlInsertEbBody ::
   LocalFills ->
   Map TxOffset ByteString ->
   IO (Set TxOffset)
-sqlInsertEbBody conn point eb fills held = do
+sqlInsertEbBody conn point eb fills given = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (inserted, held) <- dbWithWriteTransaction conn $ do
@@ -80,7 +80,10 @@ sqlInsertEbBody conn point eb fills held = do
     -- the txs written since.
     atPoint <- if inserted > 0 then pure Set.empty else markedAtPoint
     filled <- readLocalFills
-    let toWrite = (held `Map.union` filled) `Map.withoutKeys` atPoint
+    -- Like a fill, a given tx lands only at an offset the body lists.
+    let toWrite =
+          ((given `Map.restrictKeys` Map.keysSet refsByOffset) `Map.union` filled)
+            `Map.withoutKeys` atPoint
     dropped <- writeTxBytes conn point toWrite
     pure (inserted, atPoint <> (Map.keysSet toWrite `Set.difference` dropped))
   bumpVolatileStats conn inserted
