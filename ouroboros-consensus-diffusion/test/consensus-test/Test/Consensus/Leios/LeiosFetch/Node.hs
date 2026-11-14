@@ -34,9 +34,9 @@ import qualified Data.ByteString.Short as SBS
 import Data.Functor ((<&>))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Data.Proxy (Proxy (..))
 import Data.Time (NominalDiffTime, addUTCTime)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
@@ -46,7 +46,6 @@ import Network.TypedProtocol.Peer (Peer (..))
 import Ouroboros.Consensus.Block
   ( Header
   , Point
-  , Proxy (..)
   , SlotNo (..)
   , blockHash
   , blockPoint
@@ -72,16 +71,16 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
-  , Serialised (..)
-  , deserialiseEndorserBlock
-  , serialiseEndorserBlock
   , LeiosVote
+  , Serialised (..)
   , TxHash
+  , deserialiseEndorserBlock
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , mkEndorserBlock
+  , serialiseEndorserBlock
   , toRankingBlockHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -147,7 +146,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
-import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePrunerInterval)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
@@ -158,7 +157,7 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
-import Ouroboros.Network.Driver.Simple (runAnnotatedPeer, runPeer)
+import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -626,7 +625,7 @@ withholding ::
   IOSim s ()
 withholding node requested chan =
   fst
-    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer withhold)
+    <$> runPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer withhold)
  where
   withhold = MkLeiosFetchRequestHandler $ \_request -> do
     atomically $ writeTVar requested True
@@ -886,7 +885,7 @@ newListenerWith node immTip offset = do
               )
       , lsFetchClient = \chan ->
           fst
-            <$> runAnnotatedPeer
+            <$> runPeer
               nullTracer
               (envLeiosFetchCodec node)
               chan
@@ -935,12 +934,13 @@ fetchingBack toFetch settle = Effect $ do
   settling offer whys = Effect $ fetchingBack toFetch settle <$ settle offer (map ((show offer <> ": ") <>) whys)
 
 -- | A client that requests the endorser block at the point, and goes on as the
--- function says with the reply.
+-- function says with the reply, which it fails on unless it decodes.
 requestingBody :: LeiosPoint -> (EndorserBlock -> EnvClient s) -> EnvClient s
 requestingBody point k =
   Yield ReflClientAgency (MsgLeiosBlockRequest point) $
     Await ReflServerAgency $ \case
-      MsgLeiosBlock eb -> k eb
+      MsgLeiosBlock bytes ->
+        k $ either (error . show) id $ deserialiseEndorserBlock (Proxy @DijkstraEra) bytes
 
 -- | A LeiosNotify server that sends what the queue holds, as the node asks.
 feedingLeiosNotifyServer ::
@@ -977,7 +977,7 @@ serving ::
   IOSim s ()
 serving eb txs node chan =
   fst
-    <$> runAnnotatedPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer (serveEb eb txs))
+    <$> runPeer nullTracer (envLeiosFetchCodec node) chan (leiosFetchServerPeer (serveEb eb txs))
 
 relayedOf ::
   Message (LeiosNotify LeiosPoint (Header LeiosTestBlock) LeiosVote) LN.StBusy LN.StIdle -> Relayed
@@ -991,9 +991,11 @@ relayedOf = \case
 -- | Serve the endorser block and its transactions.
 serveEb ::
   Monad m =>
-  EndorserBlock -> V.Vector LeiosTx -> LeiosFetchRequestHandler LeiosPoint EndorserBlock LeiosTx m
+  EndorserBlock ->
+  V.Vector LeiosTx ->
+  LeiosFetchRequestHandler LeiosPoint (Serialised EndorserBlock) LeiosTx m
 serveEb eb txs = MkLeiosFetchRequestHandler $ \case
-  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock eb)
+  MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock (serialiseEndorserBlock eb))
   MsgLeiosBlockTxsRequest _point bitmaps ->
     pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (txs V.!?) (bitmapToOffsets bitmaps)
 
@@ -1082,7 +1084,7 @@ genReach = do
   skew = realToFrac (InFutureCheck.unClockSkew InFutureCheck.defaultClockSkew)
   slot = fromIntegral (unSlotNo (blockSlot announcingLater))
   lastRelayed = round (maxAgeSend - 1)
-  firstUnrelayed = round (maxAgeSend + realToFrac NotifyLog.notifyLogPruneCadence + 1)
+  firstUnrelayed = round (maxAgeSend + realToFrac leiosDeadlinePrunerInterval + 1)
 
 -- | A listener with this immutable tip, and with its clock this far ahead of
 -- the node's, or behind if negative, connects when the announcement of
@@ -1242,7 +1244,7 @@ expectedAnswers = go []
   go replies = \case
     [] -> (reverse replies, ServerEnded)
     RequestBlock point : rest
-      | point == heldPoint -> go (ReplyBlock heldEb : replies) rest
+      | point == heldPoint -> go (ReplyBlock (serialiseEndorserBlock heldEb) : replies) rest
       | otherwise -> (reverse replies, ServerFailed (show (ExnLeiosUnknownBlockRequested point)))
     RequestTxs point offsets : rest
       | null missing -> go (ReplyTxs (map heldTx ascending) : replies) rest

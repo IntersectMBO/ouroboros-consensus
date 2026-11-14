@@ -315,6 +315,7 @@ tests =
                 20
                 [ PeerSpec
                     0
+                    []
                     [ announce someAnnouncingBlock
                     , (8.8, vote someAnnouncingBlock 0)
                     , (8.85, vote someAnnouncingBlock 1)
@@ -339,6 +340,7 @@ tests =
                 20
                 [ PeerSpec
                     0
+                    []
                     [announce someAnnouncingBlock, (5, vote someAnnouncingBlock 0), (5, vote someAnnouncingBlock 1)]
                 ]
                 []
@@ -890,7 +892,7 @@ aggregationFailures = runSimOrThrow $ do
   notifyLog <- newNotifyLog
   announceState <- newAnnounceState defaultLeiosAnnouncementAgeLimits notifyLog
   st <- newVoteState tracer announceState notifyLog
-  atomically $ onValidAnnouncement announceState (someValidAnnouncement 0)
+  _ <- atomically $ onValidAnnouncement announceState (someValidAnnouncement 0)
   for_ [0 .. 2] $ \seat -> addVote st systemTime (accepted seat)
   traces <- getTraces
   pure [err | TraceLeiosAggregationFailed _ err <- traces]

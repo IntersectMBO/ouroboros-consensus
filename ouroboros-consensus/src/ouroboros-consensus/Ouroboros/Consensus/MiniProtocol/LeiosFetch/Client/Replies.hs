@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | What the node's LeiosFetch clients do: send the requests the decision
 -- logic assigned to their peer, and take in the replies.
@@ -19,15 +20,19 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (forM_, unless, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (fold)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -48,12 +53,14 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEbSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , Serialised (..)
   , TxHash
   , TxOffset
+  , deserialiseEndorserBlock
   , encodeEndorserBlockSize
-  , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
+  , hashSerialisedEndorserBlock
   , leiosEbSizes
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
@@ -138,6 +145,9 @@ data ExnLeiosFetchInvalidReply
       !BytesSize
       -- | its actual size
       !BytesSize
+  | -- | The endorser block has the requested hash, but does not decode, so no
+    -- honest peer holds it.
+    ExnLeiosBlockUndecodable !LeiosPoint !DecoderError
   | -- | The endorser block is larger than the ledger allows.
     ExnLeiosBlockTooBig
       !LeiosPoint
@@ -192,15 +202,16 @@ nextLeiosFetchClientCommand ::
   StrictTVar m (Seq LeiosFetchRequest) ->
   m
     ( Either
-        (m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
-        (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
+        (m (Either () (SomeLeiosFetchJob LeiosPoint (Serialised EndorserBlock) LeiosTx m)))
+        (Either () (SomeLeiosFetchJob LeiosPoint (Serialised EndorserBlock) LeiosTx m))
     )
 nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
   atomically checkOrBlock >>= \case
     Just result -> pure $ Right result
     Nothing -> pure $ Left (atomically awaitStopOrRequest)
  where
-  checkOrBlock :: STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
+  checkOrBlock ::
+    STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint (Serialised EndorserBlock) LeiosTx m)))
   checkOrBlock =
     controlMessageSTM >>= \case
       Terminate -> pure $ Just $ Left ()
@@ -215,7 +226,8 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
           pure $ Just $ Right $ toJob req
         Seq.Empty -> pure Nothing
 
-  awaitStopOrRequest :: STM m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
+  awaitStopOrRequest ::
+    STM m (Either () (SomeLeiosFetchJob LeiosPoint (Serialised EndorserBlock) LeiosTx m))
   awaitStopOrRequest = checkOrBlock >>= maybe retry pure
 
   -- Replies are processed right on the pipelined peer's collector thread:
@@ -240,41 +252,45 @@ nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
 -- the right block but not the size the peer offered still cost the peer its
 -- connection, but only once we have taken the body: throwing them away would
 -- let a peer deny us an endorser block just by lowballing its own offer. Bytes
--- larger than the ledger allows, or referencing more transaction bytes than it
--- allows, are never written, so the node never offers them onward.
+-- larger than the ledger allows, referencing more transaction bytes than it
+-- allows, or that do not decode, are never written, so the node never offers
+-- them onward.
+--
+-- The hash is checked before the bytes are decoded. They decode at Dijkstra's
+-- ledger version, the only era with endorser blocks.
 processLeiosBlock ::
   forall peer m.
   (Ord peer, IOLike m) =>
   LeiosFetchClientContext m peer ->
   peer ->
   LeiosBlockRequest ->
-  EndorserBlock ->
+  Serialised EndorserBlock ->
   m ()
-processLeiosBlock ctx peer req eb = do
+processLeiosBlock ctx peer req bytes = do
   now <- systemTimeCurrent lfcSystemTime
-  when (endorserBlockHash eb /= ebHash) $ do
+  when (hashSerialisedEndorserBlock bytes /= ebHash) $ do
     traceWith lfcTracer $
       TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
-    throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
+    throwIO $ ExnLeiosBlockWrongHash point (hashSerialisedEndorserBlock bytes)
   -- Under the lock, decide what to do with this body. The point lacks the body
   -- until a delivery's write settles, so another delivery meanwhile is written
   -- too.
   delivery <- modifyMVar lfcOutstanding $ \outstanding -> do
     -- Answered, so this request is no longer in flight.
     let cleaned = refundEbRequest peer point (lbrOfferedSize req) outstanding
-    case Map.lookup point (ebState outstanding) of
-      _
-        | Just exn <- tooBig ->
-            -- Held with nothing to fetch, so that neither its closure nor a
-            -- re-send of the same bytes costs us anything more at this point.
-            -- It is not written, so it is never emitted as acquired.
-            pure (acquireEbBody point Jobs.emptyJobPool cleaned, BodyTooBig exn)
-      -- Pruned meanwhile.
-      Nothing -> pure (cleaned, BodyDiscarded (fetchArrivalEvicted ebBytesSize))
-      -- Another delivery's write settled first.
-      Just (MkEbState _onset BodyAcquired{}) ->
-        pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
-      Just (MkEbState _onset NoBody) -> pure (cleaned, BodyToWrite)
+    case verdict of
+      Left exn ->
+        -- Held with nothing to fetch, so that neither its closure nor a
+        -- re-send of the same bytes costs us anything more at this point.
+        -- It is not written, so it is never emitted as acquired.
+        pure (acquireEbBody point Jobs.emptyJobPool cleaned, BodyTooBig exn)
+      Right eb -> case Map.lookup point (ebState outstanding) of
+        -- Pruned meanwhile.
+        Nothing -> pure (cleaned, BodyDiscarded (fetchArrivalEvicted ebBytesSize))
+        -- Another delivery's write settled first.
+        Just (MkEbState _onset BodyAcquired{}) ->
+          pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
+        Just (MkEbState _onset NoBody) -> pure (cleaned, BodyToWrite eb)
   void $ tryPutMVar lfcReady ()
   case delivery of
     BodyTooBig exn -> do
@@ -282,7 +298,7 @@ processLeiosBlock ctx peer req eb = do
         TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-    BodyToWrite -> do
+    BodyToWrite eb -> do
       bodyWritten <- writeEbBody lfcWriter point eb mempty
       -- A failed write brings the node down, since the SQLite LeiosDB's writer
       -- is linked to it. This worker runs off this thread but is linked to it,
@@ -304,28 +320,31 @@ processLeiosBlock ctx peer req eb = do
 
   point = lbrPoint req
   ebHash = pointEbHash point
-  sizes = leiosEbSizes eb
-  ebBytesSize = lesBodySize sizes
-  closureBytesSize = lesTxsSize sizes
+  ebBytesSize = fromIntegral (BSL.length (unSerialised bytes))
   -- TODO The node does not vote yet. Voting must check the endorser block
   -- against the limits of the election it votes in: these are the limits of
   -- whichever election the request was made for.
   MkLeiosEbByteSizeBounds{lebMaxBodySize, lebMaxTxsSize} = lbrEbBounds req
-  tooBig
+  verdict
     | ebBytesSize > lebMaxBodySize =
-        Just $ ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
-    | closureBytesSize > fromIntegral lebMaxTxsSize =
-        Just $ ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
-    | otherwise = Nothing
+        Left $ ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
+    | otherwise = case deserialiseEndorserBlock (Proxy @DijkstraEra) bytes of
+        Left err -> Left $ ExnLeiosBlockUndecodable point err
+        Right eb
+          | closureBytesSize > fromIntegral lebMaxTxsSize ->
+              Left $ ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
+          | otherwise -> Right eb
+         where
+          closureBytesSize = lesTxsSize (leiosEbSizes eb)
 
 -- | What 'processLeiosBlock' does with a body, decided under the lock.
 data BodyDelivery
-  = -- | Beyond its point's bounds, so never written.
+  = -- | Beyond its point's bounds, or undecodable, so never written.
     BodyTooBig !ExnLeiosFetchInvalidReply
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, and traced once that settles.
-    BodyToWrite
+    BodyToWrite !EndorserBlock
 
 -- | Record the body as acquired at its point, now that its write is durable,
 -- with jobs for the txs the point does not hold yet, and emit what is acquired.
