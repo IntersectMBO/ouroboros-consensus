@@ -49,8 +49,7 @@ import Ouroboros.Consensus.Ledger.Tables
   , HasLedgerTables (..)
   , LedgerTables (..)
   )
-import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import Ouroboros.Consensus.Ledger.Tables.MapKind (DiffMK (..), EmptyMK, KeysMK, ValuesMK (..))
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -112,7 +111,7 @@ tests =
     , testProperty
         "the closure of the announced endorser block applies its transactions"
         prop_appliesClosure
-    , testProperty "a state that announced nothing applies no closure" prop_noClosure
+    , testProperty "a state that announced nothing names no endorser block" prop_noAnnouncement
     ]
 
 prop_announcesEb :: Property
@@ -161,29 +160,24 @@ prop_appliesClosure =
             MkLeiosClosure
               (serialiseEndorserBlock (forgedEbBody forged))
               (MkLeiosTx <$> toList (forgedEbTxs forged))
-          resolve requested
-            | requested == point = pure closure
-            | otherwise = fail $ "resolved " <> show requested <> " instead of " <> show point
           announcing = announcedIn (blockSlot blk) ann exampleLedgerState
-      after <- applyLeiosClosure (topLevelConfigLedger cfg) resolve readExampleTables announcing
-      let utxo = getValuesMK . getLedgerTables . projectLedgerTables $ applyDiffs exampleValues after
+      eb <- either (fail . show) pure $ decodeLedgerEndorserBlock blk closure
+      let after =
+            applyLedgerEndorserBlock
+              (topLevelConfigLedger cfg)
+              eb
+              (announcing `withLedgerTables` projectLedgerTables exampleValues)
+          utxo = getValuesMK . getLedgerTables . projectLedgerTables $ applyDiffs exampleValues after
       pure $
-        conjoin
-          [ counterexample ("output of " <> show txid <> " missing") $
-              Map.member (BigEndianTxIn (TxIn txid minBound)) utxo
-          | ShelleyTx txid _ <- ebTxs
-          ]
+        conjoin $
+          (ledgerAnnouncedEb announcing === Just point)
+            : [ counterexample ("output of " <> show txid <> " missing") $
+                  Map.member (BigEndianTxIn (TxIn txid minBound)) utxo
+              | ShelleyTx txid _ <- ebTxs
+              ]
 
-prop_noClosure :: Property
-prop_noClosure = ioProperty $ do
-  after <-
-    applyLeiosClosure
-      (example Examples.exampleLedgerConfig)
-      (\point -> fail $ "resolved " <> show point)
-      readExampleTables
-      exampleLedgerState
-  let DiffMK (Diff diffs) = getLedgerTables (projectLedgerTables after)
-  pure $ Map.null diffs
+prop_noAnnouncement :: Property
+prop_noAnnouncement = ledgerAnnouncedEb exampleLedgerState === Nothing
 
 -- | The transaction, paying out a copy of the example UTxO's output, so that
 -- applying it changes the UTxO.
@@ -220,10 +214,6 @@ exampleLedgerState = example Examples.exampleLedgerState
 -- | The UTxO of the example ledger state.
 exampleValues :: LedgerState StandardDijkstraBlock ValuesMK
 exampleValues = unstowLedgerTables exampleLedgerState
-
-readExampleTables ::
-  LedgerTables StandardDijkstraBlock KeysMK -> IO (LedgerTables StandardDijkstraBlock ValuesMK)
-readExampleTables _keys = pure $ projectLedgerTables exampleValues
 
 -- | A number of endorser-block transactions.
 -- 'Ouroboros.Consensus.Leios.Types.encodeEndorserBlock' writes a

@@ -1,7 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -14,8 +12,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosDbReader (..)
   , withReader
   , allocateReader
-  , resolveLeiosClosure
-  , LeiosClosureMissing (..)
+  , lookupLeiosClosure
 
     -- * Writing
   , LeiosDbWriter (..)
@@ -44,7 +41,6 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosClosure (..)
   , LeiosPoint (..)
   , LeiosTx (..)
-  , ResolveLeiosClosure
   , Serialised
   , TxLocation
   , TxOffset
@@ -53,14 +49,7 @@ import Ouroboros.Consensus.Leios.Types
   , forgedEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
-import Ouroboros.Consensus.Util.IOLike
-  ( Exception
-  , IOLike
-  , MonadThrow
-  , NoThunks (..)
-  , bracket
-  , throwIO
-  )
+import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
 -- | The Leios database. Hands out readers and writers.
 data LeiosDbHandle m = LeiosDbHandle
@@ -208,19 +197,12 @@ withWriter db = bracket (openWriter db) closeWriter
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
 allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) closeReader
 
--- | Read the closure at a point, which must be stored whole.
-resolveLeiosClosure :: MonadThrow m => LeiosDbHandle m -> ResolveLeiosClosure m
-resolveLeiosClosure db point = withReader db $ \reader -> do
+-- | Read the closure at a point, if it is stored whole.
+lookupLeiosClosure :: MonadThrow m => LeiosDbHandle m -> LeiosPoint -> m (Maybe LeiosClosure)
+lookupLeiosClosure db point = withReader db $ \reader -> do
   body <- lookupEbBody reader point
   txs <- lookupEbClosure reader point
-  maybe (throwIO $ LeiosClosureMissing point) pure $
-    MkLeiosClosure <$> body <*> (map MkLeiosTx <$> txs)
-
--- | A closure that block application needs is not stored whole. Chain
--- selection only applies a block certifying a closure it has acquired.
-newtype LeiosClosureMissing = LeiosClosureMissing LeiosPoint
-  deriving stock Show
-  deriving anyclass Exception
+  pure $ MkLeiosClosure <$> body <*> (map MkLeiosTx <$> txs)
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter

@@ -49,7 +49,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosClosureMissing (..))
 import Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -261,8 +260,7 @@ initLedgerDB s c = do
               -- These tests do not use EBBs.
               IsNotEBB
               (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-              -- These tests do not use Leios certificates.
-              (throwIO . LeiosClosureMissing)
+              (\_ _ -> error "These tests do not use Leios certificates")
               (LedgerDB.praosGetVolatileSuffix s)
           pure (db, ())
       )

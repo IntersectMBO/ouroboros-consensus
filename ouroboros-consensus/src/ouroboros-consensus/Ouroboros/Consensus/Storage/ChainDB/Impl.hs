@@ -95,7 +95,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (leiosDbTruncateImmutable)
   , LeiosDbReader (..)
-  , resolveLeiosClosure
   , withReader
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -233,7 +232,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           NotOrigin tip -> ImmutableDB.tipIsEBB tip
       )
       (Query.getAnyKnownBlock immutableDB volatileDB)
-      (resolveLeiosClosure leiosDb)
+      (Query.getKnownEndorserBlock leiosDb)
       ledgerDbGetVolatileSuffix
 
   lift $ do

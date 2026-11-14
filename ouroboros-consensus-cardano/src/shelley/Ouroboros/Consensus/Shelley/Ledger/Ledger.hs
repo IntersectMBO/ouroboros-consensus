@@ -62,7 +62,7 @@ import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure, stric
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
   ( DecCBOR (decCBOR)
-  , DecoderError
+  , DecoderError (DecoderErrorCustom)
   , decShareCBOR
   , decodeFullAnnotator
   , decodeMap
@@ -87,7 +87,7 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
-import Cardano.Ledger.Dijkstra (DijkstraEra, applyEndorserBlockNoValidation)
+import Cardano.Ledger.Dijkstra (applyEndorserBlockNoValidation)
 import Cardano.Ledger.Dijkstra.Block.Endorser (EbTransactions (..), EraEndorserBlock (..))
 import Cardano.Ledger.Hashes (extractHash)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -146,7 +146,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   )
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
-import Ouroboros.Consensus.Util.IOLike (throwIO)
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -641,44 +640,52 @@ instance
 -------------------------------------------------------------------------------}
 
 instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
+  -- An endorser block of an era that supports Leios.
+  data LedgerEndorserBlock (ShelleyBlock proto era)
+    = ShelleyLedgerEndorserBlock !(LeiosEraDict era) !(EndorserBlock era)
+
   blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
     SL.strictMaybeToMaybe (bodyLeiosCert blockBody)
 
-  applyLeiosClosure cfg resolve readTables st = case getLeiosEraDict (Proxy @era) of
-    Nothing -> pure $ st `withLedgerTables` emptyLedgerTables
-    Just LeiosEraDict ->
-      case shelleyLedgerState st ^. SL.nesEsL . SL.esLStateL . SL.lsLastEbAnnouncementL of
-        SL.SNothing -> pure $ st `withLedgerTables` emptyLedgerTables
-        SL.SJust announcement -> do
-          let point = leiosPointOfAnnouncement announcement
-          Leios.MkLeiosClosure ebBytes txsBytes <- resolve point
-          eb <- either (throwIO . ShelleyLeiosClosureUndecodable point) pure $ do
-            body <- Leios.deserialiseEndorserBlock (Proxy @era) ebBytes
-            txs <- traverse decodeClosureTx txsBytes
-            pure $ Leios.toLedgerEndorserBlock body (StrictSeq.fromList txs)
-          values <- readTables (closureKeySets eb)
-          let before = st `withLedgerTables` values
-              stowed = stowLedgerTables before
-              after =
-                applyEndorserBlockNoValidation @(LeiosLedger.Header StandardCrypto)
-                  (shelleyLedgerGlobals cfg)
-                  (shelleyLedgerState stowed)
-                  eb
-          pure $
-            trackingToDiffs $
-              calculateDifference before $
-                unstowLedgerTables stowed{shelleyLedgerState = after}
+  decodeLedgerEndorserBlock _blk (Leios.MkLeiosClosure (Leios.Serialised ebBytes) txsBytes) =
+    case getLeiosEraDict (Proxy @era) of
+      Nothing -> Left $ DecoderErrorCustom "EndorserBlock" "an era without Leios"
+      Just dict@LeiosEraDict -> do
+        references <- decodeFullAnnotator (Core.eraProtVerLow @era) "EndorserBlock" decCBOR ebBytes
+        txs <- traverse (decodeTx dict) txsBytes
+        pure $
+          ShelleyLedgerEndorserBlock dict $
+            mkBasicEndorserBlock
+              & referencesEndorserBlockL .~ references
+              & transactionsEndorserBlockL .~ EbTransactions (StrictSeq.fromList txs)
    where
-    -- Like the endorser block, its transactions are only ever Dijkstra's.
-    decodeClosureTx :: Leios.LeiosTx -> Either DecoderError (Core.Tx Core.TopTx DijkstraEra)
-    decodeClosureTx (Leios.MkLeiosTx bytes) =
-      decodeFullAnnotator (Core.eraProtVerLow @DijkstraEra) "Tx" decCBOR (Lazy.fromStrict bytes)
+    decodeTx :: LeiosEraDict era -> Leios.LeiosTx -> Either DecoderError (Core.Tx Core.TopTx era)
+    decodeTx LeiosEraDict (Leios.MkLeiosTx bytes) =
+      decodeFullAnnotator (Core.eraProtVerLow @era) "Tx" decCBOR (Lazy.fromStrict bytes)
 
-    closureKeySets eb =
-      LedgerTables . KeysMK . coerceSet $
-        foldMap
-          (^. Core.bodyTxL . Core.allInputsTxBodyF)
-          (unEbTransactions (eb ^. transactionsEndorserBlockL))
+  getEndorserBlockKeySets (ShelleyLedgerEndorserBlock LeiosEraDict eb) =
+    LedgerTables . KeysMK . coerceSet $
+      foldMap
+        (^. Core.bodyTxL . Core.allInputsTxBodyF)
+        (unEbTransactions (eb ^. transactionsEndorserBlockL))
+
+  ledgerAnnouncedEb st =
+    leiosPointOfAnnouncement
+      <$> SL.strictMaybeToMaybe
+        (shelleyLedgerState st ^. SL.nesEsL . SL.esLStateL . SL.lsLastEbAnnouncementL)
+
+  applyLedgerEndorserBlock cfg (ShelleyLedgerEndorserBlock LeiosEraDict eb) st =
+    trackingToDiffs $ calculateDifference st $ unstowLedgerTables after
+   where
+    stowed = stowLedgerTables st
+    after =
+      stowed
+        { shelleyLedgerState =
+            applyEndorserBlockNoValidation @(LeiosLedger.Header StandardCrypto)
+              (shelleyLedgerGlobals cfg)
+              (shelleyLedgerState stowed)
+              eb
+        }
 
 -- | The point of the endorser block an announcement names.
 leiosPointOfAnnouncement :: SL.EbAnnouncement -> Leios.LeiosPoint
@@ -686,14 +693,6 @@ leiosPointOfAnnouncement announcement =
   Leios.MkLeiosPoint
     (SL.ebAnnouncementSlotNo announcement)
     (extractHash (Core.ebReferencesAnnouncementHash (SL.ebAnnouncement announcement)))
-
--- | A certified endorser block's closure that does not decode, which the voters
--- who certified it could not have applied.
-data ShelleyLeiosClosureUndecodable
-  = ShelleyLeiosClosureUndecodable Leios.LeiosPoint DecoderError
-  deriving Show
-
-instance Exception.Exception ShelleyLeiosClosureUndecodable
 
 data ShelleyReapplyException
   = forall era.

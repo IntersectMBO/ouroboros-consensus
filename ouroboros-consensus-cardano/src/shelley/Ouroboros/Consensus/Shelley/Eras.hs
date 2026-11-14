@@ -4,7 +4,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -48,7 +47,11 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
 import qualified Cardano.Ledger.Conway.State as CG
-import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import Cardano.Ledger.Dijkstra
+  ( ApplyTxError (DijkstraApplyTxError)
+  , DijkstraApplyBlock
+  , DijkstraEra
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (DijkstraEraBlockBody)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
@@ -61,6 +64,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
@@ -160,7 +164,12 @@ data ConwayEraGovDict era where
 -- supports Leios has one.
 data LeiosEraDict era where
   LeiosEraDict ::
-    (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era, era ~ DijkstraEra) => LeiosEraDict era
+    ( SafeToHash (Core.Tx TopTx era)
+    , DecCBOR (Annotator (Core.Tx TopTx era))
+    , DijkstraEraBlockBody era
+    , DijkstraApplyBlock (LeiosLedger.Header StandardCrypto) era
+    ) =>
+    LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =

@@ -1,10 +1,12 @@
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -276,7 +278,13 @@ instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios DualByronBlock where
+  data LedgerEndorserBlock DualByronBlock
+
   blockLeiosCert = defaultBlockLeiosCert
+  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
+  getEndorserBlockKeySets eb = case eb of {}
+  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
+  applyLedgerEndorserBlock _cfg eb = case eb of {}
 
 instance BlockSupportsSanityCheck DualByronBlock where
   configAllSecurityParams = pure . configSecurityParam
