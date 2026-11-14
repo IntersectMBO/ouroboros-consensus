@@ -39,7 +39,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerE
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( Message (..)
   , TxBitmaps
-  , bitmapOffsets
+  , bitmapToOffsets
   )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
@@ -129,7 +129,7 @@ serveTxs tracer reader point bitmaps = do
       let held = IntSet.fromList [offset | (offset, _txHash, Just _bytes) <- rows]
       throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` held) offsets)
  where
-  offsets = bitmapOffsets bitmaps
+  offsets = bitmapToOffsets bitmaps
 
 -- | Trace an exception of the event's type that the action throws, then
 -- rethrow it.
