@@ -191,6 +191,7 @@ library
     Ouroboros.Consensus.Ledger.Peras
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
+    Ouroboros.Consensus.Ledger.SupportsLeios
     Ouroboros.Consensus.Ledger.SupportsMempool
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsPeras
@@ -1970,6 +1971,7 @@ test-suite shelley-test
     cardano-ledger-shelley,
     cardano-protocol,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,
