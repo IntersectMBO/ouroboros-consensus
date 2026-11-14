@@ -27,8 +27,9 @@ import Ouroboros.Consensus.Mempool.API (Mempool (getLeiosTxIndex))
 import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.IOLike
 
--- | Borrow only explicitly named exact TXs in STM; serialize immutable selected
--- values outside STM and all fetch/cache locks. No full snapshot or source epoch.
+-- | Select only explicitly named TXs in STM; verify their exact serialized
+-- hash and size outside STM and all fetch/cache locks. No full snapshot or
+-- source epoch is retained.
 data LocalSource m tx = LocalSource
   { localLookup :: [(TxHash, BytesSize)] -> STM m (Map.Map TxHash tx)
   -- ^ Strict bounded selection. May wait for the mempool owner; closing is
@@ -115,7 +116,8 @@ newLocalReuse closing source writer = do
       bytes <- localBytes source tx
       case bytes of
         Just value@(MkLeiosTx raw)
-          | BS.length raw == fromIntegral size, hashLeiosTx value == h ->
+          | BS.length raw == fromIntegral size
+          , hashLeiosTx value == h ->
               let !item = (off, raw) in pure $! item : acc
         _ -> pure acc
 

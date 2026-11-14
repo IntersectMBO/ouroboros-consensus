@@ -4,7 +4,19 @@
 
 -- | Tests of how the node's LeiosFetch client takes in replies, against an
 -- in-memory LeiosDB.
-module Test.Consensus.Leios.LeiosFetch.Replies (tests, fixture, newContext, newContextHolding, awaitNotes, processLeiosBlock, processLeiosBlockTxs, tryEnqueueRequest, assignRequests, expireRuntimeHeads) where
+module Test.Consensus.Leios.LeiosFetch.Replies
+  ( tests
+  , fixture
+  , tryEnqueueRequest
+  , assignRequests
+  , expireRuntimeHeads
+  , newContext
+  , newContextHolding
+  , newContextAt
+  , awaitNotes
+  , processLeiosBlock
+  , processLeiosBlockTxs
+  ) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))

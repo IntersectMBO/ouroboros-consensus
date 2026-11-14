@@ -113,6 +113,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
   , FetchPhase (..)
   , FetchRoutine (..)
+  , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchDetailEvent (..)
   , fetchArrivalEvicted
@@ -421,8 +423,8 @@ processLeiosBlock ownership ctx peer req bytes =
                   if not claimed
                     then pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
                     else do
-                      (_summary, located) <- insertBody lfcTxCache point (packEndorserBlock eb) [] snocLocated
-                      pure (cleaned, BodyToWrite located)
+                      (summary, located) <- insertBody lfcTxCache point (packEndorserBlock eb) [] snocLocated
+                      pure (cleaned, BodyToWrite summary located)
             atomically $ W.notifyReadiness lfcReady
             case delivery of
               BodyTooBig exn -> do
@@ -430,7 +432,7 @@ processLeiosBlock ownership ctx peer req bytes =
                   TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
                 throwIO exn
               BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-              BodyToWrite localFills -> do
+              BodyToWrite summary localFills -> do
                 bodyWritten <- writeEbBody lfcWriter point eb (Map.fromList localFills) Map.empty
                 acceptedAt <- getMonotonicTime
                 emitAccepted <- atomically (acceptedReply ownership acceptedAt ebBytesSize)
@@ -441,6 +443,11 @@ processLeiosBlock ownership ctx peer req bytes =
                       `finally` finishReplyReceipt ownership
                   )
                 emitAccepted
+                traceWith lfcTracer $
+                  TraceLeiosFetchClientBlockTxSources
+                    point
+                    (MkLeiosBlockTxSources (length localFills) 0 (length (endorserBlockReferences eb) - length localFills))
+                    summary
             when (ebBytesSize /= lbrOfferedSize req) $
               throwIO $
                 ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
@@ -479,7 +486,7 @@ data BodyDelivery
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite ![(TxOffset, TxLocation)]
+    BodyToWrite !(Maybe LeiosTxCacheInsertBodySummary) ![(TxOffset, TxLocation)]
 
 -- | Where a body that 'settleBody' settles came from.
 data BodySource peer
@@ -645,15 +652,14 @@ acquireCachedBody ctx point bounds =
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
 -- one that arrived with no peer: take its body into the LeiosTxCache, write it
--- together with all its txs, take those into the LeiosTxCache as validated,
--- wait for the write to be durable, and then settle the point
--- ('settleForgedEb').
+-- with all its txs, take those into the LeiosTxCache as validated, and
+-- settle the point once the combined write is durable ('settleForgedEb').
 --
 -- Its bytes are not checked: the forge built the body from these very txs. No
 -- tx is filled from another point, since all of them are written.
 --
 -- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- write in the same transaction as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -693,7 +699,7 @@ submitForgedEb ctx point forged = Receipts.withReceiptSubmissionResult (lfcRecei
   refs = endorserBlockReferences eb
 
 -- | Record the forge's endorser block as acquired at this point, with no job
--- left, now that its writes are durable, and emit what of its acquisition the
+-- left, now that its write is durable, and emit what of its acquisition the
 -- node had not already emitted there ('settleReceivingFromForge').
 settleForgedEb ::
   IOLike m =>

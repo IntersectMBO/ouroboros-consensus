@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Test.Consensus.Mempool.Fairness.TestBlock
@@ -12,12 +14,16 @@ module Test.Consensus.Mempool.Fairness.TestBlock
   , TestBlock.PayloadDependentState (..)
   , Tx
   , mkGenTx
+  , mkRectifyingGenTx
   , txSize
   , unGenTx
   ) where
 
+import Cardano.Ledger.BaseTypes (ProtVer (..))
+import Cardano.Ledger.Binary.Version (natVersion)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise
 import Control.DeepSeq (NFData)
 import qualified Data.Map.Strict as Map
@@ -52,7 +58,7 @@ type TestBlock = TestBlockWith Tx
 -- We do need to keep track of the transaction id.
 --
 -- All transactions will be accepted by the mempool.
-data Tx = Tx {txNumber :: Int, txSize :: Ledger.ByteSize32}
+data Tx = Tx {txNumber :: Int, txSize :: Ledger.ByteSize32, txCanonical :: Bool}
   deriving stock (Eq, Ord, Generic, Show)
   deriving anyclass (NoThunks, NFData)
 
@@ -90,16 +96,22 @@ newtype instance Ledger.Validated (Ledger.GenTx TestBlock)
   deriving stock Generic
   deriving newtype (Show, NoThunks)
 
-newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
+newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId (Int, Ledger.ByteSize32)
   deriving stock Generic
   deriving newtype (Show, Ord, Eq)
   deriving anyclass NoThunks
 
 instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
-  txId (TestBlockGenTx tx) = TestBlockTxId tx
+  txId (TestBlockGenTx tx) = TestBlockTxId (txNumber tx, txSize tx)
 
 mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
-mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize}
+mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize, txCanonical = True}
+
+-- | Rectification changes encoded bytes, preserving transaction identity and size,
+-- as a ledger can do when correcting a phase-2 validity flag.
+mkRectifyingGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
+mkRectifyingGenTx anId aSize =
+  TestBlockGenTx $ (unGenTx (mkGenTx anId aSize)){txCanonical = False}
 
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot gtx st =
@@ -108,8 +120,10 @@ instance Ledger.LedgerSupportsMempool TestBlock where
           convertMapKind $
             TestBlock.getTickedTestLedger
               st
-      , ValidatedGenTx gtx
+      , ValidatedGenTx (normalize gtx)
       )
+   where
+    normalize (TestBlockGenTx tx) = TestBlockGenTx tx{txCanonical = True}
 
   reapplyTx _cfg _slot _gtx gst =
     pure gst
@@ -119,8 +133,14 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
-  txLeiosBytes = Ledger.nothingTxLeiosBytes
-  tickedLedgerProtVer = Ledger.nothingTickedLedgerProtVer
+  txLeiosBytes (TestBlockGenTx tx) =
+    Just $
+      toStrictByteString $
+        CBOR.encodeListLen 3
+          <> CBOR.encodeInt (txNumber tx)
+          <> CBOR.encodeWord32 (Ledger.unByteSize32 (txSize tx))
+          <> CBOR.encodeBool (txCanonical tx)
+  tickedLedgerProtVer _ = Just (ProtVer (natVersion @11) 0)
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
