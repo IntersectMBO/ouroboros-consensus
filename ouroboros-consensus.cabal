@@ -1183,6 +1183,7 @@ benchmark LeiosDB-gc-bench
     async,
     base,
     bytestring,
+    containers,
     cardano-crypto-class,
     cardano-slotting,
     containers,
