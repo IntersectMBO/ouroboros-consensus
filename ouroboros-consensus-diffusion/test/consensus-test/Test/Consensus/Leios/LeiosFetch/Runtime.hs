@@ -25,7 +25,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 import System.Random (mkStdGen)
 import Test.Consensus.Leios.LeiosFetch.Replies
-  ( expireRuntimeHeads
+  ( claimReceivedBody
+  , expireRuntimeHeads
   , fixture
   , newContext
   , tryEnqueueRequest
@@ -118,7 +119,7 @@ tests =
         key <- admit client 0
         state <- atomically (readTVar (R.runtimeFacts rt))
         let point = case R.attemptWork (R.attempts state Map.! key) of L.Body p -> p; _ -> error "body fixture"
-        token <- atomically (R.claimLocalBody rt point) >>= maybe (fail "local claim") pure
+        token <- atomically (claimReceivedBody rt point) >>= maybe (fail "local claim") pure
         atomically (R.claimUseful rt key) >>= (@?= False)
         atomically $ do
           R.closePeer rt 0
@@ -381,13 +382,13 @@ testPendingReadiness = withClient $ \rt client -> do
   takeRuntimeReady rt >>= (@?= True)
   atomically (R.settleReceipt rt key work)
   takeRuntimeReady rt >>= (@?= False)
-  token <- atomically (R.claimLocalBody rt point) >>= maybe (fail "local claim") pure
+  token <- atomically (claimReceivedBody rt point) >>= maybe (fail "local claim") pure
   takeRuntimeReady rt >>= (@?= True)
   atomically (R.acceptLocalBody rt point token >> R.acceptLocalBody rt point token)
   takeRuntimeReady rt >>= (@?= False)
   atomically (R.settleLocalBody rt point token)
   takeRuntimeReady rt >>= (@?= True)
-  replacement <- atomically (R.claimLocalBody rt point) >>= maybe (fail "replacement") pure
+  replacement <- atomically (claimReceivedBody rt point) >>= maybe (fail "replacement") pure
   _ <- takeRuntimeReady rt
   atomically $ do
     R.acceptLocalBody rt point token
@@ -623,7 +624,7 @@ testTargetedClaims = withClient $ \rt old -> do
   b <- admit fresh 0
   atomically (R.claimUseful rt b) >>= (@?= True)
   let point = L.workPoint (bodyWork 1)
-  local <- atomically (R.claimLocalBody rt point) >>= maybe (fail "local claim") pure
+  local <- atomically (claimReceivedBody rt point) >>= maybe (fail "local claim") pure
   atomically $ do
     R.acceptReply rt a (bodyWork 0)
     R.clearUnsubmitted rt a (bodyWork 0)

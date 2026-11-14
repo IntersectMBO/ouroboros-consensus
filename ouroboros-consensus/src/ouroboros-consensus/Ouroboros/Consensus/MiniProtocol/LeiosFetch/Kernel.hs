@@ -5,9 +5,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | The node's LeiosFetch state, which all its LeiosFetch clients share, and
--- the threads that maintain it: the decision loop, which assigns the peers'
--- offers to requests, and the pruner.
+-- | Shared LeiosFetch state, planning and node-owned work. Bounded workers
+-- establish announcement focus and acquire payloads; the certificate focuser
+-- follows ChainDB. The node's shared immutable-tip worker invokes this module's
+-- fetch-pruning entrypoint. See
+-- @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@ and
+-- @docs/fetch-policy/leiosfetch-improved.md#immutable-tip-pruning@.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
@@ -98,6 +101,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , submitForgedEb
+  , withBodyWorkers
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (LeiosFetchStaticEnv)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -141,6 +145,7 @@ import Ouroboros.Consensus.Util.IOLike
   , Time
   , atomically
   , bracket
+  , catch
   , finally
   , getMonotonicTime
   , mask_
@@ -189,10 +194,9 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
 --
 -- The peer alone would not do, even though connections whose mini-protocols
 -- run at the same time have different @ConnectionId@s: that covers only the
--- mini-protocols' own threads. The LeiosDB writes asynchronously, so for each
--- reply a LeiosFetch client forks a thread that waits for the write and then
--- updates the decision loop's state for the peer, and that thread may outlive
--- the client. By then the peer may have registered again, after the mux
+-- mini-protocols' own threads. Accepted writes are reconciled by fixed body
+-- workers and node-owned TX receipt tasks, which can outlive the client.
+-- By then the peer may have registered again, after the mux
 -- restarted its mini-protocols or after it reconnected with the same
 -- @ConnectionId@, and the update would act on that registration instead.
 data LeiosPeerLifetimeId peer = MkLeiosPeerLifetimeId !peer !Word64
@@ -237,6 +241,8 @@ newLeiosFetchKernel ::
   ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
     W.Readiness m ->
     R.Runtime m (LeiosPeerLifetimeId peer) ->
+    Owned.OwnedWork m LeiosPoint (m ()) ->
+    (LeiosPoint -> STM m Bool) ->
     LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
   ) ->
   m (LeiosFetchKernel m peer blk)
@@ -263,6 +269,8 @@ newLeiosFetchKernelFromState ::
   ( StrictMVar m (LeiosOutstanding (LeiosPeerLifetimeId peer)) ->
     W.Readiness m ->
     R.Runtime m (LeiosPeerLifetimeId peer) ->
+    Owned.OwnedWork m LeiosPoint (m ()) ->
+    (LeiosPoint -> STM m Bool) ->
     LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
   ) ->
   m (LeiosFetchKernel m peer blk)
@@ -273,13 +281,20 @@ newLeiosFetchKernelFromState initial env closing mkContext = do
   let workClosing = (||) <$> readTVar lfkWorkClosing <*> closing
   runtime <- R.newRuntime env ready workClosing
   lfkAnnouncements <- Owned.newOwnedWork "LeiosFetch.announcements" 128 workClosing
+  bodies <- Owned.newOwnedWork "LeiosFetch.bodies" 2 workClosing
   lfkForged <- Owned.newOwnedWork "LeiosFetch.forged" 4 workClosing
   lfkPeers <- uncheckedNewTVarM Map.empty
   lfkNextLifetimeId <- uncheckedNewTVarM 0
   lfkPrunedSlot <- uncheckedNewTVarM (outstandingPrunedSlot initial)
   pure
     MkLeiosFetchKernel
-      { lfkContext = mkContext outstanding ready runtime
+      { lfkContext =
+          mkContext
+            outstanding
+            ready
+            runtime
+            bodies
+            (\point -> (pointSlotNo point <) <$> readTVar lfkPrunedSlot)
       , lfkPeers
       , lfkNextLifetimeId
       , lfkPrunedSlot
@@ -528,11 +543,10 @@ headersWithPredecessorStates jumpedThrough jumpInfo =
 -- election focus and lists the point to fetch; it does not retain a cache point.
 -- Body insertion alone establishes body-bearing cache retention.
 --
--- One entry per election: the announcement that takes the election's focus. A
--- second announcement for an already-focused election is an equivocation, and
--- tracking its endorser block too would let a pool double what its won slots
--- cost us. If that one turns out to be the certified one, a verified
--- certificate gives it an entry then.
+-- Peer callers compose this with acceptance of a new non-proof announcement.
+-- Network fetch state initially tracks one focused EB per election. An
+-- equivocation proof creates no second initial-focus obligation; a verified
+-- certificate can later select that EB.
 --
 -- Queued metadata alone never establishes body or transaction possession.
 enqueueLeiosAnnouncement ::
@@ -549,9 +563,8 @@ enqueueLeiosAnnouncement kernel valid = do
       valid
   W.notifyReadiness (lfcReady (lfkContext kernel))
 
--- The bounded queue keeps the focus-installation obligation after the
--- announcing peer disconnects. It replaces the separate announcement-focuser
--- loop: no additional unbounded queue or metadata worker is required.
+-- The bounded metadata worker keeps the focus-installation obligation after
+-- the announcing peer disconnects, without cache insertion or database IO.
 registerAnnouncement ::
   IOLike m =>
   LeiosFetchKernel m peer blk -> ValidAnnouncement blk -> m ()
@@ -623,7 +636,10 @@ onForgedLeiosEb kernel announcements valid forged = do
   point = MkLeiosPoint (electionSlot (ancElectionId anc)) (endorserBlockHash (forgedEbBody forged))
 
 -- | The receipt supervisor encloses worker activation, processing, drain and
--- cleanup. Before this scope even warm-cache/focuser paths can only queue work.
+-- cleanup. Work admitted before activation remains queued until this scope.
+-- Metadata, shared body preparation and forged payloads retain their separate
+-- 128/two/four bounds. See
+-- @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
 withLeiosFetchWorkers ::
   forall m peer blk a.
   IOLike m =>
@@ -633,6 +649,7 @@ withLeiosFetchWorkers kernel action =
       . Owned.withOwnedWork
         (lfkAnnouncements kernel)
         (\_ valid -> registerAnnouncement kernel valid >> pure (pure False))
+      . withBodyWorkers ctx
       . Owned.withOwnedWork (lfkForged kernel) submitForge
       $ action `finally` atomically (writeTVar (lfkWorkClosing kernel) True)
   )
@@ -658,6 +675,10 @@ withLeiosFetchWorkers kernel action =
               Just settled -> pure (atomically settled `finally` release point)
     )
       `onException` release point
+      -- The metadata/receipt owner supervises its original failure. A forge
+      -- waiting on that dependency abandons its claim through the cleanup above,
+      -- without turning closure into another linked worker failure.
+      `catch` \Owned.WorkClosed -> pure (pure False)
 
 -- | Each time something might give a peer something new to do, decide what to
 -- request from every peer, waking on readiness or the nearest active deadline.
@@ -776,6 +797,7 @@ leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
 -- Offer times, completed forge work and the planner wakeup follow the same
 -- boundary. The storage-promotion wrapper independently fences cache locations
 -- before database promotion; this node worker is not a database GC barrier.
+-- See @docs/fetch-policy/leiosfetch-improved.md#immutable-tip-pruning@.
 pruneLeiosFetchToImmTip ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->

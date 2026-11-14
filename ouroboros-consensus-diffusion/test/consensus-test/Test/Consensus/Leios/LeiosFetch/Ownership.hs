@@ -120,11 +120,13 @@ newKernel ctx =
     (emptyLeiosOutstanding (mkStdGen 1) (SlotNo 0))
     (lfcStaticEnv ctx)
     (Receipts.receiptClosing (lfcReceiptTasks ctx))
-    $ \out ready runtime ->
+    $ \out ready runtime bodies retired ->
       ctx
         { lfcOutstanding = out
         , lfcReady = ready
         , lfcRuntime = runtime
+        , lfcBodyWork = bodies
+        , lfcBodyRetired = retired
         , lfcTracer = nullTracer
         , lfcDetailTracer = nullTracer
         }

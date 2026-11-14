@@ -12,7 +12,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
   , RequestError (..)
   , AdmissionRejection (..)
   , PendingOwner (..)
-  , claimLocalBody
+  , transferBodyClaim
   , claimLocalForge
   , releaseLocalForge
   , acceptLocalBody
@@ -135,7 +135,7 @@ data RuntimeState m peer = RuntimeState
   -- ^ Known locally supplied payloads, including queued producers. Suppresses
   -- new body and TX dispatch; already-sent replies retain their physical debt.
   , nextLocalOwner :: !Natural
-  -- ^ Next runtime-wide identity for local body-import submission claims.
+  -- ^ Next runtime-wide identity for node-owned received-body claims.
   -- Distinct tokens keep an old local completion from clearing a newer claim.
   , nextInvocation :: !Natural
   -- ^ Next runtime-wide client-run identity, allocated by 'openClient'. A new
@@ -820,23 +820,26 @@ releaseLocalForge rt point = do
     writeTVar (runtimeFacts rt) st{localForges = Set.delete point (localForges st)}
     W.notifyReadiness (runtimeReady rt)
 
--- | Try to claim a local body import with a fresh 'LocalOwner' token. The caller
--- checks that the body is still needed; existing acquisition claims take
--- precedence. The claim suppresses new body copies while submission is owned
--- locally, without creating or refunding a network request lease.
-claimLocalBody :: IOLike m => Runtime m peer -> LeiosPoint -> STM m (Maybe Natural)
-claimLocalBody rt point = do
+-- | Atomically detach this exact useful network-body claim from its peer and
+-- install a fresh local owner. Compose this transaction with bounded node-work
+-- admission; rollback then restores the network claim if capacity is unavailable.
+-- Peer finalizers cannot erase the resulting token before writer acceptance.
+transferBodyClaim ::
+  (IOLike m, Ord peer) => Runtime m peer -> L.AttemptKey peer -> STM m (Maybe Natural)
+transferBodyClaim rt key = do
   st <- readTVar (runtimeFacts rt)
-  let work = L.Body point
-      token = nextLocalOwner st
-  if Set.member point (localForges st) || Map.member work (pending st)
-    then pure Nothing
-    else do
-      writeTVar
-        (runtimeFacts rt)
-        st{pending = Map.insert work (LocalOwner token, False) (pending st), nextLocalOwner = token + 1}
-      W.notifyReadiness (runtimeReady rt)
-      pure (Just token)
+  case Map.lookup key (attempts st) of
+    Just attempt
+      | work@(L.Body _) <- attemptWork attempt
+      , Just (NetworkOwner owner, False) <- Map.lookup work (pending st)
+      , owner == key -> do
+          let token = nextLocalOwner st
+          writeTVar
+            (runtimeFacts rt)
+            st{pending = Map.insert work (LocalOwner token, False) (pending st), nextLocalOwner = token + 1}
+          W.notifyReadiness (runtimeReady rt)
+          pure (Just token)
+    _ -> pure Nothing
 
 -- | After writer acceptance, transfer the matching local body claim to receipt
 -- ownership. It must survive ordinary caller cleanup until its receipt task
