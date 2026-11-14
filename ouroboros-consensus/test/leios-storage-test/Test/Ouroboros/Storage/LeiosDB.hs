@@ -21,12 +21,12 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
-import qualified Data.IntMap.Strict as IntMap
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Database.SQLite3 as SQL
@@ -166,14 +166,14 @@ rwInsertEbBody rw point eb = void $ rwInsertEbBodyFilling rw point eb mempty
 
 -- | Also fill from local bytes, and return the offsets the point holds.
 rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> LocalFills -> IO [TxOffset]
-rwInsertEbBodyFilling rw point eb fills = await =<< writeEbBody (rwWriter rw) point eb fills
+rwInsertEbBodyFilling rw point eb fills = Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills)
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
 rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
 
 -- | Also the offsets dropped for their size.
 rwInsertTxsDropped :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
-rwInsertTxsDropped rw point txs = await =<< writeTxs (rwWriter rw) point txs
+rwInsertTxsDropped rw point txs = Set.toAscList <$> (await =<< writeTxs (rwWriter rw) point (Map.fromList txs))
 
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
@@ -184,8 +184,8 @@ rwLookupEbBody = lookupEbBody . rwReader
 rwLookupEbClosure :: RW -> LeiosPoint -> IO (Maybe [BS.ByteString])
 rwLookupEbClosure = lookupEbClosure . rwReader
 
-rwBatchRetrieveTxs :: RW -> LeiosPoint -> [Int] -> IO [(Int, Maybe BS.ByteString)]
-rwBatchRetrieveTxs = batchRetrieveTxs . rwReader
+rwBatchRetrieveTxs :: RW -> LeiosPoint -> [TxOffset] -> IO (Map.Map TxOffset BS.ByteString)
+rwBatchRetrieveTxs rw point = batchRetrieveTxs (rwReader rw) point . Set.fromList
 
 -- | Create a fresh database and run an action with it.
 -- Ensures proper cleanup for SQLite databases.
@@ -248,7 +248,7 @@ mkTestGroups impl =
       "transactions"
       [ testProperty "insert then retrieve" $ prop_txsInsertThenRetrieve impl
       , testProperty "retrieve missing returns empty" $ prop_txsRetrieveMissing impl
-      , testCase "out of bounds, duplicate and wrong-sized writes are dropped" $
+      , testCase "out of bounds and wrong-sized writes are dropped" $
           withFreshDb impl test_malformedTxWritesDropped
       , testCase "reads a point older than the promoted slot from the immutable partition only" $
           test_readsDispatchBySlot impl
@@ -491,21 +491,10 @@ prop_txsInsertThenRetrieve impl =
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
           (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con point allOffsets
-          -- Check that inserted txs have their bytes, others are missing
-          let checkResult (off, mbBytes) =
-                if off `elem` offsetsToInsert
-                  then mbBytes == Just (txBytesFor eb off)
-                  else mbBytes == Nothing
+          -- The inserted txs have their bytes, the others are absent.
           pure $
-            conjoin
-              [ all checkResult results
-                  & counterexample "Unexpected bytes"
-                  & counterexample ("Inserted offsets: " ++ show offsetsToInsert)
-                  & counterexample ("Results: " ++ show results)
-              , length results === numTxs
-                  & counterexample "Length mismatch"
-                  & counterexample ("Results: " ++ show (length results))
-              ]
+            results === Map.fromList [(off, txBytesFor eb off) | off <- offsetsToInsert]
+              & counterexample ("Inserted offsets: " ++ show offsetsToInsert)
               & counterexample ("Total txs: " <> show numTxs)
               & counterexample ("Inserted txs: " <> show (length txsToInsert))
               & tabulate "insertTxs" [timeBucket insertTime]
@@ -519,7 +508,7 @@ prop_txsRetrieveMissing impl =
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
       (result, retrieveTime) <- timed $ rwBatchRetrieveTxs con missingPoint [0, 1, 2]
       pure $
-        result === []
+        result === Map.empty
           & tabulate "batchRetrieveTxs (missing)" [timeBucket retrieveTime]
 
 -- * Completion tests
@@ -612,7 +601,7 @@ test_readsAtPoint db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 1 1] eb
   rwLookupEbBody con (mkTestPoint 2 1) >>= (@?= Nothing)
   rwLookupEbClosure con (mkTestPoint 2 1) >>= (@?= Nothing)
-  rwBatchRetrieveTxs con (mkTestPoint 2 1) [0, 1] >>= (@?= [])
+  rwBatchRetrieveTxs con (mkTestPoint 2 1) [0, 1] >>= (@?= Map.empty)
   rwInsertEbBody con (mkTestPoint 2 1) eb
   rwLookupEbClosure con (mkTestPoint 2 1) >>= (@?= Nothing)
   rwInsertTxs con (mkTestPoint 2 1) (allTxsFor eb)
@@ -642,11 +631,10 @@ test_malformedTxWritesDropped db = do
         ]
     dropped @?= [0, 1]
     retrieved <- rwBatchRetrieveTxs con point offsets
-    retrieved @?= [(off, Nothing) | off <- offsets]
-    -- Within one write, the first delivery wins.
-    rwInsertTxs con point [(0, txBytesFor eb 0), (0, BS.map (+ 1) (txBytesFor eb 0))]
+    retrieved @?= Map.empty
+    rwInsertTxs con point [(0, txBytesFor eb 0)]
     retrieved' <- rwBatchRetrieveTxs con point [0]
-    retrieved' @?= [(0, Just (txBytesFor eb 0))]
+    retrieved' @?= Map.singleton 0 (txBytesFor eb 0)
     rwInsertTxs con point [(1, txBytesFor eb 1)]
     closure <- rwLookupEbClosure con point
     closure @?= Just (map snd (allTxsFor eb))
@@ -674,14 +662,14 @@ test_fillFromAnotherEb db = do
         con
         pointB
         ebB
-        ( IntMap.fromList
+        ( Map.fromList
             [ (0, MkTxLocation pointA 1)
             , (1, MkTxLocation pointA 0)
             ]
         )
     result @?= [0]
     retrieved <- rwBatchRetrieveTxs con pointB [0, 1]
-    retrieved @?= [(0, Just (txBytesFor ebA 1)), (1, Nothing)]
+    retrieved @?= Map.singleton 0 (txBytesFor ebA 1)
     rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
     rwScanComplete con 0 >>= (@?= [pointA, pointB])
 
@@ -697,7 +685,7 @@ test_fillWithoutSourceBytes db = do
         con
         pointB
         ebB
-        ( IntMap.fromList
+        ( Map.fromList
             [ (0, MkTxLocation pointA 1)
             , (1, MkTxLocation (mkTestPoint (SlotNo 1) 9) 0)
             ]
@@ -711,7 +699,7 @@ test_fillCompletesClosure db = do
       ebB = mkEndorserBlock [(testTxHash 1 101, 101)]
   withRW db $ \con -> do
     writeWholeEb con [pointA] ebA
-    result <- rwInsertEbBodyFilling con pointB ebB (IntMap.singleton 0 (MkTxLocation pointA 1))
+    result <- rwInsertEbBodyFilling con pointB ebB (Map.singleton 0 (MkTxLocation pointA 1))
     result @?= [0]
     rwScanComplete con 0 >>= (@?= [pointA, pointB])
 
@@ -728,7 +716,7 @@ test_fillFromAnotherPoint db = withRW db $ \con -> do
       con
       younger
       eb
-      (IntMap.fromList [(off, MkTxLocation older off) | off <- [0, 1]])
+      (Map.fromList [(off, MkTxLocation older off) | off <- [0, 1]])
   result @?= [0, 1]
   rwLookupEbClosure con younger >>= (@?= Just (map snd (allTxsFor eb)))
 
@@ -739,9 +727,9 @@ test_fillOfMisstatedSize db = do
       ebB = mkEndorserBlock [(testTxHash 1 101, 102)]
   withRW db $ \con -> do
     writeWholeEb con [pointA] ebA
-    result <- rwInsertEbBodyFilling con pointB ebB (IntMap.singleton 0 (MkTxLocation pointA 1))
+    result <- rwInsertEbBodyFilling con pointB ebB (Map.singleton 0 (MkTxLocation pointA 1))
     result @?= []
-    rwBatchRetrieveTxs con pointB [0] >>= (@?= [(0, Nothing)])
+    rwBatchRetrieveTxs con pointB [0] >>= (@?= Map.empty)
 
 -- * Garbage collection
 
@@ -765,7 +753,7 @@ test_readsDispatchBySlot impl = withFreshDb impl $ \db -> withRW db $ \con -> do
   garbageCollect db
   rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
-  rwBatchRetrieveTxs con again [0, 1] >>= (@?= [(0, Just (txBytesFor eb 0)), (1, Nothing)])
+  rwBatchRetrieveTxs con again [0, 1] >>= (@?= Map.singleton 0 (txBytesFor eb 0))
   rwLookupEbClosure con again >>= (@?= Nothing)
   rwLookupEbClosure con promoted >>= (@?= Just (map snd (allTxsFor eb)))
   rwLookupEbBody con promoted >>= (@?= Just (bodyBytes eb))
@@ -1255,7 +1243,7 @@ genOps bodies = listOf genOp
           ]
   genOp =
     frequency
-      [ (3, genPointOf >>= \point -> OpBody point . IntMap.fromList <$> listOf (genFill point))
+      [ (3, genPointOf >>= \point -> OpBody point . Map.fromList <$> listOf (genFill point))
       , (3, OpTxs <$> genPointOf <*> sublistOf [0 .. 4])
       , (3, OpPromote <$> elements (Map.keys bodies))
       , (1, OpGc . (+ 1) <$> genSlot)
@@ -1292,7 +1280,7 @@ observe ::
     , ( [[TxOffset]]
       , ( [ ( Maybe BS.ByteString
             , Maybe [BS.ByteString]
-            , [(Int, Maybe BS.ByteString)]
+            , Map.Map TxOffset BS.ByteString
             )
           ]
         , [LeiosPoint]

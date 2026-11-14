@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -29,24 +30,25 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (readTVarIO)
-import Control.DeepSeq (force)
-import Control.Exception (bracket, evaluate)
+import Control.Exception (bracket)
 import Control.Monad (forM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.IntSet as IntSet
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
+  , TxOffset
   , endorserBlockReferences
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
@@ -93,15 +95,16 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
       <$> (SlotNo . fromIntegral <$> DB.columnInt64 stmt 0)
       <*> dbColumnHash stmt 1
 
--- | Split a closure at its 'encodeTxBounds' into its txs, 'Nothing' where its
--- marker in @txWritten@ is not set.
-splitClosure :: ByteString -> ByteString -> ByteString -> [Maybe ByteString]
-splitClosure txWritten bounds txs =
-  [ if isWritten txWritten i
-      then Just (BS.take (boundAt bounds (i + 1) - boundAt bounds i) (BS.drop (boundAt bounds i) txs))
-      else Nothing
-  | i <- [0 .. BS.length bounds `div` 4 - 2]
-  ]
+-- | Split a closure at its 'encodeTxBounds' into its txs, each sliced before
+-- the list is returned.
+splitClosure :: ByteString -> ByteString -> [ByteString]
+splitClosure bounds txs = go (BS.length bounds `div` 4 - 2) []
+ where
+  go i acc
+    | i < 0 = acc
+    | otherwise =
+        let !tx = BS.take (boundAt bounds (i + 1) - boundAt bounds i) (BS.drop (boundAt bounds i) txs)
+         in go (i - 1) (tx : acc)
 
 -- | Whether the marker of the tx at this index of the markers is set.
 isWritten :: ByteString -> Int -> Bool
@@ -144,18 +147,15 @@ sqlLookupEbBody conn point = readPartition conn point (`lookupBlob` point)
 sqlBatchRetrieveTxs ::
   Conn ->
   LeiosPoint ->
-  [Int] ->
-  IO [(Int, Maybe ByteString)]
+  Set TxOffset ->
+  IO (Map TxOffset ByteString)
 sqlBatchRetrieveTxs conn point offsets =
-  (evaluate . force . fromMaybe [] =<<) $
+  fmap (fromMaybe Map.empty) $
     readPartition conn point $ \db ->
       lookupEbIndex db point
         >>= traverse
           ( \ix@EbIndex{eiTxCount} ->
-              readTxBytes
-                db
-                ix
-                [o | o <- IntSet.toAscList (IntSet.fromList offsets), o >= 0, o < eiTxCount]
+              readTxBytes db ix [o | o <- Set.toAscList offsets, o >= 0, o < eiTxCount]
           )
 
 -- | Whether the immutable partition holds the EB at the point, whichever
@@ -174,8 +174,7 @@ sqlIsImmutable Conn{conImmDb = immDb} point =
 -- unless each of them is written.
 sqlLookupEbClosure :: Conn -> LeiosPoint -> IO (Maybe [ByteString])
 sqlLookupEbClosure conn point =
-  (evaluate . force =<<) $
-    readPartition conn point (`completeClosureAt` point)
+  readPartition conn point (`completeClosureAt` point)
 
 -- * Lookups
 
@@ -196,7 +195,8 @@ completeClosureAt db point =
             rowid <- DB.columnInt64 stmt 2
             txs <- withBlob db "ebs" "txs" rowid False $ \blob ->
               withDie db (DB.blobRead blob (boundAt bounds (BS.length txWritten)) 0)
-            pure $ sequence (splitClosure txWritten bounds txs)
+            let !closure = splitClosure bounds txs
+            pure (Just closure)
           else pure Nothing
 
 -- | An EB's body.
@@ -242,28 +242,31 @@ readTxWritten db EbIndex{eiRowid} lo hi =
   withBlob db "ebs" "txWritten" eiRowid False $ \blob ->
     withDie db (DB.blobRead blob (hi - lo + 1) lo)
 
--- | The bytes of the txs at these offsets, which must be ascending, distinct
--- and in the body, or 'Nothing' where no tx is marked written: one read per run
--- of consecutive written offsets.
-readTxBytes :: DB.Database -> EbIndex -> [Int] -> IO [(Int, Maybe ByteString)]
-readTxBytes _ _ [] = pure []
+-- | The bytes of the txs at these offsets that are marked written, each sliced
+-- before the map is returned. The offsets must be ascending, distinct and in
+-- the body. One read per run of consecutive written offsets.
+readTxBytes :: DB.Database -> EbIndex -> [TxOffset] -> IO (Map TxOffset ByteString)
+readTxBytes _ _ [] = pure Map.empty
 readTxBytes db ix@EbIndex{eiRowid} (lo : rest) = do
   let hi = NE.last (lo :| rest)
   txWritten <- readTxWritten db ix lo hi
   let present = [o | o <- lo : rest, isWritten txWritten (o - lo)]
-  bytesOf <-
-    if null present
-      then pure IntMap.empty
-      else do
-        bounds <- readTxBounds db ix lo hi
-        let start o = boundAt bounds (o - lo)
-            end o = boundAt bounds (o - lo + 1)
-        fmap (IntMap.fromList . concat) $ withBlob db "ebs" "txs" eiRowid False $ \blob ->
-          forM (consecutiveRuns id present) $ \run -> do
-            let at = start (NE.head run)
-            bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
-            pure [(o, BS.take (end o - start o) (BS.drop (start o - at) bytes)) | o <- NE.toList run]
-  pure [(o, IntMap.lookup o bytesOf) | o <- lo : rest]
+  if null present
+    then pure Map.empty
+    else do
+      bounds <- readTxBounds db ix lo hi
+      let start o = boundAt bounds (o - lo)
+          end o = boundAt bounds (o - lo + 1)
+      runs <- withBlob db "ebs" "txs" eiRowid False $ \blob ->
+        forM (consecutiveRuns id present) $ \run -> do
+          let at = start (NE.head run)
+          bytes <- withDie db (DB.blobRead blob (end (NE.last run) - at) at)
+          -- Strict in the values, so each slice is cut here.
+          let !sliced =
+                Map.fromDistinctAscList
+                  [(o, BS.take (end o - start o) (BS.drop (start o - at) bytes)) | o <- NE.toList run]
+          pure sliced
+      pure $! Map.unions runs
 
 -- | Open a blob of the main database, for the duration of the action.
 withBlob :: DB.Database -> DB.Utf8 -> DB.Utf8 -> Int64 -> Bool -> (DB.Blob -> IO a) -> IO a

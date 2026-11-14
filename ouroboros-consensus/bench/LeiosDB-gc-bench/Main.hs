@@ -81,6 +81,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List as List (foldl', group, intercalate, isSuffixOf, nub, sort)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
@@ -357,7 +358,7 @@ populateDb opts db =
           hashBytes = hashToBytes ebHash
           point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
-          txs = zip [0 ..] (ebTxsFor opts ebIdx)
+          txs = Map.fromList (zip [0 ..] (ebTxsFor opts ebIdx))
       bodyWritten <- writeEbBody writer point eb mempty
       txsWritten <- writeTxs writer point txs
       awaitAll [void bodyWritten, void txsWritten]
@@ -447,7 +448,7 @@ runPhases opts db flushEvents latRef schedule =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = zip [0 ..] (ebTxsFor opts ebIdx)
+              txs = Map.fromList (zip [0 ..] (ebTxsFor opts ebIdx))
           snd
             <$> timed
               ( do

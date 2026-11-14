@@ -70,6 +70,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
+import qualified Data.Set as Set
 import Data.Time.Clock (DiffTime)
 import GHC.RTS.Flags (GCFlags (..), getGCFlags)
 import Ouroboros.Consensus.Leios.Types
@@ -344,7 +345,7 @@ writeBody w point eb@BenchEb{beEb} record =
 
 -- | Write a chunk of an EB's Txs, as the fetch logic does on receiving it.
 writeChunk :: LeiosDbWriter IO -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
-writeChunk w point batch = void . await =<< writeTxs w point batch
+writeChunk w point batch = void . await =<< writeTxs w point (Map.fromList batch)
 
 -- | Write an EB in full on one writer: its body, then its Tx chunks.
 ingest :: LeiosDbWriter IO -> LeiosPoint -> BenchEb -> Record -> IO ()
@@ -381,9 +382,9 @@ servePeer seed r point BenchEb{beIdx, beMeasured} completed record missing = do
     else when beMeasured $ record ServeBody (diffTime t' t)
   forM_ (requests seed beIdx) $ \offsets -> do
     u <- getMonotonicTime
-    txs <- evaluate . force =<< batchRetrieveTxs r point offsets
+    txs <- evaluate . force =<< batchRetrieveTxs r point (Set.fromList offsets)
     u' <- getMonotonicTime
-    if length txs /= length offsets || any (isNothing . snd) txs
+    if Map.size txs /= length offsets
       then missing
       else when beMeasured $ record ServeTxs (diffTime u' u)
   done <- getMonotonicTime

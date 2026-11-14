@@ -22,11 +22,9 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (guard)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack as GHC
@@ -89,10 +87,10 @@ emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty 0
 data EbRow = EbRow
   { rowBody :: !ByteString
   -- ^ The body in the bytes it arrived in, as @body@.
-  , rowTxSizes :: !(IntMap {- txOffset -} BytesSize)
+  , rowTxSizes :: !(Map TxOffset BytesSize)
   -- ^ The size of each tx the body lists, by offset, as @txBounds@. No hashes:
   -- the body lists those.
-  , rowTxs :: !(IntMap {- txOffset -} ByteString)
+  , rowTxs :: !(Map TxOffset ByteString)
   -- ^ The written txs by offset, as @txs@ and @txWritten@.
   }
   deriving stock Generic
@@ -239,65 +237,65 @@ imInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
-  m [TxOffset]
+  m (Set TxOffset)
 imInsertEbBody stateVar point eb fills = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   atomically $ do
     s <- readTVar stateVar
     if isPromoted s point
-      then pure []
+      then pure Set.empty
       else do
         let row = Map.findWithDefault newRow point (imVolatile s)
-            toWrite = filled s `IntMap.withoutKeys` IntMap.keysSet (rowTxs row)
+            toWrite = filled s `Map.withoutKeys` Map.keysSet (rowTxs row)
             row' = row{rowTxs = rowTxs row <> toWrite}
         writeTVar stateVar s{imVolatile = Map.insert point row' (imVolatile s)}
-        pure (IntMap.keys (rowTxs row'))
+        pure (Map.keysSet (rowTxs row'))
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
   -- declares, at its declared size, from the source's volatile row holding
   -- bytes that hash to the tx this body lists there.
   filled s =
-    IntMap.fromList
+    Map.fromList
       [ (off, bytes)
-      | (off, MkTxLocation srcPoint srcOff) <- IntMap.toList fills
-      , Just (txHash, size) <- [IntMap.lookup off refs]
+      | (off, MkTxLocation srcPoint srcOff) <- Map.toList fills
+      , Just (txHash, size) <- [Map.lookup off refs]
       , Just row <- [Map.lookup srcPoint (imVolatile s)]
-      , Just bytes <- [IntMap.lookup srcOff (rowTxs row)]
+      , Just bytes <- [Map.lookup srcOff (rowTxs row)]
       , hashLeiosTx (MkLeiosTx bytes) == txHash
       , fromIntegral (BS.length bytes) == size
       ]
-  refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
+  refs = Map.fromList (zip [0 ..] (endorserBlockReferences eb))
   newRow =
     EbRow
       { rowBody = serialiseEndorserBlock eb
       , rowTxSizes = fmap snd refs
-      , rowTxs = IntMap.empty
+      , rowTxs = Map.empty
       }
 
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
-  [(TxOffset, ByteString)] ->
-  m [TxOffset]
+  Map TxOffset ByteString ->
+  m (Set TxOffset)
 imInsertTxs stateVar point offBytes = atomically $ do
   s <- readTVar stateVar
   -- Mirrors the SQLite backend's in-place fill: a tx only lands at an offset
-  -- the body declared at the point, at the declared size, the first of a write
-  -- winning.
+  -- the body declared at the point, at the declared size.
   case guard (not (isPromoted s point)) *> Map.lookup point (imVolatile s) of
-    Nothing -> pure []
+    Nothing -> pure Set.empty
     Just row -> do
-      let inBody =
-            [(off, bytes, size) | (off, bytes) <- offBytes, Just size <- [IntMap.lookup off (rowTxSizes row)]]
-          sized (_, bytes, size) = fromIntegral (BS.length bytes) == size
-          accepted = IntMap.fromListWith (\_new old -> old) [(off, bytes) | tx@(off, bytes, _) <- inBody, sized tx]
-      unless (IntMap.null accepted) $
+      let inBody = Map.intersectionWith (,) offBytes (rowTxSizes row)
+          sized (bytes, size) = fromIntegral (BS.length bytes) == size
+          (accepted, missized) = Map.partition sized inBody
+      unless (Map.null accepted) $
         writeTVar
           stateVar
-          s{imVolatile = Map.insert point row{rowTxs = IntMap.union accepted (rowTxs row)} (imVolatile s)}
-      pure [off | tx@(off, _, _) <- inBody, not (sized tx)]
+          s
+            { imVolatile = Map.insert point row{rowTxs = Map.union (fst <$> accepted) (rowTxs row)} (imVolatile s)
+            }
+      pure (Map.keysSet missized)
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete where its reads go
@@ -311,19 +309,15 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
       imm = Map.filterWithKey (\p _ -> readsImmutable s p) (imImmutable s)
   pure [p | p <- Set.toAscList (Map.keysSet vol <> Map.keysSet imm), pointSlotNo p >= sinceSlot]
 
--- | Each requested offset the body declares, with its bytes, or 'Nothing' if
--- not written.
+-- | The bytes of each requested offset the point holds.
 imBatchRetrieveTxs ::
   IOLike m =>
-  StrictTVar m InMemoryLeiosDb -> LeiosPoint -> [TxOffset] -> m [(TxOffset, Maybe ByteString)]
+  StrictTVar m InMemoryLeiosDb -> LeiosPoint -> Set TxOffset -> m (Map TxOffset ByteString)
 imBatchRetrieveTxs stateVar point offsets = atomically $ do
   state <- readTVar stateVar
-  pure
-    [ (offset, IntMap.lookup offset (rowTxs row))
-    | Just row <- [rowAt state point]
-    , offset <- IntSet.toAscList (IntSet.fromList offsets)
-    , IntMap.member offset (rowTxSizes row)
-    ]
+  pure $ case rowAt state point of
+    Nothing -> Map.empty
+    Just row -> rowTxs row `Map.restrictKeys` offsets
 
 imLookupEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [ByteString])
@@ -331,7 +325,7 @@ imLookupEbClosure stateVar point = atomically $ do
   state <- readTVar stateVar
   pure $ do
     row <- rowAt state point
-    traverse (`IntMap.lookup` rowTxs row) (IntMap.keys (rowTxSizes row))
+    traverse (`Map.lookup` rowTxs row) (Map.keys (rowTxSizes row))
 
 -- | Whether reads of the point go to the immutable partition: it is older
 -- than the slot the latest promotion reached.
@@ -346,4 +340,4 @@ rowAt state point
 
 -- | Whether each tx of the row is written.
 rowComplete :: EbRow -> Bool
-rowComplete row = IntMap.keysSet (rowTxSizes row) == IntMap.keysSet (rowTxs row)
+rowComplete row = Map.keysSet (rowTxSizes row) == Map.keysSet (rowTxs row)

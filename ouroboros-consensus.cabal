@@ -1185,6 +1185,7 @@ benchmark LeiosDB-gc-bench
     bytestring,
     cardano-crypto-class,
     cardano-slotting,
+    containers,
     contra-tracer,
     direct-sqlite,
     directory,

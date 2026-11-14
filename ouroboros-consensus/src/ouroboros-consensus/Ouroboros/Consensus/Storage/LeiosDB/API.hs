@@ -29,7 +29,9 @@ import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import Data.Foldable (toList, traverse_)
-import Data.IntMap.Strict (IntMap)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
@@ -99,10 +101,9 @@ data LeiosDbReader m = LeiosDbReader
   -- 'Nothing' unless each of them is written. The body lists their hashes.
   , batchRetrieveTxs ::
       HasCallStack =>
-      LeiosPoint -> [TxOffset] -> m [(TxOffset, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into the EB at one point, in ascending
-  -- order: the offsets the body declares, each with its bytes, or 'Nothing' if
-  -- not written.
+      LeiosPoint -> Set TxOffset -> m (Map TxOffset ByteString)
+  -- ^ The bytes of the requested txs that the EB at the point holds: an offset
+  -- the body does not declare, or whose tx is not written, is absent.
   , isImmutable :: HasCallStack => LeiosPoint -> m Bool
   -- ^ Whether the immutable partition holds the EB at this point. Checks the
   -- ImmutableDB against the LeiosDB when the ChainDB opens.
@@ -127,7 +128,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> EndorserBlock -> LocalFills -> m (Promise m [TxOffset])
+      LeiosPoint -> EndorserBlock -> LocalFills -> m (Promise m (Set TxOffset))
   -- ^ Persist an EB body at this point, recording the point. Every point holds
   -- its own body and txs, even when another point names the same EB.
   --
@@ -145,26 +146,23 @@ data LeiosDbWriter m = LeiosDbWriter
   -- The LeiosDB allocates the closure at the size the body declares.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m [TxOffset])
-  -- ^ Persist tx bodies for the EB at this point, and only there. Whether that
-  -- completes the EB is for the caller to know: the LeiosDB does not track it.
-  --
-  -- Each transaction is given by its offset into the EB body and its bytes.
-  --
-  -- ASSUMPTION: the EB body must already be written, otherwise the txs are dropped.
+      LeiosPoint -> Map TxOffset ByteString -> m (Promise m (Set TxOffset))
+  -- ^ Persist the bytes of txs, by offset into the EB body, for the EB at this
+  -- point, and only there. Whether that completes the EB is for the caller to
+  -- know: the LeiosDB does not track it.
   --
   -- ASSUMPTION: each transaction's bytes hash to the tx hash the EB body lists
   -- at its offset. The implementations do not check this.
   --
-  -- A transaction may be dropped by the implementation if:
-  -- - is not in the body,
-  -- - or its size is not the declared one.
+  -- All of them are dropped if the point holds no body: none was written
+  -- there, or the point is older than the promoted slot, so a garbage
+  -- collection deletes it anyway. One is dropped if its offset is not in the
+  -- body, or its size is not the one the body declares.
   --
   -- A transaction written again overwrites itself, with the same bytes.
   --
-  -- Returns the offsets of the transactions dropped because the EB referenced
-  -- them with another size: no such closure can be stored, and an honest peer
-  -- never serves one.
+  -- Returns the offsets of the transactions dropped for their size: no such
+  -- closure can be stored, and an honest peer never serves one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
@@ -183,7 +181,7 @@ awaitAll = traverse_ await
 
 -- | Fills from local bytes: fill the EB's tx at each offset from the tx's
 -- 'TxLocation' at another point. See 'writeEbBody'.
-type LocalFills = IntMap {- TxOffset -} TxLocation
+type LocalFills = Map TxOffset TxLocation
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader
@@ -209,7 +207,7 @@ allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) clo
 storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
 storeForgedEb writer slot forgedEb = do
   _ <- writeEbBody writer point body mempty
-  void $ writeTxs writer point (zip [0 ..] (toList (forgedEbTxs forgedEb)))
+  void $ writeTxs writer point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forgedEb))))
  where
   body = forgedEbBody forgedEb
   point = MkLeiosPoint slot (endorserBlockHash body)

@@ -30,6 +30,8 @@ import Control.Monad (join)
 import Control.Monad.Class.MonadThrow (onException)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
+import Data.Map.Strict (Map)
+import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
@@ -64,14 +66,14 @@ data WriteJob
       -- | the txs to fill from local bytes
       !LocalFills
       -- | where the worker puts the offsets the point holds
-      !(ResolveWriteJob [TxOffset])
+      !(ResolveWriteJob (Set TxOffset))
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
-      ![(TxOffset, ByteString)]
+      !(Map TxOffset ByteString)
       -- | where the worker reports the offsets that were dropped because they had the wrong size
-      !(ResolveWriteJob [TxOffset])
+      !(ResolveWriteJob (Set TxOffset))
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(ResolveWriteJob ())

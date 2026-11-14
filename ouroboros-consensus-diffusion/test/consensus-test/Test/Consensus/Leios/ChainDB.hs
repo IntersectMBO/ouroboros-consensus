@@ -14,6 +14,7 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Ouroboros.Consensus.Block
   ( Point
@@ -98,7 +99,7 @@ bodiesAfterGc = do
   withWriter leiosDb $ \writer ->
     forM_ [(pointA, ebA, txA), (pointB, ebB, txB)] $ \(point, eb, tx) -> do
       void $ await =<< writeEbBody writer point eb mempty
-      void $ await =<< writeTxs writer point [(0, tx)]
+      void $ await =<< writeTxs writer point (Map.singleton 0 tx)
   withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
@@ -149,7 +150,7 @@ afterCrash chain point aOnRestart = do
   writeClosureOfA db =
     withWriter db $ \writer -> do
       void $ await =<< writeEbBody writer point ebA mempty
-      void $ await =<< writeTxs writer point [(0, txA)]
+      void $ await =<< writeTxs writer point (Map.singleton 0 txA)
 
 -- | The node adds 'twoCertifiedChain' over a LeiosDB holding the closures of
 -- A and B, so both are promoted, and restarts after a crash over a LeiosDB that
@@ -181,7 +182,7 @@ lostRowBeforeAnother = do
   writeClosure db point eb tx =
     withWriter db $ \writer -> do
       void $ await =<< writeEbBody writer point eb mempty
-      void $ await =<< writeTxs writer point [(0, tx)]
+      void $ await =<< writeTxs writer point (Map.singleton 0 tx)
 
 -- | 'immutableChain', but its fourth block certifies B. With sixteen blocks,
 -- the immutable tip is past both certificates.
@@ -254,7 +255,7 @@ heldAcrossRestart whatOfA = do
             =<< writeTxs
               writer
               pointA
-              [(0, txA)]
+              (Map.singleton 0 txA)
   beforeRestart <- withNodeOverDBs nodeDBs leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20
@@ -331,7 +332,7 @@ tipWithClosureBeforeStart = do
         =<< writeTxs
           writer
           pointA
-          [(0, txA)]
+          (Map.singleton 0 txA)
   withNodeOver leiosDb $ \node -> do
     -- Let the slots of the chain's blocks pass, so none is from the future.
     threadDelay 20

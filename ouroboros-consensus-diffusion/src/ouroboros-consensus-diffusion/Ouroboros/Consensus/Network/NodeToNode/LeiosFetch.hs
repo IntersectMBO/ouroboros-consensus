@@ -16,7 +16,8 @@ import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
-import qualified Data.IntSet as IntSet
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
@@ -118,18 +119,16 @@ serveTxs ::
 serveTxs tracer reader point bitmaps = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
-  -- One row for each requested offset that the endorser block has, with its
-  -- bytes if the node holds them.
-  rows <- batchRetrieveTxs reader point offsets
-  case traverse (\(_offset, mbBytes) -> MkLeiosTx <$> mbBytes) rows of
-    Just txs | length txs == length offsets -> do
-      let n = length txs
+  -- The bytes of each requested offset the node holds.
+  held <- batchRetrieveTxs reader point (Set.fromList offsets)
+  if Map.size held == length offsets
+    then do
+      let txs = map MkLeiosTx (Map.elems held)
+          n = length txs
       traceWith tracer $
         TraceLeiosFetchServerTxsServed point n (sum [BS.length (leiosTxBytes tx) | tx <- txs])
       pure $ V.fromListN n txs
-    _ -> do
-      let held = IntSet.fromList [offset | (offset, Just _bytes) <- rows]
-      throwIO $ ExnLeiosUnknownTxsRequested point (filter (`IntSet.notMember` held) offsets)
+    else throwIO $ ExnLeiosUnknownTxsRequested point (filter (`Map.notMember` held) offsets)
  where
   offsets = bitmapOffsets bitmaps
 

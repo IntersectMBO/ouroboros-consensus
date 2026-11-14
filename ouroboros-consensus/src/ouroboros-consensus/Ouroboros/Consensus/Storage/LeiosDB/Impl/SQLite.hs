@@ -44,6 +44,7 @@ import Control.ResourceRegistry
   )
 import Control.Tracer (Tracer, traceWith)
 import Data.IORef (newIORef, readIORef, writeIORef)
+import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Stack
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
@@ -270,11 +271,11 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
               pure Stop
             WriteEbBody point eb fills resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure [] else sqlInsertEbBody conn point eb fills
+              resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills
               pure Continue
             WriteTxs point txs resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure [] else sqlInsertTxs conn point txs
+              resolve =<< if promoted then pure Set.empty else sqlInsertTxs conn point txs
               pure Continue
             Flush resolve -> do
               resolve ()

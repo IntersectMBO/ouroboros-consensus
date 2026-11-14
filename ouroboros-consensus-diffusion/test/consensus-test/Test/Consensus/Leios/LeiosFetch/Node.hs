@@ -188,7 +188,7 @@ heldTx = MkLeiosTx . heldTxBytes
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
   _ <- await =<< writeEbBody writer heldPoint heldEb mempty
-  _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
+  _ <- await =<< writeTxs writer heldPoint (Map.fromList [(i, heldTxBytes i) | i <- [0 .. 68]])
   pure ()
 
 {-------------------------------------------------------------------------------

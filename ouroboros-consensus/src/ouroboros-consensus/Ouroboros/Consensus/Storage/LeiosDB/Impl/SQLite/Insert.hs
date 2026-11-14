@@ -15,12 +15,11 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (forM, forM_, unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.IntSet as IntSet
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
@@ -70,7 +69,7 @@ sqlInsertEbBody ::
   LeiosPoint ->
   EndorserBlock ->
   LocalFills ->
-  IO [TxOffset]
+  IO (Set TxOffset)
 sqlInsertEbBody conn point eb fills = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
@@ -78,22 +77,21 @@ sqlInsertEbBody conn point eb fills = do
     inserted <- insertWithBody
     -- Nothing inserted: the point holds the body of an earlier delivery, and
     -- the txs written since.
-    atPoint <- if inserted > 0 then pure IntSet.empty else markedAtPoint
+    atPoint <- if inserted > 0 then pure Set.empty else markedAtPoint
     filled <- readLocalFills
-    let toWrite = IntMap.toAscList (filled `IntMap.withoutKeys` atPoint)
+    let toWrite = filled `Map.withoutKeys` atPoint
     dropped <- writeTxBytes conn point toWrite
-    let written = IntSet.fromList (map fst toWrite) `IntSet.difference` IntSet.fromList dropped
-    pure (inserted, IntSet.toAscList (atPoint <> written))
+    pure (inserted, atPoint <> (Map.keysSet toWrite `Set.difference` dropped))
   bumpVolatileStats conn inserted
   pure held
  where
   -- The offsets of the txs marked written at the point.
   markedAtPoint =
     lookupEbIndex db point >>= \case
-      Nothing -> pure IntSet.empty
+      Nothing -> pure Set.empty
       Just ix@EbIndex{eiTxCount = n} -> do
         txWritten <- readTxWritten db ix 0 (n - 1)
-        pure $ IntSet.fromList [o | o <- [0 .. n - 1], isWritten txWritten o]
+        pure $ Set.fromDistinctAscList [o | o <- [0 .. n - 1], isWritten txWritten o]
 
   -- The bytes of the fills, by offset in this body: those the node holds that
   -- hash to the tx this body lists there. Writing them drops those of another
@@ -101,39 +99,38 @@ sqlInsertEbBody conn point eb fills = do
   -- ascending offsets, as each blob handle walks the blob's pages from its
   -- start.
   readLocalFills =
-    fmap IntMap.unions $ forM (Map.toList bySource) $ \(srcPoint, wanted) -> do
-      srcTxs <- readFromSource srcPoint (IntMap.keysSet wanted)
+    fmap Map.unions $ forM (Map.toList bySource) $ \(srcPoint, wanted) -> do
+      srcTxs <- readFromSource srcPoint (Map.keysSet wanted)
       pure $
-        IntMap.fromList
+        Map.fromList
           [ (txOffset, tx)
-          | (srcOffset, txOffsets) <- IntMap.toList wanted
-          , Just tx <- [IntMap.lookup srcOffset srcTxs]
+          | (srcOffset, txOffsets) <- Map.toList wanted
+          , Just tx <- [Map.lookup srcOffset srcTxs]
           , txOffset <- txOffsets
-          , Just (txHash, _size) <- [IntMap.lookup txOffset refsByOffset]
+          , Just (txHash, _size) <- [Map.lookup txOffset refsByOffset]
           , hashLeiosTx (MkLeiosTx tx) == txHash
           ]
 
   -- The fills by source, then by offset in the source, excluding the fills
   -- that are beyond the end of the body.
-  bySource :: Map LeiosPoint (IntMap [TxOffset])
+  bySource :: Map LeiosPoint (Map TxOffset [TxOffset])
   bySource =
     Map.fromListWith
-      (IntMap.unionWith (<>))
-      [ (srcPoint, IntMap.singleton srcOffset [txOffset])
-      | (txOffset, MkTxLocation srcPoint srcOffset) <- IntMap.toList fills
+      (Map.unionWith (<>))
+      [ (srcPoint, Map.singleton srcOffset [txOffset])
+      | (txOffset, MkTxLocation srcPoint srcOffset) <- Map.toList fills
       , srcOffset >= 0
-      , IntMap.member txOffset refsByOffset
+      , Map.member txOffset refsByOffset
       ]
 
   -- The written txs at these offsets of the source point.
   readFromSource srcPoint wanted =
     lookupEbIndex db srcPoint >>= \case
-      Nothing -> pure IntMap.empty
-      Just ix@EbIndex{eiTxCount} -> do
-        txs <- readTxBytes db ix (IntSet.toAscList (IntSet.filter (< eiTxCount) wanted))
-        pure $ IntMap.fromList [(o, tx) | (o, Just tx) <- txs]
+      Nothing -> pure Map.empty
+      Just ix@EbIndex{eiTxCount} ->
+        readTxBytes db ix (Set.toAscList (Set.filter (< eiTxCount) wanted))
 
-  refsByOffset = IntMap.fromList (zip [0 ..] refs)
+  refsByOffset = Map.fromList (zip [0 ..] refs)
 
   insertWithBody =
     withStmt
@@ -168,11 +165,11 @@ sqlInsertTxs ::
   -- | The EB the txs belong to
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
-  [(TxOffset, ByteString)] ->
-  IO [TxOffset]
-sqlInsertTxs conn point txBytesWithOffsets =
+  Map TxOffset ByteString ->
+  IO (Set TxOffset)
+sqlInsertTxs conn point txBytesByOffset =
   dbWithWriteTransaction conn $
-    writeTxBytes conn point txBytesWithOffsets
+    writeTxBytes conn point txBytesByOffset
 
 -- | Write txs into the closure of the EB at the point, and mark them written,
 -- within the caller's transaction, and return the offsets of those dropped for
@@ -180,29 +177,27 @@ sqlInsertTxs conn point txBytesWithOffsets =
 -- transaction is dropped if:
 --
 -- * the EB's body is not stored;
--- * its offset is not in the body, or earlier in the same write;
+-- * its offset is not in the body;
 -- * or its size is not the declared one.
-writeTxBytes :: Conn -> LeiosPoint -> [(TxOffset, ByteString)] -> IO [TxOffset]
-writeTxBytes conn point txBytesWithOffsets =
+writeTxBytes :: Conn -> LeiosPoint -> Map TxOffset ByteString -> IO (Set TxOffset)
+writeTxBytes conn point txBytesByOffset =
   lookupEbIndex db point >>= \case
-    Nothing -> pure []
+    Nothing -> pure Set.empty
     Just ix@EbIndex{eiRowid, eiTxCount = n} -> do
       bounds <- readTxBounds db ix 0 (n - 1)
       let start i = boundAt bounds i
           end i = boundAt bounds (i + 1)
-          inBody = [tx | tx@(txOffset, _) <- txBytesWithOffsets, txOffset >= 0, txOffset < n]
-          sized (txOffset, txBytes) = BS.length txBytes == end txOffset - start txOffset
-          accepted =
-            IntMap.toAscList $
-              IntMap.fromListWith (\_new old -> old) (filter sized inBody)
-          runs = consecutiveRuns fst accepted
-      unless (null accepted) $ do
+          inBody = Map.filterWithKey (\txOffset _ -> txOffset >= 0 && txOffset < n) txBytesByOffset
+          sized txOffset txBytes = BS.length txBytes == end txOffset - start txOffset
+          (accepted, missized) = Map.partitionWithKey sized inBody
+          runs = consecutiveRuns fst (Map.toAscList accepted)
+      unless (Map.null accepted) $ do
         withBlob db "ebs" "txs" eiRowid True $ \blob ->
           forM_ runs $ \run ->
             withDie db (DB.blobWrite blob (BS.concat (map snd (NE.toList run))) (start (fst (NE.head run))))
         withBlob db "ebs" "txWritten" eiRowid True $ \blob ->
           forM_ runs $ \run ->
             withDie db (DB.blobWrite blob (BS.replicate (NE.length run) 1) (fst (NE.head run)))
-      pure [txOffset | tx@(txOffset, _) <- inBody, not (sized tx)]
+      pure (Map.keysSet missized)
  where
   Conn{conVolDb = db} = conn
