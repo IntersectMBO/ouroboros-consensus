@@ -19,19 +19,28 @@
 -- 'newPureLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Reference" and
 -- 'newHashTableLeiosTxCache' from "Ouroboros.Consensus.Leios.TxCache.Optimized".
 --
--- == What it promises about the LeiosDb
+-- == Availability, validation and durability
 --
--- Nothing: its records are hints. A location it records for a tx need not hold
--- that tx in the LeiosDb. Once a point is older than the LeiosDb's promoted
--- slot, the LeiosDb's garbage collection deletes the point's txs, and a later
--- write of txs to that point stores none of them, though it settles as usual.
--- The cache evicts that point when LeiosFetch prunes to the immutable tip
--- ('evictOlderThanFoldl''), which can come after either.
+-- The cache retains reference metadata for the 128 freshest body-bearing
+-- points and indexes only transactions it holds. Announcements do not retain
+-- points; several points and bodies may reference the same transaction. See
+-- @docs/fetch-policy/leiosfetch-improved.md#cache-retention@.
 --
--- Offering a recorded location to the LeiosDb as a fill is safe anyway: the
--- LeiosDb copies a fill only if its bytes hash to the tx the body lists at that
--- offset (see 'Ouroboros.Consensus.Storage.LeiosDB.API.writeEbBody'), so a
--- stale or wrong location costs a fetch, never a wrong tx.
+-- Reference metadata does not establish target-body or closure possession.
+-- Fetch publishes held/validated state and target locations only for positively
+-- confirmed offsets. Validation facts captured from the mempool remain local
+-- preparation facts until the corresponding write is confirmed.
+--
+-- Locations are fill proposals, not storage pins: GC can remove a source before
+-- its target write. The database checks a fill against the target reference,
+-- so a stale or wrong location costs a fetch, never a wrong transaction. Only
+-- the target receipt establishes which offsets the target actually holds.
+-- Cache eviction makes publication for that point a no-op without invalidating
+-- an otherwise live positive receipt or redirecting it through another point.
+--
+-- Logical acquisition and its subscribers independently filter retirement.
+-- See @docs/fetch-policy/leiosfetch-improved.md#offers-and-local-possession@
+-- and @docs/fetch-policy/leiosfetch-improved.md#ownership-and-shutdown@.
 module Ouroboros.Consensus.Leios.TxCache
   ( module Ouroboros.Consensus.Leios.TxCache.API
   , newPureLeiosTxCache

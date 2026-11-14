@@ -115,6 +115,26 @@ tests =
         state <- atomically (readTVar (R.runtimeFacts rt))
         L.usage 0 (R.ledger state) @?= L.Usage 0 0 150
         Map.size (L.leases (R.ledger state)) @?= 150
+    , testCase "old network or local cleanup cannot erase a transferred replacement owner" $ withClient $ \rt client -> do
+        key <- admit client 0
+        state <- atomically (readTVar (R.runtimeFacts rt))
+        let point = case R.attemptWork (R.attempts state Map.! key) of L.Body p -> p; _ -> error "body fixture"
+        atomically (R.claimUseful rt key) >>= (@?= True)
+        token <- atomically (R.transferBodyClaim rt key) >>= maybe (fail "transfer") pure
+        atomically $ do
+          R.clearUnsubmitted rt key (bodyWork 0)
+          R.settleReceipt rt key (bodyWork 0)
+          R.closePeer rt 0
+        atomically (Map.lookup (L.Body point) . R.pending <$> readTVar (R.runtimeFacts rt))
+          >>= (@?= Just (R.LocalOwner token, False))
+        atomically $ R.settleLocalBody rt point token
+        replacement <- atomically (claimReceivedBody rt point) >>= maybe (fail "replacement") pure
+        assertBool "owner identities must never repeat" (replacement /= token)
+        atomically $ R.settleLocalBody rt point token
+        atomically (Map.lookup (L.Body point) . R.pending <$> readTVar (R.runtimeFacts rt))
+          >>= (@?= Just (R.LocalOwner replacement, False))
+        atomically $ R.settleLocalBody rt point replacement
+        atomically (Map.null . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)
     , testCase "local pending owner survives peer removal and blocks another writer" $ withClient $ \rt client -> do
         key <- admit client 0
         state <- atomically (readTVar (R.runtimeFacts rt))
@@ -124,9 +144,10 @@ tests =
         atomically $ do
           R.closePeer rt 0
           R.closePeer rt 0
-          R.acceptLocalBody rt point token
-          R.clearLocalBody rt token
-        atomically (Map.size . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= 1)
+          R.clearUnsubmitted rt key (bodyWork 0)
+        afterRemoval <- atomically (readTVar (R.runtimeFacts rt))
+        Map.lookup (L.Body point) (R.pending afterRemoval) @?= Just (R.LocalOwner token, False)
+        R.workEligible (L.Body point) afterRemoval @?= False
         atomically (R.settleLocalBody rt point token)
         atomically (Map.null . R.pending <$> readTVar (R.runtimeFacts rt)) >>= (@?= True)
     , testCase "progressive admission is authoritative for both body and TX copies" $
@@ -384,14 +405,15 @@ testPendingReadiness = withClient $ \rt client -> do
   takeRuntimeReady rt >>= (@?= False)
   token <- atomically (claimReceivedBody rt point) >>= maybe (fail "local claim") pure
   takeRuntimeReady rt >>= (@?= True)
-  atomically (R.acceptLocalBody rt point token >> R.acceptLocalBody rt point token)
+  atomically $ do
+    R.clearUnsubmitted rt key work
+    R.settleReceipt rt key work
   takeRuntimeReady rt >>= (@?= False)
   atomically (R.settleLocalBody rt point token)
   takeRuntimeReady rt >>= (@?= True)
   replacement <- atomically (claimReceivedBody rt point) >>= maybe (fail "replacement") pure
   _ <- takeRuntimeReady rt
   atomically $ do
-    R.acceptLocalBody rt point token
     R.settleLocalBody rt point token
     R.settleReceipt rt key work
     R.clearUnsubmitted rt key work
@@ -630,10 +652,9 @@ testTargetedClaims = withClient $ \rt old -> do
     R.clearUnsubmitted rt a (bodyWork 0)
     R.settleReceipt rt a (bodyWork 0)
     R.finishHandler old a (bodyWork 0) (Time 1)
-    R.acceptLocalBody rt point local
   st <- atomically (readTVar (R.runtimeFacts rt))
   R.pending st @?= Map.fromList
-    [(bodyWork 0, (R.NetworkOwner b, False)), (bodyWork 1, (R.LocalOwner local, True))]
+    [(bodyWork 0, (R.NetworkOwner b, False)), (bodyWork 1, (R.LocalOwner local, False))]
   Map.member b (L.leases (R.ledger st)) @?= True
   atomically $ do
     R.settleLocalBody rt point local

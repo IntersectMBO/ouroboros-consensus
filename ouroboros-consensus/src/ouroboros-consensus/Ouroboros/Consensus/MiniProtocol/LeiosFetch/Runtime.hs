@@ -15,8 +15,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime
   , transferBodyClaim
   , claimLocalForge
   , releaseLocalForge
-  , acceptLocalBody
-  , clearLocalBody
   , settleLocalBody
   , newRuntime
   , openClient
@@ -66,8 +64,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing (RttObservation)
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchLimit)
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (maxLeiosTxsRequestBytesSize)
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.Util.IOLike
 
 -- | Configuration/internal errors are explicit; a legal indivisible job can
@@ -128,9 +126,9 @@ data RuntimeState m peer = RuntimeState
   -- a lease after its physical credit has been released.
   , pending :: !(Map (L.Work LeiosPoint) (PendingOwner peer, Bool))
   -- ^ Work with a local submission/receipt owner, independently of network
-  -- credit. False means submission is not yet accepted; True means writer
-  -- acceptance has transferred settlement to a receipt task, so peer removal
-  -- must not clear the claim.
+  -- credit. For network owners, the flag records writer acceptance and protects
+  -- receipt-owned writes from handler cleanup. Local owners keep False: their
+  -- fixed body worker owns the token from pool admission through settlement.
   , localForges :: !(Set.Set LeiosPoint)
   -- ^ Known locally supplied payloads, including queued producers. Suppresses
   -- new body and TX dispatch; already-sent replies retain their physical debt.
@@ -398,8 +396,8 @@ commitRequest client@(Client rt peer _) key = do
   case (liveSession client st, Map.lookup key (attempts st)) of
     (Just session, Just attempt)
       | not closing
-      , Map.member key (L.leases (ledger st))
       , Set.notMember (L.workPoint (attemptWork attempt)) (localForges st)
+      , Map.member key (L.leases (ledger st))
       , not (committed attempt) -> do
           writeTVar
             (runtimeFacts rt)
@@ -796,7 +794,9 @@ closeClient client@(Client rt peer _) = do
     Nothing -> pure ()
 
 -- | Pending local acquisition is explicitly distinct from a network attempt.
--- Both are node-owned once a writer accepts; no fake peer identity is invented.
+-- A local body owner belongs to its bounded node operation from admission;
+-- a network TX owner transfers to its receipt at writer acceptance. Neither
+-- requires a fake peer identity.
 data PendingOwner peer = NetworkOwner !(L.AttemptKey peer) | LocalOwner !Natural
   deriving (Eq, Ord, Show)
 
@@ -841,27 +841,8 @@ transferBodyClaim rt key = do
           pure (Just token)
     _ -> pure Nothing
 
--- | After writer acceptance, transfer the matching local body claim to receipt
--- ownership. It must survive ordinary caller cleanup until its receipt task
--- settles; acceptance alone does not establish durable possession.
-acceptLocalBody ::
-  IOLike m => Runtime m peer -> LeiosPoint -> Natural -> STM m ()
-acceptLocalBody rt point token =
-  void $ modifyPending rt (L.Body point) (isLocalOwner token) (\_ -> Just True)
-
--- | Clean up a local body import that may not have reached writer acceptance.
--- Remove only unaccepted claims for this token; leave accepted claims to their
--- receipt task. Token-specific cleanup cannot erase a replacement claim.
-clearLocalBody :: IOLike m => Runtime m peer -> Natural -> STM m ()
-clearLocalBody rt token = do
-  modifyTVar (runtimeFacts rt) $ \st ->
-    st
-      { pending = Map.filter (\(owner, accepted) -> not (isLocalOwner token owner) || accepted) (pending st)
-      }
-  W.notifyReadiness (runtimeReady rt)
-
--- | Retire the matching local body claim when its receipt task finishes, then
--- wake planning. The captured point and expected token preserve newer owners;
+-- | Release the matching node-owned body token after settlement or
+-- abandonment, then wake planning. The captured point and expected token preserve newer owners;
 -- this releases ownership without declaring the body acquired.
 settleLocalBody ::
   IOLike m => Runtime m peer -> LeiosPoint -> Natural -> STM m ()

@@ -441,7 +441,7 @@ processLeiosBlock ownership ctx peer req bytes =
                                           Owned.submitWork
                                             (lfcBodyWork ctx)
                                             point
-                                            ( runUsefulBody ctx peer point eb now local (Just ownership)
+                                            ( runUsefulBody ctx peer point eb now (Just ownership)
                                                 `finally` atomically (R.settleLocalBody (lfcRuntime ctx) point local)
                                             )
                                         pure BodyQueued
@@ -512,10 +512,9 @@ runUsefulBody ::
   LeiosPoint ->
   EndorserBlock ->
   RelativeTime ->
-  Natural ->
   Maybe (ReplyOwnership m) ->
   m ()
-runUsefulBody ctx peer point eb now token ownership = do
+runUsefulBody ctx peer point eb now ownership = do
   needed <- bodyStillNeeded ctx point
   if not needed
     then traceUnusedBody ctx peer point eb
@@ -547,7 +546,6 @@ runUsefulBody ctx peer point eb now token ownership = do
             emit <- atomically (acceptedReply owner at)
             bodyWon owner (lebBodySize (leiosEbByteSizes eb))
             emit
-          atomically $ R.acceptLocalBody (lfcRuntime ctx) point token
           traceWith (lfcTracer ctx) $
             TraceLeiosFetchClientBlockTxSources
               point
