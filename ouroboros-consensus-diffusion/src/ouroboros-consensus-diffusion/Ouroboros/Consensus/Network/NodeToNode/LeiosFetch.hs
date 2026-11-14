@@ -27,8 +27,15 @@ import Ouroboros.Consensus.Leios.Types
   , Serialised (..)
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
-  ( LeiosFetchClientPeer
-  , leiosFetchClientPeerIdle
+  ( LeiosFetchClientPeerPipelined
+  , leiosFetchClientPeerPipelined
+  , toLeiosFetchClientPeerPipelined
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (nextLeiosFetchClientCommand)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
+  ( LeiosFetchKernel (..)
+  , LeiosFetchPeer (..)
+  , LeiosPeerLifetimeId
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
@@ -40,17 +47,21 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerE
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( Message (..)
   , TxBitmaps
-  , bitmapOffsets
+  , bitmapToOffsets
   )
-import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
+import Ouroboros.Consensus.Network.LeiosFetch
+  ( leiosFetchMiniProtocolNum
+  , leiosFetchPipelineDepth
+  , maxLeiosFetchIngressBytes
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
+  , IOLike
   , MonadCatch (..)
-  , MonadSTM (..)
   , MonadThrow (..)
   )
-import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
+import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolLimits (..)
@@ -59,18 +70,23 @@ import Ouroboros.Network.Mux
   , StartOnDemandOrEagerly (..)
   )
 
--- | The node's LeiosFetch client, which requests nothing yet and ends when the
--- node demotes the peer.
+-- | The node's LeiosFetch client, which sends the requests the node's
+-- decision loop assigns to the peer, and ends when the node demotes the peer.
 leiosFetchClient ::
-  MonadSTM m =>
+  (IOLike m, Ord peer) =>
+  LeiosFetchKernel m peer blk ->
   ControlMessageSTM m ->
-  LeiosFetchClientPeer LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
-leiosFetchClient controlMessageSTM =
-  leiosFetchClientPeerIdle $
-    controlMessageSTM >>= \case
-      Continue -> retry
-      Quiesce -> retry
-      Terminate -> pure ()
+  LeiosPeerLifetimeId peer ->
+  LeiosFetchPeer m blk ->
+  LeiosFetchClientPeerPipelined LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
+leiosFetchClient kernel controlMessageSTM lifetimeId peerVars =
+  toLeiosFetchClientPeerPipelined $
+    leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
+      nextLeiosFetchClientCommand
+        (lfkContext kernel)
+        controlMessageSTM
+        lifetimeId
+        (lfpRequestsToSend peerVars)
 
 -- | The node's LeiosFetch server, which serves endorser blocks and their
 -- transactions from the LeiosDB, through the connection's own reader.
@@ -130,7 +146,7 @@ serveTxs tracer reader point bitmaps = do
       pure $ V.fromListN n txs
     else throwIO $ ExnLeiosUnknownTxsRequested point (filter (`Map.notMember` held) offsets)
  where
-  offsets = bitmapOffsets bitmaps
+  offsets = bitmapToOffsets bitmaps
 
 -- | Trace an exception of the event's type that the action throws, then
 -- rethrow it.

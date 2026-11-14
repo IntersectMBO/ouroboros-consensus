@@ -25,6 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , ValidAnnouncement (..)
   , announcementValidity
   , announcingRbHash
+  , validHeaderAnnouncement
   , InvalidLeiosAnnouncementAgeLimits (..)
   , LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -39,7 +40,9 @@ import Control.Monad (when)
 import Control.Monad.Except (Except, ExceptT, liftEither, runExcept, throwError, withExcept)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (first)
+import Data.Maybe.Strict (StrictMaybe, strictMaybeToMaybe)
 import Data.Time.Clock (NominalDiffTime)
+import Data.Traversable (for)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -68,7 +71,12 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import Ouroboros.Consensus.Leios.Protocol
-import Ouroboros.Consensus.Leios.Types (ElectionId (..), RankingBlockHash, toRankingBlockHash)
+import Ouroboros.Consensus.Leios.Types
+  ( ElectionId (..)
+  , LeiosEbByteSizeBounds (..)
+  , RankingBlockHash
+  , toRankingBlockHash
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
@@ -231,14 +239,15 @@ deriving stock instance
 -- selected tip, and is never voted for; the asymmetry never yields a certified
 -- EB, so it is no Linear Leios availability violation.
 --
--- Returns the OCIN staleness.
+-- Returns the OCIN staleness, and the ledger's bounds on the announced
+-- endorser block, as of the announcement's slot.
 validateAnnouncementHeader ::
   forall blk.
   LedgerSupportsProtocol blk =>
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
-  Except (AnnouncementInvalidity blk) OCINStaleness
+  Except (AnnouncementInvalidity blk) (OCINStaleness, LeiosEbByteSizeBounds)
 validateAnnouncementHeader cfg extLedger ancHdr = do
   -- 'forecastFor' does not reject a slot below its anchor (the immutable
   -- tip's slot) — that is a precondition violation, not 'OutsideForecastRange'
@@ -262,15 +271,22 @@ validateAnnouncementHeader cfg extLedger ancHdr = do
   -- opcert counters only yield 'StaleOCIN', never a false rejection.
   let tickedHeaderState =
         tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
-  withExcept HeaderInvalid $
-    validateLeiosAnnouncement
-      (configConsensus cfg)
-      (validateView (configBlock cfg) hdr)
-      slot
-      (tickedHeaderStateChainDep tickedHeaderState)
+  staleness <-
+    withExcept HeaderInvalid $
+      validateLeiosAnnouncement
+        (configConsensus cfg)
+        (validateView (configBlock cfg) hdr)
+        slot
+        (tickedHeaderStateChainDep tickedHeaderState)
+  pure (staleness, ebBoundsOf (getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView))
  where
   hdr = ancHeader ancHdr
   slot = blockSlot hdr
+
+-- | The ledger's bounds on an endorser block, given the Leios part of its
+-- ledger view: an era without Leios admits none.
+ebBoundsOf :: Maybe LeiosLedgerView -> LeiosEbByteSizeBounds
+ebBoundsOf = maybe (MkLeiosEbByteSizeBounds 0 0) leiosEbByteSizeBounds
 
 -- | Validate a relayed announcement, after the peer's per-election counting
 -- checks have passed.
@@ -318,7 +334,7 @@ announcementValidity ageLimits systemTime futureCheck cfg immLedger ancHdr = do
   let age = diffRelTime now onset
   when (age > maxAnnouncementAgeRecv ageLimits) $
     throwError Announcements.ErrTooOld
-  staleness <-
+  (staleness, ebBounds) <-
     liftEither . first Announcements.ErrInvalid . runExcept $
       validateAnnouncementHeader cfg immLedger ancHdr
   pure
@@ -327,7 +343,38 @@ announcementValidity ageLimits systemTime futureCheck cfg immLedger ancHdr = do
       , announcementOnset = onset
       , announcementAge = age
       , announcementStaleness = staleness
+      , announcementEbBounds = ebBounds
       }
+
+-- | The announcement a header carries, if any, once the header is known to be
+-- valid: ChainSync validated it as an extension of the peer's chain, or the
+-- node's own forge built it on the node's selection.
+--
+-- Validating a header as an extension of its chain checks all that
+-- 'announcementValidity' does and more, and the forge builds only headers that
+-- would pass. That chain extends the immutable tip, so the header's operational
+-- certificate is not revoked there either.
+validHeaderAnnouncement ::
+  (Monad m, BlockSupportsProtocol blk) =>
+  SystemTime m ->
+  TopLevelConfig blk ->
+  Header blk ->
+  -- | the onset of the header's slot
+  RelativeTime ->
+  -- | the Leios part of the ledger view at the header's slot
+  StrictMaybe LeiosLedgerView ->
+  m (Maybe (ValidAnnouncement blk))
+validHeaderAnnouncement systemTime cfg hdr onset leiosView =
+  for (mkAnnouncingHeader cfg hdr) $ \anc -> do
+    now <- systemTimeCurrent systemTime
+    pure
+      MkValidAnnouncement
+        { announcingHeader = anc
+        , announcementOnset = onset
+        , announcementAge = diffRelTime now onset
+        , announcementStaleness = FreshOCIN
+        , announcementEbBounds = ebBoundsOf (strictMaybeToMaybe leiosView)
+        }
 
 -- | A valid announcement, and what 'announcementValidity' learns about it.
 data ValidAnnouncement blk = MkValidAnnouncement
@@ -337,16 +384,19 @@ data ValidAnnouncement blk = MkValidAnnouncement
   , announcementAge :: !NominalDiffTime
   -- ^ How long after that onset the announcement arrived.
   , announcementStaleness :: !OCINStaleness
+  , announcementEbBounds :: !LeiosEbByteSizeBounds
+  -- ^ The ledger's bounds on the announced endorser block, as of the
+  -- announcement's slot: what a receiving node holds an offer at its point to.
   }
 
 -- | How old an announcement may be, by the wall-clock onset of its slot.
 --
--- An honest node relays an announcement until it is 'maxAnnouncementAgeSend'
--- old. Its downstream peer rejects what is older than its own
--- 'maxAnnouncementAgeRecv', and what is in a slot before its immutable tip. So
--- the configuration must ensure, for every node and each of its downstream
--- peers, that both of these exceed the node's 'maxAnnouncementAgeSend' by more
--- than a margin:
+-- An honest node relays an announcement, and offers at its point, until it is
+-- 'maxAnnouncementAgeSend' old. Its downstream peer rejects what is older than
+-- its own 'maxAnnouncementAgeRecv', and what is in a slot before its immutable
+-- tip. So the configuration must ensure, for every node and each of its
+-- downstream peers, that both of these exceed the node's
+-- 'maxAnnouncementAgeSend' by more than a margin:
 --
 -- - the downstream peer's 'maxAnnouncementAgeRecv';
 -- - how old the downstream peer's immutable tip always is, by the onset of its
@@ -385,7 +435,7 @@ data LeiosAnnouncementAgeLimits
     UnsafeMkLeiosAnnouncementAgeLimits !NominalDiffTime !NominalDiffTime
   deriving stock (Eq, Show)
 
--- | Do not relay an announcement older than this.
+-- | Do not relay an announcement older than this, nor offer at its point.
 maxAnnouncementAgeSend :: LeiosAnnouncementAgeLimits -> NominalDiffTime
 maxAnnouncementAgeSend (UnsafeMkLeiosAnnouncementAgeLimits send _recv) = send
 

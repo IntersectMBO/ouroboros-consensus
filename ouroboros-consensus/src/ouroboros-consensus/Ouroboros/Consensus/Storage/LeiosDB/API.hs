@@ -19,32 +19,25 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , awaitAll
   , withWriter
   , allocateWriter
-  , storeForgedEb
   , LocalFills
   , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Monad (void)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
-import Data.Foldable (toList, traverse_)
+import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
-  , ForgedEndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised
   , TxLocation
   , TxOffset
-  , endorserBlockHash
-  , forgedEbBody
-  , forgedEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
@@ -197,20 +190,3 @@ allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) clo
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter
-
--- | Write an endorser block that this node forged to the LeiosDB.
---
--- The slot is the slot of the ranking block that announces the endorser block.
--- That ranking block must announce the 'endorserBlockHash' and the
--- 'encodeEndorserBlockSize' of the endorser block body.
---
--- This function does not await the writes. On SQLite, it blocks while the
--- write queue is full, and if a write fails, the node stops. Peers can get the
--- header before the endorser block is stored.
-storeForgedEb :: Monad m => LeiosDbWriter m -> SlotNo -> ForgedEndorserBlock -> m ()
-storeForgedEb writer slot forgedEb = do
-  _ <- writeEbBody writer point body mempty
-  void $ writeTxs writer point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forgedEb))))
- where
-  body = forgedEbBody forgedEb
-  point = MkLeiosPoint slot (endorserBlockHash body)
