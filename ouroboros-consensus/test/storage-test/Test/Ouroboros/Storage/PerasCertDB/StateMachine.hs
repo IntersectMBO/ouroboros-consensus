@@ -37,7 +37,6 @@ import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
-  , WithBoostedBlockStatus
   )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -76,7 +75,7 @@ instance StateModel Model where
     AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
     GetLatestCertSeen ::
-      Action Model (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert TestBlock))))
+      Action Model (Maybe (WithArrivalTime (ValidatedPerasCert TestBlock)))
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
