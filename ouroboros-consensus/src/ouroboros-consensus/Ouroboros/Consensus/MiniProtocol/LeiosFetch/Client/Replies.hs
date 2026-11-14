@@ -444,7 +444,7 @@ settleBody ctx source point eb now bodyWritten = do
           )
   -- These bytes are durable now: advertise them as fill sources for later
   -- endorser blocks referencing the same txs.
-  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- heldOffs]
+  setTxLocations lfcTxCache point [(off, fst (refs IntMap.! off)) | off <- Set.toList heldOffs]
   void $ tryPutMVar lfcReady ()
   mapM_ (traceWith lfcTracer) traces
  where
@@ -482,7 +482,9 @@ acquireCachedBody ::
 acquireCachedBody ctx point bounds =
   lookupBody lfcTxCache (pointEbHash point) >>= \case
     Nothing -> pure ()
-    Just packed -> case deserialiseEndorserBlock (Proxy @DijkstraEra) (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
+    Just packed -> case deserialiseEndorserBlock
+      (Proxy @DijkstraEra)
+      (Serialised (BSL.fromStrict (SBS.fromShort (pebBytes packed)))) of
       -- They decoded when the body arrived. The point is then fetched like any
       -- other.
       Left _failure -> pure ()
@@ -590,7 +592,12 @@ settleForgedEb ctx point eb now written = do
 
 -- | Prepend a tx's location, if it has one, as a fill of its offset.
 snocLocated ::
-  [(TxOffset, TxLocation)] -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> [(TxOffset, TxLocation)]
+  [(TxOffset, TxLocation)] ->
+  TxOffset ->
+  TxHash ->
+  BytesSize ->
+  Maybe TxLocation ->
+  [(TxOffset, TxLocation)]
 snocLocated acc off _txh _sz = \case
   Just loc -> (off, loc) : acc
   Nothing -> acc
@@ -642,7 +649,8 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       IntMap.traverseWithKey
         (\i job -> checkJobCommitment point aligned (Jobs.MkLeiosJobId i) job)
         pendingJobs
-  txsWritten <- writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
+  txsWritten <-
+    writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
   arrival <-
     withLockedInsertUnappliedTx lfcTxCache $ \w0 step ->
       foldM (\w (_off, txHash, bytes) -> step w txHash (fromIntegral (BS.length bytes)) ()) w0 toIngest

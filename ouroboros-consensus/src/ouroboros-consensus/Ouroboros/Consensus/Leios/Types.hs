@@ -94,14 +94,12 @@ import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
 import Cardano.Ledger.Binary
-  ( Annotator (..)
-  , DecCBOR (..)
+  ( DecCBOR (..)
   , DecoderError (..)
   , EncCBOR (..)
   , Version
   , decodeFullAnnotator
   , getVersion64
-  , toPlainDecoder
   , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
@@ -119,6 +117,7 @@ import Cardano.Ledger.Hashes
   , unsafeMakeSafeHash
   )
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.MemoBytes (getMemoRawBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
@@ -131,6 +130,7 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import Data.ByteString.Short (ShortByteString)
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
@@ -356,14 +356,6 @@ forgeLeiosEb parity txBytes =
     , forgedEbTxsParity = parity
     }
 
--- | Where a transaction's durable bytes live: an endorser block point that
--- references it, and its offset there. A later endorser block point referencing
--- the same transaction copies the bytes from there rather than fetching them
--- again. A stale location is harmless: if the bytes are gone, nothing is copied
--- and the transaction is fetched.
-data TxLocation = MkTxLocation !LeiosPoint !TxOffset
-  deriving stock (Eq, Show)
-
 -- | The protocol version a tx was validated under, modulo 2. A tx stays
 -- cached for less than an epoch, so it sees at most one version change, and the
 -- parity tells whether its validation still holds.
@@ -527,8 +519,8 @@ encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBy
 
 -- | 'endorserBlockBytes', sharing the endorser block's own array of them rather
 -- than copying them.
-endorserBlockShortBytes :: EndorserBlock -> SBS.ShortByteString
-endorserBlockShortBytes (MkEndorserBlock (Ledger.MkEbReferences (Memo _references bytes))) = bytes
+endorserBlockShortBytes :: EndorserBlock -> ShortByteString
+endorserBlockShortBytes (MkEndorserBlock references) = getMemoRawBytes references
 
 -- | What the ledger's bounds on an endorser block measure.
 data LeiosEbSizes = MkLeiosEbSizes
