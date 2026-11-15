@@ -232,7 +232,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           NotOrigin tip -> ImmutableDB.tipIsEBB tip
       )
       (Query.getAnyKnownBlock immutableDB volatileDB)
-      (Query.getKnownEndorserBlock leiosDb)
+      (Query.getKnownEndorserBlock @blk leiosDb)
       ledgerDbGetVolatileSuffix
 
   lift $ do

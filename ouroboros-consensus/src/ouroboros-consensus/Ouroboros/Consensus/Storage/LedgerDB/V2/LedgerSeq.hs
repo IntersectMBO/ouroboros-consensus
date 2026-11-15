@@ -57,7 +57,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsLeios (ApplyEndorserBlock)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -238,8 +237,8 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyEndorserBlock l blk) =>
-  ResolveEndorserBlock m blk ->
+  (IOLike m, ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState) =>
+  ResolveEndorserBlock m ->
   LedgerDbCfg l blk ->
   blk ->
   LedgerSeq m l blk ->
@@ -251,10 +250,10 @@ reapplyThenPush doResolveEb cfg ap db = do
   pure db'
 
 reapplyBlock ::
-  (ApplyEndorserBlock l blk, IOLike m) =>
+  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
-  ResolveEndorserBlock m blk ->
+  ResolveEndorserBlock m ->
   blk ->
   LedgerSeq m l blk ->
   m (StateRef m l blk)

@@ -114,7 +114,7 @@ openLedgerDB args immutableDB replayGoal =
                   (\_ -> pure (error "no stream"))
                   -- TODO Resolve endorser blocks from the node's LeiosDB, to
                   -- analyse blocks containing Leios certificates.
-                  (\_ _ -> error "no LeiosDB")
+                  (\_ -> error "no LeiosDB")
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
