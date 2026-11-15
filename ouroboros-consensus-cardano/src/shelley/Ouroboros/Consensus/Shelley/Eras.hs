@@ -67,6 +67,7 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
+import Control.DeepSeq (force)
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure, ValidationPolicy (ValidateAll))
 import Data.ByteString (ByteString)
@@ -321,8 +322,10 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
     DoNotIntervene -> withPhase2Validity L.Phase2Valid
     Intervene -> SL.unwrapMempoolTx tx
 
-  withPhase2Validity validity =
-    SL.unwrapMempoolTx tx & Core.isPhase2ValidTxL .~ validity
+  -- Setting the flag re-memoizes the transaction, so only a wrong flag is set.
+  withPhase2Validity validity
+    | SL.unwrapMempoolTx tx ^. Core.isPhase2ValidTxL == validity = SL.unwrapMempoolTx tx
+    | otherwise = force $ SL.unwrapMempoolTx tx & Core.isPhase2ValidTxL .~ validity
 
   handler e = case (wti, e) of
     (DoNotIntervene, err)
