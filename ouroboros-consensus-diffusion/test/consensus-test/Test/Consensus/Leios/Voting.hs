@@ -29,6 +29,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as Text
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
 import Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
@@ -85,6 +86,7 @@ import Test.Consensus.Leios.TestBlock
   , heavyEbTx
   , inapplicableEbTx
   , invalidEbTx
+  , invalidEbTxError
   , setAnnouncement
   , successorLeiosBlock
   )
@@ -130,7 +132,7 @@ tests =
         let Outcome{down, notVoted} =
               runVoting voting{closures = [(2, someAnnouncingBlock, [invalidEbTx])]}
         votes down @?= []
-        notVoted @?= [EbInvalid "invalid endorsed transaction"]
+        notVoted @?= [EbInvalid (Text.pack (show invalidEbTxError))]
     , testCase "the node does not vote for an endorser block with a transaction that does not apply" $ do
         let Outcome{down, notVoted} =
               runVoting voting{closures = [(2, someAnnouncingBlock, [inapplicableEbTx])]}
@@ -187,6 +189,11 @@ tests =
         validated @?= [(0, 1)]
     , testCase "the node records the transactions it validated in full" $ do
         let Outcome{validatedAfter} = runVoting voting
+        validatedAfter @?= Map.singleton (txHashOf 0) EvenProtVer
+    , testCase "the node records the transactions it validated before one that does not decode" $ do
+        let Outcome{notVoted, validatedAfter} =
+              runVoting voting{closures = [(2, someAnnouncingBlock, validTxs <> [invalidEbTx])]}
+        notVoted @?= [EbInvalid (Text.pack (show invalidEbTxError))]
         validatedAfter @?= Map.singleton (txHashOf 0) EvenProtVer
     ]
 

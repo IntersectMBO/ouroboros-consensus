@@ -931,6 +931,9 @@ instance BlockSupportsLeios TestBlock where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  decodeEbTx = defaultDecodeEbTx
+  ebTxsProtVerParity = defaultEbTxsProtVerParity
+  assumeValidatedEbTx = defaultAssumeValidatedEbTx
 
 {-------------------------------------------------------------------------------
   Corruption

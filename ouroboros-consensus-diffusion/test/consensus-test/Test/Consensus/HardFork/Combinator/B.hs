@@ -65,7 +65,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
@@ -388,8 +387,6 @@ data instance Validated (GenTx BlockB)
 
 type instance ApplyTxErr BlockB = Void
 
-instance LedgerSupportsEndorserBlocks BlockB
-
 instance LedgerSupportsMempool BlockB where
   applyTx = \_ _ _wti tx -> case tx of {}
   reapplyTx = \_ _ vtx -> case vtx of {}
@@ -497,6 +494,9 @@ instance BlockSupportsLeios BlockB where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  decodeEbTx = defaultDecodeEbTx
+  ebTxsProtVerParity = defaultEbTxsProtVerParity
+  assumeValidatedEbTx = defaultAssumeValidatedEbTx
 
 deriving via
   SelectViewDiffusionPipelining BlockB

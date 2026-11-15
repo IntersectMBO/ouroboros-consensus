@@ -23,20 +23,20 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
 import Control.Arrow ((+++))
 import Control.Monad.Except
-import Data.ByteString (ByteString)
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
+import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Tele
-import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -44,14 +44,15 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
+import Ouroboros.Consensus.HardFork.Combinator.Block (Header (HardForkHeader))
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Types (SerialisedEndorserBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 import Ouroboros.Network.Tx (HasRawTxId (..))
@@ -613,34 +614,61 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
   Endorser blocks
 -------------------------------------------------------------------------------}
 
--- | A closure is in the era of the announcing block's ledger state.
 instance
   ( CanHardFork xs
   , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
-  , All LedgerSupportsEndorserBlocks xs
   ) =>
-  LedgerSupportsEndorserBlocks (HardForkBlock xs)
+  BlockSupportsLeios (HardForkBlock xs)
   where
-  decodeEbTx ::
-    forall mk.
-    TickedLedgerState (HardForkBlock xs) mk ->
-    ByteString ->
-    Either Text (GenTx (HardForkBlock xs))
-  decodeEbTx (TickedHardForkLedgerState _transition hardForkState) bytes =
-    hcollapse $ hcimap (Proxy @LedgerSupportsEndorserBlocks) decodeIn hardForkState
+  blockLeiosCert =
+    hcollapse
+      . hcmap proxySingle (K . blockLeiosCert . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+  ledgerAnnouncedLeiosPoint =
+    hcollapse
+      . hcmap proxySingle (K . ledgerAnnouncedLeiosPoint . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
+
+  applyEndorserBlock ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m (Either DecoderError (LedgerState (HardForkBlock xs) DiffMK))
+  applyEndorserBlock cfg readTables serialised (HardForkLedgerState st) =
+    unComp . fmap HardForkLedgerState . State.sequenceHardForkState $
+      hcizipWith proxySingle applyIn cfgs st
    where
-    decodeIn ::
-      LedgerSupportsEndorserBlocks x =>
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    applyIn ::
+      SingleEraBlock x =>
       Index xs x ->
-      FlipTickedLedgerState mk x ->
-      K (Either Text (GenTx (HardForkBlock xs))) x
-    decodeIn index (FlipTickedLedgerState st) = K $ injectGenTx index <$> decodeEbTx st bytes
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      ((m :.: Either DecoderError) :.: Flip LedgerState DiffMK) x
+    applyIn idx (WrapLedgerConfig cfg') (Flip st') =
+      Comp . Comp . fmap (fmap Flip) $
+        applyEndorserBlock
+          cfg'
+          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          serialised
+          st'
+
+  decodeEbTx (HardForkHeader (OneEraHeader hdr)) tx =
+    hcollapse $
+      hcimap proxySingle (\idx hdr' -> K $ injectGenTx idx <$> decodeEbTx hdr' tx) hdr
 
   ebTxsProtVerParity (TickedHardForkLedgerState _transition hardForkState) =
     hcollapse $
       hcmap
-        (Proxy @LedgerSupportsEndorserBlocks)
+        proxySingle
         (\(FlipTickedLedgerState st) -> K (ebTxsProtVerParity st))
         hardForkState
 
@@ -653,7 +681,7 @@ instance
       case matchTx tx hardForkState of
         Left _mismatch -> Nothing
         Right matched ->
-          hcollapse $ hcizipWith (Proxy @LedgerSupportsEndorserBlocks) assumeIn cfgs matched
+          hcollapse $ hcizipWith proxySingle assumeIn cfgs matched
      where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
       cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
@@ -664,7 +692,7 @@ instance
           hardForkState
 
       assumeIn ::
-        LedgerSupportsEndorserBlocks x =>
+        SingleEraBlock x =>
         Index xs x ->
         WrapLedgerConfig x ->
         Product (FlipTickedLedgerState ValuesMK) GenTx x ->

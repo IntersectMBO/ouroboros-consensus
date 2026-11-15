@@ -83,7 +83,6 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
   ( byronBlockEncodingOverhead
   )
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
@@ -118,9 +117,6 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 
 -- orphaned instance
 instance ShowProxy CC.ApplyMempoolPayloadErr
-
--- | Byron has no endorser blocks.
-instance LedgerSupportsEndorserBlocks ByronBlock
 
 instance LedgerSupportsMempool ByronBlock where
   -- Check that the annotation is the canonical encoding. This is currently

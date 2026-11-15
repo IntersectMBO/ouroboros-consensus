@@ -59,6 +59,7 @@ import Data.Traversable (for)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
+  , BlockSupportsLeios (..)
   , ConvertRawHash
   , SlotNo
   , blockSlot
@@ -80,7 +81,6 @@ import Ouroboros.Consensus.Ledger.Abstract
   )
 import Ouroboros.Consensus.Ledger.Basics (TickedLedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , GenTx
@@ -114,7 +114,6 @@ import Ouroboros.Consensus.Leios.Protocol
   )
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint (..)
-  , LeiosTx (..)
   , LeiosVote (..)
   , ProtVerParity
   , RankingBlockHash
@@ -239,7 +238,8 @@ runLeiosVoter ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsEndorserBlocks blk
+  , BlockSupportsLeios blk
+  , LedgerSupportsMempool blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
   ) =>
@@ -268,7 +268,8 @@ voteFor ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsEndorserBlocks blk
+  , BlockSupportsLeios blk
+  , LedgerSupportsMempool blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
   ) =>
@@ -391,7 +392,8 @@ voteFor env keys point@MkLeiosPoint{pointSlotNo = slot} = runExceptT $ do
 validateEndorserBlock ::
   forall m blk.
   ( IOLike m
-  , LedgerSupportsEndorserBlocks blk
+  , BlockSupportsLeios blk
+  , LedgerSupportsMempool blk
   ) =>
   LedgerConfig blk ->
   ChainDB m blk ->
@@ -432,9 +434,8 @@ validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotN
 
         closure <- lift (lookupEbClosure reader point) >>= (?>= ClosureUnavailable)
         when (length closure /= length references) $ throwError ClosureUnavailable
-        txs <- liftEither $ first EbInvalid $ traverse (decodeEbTx ticked . leiosTxBytes) closure
-
-        let txKeys = foldMap getTransactionKeySets txs
+        let (txs, undecodable) = decodePrefix (decodeEbTx (ancHeader announcing)) closure
+            txKeys = foldMap getTransactionKeySets txs
             txHashes = map fst references
             parity = ebTxsProtVerParity ticked
         values <- lift $ roforkerReadTables forker txKeys
@@ -449,6 +450,7 @@ validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotN
         -- Even a closure that fails validated what came before the failure.
         lift $ insertValidatedTxs txCache parity closureApplied
         liftEither closureVerdict
+        for_ undecodable $ throwError . EbInvalid . Text.pack . show
         pure (closureReapplied, length closureApplied)
  where
   withForkerAt at k =
@@ -456,6 +458,13 @@ validateEndorserBlock lcfg chainDB leiosDb txCache point@MkLeiosPoint{pointSlotN
       (ChainDB.openReadOnlyForkerAtPoint chainDB (SpecificPoint at))
       (either (const (pure ())) roforkerClose)
       (k . either (const Nothing) Just)
+
+-- | The transactions up to the first that does not decode, and why it does
+-- not, so that those before it are validated still.
+decodePrefix :: (a -> Either e b) -> [a] -> ([b], Maybe e)
+decodePrefix decode = foldr step ([], Nothing)
+ where
+  step x rest = either (\err -> ([], Just err)) (\y -> first (y :) rest) (decode x)
 
 -- | What 'applyClosure' made of a closure.
 data ClosureOutcome = MkClosureOutcome
@@ -482,7 +491,7 @@ data ClosureOutcome = MkClosureOutcome
 -- does, not what the closure does.
 applyClosure ::
   forall blk.
-  LedgerSupportsEndorserBlocks blk =>
+  (BlockSupportsLeios blk, LedgerSupportsMempool blk) =>
   LedgerConfig blk ->
   SlotNo ->
   -- | What an endorser block may hold

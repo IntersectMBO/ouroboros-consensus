@@ -100,7 +100,6 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
@@ -604,8 +603,6 @@ instance
   ShowProxy (GenTx (SimpleBlock c ext))
 
 type instance ApplyTxErr (SimpleBlock c ext) = MockError (SimpleBlock c ext)
-
-instance MockProtocolSpecific c ext => LedgerSupportsEndorserBlocks (SimpleBlock c ext)
 
 instance
   MockProtocolSpecific c ext =>

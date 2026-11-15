@@ -31,7 +31,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -121,7 +120,6 @@ class
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk
-  , LedgerSupportsEndorserBlocks blk
   , PerasProtocol (BlockProtocol blk)
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)

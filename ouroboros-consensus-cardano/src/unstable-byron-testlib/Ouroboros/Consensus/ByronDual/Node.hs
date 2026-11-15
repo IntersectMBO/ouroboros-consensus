@@ -279,6 +279,9 @@ instance BlockSupportsLeios DualByronBlock where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  decodeEbTx = defaultDecodeEbTx
+  ebTxsProtVerParity = defaultEbTxsProtVerParity
+  assumeValidatedEbTx = defaultAssumeValidatedEbTx
 
 instance BlockSupportsSanityCheck DualByronBlock where
   configAllSecurityParams = pure . configSecurityParam

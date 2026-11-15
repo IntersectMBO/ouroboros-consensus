@@ -53,6 +53,7 @@ module Test.Consensus.Leios.TestBlock
   , heavyEbTx
   , inapplicableEbTx
   , invalidEbTx
+  , invalidEbTxError
   , LeiosTestBlockError (..)
   , LeiosTestLedgerConfig (..)
   , leiosTestInitExtLedger
@@ -67,7 +68,14 @@ module Test.Consensus.Leios.TestBlock
   , singleNodeLeiosTestConfig
   ) where
 
-import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Cardano.Binary
+  ( DecoderError (DecoderErrorCustom)
+  , decodeMaybe
+  , encodeMaybe
+  , enforceSize
+  , fromCBOR
+  , toCBOR
+  )
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Leios (LeiosCert, LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
@@ -125,7 +133,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
   ( LedgerSupportsPeerSelection (..)
@@ -138,6 +145,7 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
   , decodeLeiosPoint
   , encodeLeiosPoint
   )
@@ -877,16 +885,13 @@ instance HasTxId (GenTx LeiosTestBlock) where
 instance ConvertRawTxId (GenTx LeiosTestBlock) where
   toRawTxIdHash = SBS.toShort . BL.toStrict . serialise
 
--- | Every endorsed transaction decodes, bar 'invalidEbTx'.
-instance LedgerSupportsEndorserBlocks LeiosTestBlock where
-  decodeEbTx _st bytes
-    | bytes == invalidEbTx = Left "invalid endorsed transaction"
-    | otherwise = Right (LeiosTestGenTx bytes)
-  assumeValidatedEbTx _cfg _slot _st = Just . ValidatedLeiosTestGenTx
-
 -- | The bytes of the one endorsed transaction that does not decode.
 invalidEbTx :: BS.ByteString
 invalidEbTx = "invalid"
+
+-- | Why 'invalidEbTx' does not decode.
+invalidEbTxError :: DecoderError
+invalidEbTxError = DecoderErrorCustom "endorsed transaction" "invalid"
 
 -- | The bytes of the one endorsed transaction that does not apply.
 inapplicableEbTx :: BS.ByteString
@@ -985,6 +990,7 @@ instance NodeInitStorage LeiosTestBlock where
 instance BlockSupportsMetrics LeiosTestBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+-- | Every endorsed transaction decodes, bar 'invalidEbTx'.
 instance BlockSupportsLeios LeiosTestBlock where
   blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
     NoLeiosTestCert -> Nothing
@@ -995,6 +1001,12 @@ instance BlockSupportsLeios LeiosTestBlock where
   -- The ledger has no transactions, so an endorser block applies nothing,
   -- whatever transactions it references.
   applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
+
+  decodeEbTx _hdr (MkLeiosTx bytes)
+    | bytes == invalidEbTx = Left invalidEbTxError
+    | otherwise = Right (LeiosTestGenTx bytes)
+  ebTxsProtVerParity = defaultEbTxsProtVerParity
+  assumeValidatedEbTx _cfg _slot _st = Just . ValidatedLeiosTestGenTx
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

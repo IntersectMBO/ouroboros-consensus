@@ -30,7 +30,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol
   ( SingleEraBlockAndPerasProtocol
   )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
-import Ouroboros.Consensus.Ledger.SupportsEndorserBlocks (LedgerSupportsEndorserBlocks)
 import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -75,6 +74,5 @@ instance
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
   , All SingleEraBlockAndPerasProtocol xs
-  , All LedgerSupportsEndorserBlocks xs
   ) =>
   RunNode (HardForkBlock xs)
