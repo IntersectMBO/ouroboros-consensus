@@ -44,7 +44,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
-import Ouroboros.Consensus.HardFork.Combinator.Block (Header (HardForkHeader))
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
@@ -661,46 +660,34 @@ instance
           serialised
           st'
 
-  decodeEbTx (HardForkHeader (OneEraHeader hdr)) tx =
-    hcollapse $
-      hcimap proxySingle (\idx hdr' -> K $ injectGenTx idx <$> decodeEbTx hdr' tx) hdr
+  validateLeiosClosure ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    LookupValidatedTxs m ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m LeiosClosureValidation
+  validateLeiosClosure cfg readTables wasValidated closure (HardForkLedgerState st) =
+    hcollapse $ hcizipWith proxySingle validateIn cfgs (State.tip st)
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
 
-  ebTxsProtVerParity (TickedHardForkLedgerState _transition hardForkState) =
-    hcollapse $
-      hcmap
-        proxySingle
-        (\(FlipTickedLedgerState st) -> K (ebTxsProtVerParity st))
-        hardForkState
-
-  -- A transaction of another era than the state is none to reapply.
-  assumeValidatedEbTx
-    HardForkLedgerConfig{..}
-    slot
-    (TickedHardForkLedgerState transition hardForkState)
-    (HardForkGenTx (OneEraGenTx tx)) =
-      case matchTx tx hardForkState of
-        Left _mismatch -> Nothing
-        Right matched ->
-          hcollapse $ hcizipWith proxySingle assumeIn cfgs matched
-     where
-      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-      cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
-      ei =
-        State.epochInfoPrecomputedTransitionInfo
-          hardForkLedgerConfigShape
-          transition
-          hardForkState
-
-      assumeIn ::
-        SingleEraBlock x =>
-        Index xs x ->
-        WrapLedgerConfig x ->
-        Product (FlipTickedLedgerState ValuesMK) GenTx x ->
-        K (Maybe (Validated (GenTx (HardForkBlock xs)))) x
-      assumeIn index (WrapLedgerConfig cfg) (Pair (FlipTickedLedgerState st) tx') =
-        K $
-          HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx
-            <$> assumeValidatedEbTx cfg slot st tx'
+    validateIn ::
+      SingleEraBlock x =>
+      Index xs x ->
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      K (m LeiosClosureValidation) x
+    validateIn idx (WrapLedgerConfig cfg') (Flip st') =
+      K $
+        validateLeiosClosure
+          cfg'
+          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          wasValidated
+          closure
+          st'
 
 {-------------------------------------------------------------------------------
   Auxiliary

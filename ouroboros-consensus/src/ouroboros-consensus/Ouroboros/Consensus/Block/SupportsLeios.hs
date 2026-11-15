@@ -4,26 +4,26 @@
 module Ouroboros.Consensus.Block.SupportsLeios
   ( BlockSupportsLeios (..)
   , ReadLedgerTables
+  , LookupValidatedTxs
   , defaultApplyEndorserBlock
   , defaultBlockLeiosCert
   , defaultLedgerAnnouncedLeiosPoint
-  , defaultDecodeEbTx
-  , defaultEbTxsProtVerParity
-  , defaultAssumeValidatedEbTx
+  , defaultValidateLeiosClosure
+  , LeiosClosureValidation (..)
+  , LeiosClosureInvalid (..)
   ) where
 
 import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Binary (DecoderError (DecoderErrorCustom))
-import Ouroboros.Consensus.Block.Abstract (Header, SlotNo)
-import Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState, TickedLedgerState)
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, Validated)
+import Data.Text (Text)
+import Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.Tables.Basics (LedgerTables)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (DiffMK, EmptyMK, KeysMK, ValuesMK)
 import Ouroboros.Consensus.Leios.Types
   ( LeiosPoint
-  , LeiosTx
   , ProtVerParity (EvenProtVer)
   , SerialisedEndorserBlock
+  , TxHash
   )
 
 -- | What a block and its ledger say about Leios.
@@ -50,29 +50,55 @@ class BlockSupportsLeios blk where
     LedgerState blk EmptyMK ->
     m (Either DecoderError (LedgerState blk DiffMK))
 
-  -- | Decode a transaction of a closure in the era of the given header, the
-  -- one announcing it, to validate it.
-  decodeEbTx :: Header blk -> LeiosTx -> Either DecoderError (GenTx blk)
-
-  -- | The protocol version, modulo 2, that the transactions of a closure are
-  -- validated under in the given ledger state.
-  ebTxsProtVerParity :: TickedLedgerState blk mk -> ProtVerParity
-
-  -- | A transaction the node validated before, to reapply it to the given
-  -- ledger state with 'reapplyTx', which runs only the checks that depend on
-  -- the state; or 'Nothing', then the voter applies it in full.
-  assumeValidatedEbTx ::
+  -- | Validate the closure of the endorser block the tip of the ledger state
+  -- announced, to vote for it: check the block against what one may hold,
+  -- then apply its transactions one after the other, as a certificate for it
+  -- would, reapplying those validated before.
+  validateLeiosClosure ::
+    Monad m =>
     LedgerConfig blk ->
-    SlotNo ->
-    TickedLedgerState blk ValuesMK ->
-    GenTx blk ->
-    Maybe (Validated (GenTx blk))
+    ReadLedgerTables m blk ->
+    LookupValidatedTxs m ->
+    SerialisedEndorserBlock ->
+    LedgerState blk EmptyMK ->
+    m LeiosClosureValidation
+
+-- | What 'validateLeiosClosure' made of a closure.
+data LeiosClosureValidation = MkLeiosClosureValidation
+  { closureVerdict :: !(Either LeiosClosureInvalid ())
+  , closureParity :: !ProtVerParity
+  -- ^ The protocol version parity the transactions were validated under.
+  , closureReapplied :: !Int
+  -- ^ How many transactions were reapplied, as validated before.
+  , closureValidated :: ![TxHash]
+  -- ^ The transactions validated in full, before the verdict.
+  }
+
+-- | Why a closure is not one to vote for.
+data LeiosClosureInvalid
+  = -- | The block references more than an endorser block may hold, by what it
+    -- claims of its transactions or by what they turn out to take.
+    ClosureOverCapacity
+  | -- | The closure does not hold one transaction per reference.
+    ClosureIncomplete
+  | -- | The block or one of its transactions does not decode, or does not
+    -- apply.
+    ClosureInvalid !Text
+  deriving (Eq, Show)
 
 -- | Read the values of the given keys from the ledger tables of a state.
 --
 -- Reading lives in @m@ because the tables may be on disk. It yields the
 -- values of those keys that exist in the tables.
 type ReadLedgerTables m blk = LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)
+
+-- | Which of the given transactions the node validated before, under the
+-- given protocol version parity.
+--
+-- Looking up lives in @m@ because the node keeps what it validated outside
+-- the ledger state. A transaction not known to be validated before is
+-- validated in full.
+type LookupValidatedTxs m = ProtVerParity -> [TxHash] -> m [Bool]
 
 -- | 'blockLeiosCert' for a block type that never contains a Leios certificate.
 defaultBlockLeiosCert :: blk -> Maybe LeiosCert
@@ -93,20 +119,20 @@ defaultApplyEndorserBlock ::
 defaultApplyEndorserBlock _cfg _readTables _serialised _st =
   pure . Left $ DecoderErrorCustom "EndorserBlock" "this block type has no endorser blocks"
 
--- | 'decodeEbTx' for a block type without endorser blocks.
-defaultDecodeEbTx :: Header blk -> LeiosTx -> Either DecoderError (GenTx blk)
-defaultDecodeEbTx _hdr _tx =
-  Left $ DecoderErrorCustom "EndorserBlock" "this block type has no endorser blocks"
-
--- | 'ebTxsProtVerParity' for a block type without endorser blocks.
-defaultEbTxsProtVerParity :: TickedLedgerState blk mk -> ProtVerParity
-defaultEbTxsProtVerParity _st = EvenProtVer
-
--- | 'assumeValidatedEbTx' for a block type without endorser blocks.
-defaultAssumeValidatedEbTx ::
+-- | 'validateLeiosClosure' for a block type without endorser blocks.
+defaultValidateLeiosClosure ::
+  Monad m =>
   LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk ValuesMK ->
-  GenTx blk ->
-  Maybe (Validated (GenTx blk))
-defaultAssumeValidatedEbTx _cfg _slot _st _tx = Nothing
+  ReadLedgerTables m blk ->
+  LookupValidatedTxs m ->
+  SerialisedEndorserBlock ->
+  LedgerState blk EmptyMK ->
+  m LeiosClosureValidation
+defaultValidateLeiosClosure _cfg _readTables _wasValidated _closure _st =
+  pure
+    MkLeiosClosureValidation
+      { closureVerdict = Left (ClosureInvalid "this block type has no endorser blocks")
+      , closureParity = EvenProtVer
+      , closureReapplied = 0
+      , closureValidated = []
+      }

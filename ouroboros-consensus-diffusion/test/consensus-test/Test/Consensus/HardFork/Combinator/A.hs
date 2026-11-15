@@ -596,9 +596,7 @@ instance BlockSupportsLeios BlockA where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
-  decodeEbTx = defaultDecodeEbTx
-  ebTxsProtVerParity = defaultEbTxsProtVerParity
-  assumeValidatedEbTx = defaultAssumeValidatedEbTx
+  validateLeiosClosure = defaultValidateLeiosClosure
 
 deriving via
   SelectViewDiffusionPipelining BlockA

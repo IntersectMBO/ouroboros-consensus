@@ -140,12 +140,14 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.ClosureValidation (validateClosureInMempool)
 import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (EvenProtVer)
   , decodeLeiosPoint
   , encodeLeiosPoint
   )
@@ -1002,11 +1004,12 @@ instance BlockSupportsLeios LeiosTestBlock where
   -- whatever transactions it references.
   applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
 
-  decodeEbTx _hdr (MkLeiosTx bytes)
-    | bytes == invalidEbTx = Left invalidEbTxError
-    | otherwise = Right (LeiosTestGenTx bytes)
-  ebTxsProtVerParity = defaultEbTxsProtVerParity
-  assumeValidatedEbTx _cfg _slot _st = Just . ValidatedLeiosTestGenTx
+  validateLeiosClosure = validateClosureInMempool decodeTx (const EvenProtVer) assumeValidated
+   where
+    decodeTx (MkLeiosTx bytes)
+      | bytes == invalidEbTx = Left invalidEbTxError
+      | otherwise = Right (LeiosTestGenTx bytes)
+    assumeValidated _cfg _slot _st = Just . ValidatedLeiosTestGenTx
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

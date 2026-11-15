@@ -138,6 +138,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.ClosureValidation (validateClosureInMempool)
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Shelley.Eras
@@ -293,27 +294,30 @@ instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto e
       Left err -> pure (Left err)
       Right dict -> applyEraEndorserBlock dict cfg readTables serialised st
 
-  decodeEbTx _hdr tx = do
-    dict <- leiosEraDict @era
-    mkShelleyTx . UnsafeMkMempoolTx <$> decodeEndorsedTx dict tx
-
-  ebTxsProtVerParity st =
-    Leios.protVerParity $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
-
-  -- What 'SL.reapplyValidatedTx' needs of the state, its annotation of the
-  -- transaction, comes from the state the transaction is reapplied to.
-  --
-  -- TODO The ledger documents 'SL.unsafeMakeValidatedTx' as for testing only.
-  -- It should offer this for a transaction validated before.
-  assumeValidatedEbTx cfg slot st (ShelleyTx txid tx) =
-    Just . ShelleyValidatedTx txid $
-      SL.unsafeMakeValidatedTx
-        (shelleyLedgerGlobals cfg)
-        (SL.mkMempoolEnv innerSt slot)
-        (SL.mkMempoolState innerSt)
-        (SL.unwrapMempoolTx tx)
+  -- TODO Validate through the ledger's re-builder of an endorser block for
+  -- voting, cardano-ledger#6211, once it exists.
+  validateLeiosClosure = validateClosureInMempool decodeTx parity assumeValidated
    where
-    innerSt = tickedShelleyLedgerState (stowLedgerTables st)
+    decodeTx tx = do
+      dict <- leiosEraDict @era
+      mkShelleyTx . UnsafeMkMempoolTx <$> decodeEndorsedTx dict tx
+
+    parity st = Leios.protVerParity $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
+
+    -- What 'SL.reapplyValidatedTx' needs of the state, its annotation of the
+    -- transaction, comes from the state the transaction is reapplied to.
+    --
+    -- TODO The ledger documents 'SL.unsafeMakeValidatedTx' as for testing
+    -- only. It should offer this for a transaction validated before.
+    assumeValidated cfg slot st (ShelleyTx txid tx) =
+      Just . ShelleyValidatedTx txid $
+        SL.unsafeMakeValidatedTx
+          (shelleyLedgerGlobals cfg)
+          (SL.mkMempoolEnv innerSt slot)
+          (SL.mkMempoolState innerSt)
+          (SL.unwrapMempoolTx tx)
+     where
+      innerSt = tickedShelleyLedgerState (stowLedgerTables st)
 
 -- | 'applyEndorserBlock' in an era with endorser blocks.
 applyEraEndorserBlock ::
