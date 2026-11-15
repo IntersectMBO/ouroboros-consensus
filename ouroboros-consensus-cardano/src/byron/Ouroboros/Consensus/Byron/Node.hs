@@ -1,6 +1,5 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -341,13 +340,9 @@ instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios ByronBlock where
-  data LedgerEndorserBlock ByronBlock
-
   blockLeiosCert = defaultBlockLeiosCert
-  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
-  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
-  getEndorserBlockKeySets eb = case eb of {}
-  applyLedgerEndorserBlock _cfg eb = case eb of {}
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 instance BlockSupportsSanityCheck ByronBlock where
   configAllSecurityParams =

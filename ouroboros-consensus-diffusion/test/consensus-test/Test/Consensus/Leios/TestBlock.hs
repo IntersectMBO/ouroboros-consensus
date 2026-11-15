@@ -937,18 +937,15 @@ instance BlockSupportsMetrics LeiosTestBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios LeiosTestBlock where
-  -- The ledger has no transactions, so an endorser block applies nothing,
-  -- whatever its closure.
-  data LedgerEndorserBlock LeiosTestBlock = LeiosTestEndorserBlock
-
   blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
     NoLeiosTestCert -> Nothing
     HasLeiosTestCert cert -> Just cert
 
-  decodeLedgerEndorserBlock _blk _closure = Right LeiosTestEndorserBlock
-  ledgerAnnouncedEb = ltlsAnnouncement
-  getEndorserBlockKeySets LeiosTestEndorserBlock = emptyLedgerTables
-  applyLedgerEndorserBlock _cfg LeiosTestEndorserBlock = convertMapKind
+  ledgerAnnouncedLeiosPoint = ltlsAnnouncement
+
+  -- The ledger has no transactions, so an endorser block applies nothing,
+  -- whatever transactions it references.
+  applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

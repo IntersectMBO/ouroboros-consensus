@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | A forged Dijkstra block announces the endorser block that 'forgeBlock'
@@ -53,9 +54,9 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , LeiosClosure (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , SerialisedEndorserBlock (..)
   , TxHash
   , encodeEndorserBlockSize
   , endorserBlockHash
@@ -109,8 +110,8 @@ tests =
     [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
     , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
     , testProperty
-        "the closure of the announced endorser block applies its transactions"
-        prop_appliesClosure
+        "the announced endorser block applies its transactions"
+        prop_appliesEndorserBlock
     ]
 
 prop_announcesEb :: Property
@@ -144,37 +145,43 @@ prop_noEb =
     (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
     pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
 
-prop_appliesClosure :: Property
-prop_appliesClosure =
+prop_appliesEndorserBlock :: Property
+prop_appliesEndorserBlock =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
-    forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
-      let ebTxs = map withExampleOutput $ take numEbTxs distinctTxs
-      (cfg, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
-      forged <- maybe (fail "no endorser block") pure forgedEb
-      ann <- case announcement blk of
-        SJust ann -> pure ann
-        SNothing -> fail "no announcement"
-      let closure =
-            MkLeiosClosure
-              (serialiseEndorserBlock (forgedEbBody forged))
-              (MkLeiosTx <$> toList (forgedEbTxs forged))
-          announcing = announcedIn (blockSlot blk) ann exampleLedgerState
-      eb <- either (fail . show) pure $ decodeLedgerEndorserBlock blk closure
-      let after =
-            applyLedgerEndorserBlock
-              (topLevelConfigLedger cfg)
-              eb
-              (announcing `withLedgerTables` projectLedgerTables exampleValues)
-          utxo = getValuesMK . getLedgerTables . projectLedgerTables $ applyDiffs exampleValues after
+    forAll genEbTxs $ \ebTxs -> ioProperty $ do
+      (cfg, ForgeBlockResult blk (Just forged)) <- forgeWith coreNode ebTxs
+      SJust ann <- pure $ announcement blk
+      let announcing = announcedIn (blockSlot blk) ann exampleLedgerState
+      Right after <-
+        applyEndorserBlock
+          (topLevelConfigLedger cfg)
+          readExampleValues
+          (serialise forged)
+          announcing
       pure $
-        conjoin $
-          ( ledgerAnnouncedEb announcing
-              === Just (MkLeiosPoint (blockSlot blk) (extractHash (ebReferencesAnnouncementHash ann)))
-          )
-            : [ counterexample ("output of " <> show txid <> " missing") $
-                  Map.member (BigEndianTxIn (TxIn txid minBound)) utxo
-              | ShelleyTx txid _ <- ebTxs
-              ]
+        recordsAnnouncement blk ann announcing
+          .&&. createsOutputs ebTxs after
+ where
+  genEbTxs = map withExampleOutput . flip take distinctTxs <$> genNumEbTxs
+
+  readExampleValues _keys = pure $ projectLedgerTables exampleValues
+
+  serialise forged =
+    MkSerialisedEndorserBlock
+      (serialiseEndorserBlock (forgedEbBody forged))
+      (MkLeiosTx <$> toList (forgedEbTxs forged))
+
+  recordsAnnouncement blk ann announcing =
+    ledgerAnnouncedLeiosPoint announcing
+      === Just (MkLeiosPoint (blockSlot blk) (extractHash (ebReferencesAnnouncementHash ann)))
+
+  createsOutputs ebTxs after =
+    let utxo = getValuesMK . getLedgerTables . projectLedgerTables $ applyDiffs exampleValues after
+     in conjoin
+          [ Map.member (BigEndianTxIn (TxIn txid minBound)) utxo
+              & counterexample ("output of " <> show txid <> " missing")
+          | ShelleyTx txid _ <- ebTxs
+          ]
 
 -- | The transaction, paying out a copy of the example UTxO's output, so that
 -- applying it changes the UTxO.
