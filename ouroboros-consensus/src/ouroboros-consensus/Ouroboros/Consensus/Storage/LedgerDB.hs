@@ -74,7 +74,7 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   -- | How to get the endorser blocks that blocks certify from the LeiosDB
-  ResolveEndorserBlock m blk ->
+  ResolveEndorserBlock m ->
   GetVolatileSuffix m blk ->
   WithTempRegistry st m (LedgerDB' m blk)
 openDB

@@ -566,7 +566,7 @@ openLedgerDB flavArgs env cfg fs = do
                 V2.mkInitDb
                   args
                   getBlock
-                  (\_ _ -> error "These tests do not use Leios certificates")
+                  (\_ -> error "These tests do not use Leios certificates")
                   snapManager
                   (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
                   res

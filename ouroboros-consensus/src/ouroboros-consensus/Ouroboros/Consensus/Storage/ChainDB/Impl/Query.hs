@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -71,6 +72,7 @@ import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
+import Ouroboros.Consensus.Leios.Types (SerialisedEndorserBlock (..))
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionView
   , mkPerasCertInclusionView
@@ -104,7 +106,11 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock)
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle, lookupLeiosClosure)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , withReader
+  )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
@@ -559,23 +565,19 @@ getAnyKnownBlock immutableDB volatileDB =
   getAnyKnownBlockComponent immutableDB volatileDB GetBlock
 
 -- | The endorser block a block on the chain certifies, which must be stored
--- whole and decode.
+-- whole.
 --
 -- If it does not, this indicates disk failure.
 getKnownEndorserBlock ::
-  forall m blk.
-  ( IOLike m
-  , BlockSupportsLeios blk
-  , HasHeader blk
-  ) =>
+  forall blk m.
+  (IOLike m, HasHeader blk) =>
   LeiosDbHandle m ->
-  ResolveEndorserBlock m blk
-getKnownEndorserBlock leiosDb point blk =
-  lookupLeiosClosure leiosDb point >>= \case
-    Nothing -> throwIO $ ChainDbMissingEndorserBlock @blk point
-    Just closure ->
-      either (throwIO . ChainDbUndecodableEndorserBlock @blk point) pure $
-        decodeLedgerEndorserBlock blk closure
+  ResolveEndorserBlock m
+getKnownEndorserBlock leiosDb point = withReader leiosDb $ \reader -> do
+  body <- lookupEbBody reader point
+  txs <- lookupEbClosure reader point
+  maybe (throwIO $ ChainDbMissingEndorserBlock @blk point) pure $
+    MkSerialisedEndorserBlock <$> body <*> txs
 
 -- | Wrapper around 'getAnyBlockComponent' for blocks we know should exist.
 --
