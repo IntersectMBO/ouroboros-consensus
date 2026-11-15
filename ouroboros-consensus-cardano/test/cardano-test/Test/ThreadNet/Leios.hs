@@ -59,7 +59,7 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (GetHeader (..), blockPoint)
+import Ouroboros.Consensus.Block (GetHeader (..))
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock, pattern BlockDijkstra)
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Config (SecurityParam (..))
@@ -123,23 +123,24 @@ tests :: TestTree
 tests =
   testGroup "ThreadNet Leios" $
     [ adjustQuickCheckTests (`div` 10) $
-        testProperty "a single node adopts its own endorser blocks (self-certified)" propLeiosSelfCertify
+        testProperty "three nodes certify each other's endorser blocks" propLeiosCertify
     ]
 
--- | A single node in Dijkstra, loaded beyond what fits in its ranking blocks,
--- announces endorser blocks and certifies them in later blocks of its own.
+-- | Three nodes in Dijkstra with equal stake, loaded beyond what fits in
+-- their ranking blocks, announce endorser blocks, vote for each other's and
+-- certify them in later blocks.
 --
--- With one node there is no endorser-block diffusion and no committee, so the
--- node certifies alone. What the property checks is that the node adopts
--- every block it forges, and that each of those blocks is one a peer would
--- accept for its header.
-propLeiosSelfCertify :: Seed -> Property
-propLeiosSelfCertify seed =
+-- No node holds enough stake to certify alone, so a certificate on the chain
+-- means votes of several nodes diffused. Every node must end on the same
+-- chain, and accept every block of it.
+propLeiosCertify :: Seed -> Property
+propLeiosCertify seed =
   conjoin
-    [ Map.null nodeOutputInvalids
-        & counterexample ("invalid blocks: " <> show (Map.keys nodeOutputInvalids))
-    , all (`Chain.pointOnChain` nodeOutputFinalChain) (blockPoint <$> forged)
-        & counterexample "a forged block was not adopted"
+    [ all (Map.null . nodeOutputInvalids) nodeOutputs
+        & counterexample
+          ("invalid blocks: " <> show (Map.keys . nodeOutputInvalids <$> nodeOutputs))
+    , all ((== chain) . nodeChain) nodeOutputs
+        & counterexample "the nodes ended on different chains"
     , all (\blk -> blockMatchesHeader (getHeader blk) blk) chain
         & counterexample "a block does not match its header"
     , any announces chain
@@ -149,16 +150,15 @@ propLeiosSelfCertify seed =
     ]
     & counterexample ("transactions per block: " <> show (length . extractAsMempoolTxs <$> chain))
  where
-  NodeOutput{nodeOutputFinalChain, nodeOutputForges, nodeOutputInvalids} =
-    case Map.elems (testOutputNodes testOutput) of
-      [nodeOutput] -> nodeOutput
-      outputs -> error $ "expected one node, got " <> show (length outputs)
+  nodeOutputs = Map.elems (testOutputNodes testOutput)
 
-  forged = Map.elems nodeOutputForges
+  nodeChain = Chain.toOldestFirst . nodeOutputFinalChain
 
-  chain = Chain.toOldestFirst nodeOutputFinalChain
+  chain = case nodeOutputs of
+    nodeOutput : _ -> nodeChain nodeOutput
+    [] -> []
 
-  testOutput = runThreadNet seed (NumSlots 200)
+  testOutput = runThreadNet seed (NumCoreNodes 3) (NumSlots 200)
 
 -- | Whether a Dijkstra block's header announces an endorser block.
 announces :: CardanoBlock StandardCrypto -> Bool
@@ -176,9 +176,10 @@ certifies = \case
 
 -- * Running the network
 
--- | Run a single Dijkstra node from genesis.
-runThreadNet :: Seed -> NumSlots -> TestOutput (CardanoBlock StandardCrypto)
-runThreadNet initSeed numSlots =
+-- | Run that many Dijkstra nodes from genesis, each connected to all
+-- others.
+runThreadNet :: Seed -> NumCoreNodes -> NumSlots -> TestOutput (CardanoBlock StandardCrypto)
+runThreadNet initSeed numCoreNodes numSlots =
   runTestNetwork
     TestConfig
       { numSlots
@@ -205,7 +206,7 @@ runThreadNet initSeed numSlots =
                 -- the run would never be forged.
                 if not (isDijkstraOrLater pparams) || unSlotNo slot > unNumSlots numSlots - 20
                   then pure []
-                  else pure $ constantLoadTxs slot coreNode utxo
+                  else pure $ constantLoadTxs numCoreNodes slot coreNode utxo
             }
       , version = newestVersion (Proxy @(CardanoBlock StandardCrypto))
       }
@@ -233,8 +234,6 @@ runThreadNet initSeed numSlots =
       , mkRekeyM = Nothing
       }
  where
-  numCoreNodes = NumCoreNodes 1
-
   coreNodes =
     runGen initSeed $
       replicateM (fromIntegral n) $
@@ -281,17 +280,19 @@ isDijkstraOrLater :: forall era. Ledger.Era era => PParams era -> Bool
 isDijkstraOrLater _ = eraProtVerLow @era >= eraProtVerLow @DijkstraEra
 
 -- | Every expected block interval, submit more transactions than a ranking
--- block holds, so that the rest is left for an endorser block.
+-- block holds, so that the rest is left for an endorser block. The nodes
+-- share the load.
 --
 -- The generator runs every slot, but the UTxO it sees only changes when a
 -- block is adopted, so submitting every slot would only repeat transactions.
 constantLoadTxs ::
   EraTx era =>
+  NumCoreNodes ->
   SlotNo ->
   CoreNode StandardCrypto ->
   Map TxIn (TxOut era) ->
   [Tx TopTx era]
-constantLoadTxs slot coreNode utxo
+constantLoadTxs (NumCoreNodes n) slot coreNode utxo
   | unSlotNo slot `mod` expectedBlockInterval == 0 =
       take (fromIntegral $ txsPerSlot * expectedBlockInterval) $
         infiniteRespendTxs coreNode utxo
@@ -299,7 +300,7 @@ constantLoadTxs slot coreNode utxo
  where
   expectedBlockInterval = truncate $ 1 / activeSlotCoeff
 
-  txsPerSlot = 100 :: Word64
+  txsPerSlot = 100 `div` n :: Word64
 
 -- | An infinite chain of transactions, each spending the output of the one
 -- before, starting from the first output the core node owns. The delegate key
