@@ -1,12 +1,10 @@
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -56,13 +54,9 @@ instance BlockSupportsMetrics (SimpleBlock c ext) where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsLeios (SimpleBlock c ext) where
-  data LedgerEndorserBlock (SimpleBlock c ext)
-
   blockLeiosCert = defaultBlockLeiosCert
-  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
-  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
-  getEndorserBlockKeySets eb = case eb of {}
-  applyLedgerEndorserBlock _cfg eb = case eb of {}
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 deriving via
   SelectViewDiffusionPipelining (SimpleBlock c ext)

@@ -47,7 +47,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsLeios (ApplyEndorserBlock)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -85,7 +84,7 @@ mkInitDb ::
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
-  ResolveEndorserBlock m blk ->
+  ResolveEndorserBlock m ->
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
   Resources m backend ->
@@ -174,7 +173,9 @@ implMkLedgerDb ::
   , HasCallStack
   , StandardHash (l blk)
   , LedgerSupportsProtocol blk
-  , ApplyEndorserBlock l blk
+  , ApplyBlock l blk
+  , BlockSupportsLeios blk
+  , l ~ ExtLedgerState
   , -- for validation, which needs 'ApplyBlock ExtLedgerState'
     BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -204,7 +205,9 @@ implMkLedgerDb h snapManager snapshotQueue =
 mkInternals ::
   forall m l blk.
   ( IOLike m
-  , ApplyEndorserBlock l blk
+  , ApplyBlock l blk
+  , BlockSupportsLeios blk
+  , l ~ ExtLedgerState
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
@@ -500,7 +503,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbCfg :: !(LedgerDbCfg l blk)
   , ldbHasFS :: !(SomeHasFS m)
   , ldbResolveBlock :: !(ResolveBlock m blk)
-  , ldbResolveEndorserBlock :: !(ResolveEndorserBlock m blk)
+  , ldbResolveEndorserBlock :: !(ResolveEndorserBlock m)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbOpenHandlesLock :: !(RAWLock m ())
   -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
