@@ -104,6 +104,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
+import Control.Monad (forM)
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString.Lazy as Lazy
@@ -133,7 +134,12 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Leios.Types as Leios
+import Ouroboros.Consensus.Leios.Types
+  ( LeiosPoint (..)
+  , LeiosTx (..)
+  , Serialised (..)
+  , SerialisedEndorserBlock (..)
+  )
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Eras (LeiosEraDict (..), ShelleyBasedEra (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -640,55 +646,67 @@ instance
 -------------------------------------------------------------------------------}
 
 instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto era) where
-  -- An endorser block of an era that supports Leios.
-  data LedgerEndorserBlock (ShelleyBlock proto era)
-    = ShelleyLedgerEndorserBlock !(LeiosEraDict era) !(EndorserBlock era)
-
   blockLeiosCert ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} =
     SL.strictMaybeToMaybe (bodyLeiosCert blockBody)
 
-  decodeLedgerEndorserBlock _blk (Leios.MkLeiosClosure (Leios.Serialised ebBytes) txsBytes) =
-    case getLeiosEraDict (Proxy @era) of
-      Nothing -> Left $ DecoderErrorCustom "EndorserBlock" "an era without Leios"
-      Just dict@LeiosEraDict -> do
-        references <- decodeFullAnnotator (Core.eraProtVerLow @era) "EndorserBlock" decCBOR ebBytes
-        txs <- traverse (decodeTx dict) txsBytes
-        pure $
-          ShelleyLedgerEndorserBlock dict $
-            mkBasicEndorserBlock
-              & referencesEndorserBlockL .~ references
-              & transactionsEndorserBlockL .~ EbTransactions (StrictSeq.fromList txs)
-   where
-    decodeTx :: LeiosEraDict era -> Leios.LeiosTx -> Either DecoderError (Core.Tx Core.TopTx era)
-    decodeTx LeiosEraDict (Leios.MkLeiosTx bytes) =
-      decodeFullAnnotator (Core.eraProtVerLow @era) "Tx" decCBOR (Lazy.fromStrict bytes)
-
-  ledgerAnnouncedEb st =
+  ledgerAnnouncedLeiosPoint st =
     toPoint
       <$> SL.strictMaybeToMaybe
         (shelleyLedgerState st ^. SL.nesEsL . SL.esLStateL . SL.lsLastEbAnnouncementL)
    where
     toPoint SL.EbAnnouncement{SL.ebAnnouncement = ann, SL.ebAnnouncementSlotNo = slot} =
-      Leios.MkLeiosPoint slot (extractHash (Core.ebReferencesAnnouncementHash ann))
+      MkLeiosPoint slot (extractHash (Core.ebReferencesAnnouncementHash ann))
 
-  getEndorserBlockKeySets (ShelleyLedgerEndorserBlock LeiosEraDict eb) =
+  -- Only an era with a 'LeiosEraDict' has endorser blocks.
+  applyEndorserBlock cfg readTables serialised st =
+    case getLeiosEraDict (Proxy @era) of
+      Nothing -> pure . Left $ DecoderErrorCustom "EndorserBlock" "an era without Leios"
+      Just dict -> applyEraEndorserBlock dict cfg readTables serialised st
+
+-- | 'applyEndorserBlock' in an era with endorser blocks.
+applyEraEndorserBlock ::
+  forall m proto era.
+  (Monad m, ShelleyCompatible proto era) =>
+  LeiosEraDict era ->
+  LedgerConfig (ShelleyBlock proto era) ->
+  ReadLedgerTables m (ShelleyBlock proto era) ->
+  SerialisedEndorserBlock ->
+  LedgerState (ShelleyBlock proto era) EmptyMK ->
+  m (Either DecoderError (LedgerState (ShelleyBlock proto era) DiffMK))
+applyEraEndorserBlock LeiosEraDict cfg readTables serialised st =
+  case goDecode serialised of
+    Left err -> pure $ Left err
+    Right eb -> do
+      values <- readTables $ keys eb
+      pure . Right $ apply eb values
+ where
+  goDecode (MkSerialisedEndorserBlock (Serialised ebBytes) txsBytes) = do
+    references <- decodeFullAnnotator (Core.eraProtVerLow @era) "EndorserBlock" decCBOR ebBytes
+    txs <- forM txsBytes $ \(MkLeiosTx bytes) ->
+      decodeFullAnnotator (Core.eraProtVerLow @era) "Tx" decCBOR (Lazy.fromStrict bytes)
+    pure $
+      mkBasicEndorserBlock
+        & referencesEndorserBlockL .~ references
+        & transactionsEndorserBlockL .~ EbTransactions (StrictSeq.fromList txs)
+
+  keys eb =
     LedgerTables . KeysMK . coerceSet $
       foldMap
         (^. Core.bodyTxL . Core.allInputsTxBodyF)
         (unEbTransactions (eb ^. transactionsEndorserBlockL))
 
-  applyLedgerEndorserBlock cfg (ShelleyLedgerEndorserBlock LeiosEraDict eb) st =
-    trackingToDiffs $ calculateDifference st $ unstowLedgerTables after
-   where
-    stowed = stowLedgerTables st
-    after =
-      stowed
-        { shelleyLedgerState =
-            applyEndorserBlockNoValidation @(LeiosLedger.Header StandardCrypto)
-              (shelleyLedgerGlobals cfg)
-              (shelleyLedgerState stowed)
-              eb
-        }
+  apply eb values =
+    let before = st `withLedgerTables` values
+        stowed = stowLedgerTables before
+        after =
+          stowed
+            { shelleyLedgerState =
+                applyEndorserBlockNoValidation @(LeiosLedger.Header StandardCrypto)
+                  (shelleyLedgerGlobals cfg)
+                  (shelleyLedgerState stowed)
+                  eb
+            }
+     in trackingToDiffs $ calculateDifference before $ unstowLedgerTables after
 
 data ShelleyReapplyException
   = forall era.

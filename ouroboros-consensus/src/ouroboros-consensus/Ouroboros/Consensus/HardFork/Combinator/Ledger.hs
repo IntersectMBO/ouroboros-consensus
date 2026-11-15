@@ -47,6 +47,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   , injectHardForkTxOutDefault
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
@@ -106,6 +107,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (SerialisedEndorserBlock)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
@@ -324,48 +326,45 @@ instance
   ) =>
   BlockSupportsLeios (HardForkBlock xs)
   where
-  -- An endorser block of the era it was announced in.
-  newtype LedgerEndorserBlock (HardForkBlock xs)
-    = HardForkLedgerEndorserBlock (NS LedgerEndorserBlock xs)
-
   blockLeiosCert =
     hcollapse
       . hcmap proxySingle (K . blockLeiosCert . unI)
       . getOneEraBlock
       . getHardForkBlock
 
-  decodeLedgerEndorserBlock (HardForkBlock (OneEraBlock block)) closure =
-    fmap HardForkLedgerEndorserBlock . hsequence' $
-      hcmap proxySingle (\(I blk) -> Comp $ decodeLedgerEndorserBlock blk closure) block
-
-  ledgerAnnouncedEb =
+  ledgerAnnouncedLeiosPoint =
     hcollapse
-      . hcmap proxySingle (K . ledgerAnnouncedEb . unFlip)
+      . hcmap proxySingle (K . ledgerAnnouncedLeiosPoint . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra
 
-  getEndorserBlockKeySets (HardForkLedgerEndorserBlock eb) =
-    hcollapse $
-      hcimap proxySingle (\idx eb' -> K $ injectLedgerTables idx $ getEndorserBlockKeySets eb') eb
-
-  applyLedgerEndorserBlock cfg (HardForkLedgerEndorserBlock eb) (HardForkLedgerState st) =
-    case State.match eb st of
-      Left _mismatch ->
-        -- The endorser block decoded in the era of the block certifying it,
-        -- which is that of the state announcing it.
-        error "applyLedgerEndorserBlock: certification never crosses eras"
-      Right matched ->
-        HardForkLedgerState $ hczipWith proxySingle applyOne cfgs matched
+  applyEndorserBlock ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m (Either DecoderError (LedgerState (HardForkBlock xs) DiffMK))
+  applyEndorserBlock cfg readTables serialised (HardForkLedgerState st) =
+    unComp . fmap HardForkLedgerState . sequenceHardForkState $
+      hcizipWith proxySingle applyIn cfgs st
    where
     cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
 
-    applyOne ::
+    applyIn ::
       SingleEraBlock x =>
+      Index xs x ->
       WrapLedgerConfig x ->
-      Product LedgerEndorserBlock (Flip LedgerState ValuesMK) x ->
-      Flip LedgerState DiffMK x
-    applyOne (WrapLedgerConfig cfg') (Pair eb' (Flip st')) =
-      Flip $ applyLedgerEndorserBlock cfg' eb' st'
+      Flip LedgerState EmptyMK x ->
+      ((m :.: Either DecoderError) :.: Flip LedgerState DiffMK) x
+    applyIn idx (WrapLedgerConfig cfg') (Flip st') =
+      Comp . Comp . fmap (fmap Flip) $
+        applyEndorserBlock
+          cfg'
+          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          serialised
+          st'
 
 {-------------------------------------------------------------------------------
   UpdateLedger

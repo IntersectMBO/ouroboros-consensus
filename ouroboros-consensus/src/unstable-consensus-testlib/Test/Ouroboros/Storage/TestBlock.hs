@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -929,13 +928,9 @@ deriving via
     BlockSupportsDiffusionPipelining TestBlock
 
 instance BlockSupportsLeios TestBlock where
-  data LedgerEndorserBlock TestBlock
-
   blockLeiosCert = defaultBlockLeiosCert
-  decodeLedgerEndorserBlock = defaultDecodeLedgerEndorserBlock
-  ledgerAnnouncedEb = defaultLedgerAnnouncedEb
-  getEndorserBlockKeySets eb = case eb of {}
-  applyLedgerEndorserBlock _cfg eb = case eb of {}
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 {-------------------------------------------------------------------------------
   Corruption
