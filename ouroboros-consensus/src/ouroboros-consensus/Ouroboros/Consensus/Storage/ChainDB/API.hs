@@ -474,6 +474,9 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , getIsLeiosClosureAcquired :: STM m (LeiosPoint -> Bool)
+  -- ^ Whether the node holds the closure of the endorser block at a point, so
+  -- that ChainSel does not park a block certifying it.
   , getLeiosCertifiedEbs :: STM m (Map ElectionId EndorserBlockHash)
   -- ^ The endorser block each election has had certified, among those whose
   -- announcing block is not older than the immutable tip, as far as the
