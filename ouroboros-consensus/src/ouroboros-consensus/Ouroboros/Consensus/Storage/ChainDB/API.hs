@@ -462,6 +462,9 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , getIsLeiosClosureAcquired :: STM m (LeiosPoint -> Bool)
+  -- ^ Whether the node holds the closure of the endorser block at a point, so
+  -- that ChainSel does not park a block certifying it.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
