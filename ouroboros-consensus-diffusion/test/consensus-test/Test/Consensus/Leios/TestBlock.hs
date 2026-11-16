@@ -81,7 +81,7 @@ import qualified Codec.CBOR.Decoding as CBOR.Dec
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), serialise)
-import Control.Monad (guard, replicateM, replicateM_)
+import Control.Monad (guard, replicateM, replicateM_, when)
 import Control.Monad.Except (Except, throwError)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
@@ -392,7 +392,16 @@ instance ConsensusProtocol LeiosTestProtocol where
   checkIsLeader _ _ _ _ = Just ()
 
   tickChainDepState _ _ _ = TickedLeiosTestChainDepState
-  updateChainDepState _ hdr _ _ = latestAnnouncement hdr <$ checkValidity hdr
+
+  -- 'LeiosProtocol' requires the rejection of a certificate exactly when
+  -- 'leiosAnnouncementToCertify' gives 'Left'.
+  updateChainDepState cfg hdr slot st = do
+    checkValidity hdr
+    when (getContainsLeiosCert (Proxy @LeiosTestProtocol) hdr) $
+      case leiosAnnouncementToCertify cfg slot st of
+        Left _ -> throwError LeiosTestInvalidHeader
+        Right _ -> pure ()
+    pure $ latestAnnouncement hdr
   reupdateChainDepState _ hdr _ _ = latestAnnouncement hdr
 
 instance LeiosProtocol LeiosTestProtocol where
