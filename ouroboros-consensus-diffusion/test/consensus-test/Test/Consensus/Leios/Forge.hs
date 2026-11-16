@@ -1,17 +1,23 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests that the node writes each endorser block that it forges to the
--- LeiosDB, and acquires and relays it as it would one fetched from a peer.
+-- LeiosDB, and acquires and relays it as it would one fetched from a peer, and
+-- that 'forge' puts a Leios certificate in a block exactly when it may.
 module Test.Consensus.Leios.Forge (tests) where
 
+import Cardano.Crypto.Leios (LeiosCert)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Control.Tracer (Tracer (..), emit, nullTracer)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (isJust, maybeToList)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract (GetTip (..))
 import Ouroboros.Consensus.Leios.Acquisitions
@@ -19,20 +25,38 @@ import Ouroboros.Consensus.Leios.Acquisitions
   , LeiosAcquisitions (..)
   )
 import Ouroboros.Consensus.Leios.NotifyLog (Notification (..), nextNotifyLog, notifyLogStart)
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement (..)
+  , LeiosProtocol (..)
+  , NotCertifiable (..)
+  , WhyNotCertifiable (..)
+  )
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
   )
+import Ouroboros.Consensus.Node.Tracers (TraceForgeEvent (..), TraceLabelCreds (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
+import Ouroboros.Consensus.NodeKernel.Forge (forge)
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
-import Ouroboros.Consensus.Util.IOLike (atomically, orElse)
+import Ouroboros.Consensus.Util.EarlyExit (withEarlyExit_)
+import Ouroboros.Consensus.Util.IOLike
+  ( atomically
+  , modifyTVar
+  , newTVarIO
+  , orElse
+  , readTVarIO
+  , uncheckedNewTVarM
+  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
+import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestBlock (TestHash (..))
 
 tests :: TestTree
@@ -42,7 +66,187 @@ tests =
     [ testCase
         "the node stores, acquires and relays each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
+    , testProperty
+        "the block contains a Leios certificate exactly when its predecessor announces and the node has a certificate"
+        prop_certifiesExactlyWhenAllowed
     ]
+
+-- | 'forge' runs in the slot after the tip of a generated chain, with a
+-- certificate callback that gives a certificate or not.
+--
+-- * If 'forge' asks for a certificate when the predecessor announces nothing,
+--   or for an announcement other than the predecessor's, the first check
+--   fails. For example, a forger that takes the latest announcement on the
+--   chain fails it when only an older block announces.
+-- * If the block does not contain the certificate that the callback gives, or
+--   contains one that the callback did not give, the second check fails.
+-- * If the traces do not say what 'forge' decided, the third or the fourth
+--   check fails.
+prop_certifiesExactlyWhenAllowed :: Scenario -> Property
+prop_certifiesExactlyWhenAllowed scenario@Scenario{nodeHasCert} =
+  checkCoverage
+    . cover 15 (predecessorAnnounces && nodeHasCert) "the block certifies"
+    . cover 15 (predecessorAnnounces && not nodeHasCert) "the node has no certificate"
+    . cover 10 onlyAnOlderBlockAnnounces "only an older block announces"
+    . cover 5 (null chain) "the predecessor is genesis"
+    $ conjoin
+      [ counterexample "forge asks for the wrong certificates" $
+          certRequests outcome === maybeToList predecessorAnnouncement
+      , counterexample "the block contains the wrong certificate" $
+          certInBlock outcome === expectedCert
+      , counterexample "forge traces the wrong certifying block" $
+          certifyingBlockTraces outcome
+            === [ (point, announcementEbHash announcement)
+                | Just (point, announcement) <- [predecessorAnnouncement]
+                , nodeHasCert
+                ]
+      , counterexample "forge traces the wrong reason for not certifying" $
+          notCertifiableTraces outcome
+            === [NoCertifiableAnnouncement NothingAnnounced | not predecessorAnnounces]
+      ]
+ where
+  chain = chainOf scenario
+  outcome = runSimOrThrow $ forgeOnTopOf chain (certificateCallback nodeHasCert)
+
+  -- The point and the announcement of the block that the forged block
+  -- extends, if that block announces.
+  predecessorAnnouncement = case reverse chain of
+    [] -> Nothing
+    predecessor : _ ->
+      (\announcement -> (blockRealPoint predecessor, announcement))
+        <$> getLeiosAnnouncement (Proxy @LeiosTestProtocol) (getHeader predecessor)
+
+  predecessorAnnounces = isJust predecessorAnnouncement
+
+  onlyAnOlderBlockAnnounces = not predecessorAnnounces && or (announces scenario)
+
+  expectedCert
+    | nodeHasCert = certificateFor . fst <$> predecessorAnnouncement
+    | otherwise = Nothing
+
+-- | The chain that the node holds, and whether the node has a certificate.
+data Scenario = Scenario
+  { announces :: [Bool]
+  -- ^ For each block of the chain, oldest first, whether it announces an
+  -- endorser block.
+  , nodeHasCert :: Bool
+  -- ^ Whether the certificate callback gives a certificate.
+  }
+  deriving Show
+
+instance Arbitrary Scenario where
+  arbitrary = do
+    chainLength <- choose (0, 6)
+    Scenario <$> vectorOf chainLength arbitrary <*> arbitrary
+  shrink Scenario{announces, nodeHasCert} =
+    [ Scenario announces' nodeHasCert'
+    | (announces', nodeHasCert') <- shrink (announces, nodeHasCert)
+    ]
+
+-- | The chain of the scenario. Its first block is in slot 1, and each next
+-- block is in the next slot.
+chainOf :: Scenario -> [Blk]
+chainOf Scenario{announces} =
+  zipWith announceIf announces (iterate successorLeiosBlock (firstLeiosBlock 1))
+ where
+  announceIf False blk = blk
+  announceIf True blk =
+    setAnnouncement (endorserBlockHash eb) (encodeEndorserBlockSize eb) blk
+   where
+    eb = forgedEbBody (forgeLeiosEb EvenProtVer (txInSlot (blockSlot blk) :| []))
+
+-- | The callback gives the certificate of the announcing block, if the node has
+-- certificates at all.
+certificateCallback :: Bool -> RealPoint Blk -> LeiosAnnouncement -> IOSim s (Maybe LeiosCert)
+certificateCallback nodeHasCert point _announcement
+  | nodeHasCert = pure $ Just $ certificateFor point
+  | otherwise = pure Nothing
+
+-- | A certificate that the whole test committee makes for the block at this
+-- point.
+certificateFor :: RealPoint Blk -> LeiosCert
+certificateFor point =
+  certOf (toRankingBlockHash (Proxy @Blk) (realPointHash point)) [0, 1, 2]
+
+-- | What 'forge' did.
+data CertOutcome = CertOutcome
+  { certRequests :: [(RealPoint Blk, LeiosAnnouncement)]
+  -- ^ The arguments of each call of the certificate callback, oldest first.
+  , certInBlock :: Maybe LeiosCert
+  -- ^ The certificate in the forged block.
+  , certifyingBlockTraces :: [(RealPoint Blk, EndorserBlockHash)]
+  -- ^ The announcing block and the certified endorser block of each
+  -- 'TraceForgedCertifyingBlock'.
+  , notCertifiableTraces :: [NotCertifiable]
+  -- ^ The reason of each 'TraceForgeNotCertifiable'.
+  }
+
+-- | Add the chain to the node, then run 'forge' with 'certForging' in the slot
+-- after the chain's tip.
+forgeOnTopOf ::
+  [Blk] ->
+  (RealPoint Blk -> LeiosAnnouncement -> IOSim s (Maybe LeiosCert)) ->
+  IOSim s CertOutcome
+forgeOnTopOf chain callback = withNode $ \node -> do
+  addBlocks node chain
+  requests <- newTVarIO []
+  events <- uncheckedNewTVarM []
+  let recordEvent (TraceLabelCreds _ event) = atomically $ modifyTVar events (event :)
+      recordingCallback point announcement = do
+        atomically $ modifyTVar requests ((point, announcement) :)
+        callback point announcement
+  withEarlyExit_ $
+    forge
+      (Tracer (emit recordEvent))
+      nullTracer
+      (nodeTopLevelConfig node)
+      (nodeChainDB node)
+      (getMempool (nodeKernel node))
+      certForging
+      recordingCallback
+      (\_ _ _ _ -> pure ())
+      slotAfterTip
+  forgeEvents <- reverse <$> readTVarIO events
+  certRequests <- reverse <$> readTVarIO requests
+  pure
+    CertOutcome
+      { certRequests
+      , certInBlock =
+          case [blk | TraceForgedBlock _ _ blk _ _ <- forgeEvents] of
+            [blk] -> blockLeiosCert blk
+            blks -> error $ "forge forged " <> show (length blks) <> " blocks"
+      , certifyingBlockTraces =
+          [(point, ebHash) | TraceForgedCertifyingBlock _ _ point ebHash <- forgeEvents]
+      , notCertifiableTraces =
+          [reason | TraceForgeNotCertifiable _ reason <- forgeEvents]
+      }
+ where
+  slotAfterTip = case reverse chain of
+    [] -> 1
+    tip : _ -> succ (blockSlot tip)
+
+-- | A forging that leads in every slot. Each block extends the ledger tip and
+-- contains the certificate that 'forge' gives it, if any. It announces no
+-- endorser block.
+certForging :: BlockForging (IOSim s) LeiosTestBlock
+certForging =
+  BlockForging
+    { forgeLabel = "certForging"
+    , canBeLeader = ()
+    , updateForgeState = \_ _ _ -> pure $ ForgeStateUpdated ()
+    , checkCanForge = \_ _ _ _ _ -> Right ()
+    , forgeBlock = \ForgeBlockArgs{fbCurrentSlotNo, fbCurrentTickedLedgerState, fbLeiosCert} -> do
+        let tip = castPoint (getTip fbCurrentTickedLedgerState)
+        pure
+          ForgeBlockResult
+            { rankingBlock =
+                maybe id setLeiosCert fbLeiosCert $
+                  setSlot fbCurrentSlotNo $
+                    blockAfter tip
+            , endorserBlock = Nothing
+            }
+    , finalize = pure ()
+    }
 
 -- | The node runs 'forkBlockForging' with 'ebForging' for slots 0 to 3. Then
 -- the test reads the chain and the LeiosDB.
