@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Tests that the node writes each endorser block that it forges to the
--- LeiosDB, and acquires it as it would one fetched from a peer.
+-- LeiosDB, and acquires and relays it as it would one fetched from a peer.
 module Test.Consensus.Leios.Forge (tests) where
 
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
@@ -18,7 +18,12 @@ import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisition (..)
   , LeiosAcquisitions (..)
   )
+import Ouroboros.Consensus.Leios.NotifyLog (Notification (..), nextNotifyLog, notifyLogStart)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( AnnouncingHeader (..)
+  )
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
@@ -35,7 +40,7 @@ tests =
   testGroup
     "Forging"
     [ testCase
-        "the node stores and acquires each endorser block that it forges, at the point that the header announces"
+        "the node stores, acquires and relays each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
     ]
 
@@ -50,15 +55,20 @@ tests =
 -- * If the node does not write the transaction bytes, the third check fails.
 -- * If the node does not emit both acquisitions at each such point, as it would
 --   for an endorser block fetched from a peer, the fourth check fails.
+-- * If the node does not relay the announcement and offer both the body and the
+--   closure at each such point, the fifth check fails.
 unit_storesForgedEbs :: Assertion
 unit_storesForgedEbs = do
-  let ForgeOutcome{announcedEbs, storedPoints, acquisitions} = runSimOrThrow forgedEbs
+  let ForgeOutcome{announcedEbs, storedPoints, acquisitions, relayed} = runSimOrThrow forgedEbs
       points = [MkLeiosPoint (announcedSlot eb) (announcedHash eb) | eb <- announcedEbs]
   assertBool "the node forged no block" (not (null announcedEbs))
   sort storedPoints @?= sort points
   map storedTxs announcedEbs @?= map (Just . forgedTxs) announcedEbs
   sort acquisitions
     @?= sort (concat [[AcquiredBody point, AcquiredClosure point] | point <- points])
+  sort relayed
+    @?= sort
+      (concat [[RelayedAnnouncement point, RelayedBody point, RelayedClosure point] | point <- points])
 
 -- | What the chain and the LeiosDB hold after the node forges.
 data ForgeOutcome = ForgeOutcome
@@ -68,10 +78,19 @@ data ForgeOutcome = ForgeOutcome
   -- ^ The points whose closures the LeiosDB holds.
   , acquisitions :: [Acquired]
   -- ^ What the node emitted as acquired.
+  , relayed :: [Relayed]
+  -- ^ What the node's NotifyLog holds.
   }
 
 -- | An acquisition, comparably.
 data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
+  deriving (Eq, Ord, Show)
+
+-- | A notification about an endorser block, comparably.
+data Relayed
+  = RelayedAnnouncement LeiosPoint
+  | RelayedBody LeiosPoint
+  | RelayedClosure LeiosPoint
   deriving (Eq, Ord, Show)
 
 -- | An endorser block that a block on the chain announces.
@@ -104,7 +123,8 @@ forgedEbs = withNode $ \node -> do
         ]
     storedPoints <- scanCompleteEbClosuresNotOlderThanSlot reader 0
     acquisitions <- drain next
-    pure ForgeOutcome{announcedEbs, storedPoints, acquisitions}
+    relayed <- atomically $ notifications (getLeiosNotifyLog (nodeKernel node)) notifyLogStart
+    pure ForgeOutcome{announcedEbs, storedPoints, acquisitions, relayed}
  where
   drain next =
     atomically ((Just <$> next) `orElse` pure Nothing) >>= \case
@@ -113,6 +133,22 @@ forgedEbs = withNode $ \node -> do
   acquiredOf = \case
     AcquiredEb point _size -> AcquiredBody point
     AcquiredEbTxs point -> AcquiredClosure point
+  notifications notifyLog cursor =
+    ( nextNotifyLog notifyLog cursor >>= \(n, cursor') ->
+        (relayedOf n ++) <$> notifications notifyLog cursor'
+    )
+      `orElse` pure []
+  relayedOf = \case
+    NotifyAnnouncement anc ->
+      [ RelayedAnnouncement $
+          MkLeiosPoint
+            (electionSlot (ancElectionId anc))
+            (announcementEbHash (ancAnnouncement anc))
+      ]
+    NotifyBlockOffer point _size -> [RelayedBody point]
+    NotifyBlockTxsOffer point -> [RelayedClosure point]
+    -- The node votes for nothing here.
+    NotifyVote _ -> []
 
 -- | A forging that leads in every slot. Each block extends the ledger tip and
 -- announces an endorser block with one transaction, whose bytes depend on the

@@ -154,6 +154,9 @@ tests =
         "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
         test_forgedAfterBody
     , testCase
+        "the client emits nothing more for an endorser block the node forged again at a point whose closure it already acquired"
+        test_forgedAgain
+    , testCase
         "the client counts a body delivered while the node's own forge writes it as redundant, whether it arrives or settles meanwhile"
         test_bodyWhileForging
     , testCase
@@ -398,6 +401,24 @@ test_forgedAfterBody = do
   -- Long enough for any further emission to have landed.
   threadDelay 100000
   reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | The node's own forge produces the 'fixture''s endorser block, and once its
+-- writes have settled, another of the node's forges produces the same endorser
+-- block at the same point.
+test_forgedAgain :: Assertion
+test_forgedAgain = do
+  let (point, _eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  let forgeAndSettle = do
+        modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+        acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
+        Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
+          >>= maybe (assertFailure "timed out waiting for the forge's writes to settle") pure
+  forgeAndSettle
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  forgeAndSettle
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
 
 assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of

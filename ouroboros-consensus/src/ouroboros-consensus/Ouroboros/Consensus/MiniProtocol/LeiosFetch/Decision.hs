@@ -239,11 +239,12 @@ instance Semigroup PeerOffer where
 data LeiosOutstanding peer = MkLeiosOutstanding
   { ebState :: !(Map LeiosPoint EbState)
   -- ^ Per-point state for every endorser block point this node is tracking.
-  -- Three things add an entry: the announcement that takes an election's
-  -- focus, a verified certificate ('trackCertifiedEb'), and the start-up
-  -- seeding ('initializeLeiosOutstanding') of the endorser blocks whose
-  -- closures the LeiosDb already holds (merely to avoid refetching them). An
-  -- offer never does, and is only ever acted on for a point already here.
+  -- Four things add an entry: the announcement that takes an election's
+  -- focus, the node's own forge ('markReceivingFromForge'), a verified
+  -- certificate ('trackCertifiedEb'), and the start-up seeding
+  -- ('initializeLeiosOutstanding') of the endorser blocks whose closures the
+  -- LeiosDb already holds (merely to avoid refetching them). An offer never
+  -- does, and is only ever acted on for a point already here.
   --
   -- Each point is fetched on its own, even when another point names the same
   -- endorser block, so the ledger's bounds an entry is held to never change:
@@ -427,7 +428,9 @@ markReceivingFromForge point =
       BodyAcquired jobPool
         -- An empty pool means the body and closure were emitted, except for a
         -- body too big for its bounds. Our forge produces no such endorser
-        -- block: it fits each one to its slot's bounds.
+        -- block: it fits each one to its slot's bounds. For the closure, that
+        -- relies on a tx's measure bounding its bytes, as
+        -- prop_dijkstraEbTxSizeBounded checks for Dijkstra.
         | Jobs.nullJobPool jobPool -> Just $ MkEbState onset (ReceivingFromForge EmittedBodyAndClosure)
         | otherwise -> Just $ MkEbState onset (ReceivingFromForge EmittedBody)
 
