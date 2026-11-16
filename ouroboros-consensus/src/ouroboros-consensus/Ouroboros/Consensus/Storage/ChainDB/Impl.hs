@@ -251,9 +251,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Subscribe before seeding, so that no closure acquired in between is
     -- missed. The seed is every closure the LeiosDB holds that a block the
     -- initial chain selection could select may certify.
-    --
-    -- FIXME Nothing emits acquisitions until #2493 wires LeiosFetch into the
-    -- node, so until then the seed is all the ChainDB learns.
     nextLeiosAcquisition <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
     initialAcquiredEbs <-
       withReader leiosDb $ \reader ->

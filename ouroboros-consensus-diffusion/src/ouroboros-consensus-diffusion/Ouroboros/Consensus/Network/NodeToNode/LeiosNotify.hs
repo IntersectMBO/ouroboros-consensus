@@ -10,7 +10,7 @@
 module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
   ( leiosNotifyClient
   , leiosNotifyMiniProtocol
-  , leiosNotifyPruner
+  , pruneLeiosNotifyToImmTip
   , leiosNotifyServer
   , withLeiosNotifyClientState
   ) where
@@ -23,13 +23,11 @@ import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Void (Void)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
-import Ouroboros.Consensus.Ledger.Abstract (GetTip, LedgerState, getTipSlot)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, pruneAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
@@ -49,9 +47,14 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+  ( OfferedHalves (..)
+  , PeerOffer (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (ancHeader)
+  , ValidAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
@@ -91,6 +94,10 @@ leiosNotifyClient ::
   SystemTime m ->
   SomeHeaderInFutureCheck m blk ->
   ClockSkew ->
+  -- | what to do with an announcement new to the node
+  (ValidAnnouncement blk -> m ()) ->
+  -- | record an offer the peer made
+  (LeiosPoint -> PeerOffer -> m ()) ->
   ControlMessageSTM m ->
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
@@ -104,6 +111,8 @@ leiosNotifyClient
   systemTime
   chainSyncFutureCheck
   maxClockSkew
+  onNewAnnouncement
+  recordOffer
   controlMessageSTM
   stateVar =
     leiosNotifyClientPeerHandlingReplies
@@ -126,6 +135,7 @@ leiosNotifyClient
                       chainSyncFutureCheck
                       cfg
                       announceState
+                      onNewAnnouncement
                       immLedger
                       st
                       hdr
@@ -135,12 +145,14 @@ leiosNotifyClient
             atomically $ do
               pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
               writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-          MsgLeiosBlockOffer point claimed ->
+          MsgLeiosBlockOffer point claimed -> do
             atomically $ do
               immLedger <- ChainDB.getImmutableLedger chainDB
               checkAndUpdate_ $ checkLeiosBlockOffer cfg immLedger point claimed
-          MsgLeiosBlockTxsOffer point ->
+            recordOffer point $ MkPeerOffer SNothing (OfferedBody claimed)
+          MsgLeiosBlockTxsOffer point -> do
             atomically $ checkAndUpdate_ $ checkLeiosClosureOffer point
+            recordOffer point $ MkPeerOffer SNothing OfferedClosure
           MsgLeiosVotes votes -> do
             now <- systemTimeCurrent systemTime
             accepted <- atomically $ do
@@ -206,6 +218,8 @@ leiosNotifyServer notifyLog = do
       -- One vote per message: the client pipelines its requests, so several
       -- messages cost about what several votes in one would.
       NotifyVote v -> MsgLeiosVotes (v :| [])
+      NotifyBlockOffer point size -> MsgLeiosBlockOffer point size
+      NotifyBlockTxsOffer point -> MsgLeiosBlockTxsOffer point
 
 -- | Run the given action with a fresh LeiosNotify client state, registered
 -- under the peer for as long as the action runs.
@@ -225,33 +239,19 @@ withLeiosNotifyClientState statesVar peer =
     (\_stateVar -> atomically $ modifyTVar statesVar (Map.delete peer))
 
 -- | Prune every LeiosNotify client's state, the node's 'AnnounceState', and the
--- certificates of its 'VoteState', each time the immutable tip's slot advances.
-leiosNotifyPruner ::
-  ( IOLike m
-  , GetTip (LedgerState blk)
-  , ConvertRawHash blk
-  , GetHeader blk
-  ) =>
-  ChainDB m blk ->
+-- certificates of its 'VoteState', to the immutable tip's slot.
+pruneLeiosNotifyToImmTip ::
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   AnnounceState m blk ->
   VoteState m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
-  m Void
-leiosNotifyPruner chainDB announceState voteState statesVar = go (SlotNo 0)
- where
-  go prunedSlot = do
-    immTipSlot <- atomically $ do
-      immLedger <- ChainDB.getImmutableLedger chainDB
-      case getTipSlot (ledgerState immLedger) of
-        NotOrigin slot
-          | prunedSlot < slot -> do
-              states <- readTVar statesVar
-              mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
-              pruneAnnounceState announceState slot
-              pruneCertificates voteState slot
-              pure slot
-        _ -> retry
-    go immTipSlot
+  SlotNo ->
+  STM m ()
+pruneLeiosNotifyToImmTip announceState voteState statesVar immTipSlot = do
+  states <- readTVar statesVar
+  mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState immTipSlot)) states
+  pruneAnnounceState announceState immTipSlot
+  pruneCertificates voteState immTipSlot
 
 -- | LeiosNotify as a node-to-node mini-protocol.
 leiosNotifyMiniProtocol ::
