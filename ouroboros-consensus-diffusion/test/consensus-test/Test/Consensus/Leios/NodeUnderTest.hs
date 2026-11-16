@@ -66,12 +66,14 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
-import Data.Maybe.Strict (StrictMaybe (SJust))
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Network.Mux as Mux
-import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot, getHeader)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
@@ -85,13 +87,17 @@ import Ouroboros.Consensus.Config
   ( DiffusionPipeliningSupport (..)
   , SecurityParam (..)
   , TopLevelConfig
+  , configBlock
   , configLedger
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.HeaderValidation (certRbInfo)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -216,6 +222,9 @@ data NodeUnderTest m = NodeUnderTest
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where a test emits the endorser blocks and closures the node
   -- acquires, as the node's LeiosFetch would.
+  , nodeNewLeiosValidClaims :: STM m (Map LeiosClaim LeiosAnnouncement)
+  -- ^ The claim of each new Leios certification the node's ChainDB has
+  -- validated since the node started, with the announcement it certifies
   , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
   -- ^ The peers the node has a connection to.
   }
@@ -224,21 +233,35 @@ data NodeUnderTest m = NodeUnderTest
 addBlocks :: IOLike m => NodeUnderTest m -> [Blk] -> m ()
 addBlocks node = addBlocksAfter node Origin
 
--- | Add a chain to the node's ChainDB, oldest first, given the slot of its
--- first block's predecessor
+-- | Add a chain to the node's ChainDB, oldest first, given its first block's
+-- predecessor
 --
 -- A 'LeiosTestBlock''s ledger view is the same at every slot.
-addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin SlotNo -> [Blk] -> m ()
-addBlocksAfter node predecessorSlot blks =
+addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin Blk -> [Blk] -> m ()
+addBlocksAfter node predecessor blks =
   sequence_ $
     zipWith
-      ( \predSlot ->
-          ChainDB.addBlock_ (nodeChainDB node) noPunishment predSlot leiosView
+      ( \prev blk ->
+          ChainDB.addBlock_
+            (nodeChainDB node)
+            noPunishment
+            (certRb prev blk)
+            blk
       )
-      (predecessorSlot : map (NotOrigin . blockSlot) blks)
+      (predecessor : map NotOrigin blks)
       blks
  where
-  leiosView = SJust (ltlcLeios (configLedger (nodeTopLevelConfig node)))
+  cfg = nodeTopLevelConfig node
+  leiosView = SJust (ltlcLeios (configLedger cfg))
+  certRb prev blk = case prev of
+    Origin -> SNothing
+    NotOrigin p ->
+      certRbInfo
+        (configBlock cfg)
+        (getHeader blk)
+        (NotOrigin (blockSlot p))
+        leiosView
+        (latestAnnouncement (getHeader p))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =
@@ -290,6 +313,11 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
   let seeds = configSeeds cfg
   leiosAcquisitions <- newLeiosAcquisitions
+  newLeiosValidClaims <- mkNewLeiosValidClaims
+  validClaimsSinceStart <- newTVarIO Map.empty
+  let onNewLeiosValidClaim claim ann = do
+        modifyTVar validClaimsSinceStart (Map.insert claim ann)
+        recordNewLeiosValidClaim newLeiosValidClaims claim ann
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -307,6 +335,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             (fst (mkInMemoryArgs ()))
             leiosDB
             leiosAcquisitions
+            onNewLeiosValidClaim
             ChainDB.defaultArgs
             ( (if nodeConfigLastShutDownWasClean cfg then id else ChainDB.ensureValidateAll)
                 . updateChainDbArgs
@@ -335,6 +364,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               chainDB
               leiosDB
               leiosAcquisitions
+              (consumeNewLeiosValidClaims newLeiosValidClaims)
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
@@ -384,6 +414,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   apps
             , nodeSeeds = seeds
             , nodeLeiosAcquisitions = leiosAcquisitions
+            , nodeNewLeiosValidClaims = readTVar validClaimsSinceStart
             , nodeConnectedPeers = connectedPeers
             }
 
