@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -24,6 +25,7 @@ module Ouroboros.Consensus.NodeKernel
   ) where
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -79,9 +81,17 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , pruneNotifyLog
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosLedgerView)
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
-import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock, LeiosMempoolTxs (..), TxHash)
+import Ouroboros.Consensus.Leios.Types
+  ( ForgedEndorserBlock
+  , LeiosMempoolTxs (..)
+  , LeiosPoint (..)
+  , ProtVerParity
+  , TxHash
+  , protVerParity
+  , toRankingBlockHash
+  )
 import Ouroboros.Consensus.Leios.VoteState (VoteState, getCertificate, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -771,8 +781,8 @@ forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
+              (getLeiosCertToForge chainDB voteState)
               (onForgedEb slotOnset)
-              (getCertificate voteState)
               currentSlot
     )
  where
@@ -784,9 +794,28 @@ forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
     labelThisThread $ Text.unpack $ forgeLabel bf
     pure bf
 
--- | For the subset of these txs the Mempool currently holds, their bytes as an
--- endorser block references them; and the major protocol version the Mempool
--- validated them all under; 'Nothing' in an era without endorser blocks.
+-- | The certificate of the endorser block that the block at this point
+-- announced, if the node aggregated one and holds the endorser block's
+-- closure. ChainSel parks a block that certifies a closure the node does not
+-- hold.
+getLeiosCertToForge ::
+  forall m blk.
+  (IOLike m, ConvertRawHash blk) =>
+  ChainDB m blk ->
+  VoteState m blk ->
+  RealPoint blk ->
+  LeiosAnnouncement ->
+  m (Maybe LeiosCert)
+getLeiosCertToForge chainDB voteState (RealPoint announcingSlot announcingHash) announcement =
+  atomically $ do
+    acquired <- ChainDB.getIsLeiosClosureAcquired chainDB
+    if acquired (MkLeiosPoint announcingSlot (announcementEbHash announcement))
+      then getCertificate voteState (toRankingBlockHash (Proxy @blk) announcingHash)
+      else pure Nothing
+
+-- | The bytes of those of these txs the mempool holds, as an endorser block
+-- references them, and the parity of the protocol version it validated them
+-- under.
 leiosTxsInMempool ::
   IOLike m =>
   Mempool m blk ->
