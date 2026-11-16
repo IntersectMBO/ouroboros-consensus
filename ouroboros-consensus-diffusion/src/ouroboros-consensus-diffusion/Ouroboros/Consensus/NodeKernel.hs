@@ -102,6 +102,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , LeiosPeerLifetimeId (..)
   , leiosFetchAnnouncementFocuser
   , leiosFetchDecisionLoop
+  , leiosFetchFocuser
   , newLeiosFetchKernel
   , onForgedLeiosEb
   , pruneLeiosFetchToImmTip
@@ -494,6 +495,9 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
         leiosFetchAnnouncementFocuser leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchFocuser" $
+        leiosFetchFocuser chainDB leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog

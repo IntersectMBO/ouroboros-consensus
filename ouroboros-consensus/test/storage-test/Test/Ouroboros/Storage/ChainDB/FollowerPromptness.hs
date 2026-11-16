@@ -27,6 +27,7 @@ import Control.ResourceRegistry
 import Control.Tracer (Tracer, contramapM, mkTracer, traceWith)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
@@ -170,6 +171,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
             Punishment.noPunishment
             tipSlot
             (trivialLeiosLedgerView (Proxy @TestBlock))
+            SNothing
             blk
           addBlocks (NotOrigin (blockSlot blk)) blks
       addUpdates tipSlot = \case

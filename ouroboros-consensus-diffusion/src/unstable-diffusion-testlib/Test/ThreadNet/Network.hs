@@ -975,6 +975,7 @@ runThreadNetwork
                     InvalidBlockPunishment.noPunishment
                     (pointSlot p)
                     SNothing
+                    SNothing
                     ebb
                 pure forged
 

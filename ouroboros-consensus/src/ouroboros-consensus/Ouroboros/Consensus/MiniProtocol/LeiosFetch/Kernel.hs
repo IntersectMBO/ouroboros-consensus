@@ -18,6 +18,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , leiosFetchAnnouncementFocuser
   , onForgedLeiosEb
   , leiosFetchDecisionLoop
+  , leiosFetchFocuser
   , pruneLeiosFetchToImmTip
   ) where
 
@@ -25,7 +26,7 @@ import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybe)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
@@ -66,6 +67,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosFetchRequest
   , LeiosOutstanding (..)
   , PeerOffer (..)
+  , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
@@ -102,6 +104,7 @@ import Ouroboros.Consensus.Util.IOLike
   , newTQueueIO
   , readTQueue
   , readTVar
+  , retry
   , takeMVar
   , threadDelay
   , tryPutMVar
@@ -111,6 +114,7 @@ import Ouroboros.Consensus.Util.IOLike
   , writeTQueue
   , writeTVar
   )
+import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer)
 import System.Random (StdGen)
 
@@ -302,7 +306,8 @@ leiosFetchAnnouncementFocuser kernel =
 -- One entry per election: the announcement that takes the election's focus. A
 -- second announcement for an already-focused election is an equivocation, and
 -- tracking its endorser block too would let a pool double what its won slots
--- cost us.
+-- cost us. If that one turns out to be the certified one, a verified
+-- certificate gives it an entry then.
 onNewLeiosAnnouncement ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
@@ -429,6 +434,41 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 
   loopInterval :: DiffTime
   loopInterval = 0.5
+
+-- | Move each election's focus onto the endorser block a verified certificate
+-- certifies, as ChainSel verifies such certificates.
+--
+-- This is how a node that only saw some other announcement for the election,
+-- or none, because the announcing block has been on its selection since before
+-- it started, comes to fetch the certified one. Each iteration focuses the
+-- elections certified since the one before, so a certificate verified after
+-- the offer arrived still moves the focus. A pruning alone does not wake it.
+leiosFetchFocuser ::
+  IOLike m =>
+  ChainDB m blk ->
+  LeiosFetchKernel m peer blk ->
+  m Void
+leiosFetchFocuser chainDB kernel = go SNothing
+ where
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
+
+  go !seen = do
+    certified <- atomically $ do
+      certified <- ChainDB.getLeiosCertifiedEbs chainDB
+      case seen of
+        SJust prev | getFingerprint prev == getFingerprint certified -> retry
+        _ -> pure certified
+    -- The keys suffice: an election has at most one certified endorser block
+    -- unless the committee equivocates; see 'focusElection'.
+    let arrived =
+          forgetFingerprint certified
+            `Map.difference` strictMaybe Map.empty forgetFingerprint seen
+    modifyMVar_ lfcOutstanding $ \outstanding ->
+      pure $ Map.foldlWithKey' focus outstanding arrived
+    void $ tryPutMVar lfcReady ()
+    go (SJust certified)
+
+  focus outstanding elId ebHash = focusCertifiedEb elId ebHash outstanding
 
 -- | Prune the node's LeiosFetch state and the peers' offers to the immutable
 -- tip's slot.
