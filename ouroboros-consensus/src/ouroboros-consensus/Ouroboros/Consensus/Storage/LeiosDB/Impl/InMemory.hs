@@ -231,7 +231,8 @@ imLookupEbBody stateVar point = atomically $ do
   pure $ Serialised . BSL.fromStrict . rowBody <$> rowAt state point
 
 -- | Mirrors the SQLite backend: the row of the point, unless an earlier
--- delivery wrote it, then the fills, returning the offsets the point holds.
+-- delivery wrote it, then the fills and the given txs, returning the offsets
+-- the point holds.
 -- Nothing, if the latest promotion passed the point.
 imInsertEbBody ::
   IOLike m =>
