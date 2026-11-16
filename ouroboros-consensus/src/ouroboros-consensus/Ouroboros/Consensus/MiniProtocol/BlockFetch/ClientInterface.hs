@@ -34,7 +34,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
@@ -75,6 +75,8 @@ data MatchedBlock blk = MatchedBlock
   -- ^ The slot of the block's predecessor
   , matchedBlockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
   -- ^ The Leios part of the ledger view at the block's slot
+  , matchedBlockCertifiedAnnouncement :: !(StrictMaybe LeiosAnnouncement)
+  -- ^ The announcement the block's Leios certificate certifies
   }
 
 -- | Abstract over the ChainDB
@@ -87,6 +89,7 @@ data ChainDbView m blk = ChainDbView
       InvalidBlockPunishment m ->
       WithOrigin SlotNo ->
       StrictMaybe LeiosLedgerView ->
+      StrictMaybe LeiosAnnouncement ->
       blk ->
       m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
@@ -188,6 +191,7 @@ mkBlockFetchConsensusInterface
               { matchedBlock = b
               , matchedBlockPredecessorSlot = hwtPredecessorSlot hwt
               , matchedBlockLeiosLedgerView = hwtLeiosLedgerView hwt
+              , matchedBlockCertifiedAnnouncement = hwtCertifiedAnnouncement hwt
               }
       | otherwise = Nothing
 
@@ -224,6 +228,7 @@ mkBlockFetchConsensusInterface
             { matchedBlock = blk
             , matchedBlockPredecessorSlot
             , matchedBlockLeiosLedgerView
+            , matchedBlockCertifiedAnnouncement
             } = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
@@ -262,6 +267,7 @@ mkBlockFetchConsensusInterface
         punishment
         matchedBlockPredecessorSlot
         matchedBlockLeiosLedgerView
+        matchedBlockCertifiedAnnouncement
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo
