@@ -44,6 +44,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -142,6 +143,7 @@ instance BftCrypto c => LeiosProtocol (Bft c) where
   getContainsLeiosCert = defaultGetContainsLeiosCert
   getCertifiableLeiosAnnouncement = defaultGetCertifiableLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance BftCrypto c => PerasProtocol (Bft c) where

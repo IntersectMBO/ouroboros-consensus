@@ -84,6 +84,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   )
 import Ouroboros.Consensus.Peras.Protocol
@@ -338,6 +339,7 @@ instance SL.PraosCrypto c => LeiosProtocol (TPraos c) where
   getContainsLeiosCert = defaultGetContainsLeiosCert
   getCertifiableLeiosAnnouncement = defaultGetCertifiableLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance SL.PraosCrypto c => PerasProtocol (TPraos c) where
