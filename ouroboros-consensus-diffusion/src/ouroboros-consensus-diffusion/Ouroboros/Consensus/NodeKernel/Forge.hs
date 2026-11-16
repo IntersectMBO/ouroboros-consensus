@@ -137,17 +137,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
-        traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
-
-        selectedTxs <-
-          getTransactionsToForge
-            cfg
-            mempool
-            currentSlot
-            tickedLedgerState
-            forker
-            Nothing -- NOTE: no Peras cert to include for now
-            -- ChainSel would park a block certifying a closure the node lacks.
+        -- ChainSel would park a block certifying a closure the node lacks.
         leiosCertified <- lift . atomically $
           case certifiableTip cfg currentSlot bcPrevPoint tickedChainDepState of
             Nothing -> pure Nothing
@@ -158,21 +148,30 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
                 else pure Nothing
         let leiosCert = fst <$> leiosCertified
 
-        -- A certifying block carries no transactions of its own, and it
-        -- announces no endorser block: the mempool's transactions were
-        -- validated without the certified ones.
-        let (rbTxs, ebTxs) = case leiosCert of
-              Nothing -> (rankingBlockTxs selectedTxs, endorserBlockTxs selectedTxs)
-              Just _ -> ([], [])
-            fbArgs =
+        selectedTxs <- case leiosCert of
+          -- A certifying block carries no transactions of its own, and it
+          -- announces no endorser block: the mempool's transactions were
+          -- validated without the certified ones. So 'forge' does not select
+          -- any, which saves the mempool revalidation of 'getSnapshotFor'.
+          Just _ -> pure noTransactionsToForge
+          Nothing -> do
+            traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+            getTransactionsToForge
+              cfg
+              mempool
+              currentSlot
+              tickedLedgerState
+              forker
+              Nothing -- NOTE: no Peras cert to include for now
+        let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
                 , Block.fbCurrentBlockNo = bcBlockNo
                 , Block.fbCurrentSlotNo = currentSlot
                 , Block.fbPerasCert = Nothing -- No PerasCert for now
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-                , Block.fbTxs = rbTxs
-                , Block.fbEbTxs = ebTxs
+                , Block.fbTxs = rankingBlockTxs selectedTxs
+                , Block.fbEbTxs = endorserBlockTxs selectedTxs
                 , Block.fbIsLeader = proof
                 , Block.fbLeiosCert = leiosCert
                 }
@@ -576,6 +575,18 @@ data TransactionsToForge blk = TransactionsToForge
   , endorserBlockMeasure :: MempoolMeasure blk
   , forgingMempoolSize :: MempoolSize
   }
+
+-- | The selection of a block that takes no transactions from the mempool. Its
+-- 'forgingMempoolSize' is zero, because 'forge' reads no mempool snapshot.
+noTransactionsToForge :: TxLimits blk => TransactionsToForge blk
+noTransactionsToForge =
+  TransactionsToForge
+    { rankingBlockTxs = []
+    , rankingBlockMeasure = Measure.zero
+    , endorserBlockTxs = []
+    , endorserBlockMeasure = Measure.zero
+    , forgingMempoolSize = mempty
+    }
 
 -- | Get a snapshot of the mempool that is consistent with the given ticked
 -- ledger state. Select the transactions for the ranking block and for the
