@@ -779,7 +779,11 @@ forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              (getLeiosCertToForge chainDB voteState)
+              ( getLeiosCertToForge
+                  (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
+                  chainDB
+                  voteState
+              )
               (onForgedEb slotOnset)
               currentSlot
     )
@@ -796,20 +800,31 @@ forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
 -- announced, if the node aggregated one and holds the endorser block's
 -- closure. ChainSel parks a block that certifies a closure the node does not
 -- hold.
+--
+-- If there is no certificate, this traces why.
 getLeiosCertToForge ::
   forall m blk.
   (IOLike m, ConvertRawHash blk) =>
+  Tracer m (TraceForgeEvent blk) ->
   ChainDB m blk ->
   VoteState m blk ->
   RealPoint blk ->
   LeiosAnnouncement ->
   m (Maybe LeiosCert)
-getLeiosCertToForge chainDB voteState (RealPoint announcingSlot announcingHash) announcement =
-  atomically $ do
+getLeiosCertToForge tracer chainDB voteState announcingPoint announcement = do
+  result <- atomically $ do
     acquired <- ChainDB.getIsLeiosClosureAcquired chainDB
-    if acquired (MkLeiosPoint announcingSlot (announcementEbHash announcement))
-      then getCertificate voteState (toRankingBlockHash (Proxy @blk) announcingHash)
-      else pure Nothing
+    if acquired point
+      then
+        maybe (Left $ TraceForgeNoLeiosCert announcingPoint) Right
+          <$> getCertificate voteState (toRankingBlockHash (Proxy @blk) announcingHash)
+      else pure $ Left $ TraceForgeLeiosClosureNotAcquired point
+  case result of
+    Left event -> Nothing <$ traceWith tracer event
+    Right cert -> pure $ Just cert
+ where
+  RealPoint announcingSlot announcingHash = announcingPoint
+  point = MkLeiosPoint announcingSlot (announcementEbHash announcement)
 
 -- | For the subset of these txs the Mempool currently holds, their bytes as an
 -- endorser block references them; and the major protocol version the Mempool

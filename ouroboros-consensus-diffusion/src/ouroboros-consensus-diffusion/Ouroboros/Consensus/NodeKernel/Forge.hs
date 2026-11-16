@@ -40,6 +40,8 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosAnnouncement (..)
   , LeiosLedgerView (..)
   , LeiosProtocol (getLeiosLedgerView, leiosAnnouncementToCertify)
+  , NotCertifiable (..)
+  , WhyNotCertifiable (..)
   )
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
@@ -106,7 +108,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, certified) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, certifiedBy) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -133,9 +135,11 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
 
         leiosCertified <-
           case certifiableTip cfg currentSlot bcPrevPoint tickedChainDepState of
-            Nothing -> pure Nothing
-            Just (announcingPoint, announcement) ->
-              fmap (\cert -> (cert, announcement))
+            Left notCertifiable -> do
+              trace $ TraceForgeNotCertifiable currentSlot notCertifiable
+              pure Nothing
+            Right (announcingPoint, announcement) ->
+              fmap (\cert -> (cert, (announcingPoint, announcement)))
                 <$> lift (getLeiosCert announcingPoint announcement)
         let leiosCert = fst <$> leiosCertified
 
@@ -172,7 +176,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-          , maybeToStrictMaybe $ snd <$> leiosCertified
+          , snd <$> leiosCertified
           )
 
   -- Actually produce the block
@@ -191,6 +195,14 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
       (forgingMempoolSize selectedTxs)
       (rankingBlockMeasure selectedTxs)
 
+  whenJust certifiedBy $ \(announcingPoint, announcement) ->
+    trace $
+      TraceForgedCertifyingBlock
+        currentSlot
+        (blockHash (Block.rankingBlock forgeRes))
+        announcingPoint
+        (announcementEbHash announcement)
+
   whenJust (Block.endorserBlock forgeRes) $ \eb ->
     trace $
       TraceForgedEndorserBlock
@@ -207,13 +219,14 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
     (fbTxs fbArgs)
     ( MkCertRbInfo
         <$> maybeToStrictMaybe (withOriginToMaybe (pointSlot forgingOnTopOf))
-        <*> certified
+        <*> maybeToStrictMaybe (snd <$> certifiedBy)
         <*> leiosView
     )
     (Block.rankingBlock forgeRes)
 
 -- | The announcement that a block in this slot on top of this point may
--- certify, with the point of the block that announced it.
+-- certify, with the point of the block that announced it, or why it may
+-- certify none.
 --
 -- It asks 'leiosAnnouncementToCertify', so that the forger applies the same
 -- rule as header validation, on the same ticked state.
@@ -223,14 +236,15 @@ certifiableTip ::
   SlotNo ->
   Point blk ->
   Ticked (ChainDepState (BlockProtocol blk)) ->
-  Maybe (RealPoint blk, LeiosAnnouncement)
-certifiableTip cfg currentSlot prevPoint tickedChainDepState =
-  case ( leiosAnnouncementToCertify (configConsensus cfg) currentSlot tickedChainDepState
-       , prevPoint
-       ) of
-    (Right announcement, BlockPoint announcingSlot announcingHash) ->
-      Just (RealPoint announcingSlot announcingHash, announcement)
-    _ -> Nothing
+  Either NotCertifiable (RealPoint blk, LeiosAnnouncement)
+certifiableTip cfg currentSlot prevPoint tickedChainDepState = do
+  announcement <-
+    leiosAnnouncementToCertify (configConsensus cfg) currentSlot tickedChainDepState
+  case prevPoint of
+    BlockPoint announcingSlot announcingHash ->
+      Right (RealPoint announcingSlot announcingHash, announcement)
+    -- The chain-dependent state at genesis holds no announcement.
+    GenesisPoint -> Left $ NoCertifiableAnnouncement NothingAnnounced
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext

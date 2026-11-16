@@ -30,7 +30,8 @@ import Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Types (EndorserBlock)
+import Ouroboros.Consensus.Leios.Protocol (NotCertifiable)
+import Ouroboros.Consensus.Leios.Types (EndorserBlock, EndorserBlockHash, LeiosPoint)
 import Ouroboros.Consensus.Leios.VoteState (TraceLeiosVoteState)
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
@@ -427,6 +428,8 @@ data TraceForgeEvent blk
     -- itself, the total size of the mempool snapshot at the time we produced
     -- the block (which may be significantly larger than the block, due to
     -- maximum block size), and the size of the txs included in the block.
+    -- Both sizes are zero for a block that contains a Leios certificate,
+    -- because 'forge' reads no mempool snapshot for it.
     --
     -- This will be followed by one of three messages:
     --
@@ -434,6 +437,28 @@ data TraceForgeEvent blk
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
     TraceForgedBlock SlotNo (Point blk) blk MempoolSize (MempoolMeasure blk)
+  | -- | We forged a block that contains a Leios certificate.
+    TraceForgedCertifyingBlock
+      -- | The current slot.
+      SlotNo
+      -- | The hash of the forged block.
+      (HeaderHash blk)
+      -- | The point of the block that announces the certified endorser block.
+      (RealPoint blk)
+      -- | The hash of the certified endorser block.
+      EndorserBlockHash
+  | -- | The block in this slot cannot contain a Leios certificate, because
+    -- 'leiosAnnouncementToCertify' gives this reason.
+    --
+    -- We trace this in each slot where the node leads.
+    TraceForgeNotCertifiable SlotNo NotCertifiable
+  | -- | The node has no Leios certificate for the endorser block that the block
+    -- at this point announces, so the forged block certifies nothing.
+    TraceForgeNoLeiosCert (RealPoint blk)
+  | -- | The node does not hold the closure of this endorser block, so the
+    -- forged block does not certify it. ChainSel parks a block that certifies
+    -- a closure the node does not hold.
+    TraceForgeLeiosClosureNotAcquired LeiosPoint
   | -- | We forged an endorser block.
     TraceForgedEndorserBlock
       -- | The current slot.
