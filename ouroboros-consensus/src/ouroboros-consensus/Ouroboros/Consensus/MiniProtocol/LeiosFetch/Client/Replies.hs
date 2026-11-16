@@ -557,7 +557,12 @@ writeBodyWithLocalTxs ctx point eb localFills summary = do
       summary
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (_off, txHash, _bytes, parity) -> step w txHash parity) w0 fromMempool
-  writeEbBody lfcWriter point eb fills (Map.fromList [(off, bytes) | (off, _txHash, bytes, _parity) <- fromMempool])
+  writeEbBody
+    lfcWriter
+    point
+    eb
+    fills
+    (Map.fromList [(off, bytes) | (off, _txHash, bytes, _parity) <- fromMempool])
  where
   MkLeiosFetchClientContext{lfcMempoolTxs, lfcTxCache, lfcWriter, lfcTracer} = ctx
   refs = endorserBlockReferences eb
@@ -586,7 +591,8 @@ acquireForgedEb ctx point forged = do
   now <- systemTimeCurrent lfcSystemTime
   _ <-
     insertBody lfcTxCache (pointEbHash point) (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
-  written <- writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  written <-
+    writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
   withLockedInsertAppliedTx lfcTxCache $ \w0 step ->
     foldM (\w (txHash, _size) -> step w txHash (forgedEbTxsParity forged)) w0 refs
   -- Unmasked, since this may run uninterruptibly ('onValidAnnouncement' says
