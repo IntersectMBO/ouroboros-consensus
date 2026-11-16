@@ -61,9 +61,9 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
 -- A fill copies the source's bytes only if they hash to the tx this body lists
 -- at the fill's offset, so a stale or wrong location fills nothing.
 --
--- Returns the offsets the point then holds: those filled, or written since an
--- earlier delivery of the body, which its markers tell without reading the
--- closure.
+-- Returns the offsets the point then holds: those filled or given, or written
+-- since an earlier delivery of the body, which its markers tell without reading
+-- the closure.
 sqlInsertEbBody ::
   Conn ->
   LeiosPoint ->
