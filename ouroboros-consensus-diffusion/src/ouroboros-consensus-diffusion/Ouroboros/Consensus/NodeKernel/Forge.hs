@@ -25,12 +25,9 @@ import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
-  , certRbInfo
   , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract
@@ -39,16 +36,15 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Leios.Protocol
-  ( CertRbInfo
+  ( CertRbInfo (..)
   , LeiosAnnouncement (..)
   , LeiosLedgerView (..)
-  , LeiosProtocol (getCertifiableLeiosAnnouncement, getLeiosLedgerView)
+  , LeiosProtocol (getLeiosLedgerView, leiosAnnouncementToCertify)
   )
 import Ouroboros.Consensus.Leios.Types
   ( ForgedEndorserBlock (..)
   , LeiosPoint (..)
   , RankingBlockHash
-  , minCertificationSlot
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.Mempool
@@ -113,7 +109,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, predChainDep) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, certified) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -149,12 +145,15 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
             forker
             Nothing -- NOTE: no Peras cert to include for now
             -- ChainSel would park a block certifying a closure the node lacks.
-        leiosCert <- lift . atomically $
-          case certifiableTip cfg currentSlot bcPrevPoint unticked ledgerView of
+        leiosCertified <- lift . atomically $
+          case certifiableTip cfg currentSlot bcPrevPoint tickedChainDepState of
             Nothing -> pure Nothing
-            Just (rbHash, point) -> do
+            Just (rbHash, point, announcement) -> do
               acquired <- ChainDB.getIsLeiosClosureAcquired chainDB
-              if acquired point then getLeiosCert rbHash else pure Nothing
+              if acquired point
+                then fmap (\cert -> (cert, announcement)) <$> getLeiosCert rbHash
+                else pure Nothing
+        let leiosCert = fst <$> leiosCertified
 
         -- A certifying block carries no transactions of its own, and it
         -- announces no endorser block: the mempool's transactions were
@@ -180,7 +179,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-          , headerStateChainDep (headerState unticked)
+          , maybeToStrictMaybe $ snd <$> leiosCertified
           )
 
   -- Actually produce the block
@@ -213,62 +212,38 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     mempool
     currentSlot
     (fbTxs fbArgs)
-    ( certRbInfo
-        (configBlock cfg)
-        (getHeader (Block.rankingBlock forgeRes))
-        (pointSlot forgingOnTopOf)
-        leiosView
-        predChainDep
+    ( MkCertRbInfo
+        <$> maybeToStrictMaybe (withOriginToMaybe (pointSlot forgingOnTopOf))
+        <*> certified
+        <*> leiosView
     )
     (Block.rankingBlock forgeRes)
 
--- | The ranking block a block forged on top of it may certify the endorser
--- block of, and that endorser block's point, if the block in this slot may: the
--- predecessor announced one, in this epoch, and the announcement, voting and
--- diffusion periods have elapsed.
+-- | The announcement that a block in this slot on top of this point may
+-- certify, with the hash of the ranking block that announced it and the point
+-- of the announced endorser block.
+--
+-- It asks 'leiosAnnouncementToCertify', so that the forger applies the same
+-- rule as header validation, on the same ticked state.
 certifiableTip ::
   forall blk.
   RunNode blk =>
   TopLevelConfig blk ->
   SlotNo ->
   Point blk ->
-  ExtLedgerState blk EmptyMK ->
-  LedgerView (BlockProtocol blk) ->
-  Maybe (RankingBlockHash, LeiosPoint)
-certifiableTip cfg currentSlot prevPoint unticked ledgerView = do
-  announcement <-
-    getCertifiableLeiosAnnouncement
-      (Proxy @(BlockProtocol blk))
-      (headerStateChainDep (headerState unticked))
-  BlockPoint announcingSlot announcingHash <- pure prevPoint
-  MkLeiosLedgerView
-    { llvAnnouncementPeriod
-    , llvVotePeriod
-    , llvDiffusionPeriod
-    } <-
-    getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-  ((announcingEpoch, _), (currentEpoch, _), (_onset, slotLength)) <-
-    either (const Nothing) Just $
-      HardFork.runQuery
-        ( (,,)
-            <$> HardFork.slotToEpoch' announcingSlot
-            <*> HardFork.slotToEpoch' currentSlot
-            <*> HardFork.slotToWallclock currentSlot
+  Ticked (ChainDepState (BlockProtocol blk)) ->
+  Maybe (RankingBlockHash, LeiosPoint, LeiosAnnouncement)
+certifiableTip cfg currentSlot prevPoint tickedChainDepState =
+  case ( leiosAnnouncementToCertify (configConsensus cfg) currentSlot tickedChainDepState
+       , prevPoint
+       ) of
+    (Right announcement, BlockPoint announcingSlot announcingHash) ->
+      Just
+        ( toRankingBlockHash (Proxy @blk) announcingHash
+        , MkLeiosPoint announcingSlot (announcementEbHash announcement)
+        , announcement
         )
-        (hardForkSummary (configLedger cfg) (ledgerState unticked))
-  guard $ announcingEpoch == currentEpoch
-  guard $
-    currentSlot
-      >= minCertificationSlot
-        slotLength
-        llvAnnouncementPeriod
-        llvVotePeriod
-        llvDiffusionPeriod
-        announcingSlot
-  pure
-    ( toRankingBlockHash (Proxy @blk) announcingHash
-    , MkLeiosPoint announcingSlot (announcementEbHash announcement)
-    )
+    _ -> Nothing
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
