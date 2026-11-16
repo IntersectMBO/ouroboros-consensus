@@ -40,6 +40,7 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetCertifiableLeiosAnnouncement
   , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
@@ -139,6 +140,7 @@ data instance ConsensusConfig (Bft c) = BftConfig
 instance BftCrypto c => LeiosProtocol (Bft c) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   getContainsLeiosCert = defaultGetContainsLeiosCert
+  getCertifiableLeiosAnnouncement = defaultGetCertifiableLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

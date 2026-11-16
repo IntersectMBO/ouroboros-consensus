@@ -536,6 +536,7 @@ Leios, which `SP` does not use:
 > instance LeiosProtocol SP where
 >   getLeiosAnnouncement = defaultGetLeiosAnnouncement
 >   getContainsLeiosCert = defaultGetContainsLeiosCert
+>   getCertifiableLeiosAnnouncement = defaultGetCertifiableLeiosAnnouncement
 >   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 >   getLeiosLedgerView = defaultGetLeiosLedgerView
 
