@@ -51,6 +51,8 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , PraosToSign (..)
   , SerialisePraosState
   , Ticked (..)
+  , NotCertifiable (..)
+  , certifiablePolyPraos
   , checkIsLeaderPolyPraos
   , forgePraosFields
   , getOpCertCountersPolyPraos
@@ -72,6 +74,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , getCertifiableLeiosAnnouncementPolyPraos
   , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
+  , leiosHeaderChecks
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
   , WhyNotCertifiable (..)
@@ -161,7 +164,9 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
+  , NotCertifiable (..)
   , OCINStaleness (..)
+  , WhyNotCertifiable (..)
   , decodeLeiosAnnouncement
   , encodeLeiosAnnouncement
   )
@@ -405,38 +410,6 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
    where
     nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
 
--- | Why the next header may certify no announcement.
-data WhyNotCertifiable
-  = -- | The most recently applied header carried none.
-    NothingAnnounced
-  | -- | It was announced in the previous era, and an endorser block may not be
-    -- certified across an era boundary.
-    AnnouncedInPreviousEra
-  | -- | It was announced in the previous epoch, and an endorser block may not be
-    -- certified across an epoch boundary.
-    --
-    -- (This restriction avoids some engineering complexity that wouldn't be
-    -- worthwhile, since this restriction only loses one EB opportunity per
-    -- epoch.)
-    AnnouncedInPreviousEpoch
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
-
--- | Keeps the more specific reason: 'NothingAnnounced', then
--- 'AnnouncedInPreviousEra', then 'AnnouncedInPreviousEpoch'.
---
--- An era boundary is also an epoch boundary, and either may be crossed first,
--- so neither may trample the other's more specific reason.
-instance Semigroup WhyNotCertifiable where
-  (<>) = minBy specificityRank
-   where
-    minBy f a b = if f a > f b then b else a
-
-    specificityRank = \case
-      NothingAnnounced -> 0 :: Word -- most specific
-      AnnouncedInPreviousEra -> 1
-      AnnouncedInPreviousEpoch -> 2 -- least specific
-
 -- | What the next header may certify after crossing a boundary that rules out
 -- certifying the pending announcement, for this reason.
 markUncertifiable ::
@@ -670,7 +643,7 @@ updateChainDepStatePolyPraos
   slot
   tcs = do
     -- The Leios header checks are cheap, so they run first.
-    leiosHeaderChecks ei lv b slot cs
+    leiosHeaderChecks ei b slot tcs
     -- First, we check the KES signature, which validates that the issuer is
     -- in fact who they say they are.
     validateKESSignature prms lv (praosStateOCertCounters cs) b
@@ -875,55 +848,74 @@ leiosHeaderChecks ::
   , TypeSwitch (LeiosOnly proto)
   ) =>
   EpochInfo (Except History.PastHorizonException) ->
-  Views.PolyPraosLedgerView proto ->
   Views.PolyPraosValidateView proto c ->
   SlotNo ->
-  PolyPraosState proto ->
+  Ticked (PolyPraosState proto) ->
   Except (PolyPraosValidationErr proto c) ()
-leiosHeaderChecks praosEpochInfo lv b slot cs = do
-  leiosContextFreeHeaderChecks lv b
+leiosHeaderChecks praosEpochInfo b slot tcs = do
+  leiosContextFreeHeaderChecks (tickedPraosStateLedgerView tcs) b
   traverse_ check $
-    (,,,)
+    (,,)
       <$> typeSwitchR
       <*> Views.hvLeios b
-      <*> Views.plvLeios lv
-      <*> praosStateLeiosAnnouncement cs
+      <*> certifiablePolyPraos praosEpochInfo slot tcs
  where
-  check
-    ( err
-      , (containsCert, _mbAnn)
-      , MkLeiosLedgerView
-          { llvAnnouncementPeriod = announcementPeriod
-          , llvVotePeriod = votePeriod
-          , llvDiffusionPeriod = diffusionPeriod
-          }
-      , announcedByPredecessor
-      ) =
-      when containsCert $
-        case (announcedByPredecessor, praosStateLastSlot cs) of
-          -- A state that announced an endorser block has necessarily applied a
-          -- header, so 'Origin' is the same situation as announcing nothing.
-          (_, Origin) ->
-            throwError $
-              LeiosCertWithoutAnnouncement err NothingAnnounced Origin slot
-          (Strict.Left why, NotOrigin predecessorSlot) ->
-            throwError $
-              LeiosCertWithoutAnnouncement err why (NotOrigin predecessorSlot) slot
-          (Strict.Right{}, NotOrigin announcingSlot) -> do
-            let earliestAllowed =
-                  Leios.minCertificationSlot
-                    ( runIdentity $
-                        epochInfoSlotLength
-                          (History.toPureEpochInfo praosEpochInfo)
-                          slot
-                    )
-                    announcementPeriod
-                    votePeriod
-                    diffusionPeriod
-                    announcingSlot
-            when (slot < earliestAllowed) $
-              throwError $
-                LeiosCertTooYoung err announcingSlot slot earliestAllowed
+  check (err, (containsCert, _mbAnn), certifiable) =
+    when containsCert $
+      case certifiable of
+        Right _ann -> pure ()
+        Left (NoCertifiableAnnouncement why) ->
+          throwError $
+            LeiosCertWithoutAnnouncement
+              err
+              why
+              (praosStateLastSlot (tickedPraosStateChainDepState tcs))
+              slot
+        Left (TooYoung announcingSlot earliestAllowed) ->
+          throwError $
+            LeiosCertTooYoung err announcingSlot slot earliestAllowed
+
+-- | The announcement a header at this slot may certify, or why it may certify
+-- none, given its predecessor's chain-dependent state ticked to that slot.
+--
+-- 'leiosHeaderChecks' rejects a header that contains a Leios certificate
+-- exactly when this gives 'Left'.
+certifiablePolyPraos ::
+  Applicative (WhenLeios proto) =>
+  EpochInfo (Except History.PastHorizonException) ->
+  SlotNo ->
+  Ticked (PolyPraosState proto) ->
+  WhenLeios proto (Either NotCertifiable LeiosAnnouncement)
+certifiablePolyPraos praosEpochInfo slot (TickedPraosState cs lv) =
+  certifiable <$> Views.plvLeios lv <*> praosStateLeiosAnnouncement cs
+ where
+  certifiable
+    MkLeiosLedgerView
+      { llvAnnouncementPeriod = announcementPeriod
+      , llvVotePeriod = votePeriod
+      , llvDiffusionPeriod = diffusionPeriod
+      }
+    announcedByPredecessor =
+      case (announcedByPredecessor, praosStateLastSlot cs) of
+        -- A state that announced an endorser block has necessarily applied a
+        -- header, so 'Origin' is the same situation as announcing nothing.
+        (_, Origin) -> Left $ NoCertifiableAnnouncement NothingAnnounced
+        (Strict.Left why, NotOrigin _) -> Left $ NoCertifiableAnnouncement why
+        (Strict.Right ann, NotOrigin announcingSlot)
+          | slot < earliestAllowed -> Left $ TooYoung announcingSlot earliestAllowed
+          | otherwise -> Right ann
+         where
+          earliestAllowed =
+            Leios.minCertificationSlot
+              ( runIdentity $
+                  epochInfoSlotLength
+                    (History.toPureEpochInfo praosEpochInfo)
+                    slot
+              )
+              announcementPeriod
+              votePeriod
+              diffusionPeriod
+              announcingSlot
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::

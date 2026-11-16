@@ -47,6 +47,7 @@ import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..), PerasProtocol (
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( WhyNotCertifiable (..)
+  , certifiablePolyPraos
   , getCertifiableLeiosAnnouncementPolyPraos
   , getContainsLeiosCertPolyPraos
   , getLeiosAnnouncementPolyPraos
@@ -175,6 +176,9 @@ instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
   leiosBLSKeys _proxy = toList . praos2CanBeLeaderBLSKey
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
+  leiosAnnouncementToCertify (LeiosConfig (PraosConfig _prms ei)) slot st =
+    case certifiablePolyPraos ei slot st of
+      Praos2HasLeios certifiable -> certifiable
   getLeiosLedgerView _proxy = getLeiosLedgerViewPolyPraos
 
 instance LeiosCrypto c => PerasProtocol (Praos2 c) where

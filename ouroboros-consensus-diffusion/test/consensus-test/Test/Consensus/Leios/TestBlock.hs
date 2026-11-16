@@ -432,6 +432,7 @@ instance LeiosProtocol LeiosTestProtocol where
       HeaderCounterBelowImmTips -> StaleOCIN
   getCertifiableLeiosAnnouncement _proxy (LeiosTestChainDepState mbAnn) =
     strictMaybeToMaybe mbAnn
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView _proxy = Just
 
 -- | The chain-dependent state as of this header
