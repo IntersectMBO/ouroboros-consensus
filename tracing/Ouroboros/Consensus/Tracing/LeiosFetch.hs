@@ -73,14 +73,17 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["BlockArrived"]) =
-    Just "An endorser block arrived, its bytes classified by whether the node needed them."
+    Just
+      "An endorser block arrived, its bytes classified by whether the node needed them. One the node writes is traced once the write settles."
   documentFor (Namespace _ ["TxsArrived"]) =
     Just
-      "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them."
+      "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them. Ones the node writes are traced once the write settles."
   documentFor (Namespace _ ["BlockAcquired"]) =
-    Just "The node durably holds an endorser block it fetched."
+    Just
+      "The node acquired an endorser block it fetched; its age is how long after its point's slot began."
   documentFor (Namespace _ ["BlockTxsAcquired"]) =
-    Just "The node durably holds all the transactions of an endorser block it fetched."
+    Just
+      "The node acquired all the transactions of an endorser block it fetched; its age is how long after its point's slot began."
   documentFor _ = Nothing
 
   allNamespaces =

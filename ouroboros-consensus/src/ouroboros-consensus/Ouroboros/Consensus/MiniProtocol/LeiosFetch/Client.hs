@@ -1,5 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -16,11 +19,9 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   , toLeiosFetchClientPeerPipelined
   ) where
 
-import Control.Monad.Class.MonadSTM (MonadSTM (..))
-import Control.Monad.Primitive (PrimMonad, PrimState)
+import Control.Monad.Class.MonadSTM (MonadSTM (STM, atomically, orElse))
 import Data.Functor ((<&>))
-import Data.Primitive.MutVar (MutVar)
-import qualified Data.Primitive.MutVar as Prim
+import GHC.Generics (Generic)
 import Network.TypedProtocol.Codec (PeerRole (..), StateTokenI)
 import Network.TypedProtocol.Core
   ( IsPipelined (..)
@@ -34,9 +35,16 @@ import Network.TypedProtocol.Peer
   , PeerPipelined (..)
   , Receiver (..)
   )
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch (..)
   , Message (..)
+  )
+import Ouroboros.Consensus.Util.NormalForm.StrictTVar
+  ( StrictTVar
+  , newTVarIO
+  , readTVarIO
+  , writeTVar
   )
 
 type LeiosFetchClientPeer point eb tx m a =
@@ -63,11 +71,7 @@ data SomeLeiosFetchJob point eb tx m
     StateTokenI (StBusy st') =>
     MkSomeLeiosFetchJob
       (Message (LeiosFetch point eb tx) StIdle (StBusy st'))
-      (m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()))
-
--- | Merely an abbreviation local to this module
-type X point eb tx m a n =
-  Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
+      (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ())
 
 type LeiosFetchClientPeerPipelined point eb tx m a =
   PeerPipelined (LeiosFetch point eb tx) AsClient StIdle m a
@@ -80,51 +84,51 @@ toLeiosFetchClientPeerPipelined = PeerPipelined
 data C = MkC
 
 data WhetherDraining = AlreadyDraining | NotYetDraining
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 -- | A client that sends each job's request as soon as it has one, leaving at
 -- most @depth@ outstanding, and hands each reply to its job. Once told to
 -- stop, it ignores the replies that arrive afterwards, but one already being
 -- handled is not interrupted. Then it sends 'MsgDone'.
+--
+-- If it could both stop and send a job, it stops.
 leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
-  PrimMonad m =>
+  MonadSTM m =>
   -- | the most requests to leave outstanding at once
   Int ->
-  -- | either the return value or the next job, or a blocking request for those two
-  m
-    ( Either
-        (m (Either a (SomeLeiosFetchJob point eb tx m)))
-        (Either a (SomeLeiosFetchJob point eb tx m))
-    ) ->
+  -- | blocks until the client should stop
+  STM m a ->
+  -- | blocks until there is a next job
+  STM m (SomeLeiosFetchJob point eb tx m) ->
   Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
-leiosFetchClientPeerPipelined depth tryNext =
+leiosFetchClientPeerPipelined depth awaitStop awaitJob =
   Effect $ do
-    stop <- Prim.newMutVar NotYetDraining
+    stop <- newTVarIO NotYetDraining
     pure $ go1 stop Zero
  where
-  go1 :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point eb tx m a n
-  go1 stop !n =
-    Effect $
-      tryNext >>= \case
-        -- no next instruction yet
-        Left next ->
-          case n of
-            Zero -> next <&> go2 stop Zero
-            Succ m ->
-              pure $
-                Collect
-                  (Just $ Effect $ next <&> go2 stop n)
-                  (\MkC -> go1 stop m)
-        Right x -> pure $ go2 stop n x
+  next :: m (Either a (SomeLeiosFetchJob point eb tx m))
+  next = atomically $ (Left <$> awaitStop) `orElse` (Right <$> awaitJob)
+
+  go1 ::
+    StrictTVar m WhetherDraining ->
+    Nat n ->
+    Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
+  go1 stop !n = case n of
+    Zero -> Effect $ next <&> go2 stop Zero
+    -- Collecting a reply only takes what the receiver has already handled, so
+    -- each one ready is collected before blocking for what to do next.
+    Succ m -> Collect (Just $ Effect $ next <&> go2 stop n) (\MkC -> go1 stop m)
 
   go2 ::
-    MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m WhetherDraining ->
     Nat n ->
     Either a (SomeLeiosFetchJob point eb tx m) ->
-    X point eb tx m a n
+    Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
   go2 stop !n = \case
     Left x -> Effect $ do
-      Prim.writeMutVar stop AlreadyDraining
+      atomically $ writeTVar stop AlreadyDraining
       pure $ drainThePipe x n
     Right job ->
       case n of
@@ -141,10 +145,10 @@ leiosFetchClientPeerPipelined depth tryNext =
                 (\MkC -> send stop m job)
 
   send ::
-    MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m WhetherDraining ->
     Nat n ->
     SomeLeiosFetchJob point eb tx m ->
-    X point eb tx m a n
+    Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
   send stop !n (MkSomeLeiosFetchJob req k) =
     YieldPipelined
       ReflClientAgency
@@ -154,8 +158,8 @@ leiosFetchClientPeerPipelined depth tryNext =
 
   receiver ::
     StateTokenI (StBusy st') =>
-    MutVar (PrimState m) WhetherDraining ->
-    m (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()) ->
+    StrictTVar m WhetherDraining ->
+    (Message (LeiosFetch point eb tx) (StBusy st') StIdle -> m ()) ->
     Receiver (LeiosFetch point eb tx) AsClient (StBusy st') StIdle m C
   receiver stop k =
     ReceiverAwait ReflServerAgency $ \msg -> case msg of
@@ -163,17 +167,17 @@ leiosFetchClientPeerPipelined depth tryNext =
       MsgLeiosBlockTxs{} -> handler stop k msg
 
   handler ::
-    MutVar (PrimState m) WhetherDraining ->
-    m (msg -> m ()) ->
+    StrictTVar m WhetherDraining ->
+    (msg -> m ()) ->
     msg ->
     Receiver (LeiosFetch point eb tx) AsClient StIdle StIdle m C
   handler stop k x = ReceiverEffect $ do
-    Prim.readMutVar stop >>= \case
+    readTVarIO stop >>= \case
       AlreadyDraining -> pure ()
-      NotYetDraining -> k >>= ($ x)
+      NotYetDraining -> k x
     pure $ ReceiverDone MkC
 
-  drainThePipe :: a -> Nat n -> X point eb tx m a n
+  drainThePipe :: a -> Nat n -> Peer (LeiosFetch point eb tx) AsClient (Pipelined n C) StIdle m a
   drainThePipe x = \case
     Zero ->
       Yield ReflClientAgency MsgDone $

@@ -104,25 +104,19 @@ runClient depth delayFor script = do
       job i =
         MkSomeLeiosFetchJob
           (MsgLeiosBlockRequest (N i))
-          (pure $ \(MsgLeiosBlock (N j)) -> atomically $ modifyTVar handledVar (j :))
-      next =
-        readTVar stop >>= \case
-          True -> pure (Just (Left ()))
-          False ->
-            readTVar queue >>= \case
-              [] -> pure Nothing
-              i : is -> writeTVar queue is >> pure (Just (Right (job i)))
-      tryNext =
-        atomically next >>= \case
-          Just x -> pure (Right x)
-          Nothing -> pure (Left (atomically (next >>= maybe retry pure)))
+          (\(MsgLeiosBlock (N j)) -> atomically $ modifyTVar handledVar (j :))
+      awaitStop = readTVar stop >>= check
+      awaitJob =
+        readTVar queue >>= \case
+          [] -> retry
+          i : is -> job i <$ writeTVar queue is
   _ <-
     withAsync (script queue stop) $ \_ ->
       runConnectedPeersPipelined
         (createConnectedBufferedChannels 100)
         tracer
         codecLeiosFetchId
-        (toLeiosFetchClientPeerPipelined (leiosFetchClientPeerPipelined depth tryNext))
+        (toLeiosFetchClientPeerPipelined (leiosFetchClientPeerPipelined depth awaitStop awaitJob))
         (server delayFor)
   traced <- reverse <$> readTVarIO events
   replies <- reverse <$> readTVarIO handledVar

@@ -31,6 +31,9 @@ import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 -- node started. So a subscriber that subscribes before it scans the LeiosDB at
 -- start-up, as the ChainDB does, hears of each point once at most, and only of
 -- one its scan did not find.
+--
+-- An acquisition may name a point whose writes the LeiosDB dropped, for being
+-- older than its promoted slot; the LeiosDB then does not hold what it names.
 data LeiosAcquisition
   = -- | The node holds the EB's body.
     AcquiredEb

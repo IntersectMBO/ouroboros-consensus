@@ -14,12 +14,13 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , ExnLeiosFetchInvalidReply (..)
   , JobMismatch (..)
-  , nextLeiosFetchClientCommand
+  , awaitTerminate
+  , nextLeiosFetchJob
   , processLeiosBlock
   , processLeiosBlockTxs
   ) where
 
-import Control.Monad (forM_, unless, void, when)
+import Control.Monad (unless, void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import Data.Foldable (fold)
@@ -28,6 +29,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Monoid (Sum (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -45,7 +47,7 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
   , EndorserBlockHash
-  , LeiosEbSizes (..)
+  , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , TxHash
@@ -54,7 +56,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
-  , leiosEbSizes
+  , leiosEbByteSizes
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -62,7 +64,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbByteSizeBounds (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -118,7 +119,8 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcNotify :: !(LeiosAcquisition -> STM m ())
   -- ^ Emit an acquisition to the rest of the node.
   , lfcSystemTime :: !(SystemTime m)
-  -- ^ For reporting how long after its announcement an endorser block arrived.
+  -- ^ For reporting how long after its point's slot began an endorser block,
+  -- or its transactions, were acquired.
   , lfcTracer :: !(Tracer m (TraceLeiosFetchClientEvent peer))
   }
 
@@ -152,7 +154,7 @@ data ExnLeiosFetchInvalidReply
       -- | the bytes it references
       !Word64
       -- | the most the ledger allows
-      !BytesSize
+      !Word64
   | -- | Not as many transactions arrived as were requested.
     ExnLeiosBlockTxsWrongCount
       !LeiosPoint
@@ -178,70 +180,54 @@ data JobMismatch = JobBytesSizeMismatch | JobCommitmentMismatch
 
 -----
 
--- | The next thing this peer's client should do: send a request the decision
--- logic assigned to it, or stop. 'Right' if that is known now, else 'Left'
--- with what blocks until it is.
-nextLeiosFetchClientCommand ::
+-- | Blocks until this peer's client should stop.
+awaitTerminate :: IOLike m => ControlMessageSTM m -> STM m ()
+awaitTerminate controlMessageSTM =
+  controlMessageSTM >>= \case
+    Terminate -> pure ()
+    -- Only warm mini-protocols receive this, and LeiosFetch is hot.
+    Quiesce -> retry
+    Continue -> retry
+
+-- | The next request the decision logic assigned to this peer, with what to do
+-- with its reply. Blocks until there is one.
+nextLeiosFetchJob ::
   forall peer m.
   (Ord peer, IOLike m) =>
   LeiosFetchClientContext m peer ->
-  ControlMessageSTM m ->
   peer ->
   -- | the requests the decision logic assigned to this peer and the client has
   -- not sent yet
   StrictTVar m (Seq LeiosFetchRequest) ->
-  m
-    ( Either
-        (m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
-        (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
-    )
-nextLeiosFetchClientCommand ctx controlMessageSTM peer reqsVar =
-  atomically checkOrBlock >>= \case
-    Just result -> pure $ Right result
-    Nothing -> pure $ Left (atomically awaitStopOrRequest)
+  STM m (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)
+nextLeiosFetchJob ctx peer reqsVar =
+  readTVar reqsVar >>= \case
+    Seq.Empty -> retry
+    req Seq.:<| reqs -> toJob req <$ writeTVar reqsVar reqs
  where
-  checkOrBlock :: STM m (Maybe (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m)))
-  checkOrBlock =
-    controlMessageSTM >>= \case
-      Terminate -> pure $ Just $ Left ()
-      -- Only warm mini-protocols receive this, and LeiosFetch is hot.
-      Quiesce -> next
-      Continue -> next
-   where
-    next =
-      readTVar reqsVar >>= \case
-        req Seq.:<| reqs -> do
-          writeTVar reqsVar reqs
-          pure $ Just $ Right $ toJob req
-        Seq.Empty -> pure Nothing
-
-  awaitStopOrRequest :: STM m (Either () (SomeLeiosFetchJob LeiosPoint EndorserBlock LeiosTx m))
-  awaitStopOrRequest = checkOrBlock >>= maybe retry pure
-
   -- Replies are processed right on the pipelined peer's collector thread:
   -- everything they touch is thread-safe.
   toJob = \case
     LeiosBlockRequest req ->
       MkSomeLeiosFetchJob
         (MsgLeiosBlockRequest (lbrPoint req))
-        (pure $ \(MsgLeiosBlock eb) -> processLeiosBlock ctx peer req eb)
+        (\(MsgLeiosBlock eb) -> processLeiosBlock ctx peer req eb)
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point and bitmap: the union of the
       -- covered jobs' offsets.
       let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
        in MkSomeLeiosFetchJob
             (MsgLeiosBlockTxsRequest p bitmaps)
-            (pure $ \(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
+            (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
 
 -- | Take in an endorser block that arrived in reply to this request.
 --
 -- The hash is the whole of it: these bytes either are the endorser block we
 -- asked for or they are not, and no announcement gets a say. Bytes that are
 -- the right block but not the size the peer offered still cost the peer its
--- connection, but only once we have taken the body: throwing them away would
--- let a peer deny us an endorser block just by lowballing its own offer. Bytes
--- larger than the ledger allows, or referencing more transaction bytes than it
--- allows, are never written, so the node never offers them onward.
+-- connection. Bytes larger than the ledger allows, or referencing more
+-- transaction bytes than it allows, are never written, so the node never
+-- offers them onward.
 processLeiosBlock ::
   forall peer m.
   (Ord peer, IOLike m) =>
@@ -251,15 +237,14 @@ processLeiosBlock ::
   EndorserBlock ->
   m ()
 processLeiosBlock ctx peer req eb = do
-  now <- systemTimeCurrent lfcSystemTime
-  when (endorserBlockHash eb /= ebHash) $ do
+  when (endorserBlockHash eb /= requestedEbHash) $ do
     traceWith lfcTracer $
       TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
     throwIO $ ExnLeiosBlockWrongHash point (endorserBlockHash eb)
   -- Under the lock, decide what to do with this body. The point lacks the body
-  -- until a delivery's write settles, so another delivery meanwhile is written
+  -- until a reply's write settles, so another reply meanwhile is written
   -- too.
-  delivery <- modifyMVar lfcOutstanding $ \outstanding -> do
+  disposition <- modifyMVar lfcOutstanding $ \outstanding -> do
     -- Answered, so this request is no longer in flight.
     let cleaned = refundEbRequest peer point (lbrOfferedSize req) outstanding
     case Map.lookup point (ebState outstanding) of
@@ -271,12 +256,12 @@ processLeiosBlock ctx peer req eb = do
             pure (acquireEbBody point Jobs.emptyJobPool cleaned, BodyTooBig exn)
       -- Pruned meanwhile.
       Nothing -> pure (cleaned, BodyDiscarded (fetchArrivalEvicted ebBytesSize))
-      -- Another delivery's write settled first.
+      -- Another reply's write settled first.
       Just (MkEbState _onset BodyAcquired{}) ->
         pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
       Just (MkEbState _onset NoBody) -> pure (cleaned, BodyToWrite)
   void $ tryPutMVar lfcReady ()
-  case delivery of
+  case disposition of
     BodyTooBig exn -> do
       traceWith lfcTracer $
         TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
@@ -289,7 +274,9 @@ processLeiosBlock ctx peer req eb = do
       -- so a failure also disconnects the peer, if its client still runs. Like
       -- the worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
       link
-        =<< async (labelThisThread "LeiosFetch.settleBody" >> settleBody ctx peer point eb now bodyWritten)
+        =<< async (labelThisThread "LeiosFetch.settleBody" >> settleBody ctx peer point eb bodyWritten)
+  -- Checked last, so that the body is still taken: throwing it away would let
+  -- a peer deny us an endorser block just by lowballing its own offer.
   when (ebBytesSize /= lbrOfferedSize req) $
     throwIO $
       ExnLeiosBlockWrongSize point (lbrOfferedSize req) ebBytesSize
@@ -298,28 +285,23 @@ processLeiosBlock ctx peer req eb = do
     { lfcOutstanding
     , lfcReady
     , lfcWriter
-    , lfcSystemTime
     , lfcTracer
     } = ctx
 
   point = lbrPoint req
-  ebHash = pointEbHash point
-  sizes = leiosEbSizes eb
-  ebBytesSize = lesBodySize sizes
-  closureBytesSize = lesTxsSize sizes
-  -- TODO The node does not vote yet. Voting must check the endorser block
-  -- against the limits of the election it votes in: these are the limits of
-  -- whichever election the request was made for.
-  MkLeiosEbByteSizeBounds{lebMaxBodySize, lebMaxTxsSize} = lbrEbBounds req
+  requestedEbHash = pointEbHash point
+  sizes = leiosEbByteSizes eb
+  ebBytesSize = lebBodySize sizes
+  limits = lbrEbBounds req
   tooBig
-    | ebBytesSize > lebMaxBodySize =
-        Just $ ExnLeiosBlockTooBig point ebBytesSize lebMaxBodySize
-    | closureBytesSize > fromIntegral lebMaxTxsSize =
-        Just $ ExnLeiosClosureTooBig point closureBytesSize lebMaxTxsSize
+    | ebBytesSize > lebBodySize limits =
+        Just $ ExnLeiosBlockTooBig point ebBytesSize (lebBodySize limits)
+    | lebTxsSize sizes > lebTxsSize limits =
+        Just $ ExnLeiosClosureTooBig point (lebTxsSize sizes) (lebTxsSize limits)
     | otherwise = Nothing
 
 -- | What 'processLeiosBlock' does with a body, decided under the lock.
-data BodyDelivery
+data BodyDisposition
   = -- | Beyond its point's bounds, so never written.
     BodyTooBig !ExnLeiosFetchInvalidReply
   | -- | No longer wanted, its bytes classified so.
@@ -329,69 +311,65 @@ data BodyDelivery
 
 -- | Record the body as acquired at its point, now that its write is durable,
 -- with jobs for the txs the point does not hold yet, and emit what is acquired.
--- Nothing if the point was pruned meanwhile, or another delivery of it settled
--- first. Either way, trace the delivery's arrival: its bytes were needed only if
+-- Nothing if the point was pruned meanwhile, or another reply with it settled
+-- first. Either way, trace the reply's arrival: its bytes were needed only if
 -- it settled first.
 --
--- The LeiosDB's GC normally collects a point only after the fetch state has
--- pruned it, but only timing ensures that. Had it collected one first, a settle
--- could emit an acquisition the LeiosDB no longer backs ('writeTxs' drops txs
--- whose body is gone without reporting them). Each subscriber ignores such an
--- acquisition:
---
--- * The ChainDB (@leiosAcquiredEbsRunner@) ignores 'AcquiredEb', and records
---   'AcquiredEbTxs' only for a point no older than the slot it last pruned its
---   acquired set to. It prunes that set to a slot before it schedules the
---   LeiosDB's GC to that slot, so ChainSel never sees an acquisition of a
---   collected point. Nor could it act on one: a block certifying that point
---   would fork off below the immutable tip.
+-- The LeiosDB drops the writes of a point older than its promoted slot, which
+-- reaches a block's slot once that block is copied to the ImmutableDB. The
+-- fetch state normally prunes such a point first, but only timing ensures
+-- that. Had the LeiosDB dropped a write first, a settle would emit an
+-- acquisition of a point whose writes were dropped, as 'LeiosAcquisition'
+-- allows.
 settleBody ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
-  -- | the peer that delivered it
+  -- | the peer that sent it
   peer ->
   LeiosPoint ->
   EndorserBlock ->
-  -- | when the body arrived
-  RelativeTime ->
   Promise m (Set TxOffset) ->
   m ()
-settleBody ctx peer point eb now bodyWritten = do
+settleBody ctx peer point eb bodyWritten = do
   heldOffs <- await bodyWritten
   traces <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
-      Nothing -> pure (outstanding, [arrived fetchArrivalEvicted])
-      Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, [arrived fetchArrivalExtra])
+      Nothing -> pure (outstanding, \_now -> [arrived fetchArrivalEvicted])
+      Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, \_now -> [arrived fetchArrivalExtra])
       Just (MkEbState onset NoBody) -> do
         let
           jobPool =
             newLeiosJobPool lfcStaticEnv (refs `IntMap.withoutKeys` toIntSet heldOffs)
-        atomically $ do
-          lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
-          when (Jobs.nullJobPool jobPool) $
+        atomically $ lfcNotify $ AcquiredEb point (encodeEndorserBlockSize eb)
+        when (Jobs.nullJobPool jobPool) $
+          atomically $
             lfcNotify $
               AcquiredEbTxs point
         pure
           ( acquireEbBody point jobPool outstanding
-          , arrived fetchArrivalGood
-              : TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
-              : [ TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
-                | Jobs.nullJobPool jobPool
-                ]
+          , \now ->
+              arrived fetchArrivalGood
+                : TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
+                : [ TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
+                  | Jobs.nullJobPool jobPool
+                  ]
           )
   void $ tryPutMVar lfcReady ()
-  mapM_ (traceWith lfcTracer) traces
+  -- Read after emitting, so that the acquisitions' ages run until then.
+  now <- systemTimeCurrent lfcSystemTime
+  mapM_ (traceWith lfcTracer) (traces now)
  where
   MkLeiosFetchClientContext
     { lfcStaticEnv
     , lfcOutstanding
     , lfcReady
     , lfcNotify
+    , lfcSystemTime
     , lfcTracer
     } = ctx
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   arrived bucket =
-    TraceLeiosFetchClientBlockArrived peer point (bucket (lesBodySize (leiosEbSizes eb)))
+    TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
@@ -403,22 +381,22 @@ processLeiosBlockTxs ::
   V.Vector LeiosTx ->
   m ()
 processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
-  now <- systemTimeCurrent lfcSystemTime
   -- Cheap checks, without hashing, of the whole reply and of every covered
   -- job, so that an over-send is caught and punished even for a job we have
   -- since completed.
   when (V.length txs /= IntSet.size offsetsSet) $
     invalidReply $
       ExnLeiosBlockTxsWrongCount point (IntSet.size offsetsSet) (V.length txs)
-  either invalidReply pure $
-    NEIntMap.foldrWithKey
-      (\i job acc -> checkJobSize point aligned (Jobs.MkLeiosJobId i) job >> acc)
-      (Right ())
+  either invalidReply (\_ -> pure ()) $
+    NEIntMap.traverseWithKey
+      (\i job -> checkJobSize point aligned (Jobs.MkLeiosJobId i) job)
       jobs
-  -- Only jobs still pending are hashed and ingested; a redundant delivery of a
+  -- Only jobs still pending are hashed and ingested; a redundant reply for a
   -- completed job, or a reply for an endorser block pruned meanwhile, is
-  -- discarded. The read-then-complete race is benign: completion is monotonic,
-  -- and writing a transaction again is harmless.
+  -- discarded. The state is read without holding the lock through the hashing
+  -- and the write, so it may be stale by then, harmlessly: a completed job
+  -- never becomes pending again, and writing a transaction again rewrites the
+  -- same bytes.
   outstanding0 <- readMVar lfcOutstanding
   let (pendingJobs, discardedAs) = case Map.lookup point (ebState outstanding0) of
         Just (MkEbState _onset (BodyAcquired jobPool)) ->
@@ -427,12 +405,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
         -- requested only once the body is held.
         Just (MkEbState _onset NoBody) -> (IntMap.empty, fetchArrivalEvicted)
         Nothing -> (IntMap.empty, fetchArrivalEvicted)
-      discarded =
-        discardedAs $
-          IntMap.foldr
-            (\(Jobs.MkLeiosJob _ bytes _) acc -> bytes + acc)
-            0
-            (IntMap.difference (NEIntMap.toMap jobs) pendingJobs)
+      discarded = discardedAs $ jobsBytesSize (IntMap.difference (NEIntMap.toMap jobs) pendingJobs)
   toIngest <-
     either invalidReply (pure . fold) $
       IntMap.traverseWithKey
@@ -440,16 +413,18 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
         pendingJobs
   txsWritten <-
     writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
-  let arrival =
-        fetchArrivalGood $
-          sum [fromIntegral (BS.length bytes) | (_off, _txHash, bytes) <- toIngest]
-  traceWith lfcTracer $ TraceLeiosFetchClientTxsArrived peer point (arrival <> discarded)
+  -- A reply that writes nothing is traced now; one that does is instead
+  -- traced by 'settleTxs'.
+  when (IntMap.null pendingJobs) $
+    traceWith lfcTracer $
+      TraceLeiosFetchClientTxsArrived peer point discarded
   modifyMVar_ lfcOutstanding (pure . refundTxRequest peer (fromIntegral batchBytes))
   void $ tryPutMVar lfcReady ()
-  -- Retiring the jobs waits for the write: retiring them drops them from the
-  -- pool for every peer, so doing it on arrival would leave the closure
-  -- incomplete for good if the write never landed. Until then they stay
-  -- picked by this peer, which others may already be asked for too, and
+  -- Only retiring the jobs waits for the write, on a worker thread, so the
+  -- client goes on with the peer's next replies meanwhile. Retiring them drops
+  -- them from the pool for every peer, so doing it on arrival would leave the
+  -- closure incomplete for good if the write never landed. Until then they
+  -- stay picked by this peer, which others may already be asked for too, and
   -- which its disconnection releases.
   --
   -- The worker may outlive the peer's registration, harmlessly: it settles
@@ -457,13 +432,16 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
   -- registration's @LeiosPeerLifetimeId@, so the worker neither recreates the
   -- state that unregistering removed nor touches a later registration's. It
   -- ends once the write lands, which closing the LeiosDB ensures.
-  link =<< async (labelThisThread "LeiosFetch.settleTxs" >> settleTxs ctx peer req now txsWritten)
+  link
+    =<< async
+      ( labelThisThread "LeiosFetch.settleTxs"
+          >> settleTxs ctx peer req pendingJobs discarded txsWritten
+      )
  where
   MkLeiosFetchClientContext
     { lfcOutstanding
     , lfcReady
     , lfcWriter
-    , lfcSystemTime
     , lfcTracer
     } = ctx
 
@@ -481,7 +459,9 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     throwIO exn
 
 -- | Retire the jobs of the request, now that the write of their txs is durable,
--- and emit 'AcquiredEbTxs' if no job of the point remains.
+-- and emit 'AcquiredEbTxs' if no job of the point remains. If the reply
+-- wrote any txs, trace its arrival: a written job's bytes were needed only if
+-- no other reply's write of that job settled first.
 --
 -- If the LeiosDB dropped some of the txs, the endorser block references them
 -- with sizes other than their own, so no peer can complete its closure: no more
@@ -504,31 +484,48 @@ settleTxs ::
   LeiosFetchClientContext m peer ->
   peer ->
   LeiosBlockTxsRequest ->
-  -- | when the txs arrived
-  RelativeTime ->
+  -- | the jobs whose txs this reply wrote
+  IntMap.IntMap Jobs.LeiosJob ->
+  -- | the bytes of the covered jobs that were already completed or pruned when
+  -- the txs arrived, and so were not written, as classified then
+  FetchArrivalBytes ->
   -- | the offsets of the txs the LeiosDB dropped
   Promise m (Set TxOffset) ->
   m ()
-settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now txsWritten = do
+settleTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) written discarded txsWritten = do
   wrongSize <- toIntSet <$> await txsWritten
-  completed <- modifyMVar lfcOutstanding $ \outstanding -> do
+  traces <- modifyMVar lfcOutstanding $ \outstanding -> do
     let outstanding' = completeTxRequest peer req outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
       _
         | not (IntSet.null wrongSize) ->
-            pure (abandonClosure point outstanding', Nothing)
+            pure
+              ( abandonClosure point outstanding'
+              , \_now -> arrived (fetchArrivalInvalid (jobsBytesSize (NEIntMap.toMap jobs)))
+              )
+      -- This reply's write completed the closure.
       ( Just (MkEbState _ (BodyAcquired before))
         , Just (MkEbState onset (BodyAcquired after))
         )
           | not (Jobs.nullJobPool before)
           , Jobs.nullJobPool after -> do
               atomically $ lfcNotify $ AcquiredEbTxs point
-              pure (outstanding', Just onset)
-      _ -> pure (outstanding', Nothing)
+              pure
+                ( outstanding'
+                , \now ->
+                    arrived (neededAsOf before)
+                      <> [TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)]
+                )
+      -- The closure is still incomplete, or another reply's write completed
+      -- it first.
+      (Just (MkEbState _ (BodyAcquired before)), _) ->
+        pure (outstanding', \_now -> arrived (neededAsOf before))
+      -- Pruned meanwhile, and perhaps referenced again since.
+      _ -> pure (outstanding', \_now -> arrived (fetchArrivalEvicted (jobsBytesSize written) <> discarded))
   void $ tryPutMVar lfcReady ()
-  forM_ completed $ \onset ->
-    traceWith lfcTracer $
-      TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
+  -- Read after emitting, so that the acquisition's age runs until then.
+  now <- systemTimeCurrent lfcSystemTime
+  mapM_ (traceWith lfcTracer) (traces now)
   -- Through the link to the client's thread, this disconnects the peer, if
   -- the client still runs.
   unless (IntSet.null wrongSize) $
@@ -539,8 +536,26 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) now txsWritten = do
     { lfcOutstanding
     , lfcReady
     , lfcNotify
+    , lfcSystemTime
     , lfcTracer
     } = ctx
+
+  -- A reply that wrote nothing was traced on arrival, as Extra or Evicted.
+  arrived bytes =
+    [TraceLeiosFetchClientTxsArrived peer point bytes | not (IntMap.null written)]
+
+  -- The written jobs still pending in this pool were needed; another
+  -- reply's write of the others settled first.
+  neededAsOf pool =
+    fetchArrivalGood (jobsBytesSize pending)
+      <> fetchArrivalExtra (jobsBytesSize (written `IntMap.difference` pending))
+      <> discarded
+   where
+    pending = Jobs.restrictToPending written pool
+
+-- | The total size of these jobs' txs.
+jobsBytesSize :: IntMap.IntMap Jobs.LeiosJob -> BytesSize
+jobsBytesSize = getSum . foldMap (\(Jobs.MkLeiosJob _ bytes _) -> Sum bytes)
 
 -- | How long after this onset @now@ is, if there is an onset.
 ageAt :: RelativeTime -> StrictMaybe RelativeTime -> Maybe NominalDiffTime

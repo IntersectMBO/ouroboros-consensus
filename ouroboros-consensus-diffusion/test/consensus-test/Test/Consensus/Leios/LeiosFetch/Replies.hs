@@ -40,13 +40,14 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
-  , LeiosEbByteSizeBounds (..)
+  , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
   , hashLeiosTx
+  , idLeiosEbByteSizesLimit
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
@@ -130,10 +131,13 @@ tests =
         "the client disconnects a peer whose transactions for a job do not hash to that job's commitment"
         test_jobCommitmentMismatch
     , testCase
-        "of two deliveries of a body whose writes overlap, the client counts the bytes as needed only for the one that settles first"
-        test_overlappingDeliveries
+        "of two replies with a body whose writes overlap, the client counts the bytes as needed only for the one that settles first"
+        test_overlappingReplies
     , testCase "the client counts a body that arrives once its point holds it as redundant" $
-        test_deliveryAfterSettle
+        test_replyAfterSettle
+    , testCase
+        "of two replies with a closure's transactions whose writes overlap, the client counts the bytes as needed only for the one that settles first"
+        test_overlappingTxsReplies
     , testCase "the client counts transactions for a point pruned meanwhile as evicted" $
         test_txsForPrunedPoint
     ]
@@ -376,7 +380,7 @@ test_bodyTooBig :: Assertion
 test_bodyTooBig = do
   let (point, eb, _txs) = fixture
       size = encodeEndorserBlockSize eb
-      bounds = MkLeiosEbByteSizeBounds{lebMaxBodySize = size - 1, lebMaxTxsSize = maxBound}
+      bounds = idLeiosEbByteSizesLimit MkLeiosEbByteSizes{lebBodySize = size - 1, lebTxsSize = maxBound}
   (ctx, notes) <- newContext
   result <- try $ processLeiosBlock ctx peer (MkLeiosBlockRequest point (size + 1) bounds) eb
   case result of
@@ -390,13 +394,13 @@ test_closureTooBig :: Assertion
 test_closureTooBig = do
   let (point, eb, txs) = fixture
       closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
-      bounds = MkLeiosEbByteSizeBounds{lebMaxBodySize = maxBound, lebMaxTxsSize = closure - 1}
+      bounds = idLeiosEbByteSizesLimit MkLeiosEbByteSizes{lebBodySize = maxBound, lebTxsSize = closure - 1}
   (ctx, notes) <- newContext
   result <-
     try $ processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) bounds) eb
   case result of
     Left (ExnLeiosClosureTooBig p actual most) ->
-      (p, actual, most) @?= (point, fromIntegral closure, closure - 1)
+      (p, actual, most) @?= (point, closure, closure - 1)
     Left exn -> assertFailure $ "unexpected exception: " <> show exn
     Right () -> assertFailure "the client kept a peer that sent a body referencing too many bytes"
   readTVarIO notes >>= (@?= [])
@@ -437,9 +441,9 @@ replyToClosure txs = do
   req <- closureRequest ctx point
   try $ processLeiosBlockTxs ctx peer req (V.fromList txs)
 
--- | Two peers deliver the 'fixture''s body before either write settles.
-test_overlappingDeliveries :: Assertion
-test_overlappingDeliveries = do
+-- | Two peers reply with the 'fixture''s body before either write settles.
+test_overlappingReplies :: Assertion
+test_overlappingReplies = do
   let (point, eb, _txs) = fixture
       size = encodeEndorserBlockSize eb
       req = MkLeiosBlockRequest point size maxBound
@@ -448,7 +452,7 @@ test_overlappingDeliveries = do
   processLeiosBlock ctx peer req eb
   processLeiosBlock ctx otherPeer req eb
   atomically $ putTMVar written ()
-  arrivals <- awaitBlockArrivals traces 2
+  arrivals <- awaitArrivals blockArrivals traces 2
   [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
   let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
       needed = fetchArrivalGood size
@@ -458,8 +462,8 @@ test_overlappingDeliveries = do
     (byPeer == [needed, redundant] || byPeer == [redundant, needed])
   readTVarIO notes >>= (@?= [AcquiredBody point])
 
-test_deliveryAfterSettle :: Assertion
-test_deliveryAfterSettle = do
+test_replyAfterSettle :: Assertion
+test_replyAfterSettle = do
   let (point, eb, _txs) = fixture
       size = encodeEndorserBlockSize eb
       req = MkLeiosBlockRequest point size maxBound
@@ -467,8 +471,42 @@ test_deliveryAfterSettle = do
   processLeiosBlock ctx peer req eb
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   processLeiosBlock ctx otherPeer req eb
-  awaitBlockArrivals traces 2
+  awaitArrivals blockArrivals traces 2
     >>= (@?= [(peer, point, fetchArrivalGood size), (otherPeer, point, fetchArrivalExtra size)])
+
+-- | Two peers reply with the 'fixture''s transactions before either write
+-- settles.
+test_overlappingTxsReplies :: Assertion
+test_overlappingTxsReplies = do
+  let (point, eb, txs) = fixture
+      closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+  written <- newEmptyTMVarIO
+  (ctx0, notes, traces) <- withTraces newContext
+  let ctx = ctx0{lfcWriter = holdingTxs (atomically (readTMVar written)) (lfcWriter ctx0)}
+  processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  processLeiosBlockTxs ctx otherPeer req (V.fromList txs)
+  atomically $ putTMVar written ()
+  arrivals <- awaitArrivals txsArrivals traces 2
+  [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
+  let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
+      needed = fetchArrivalGood closure
+      redundant = fetchArrivalExtra closure
+  assertBool
+    ("the bytes were not needed once and redundant once: " <> show byPeer)
+    (byPeer == [needed, redundant] || byPeer == [redundant, needed])
+  readTVarIO notes >>= (@?= [AcquiredClosure point, AcquiredBody point])
+
+-- | This writer, whose transaction writes are not done until this returns.
+holdingTxs :: IO () -> LeiosDbWriter IO -> LeiosDbWriter IO
+holdingTxs release writer =
+  writer
+    { writeTxs = \p txs -> do
+        written <- writeTxs writer p txs
+        pure $ Promise $ release >> await written
+    }
 
 test_txsForPrunedPoint :: Assertion
 test_txsForPrunedPoint = do
@@ -481,8 +519,7 @@ test_txsForPrunedPoint = do
   modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
   processLeiosBlockTxs ctx peer req (V.fromList txs)
   events <- readTVarIO traces
-  [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
-    @?= [(peer, point, fetchArrivalEvicted closure)]
+  txsArrivals events @?= [(peer, point, fetchArrivalEvicted closure)]
 
 -- | The context, its notifications, and its traces, newest first.
 withTraces ::
@@ -497,18 +534,24 @@ withTraces mk = do
   traces <- newTVarIO []
   pure (ctx{lfcTracer = mkTracer $ atomically . modifyTVar traces . (:)}, notes, traces)
 
--- | Wait until this many endorser block arrivals are traced, and return them,
+-- | Wait until this many of these arrivals are traced, and return them,
 -- ordered by peer.
-awaitBlockArrivals ::
+awaitArrivals ::
+  ([TraceLeiosFetchClientEvent Int] -> [(Int, LeiosPoint, FetchArrivalBytes)]) ->
   StrictTVar IO [TraceLeiosFetchClientEvent Int] ->
   Int ->
   IO [(Int, LeiosPoint, FetchArrivalBytes)]
-awaitBlockArrivals traces n =
+awaitArrivals select traces n =
   Timeout.timeout
     5000000
     ( atomically $ do
-        events <- readTVar traces
-        let arrivals = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
+        arrivals <- select <$> readTVar traces
         sortOn (\(p, _pt, _bytes) -> p) arrivals <$ check (length arrivals >= n)
     )
     >>= maybe (assertFailure "timed out waiting for arrivals") pure
+
+blockArrivals
+  , txsArrivals ::
+    [TraceLeiosFetchClientEvent Int] -> [(Int, LeiosPoint, FetchArrivalBytes)]
+blockArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
+txsArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]

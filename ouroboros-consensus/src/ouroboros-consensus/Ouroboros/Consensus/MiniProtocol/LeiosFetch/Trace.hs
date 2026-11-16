@@ -22,19 +22,20 @@ import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 data TraceLeiosFetchClientEvent peer
   = -- | An endorser block arrived from this peer, its bytes classified by
     -- whether the node needed them. One the node writes is traced once the
-    -- write is durable, and was needed only if no other delivery's write
+    -- write settles, and was needed only if no other reply's write
     -- settled first.
-    TraceLeiosFetchClientBlockArrived !peer !LeiosPoint !FetchArrivalBytes
+    TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
   | -- | Some of an endorser block's transactions arrived from this peer, their
-    -- bytes classified by whether the node needed them.
-    TraceLeiosFetchClientTxsArrived !peer !LeiosPoint !FetchArrivalBytes
-  | -- | The node durably holds the endorser block, which arrived this long
-    -- after its point's slot began, if that is known.
-    TraceLeiosFetchClientBlockAcquired !LeiosPoint !(Maybe NominalDiffTime)
-  | -- | The node durably holds all of the endorser block's transactions. The
-    -- arrival that completed them came this long after its point's slot
+    -- bytes classified by whether the node needed them. Ones the node writes
+    -- are traced once the write settles, and were needed only if no other
+    -- reply's write of them settled first.
+    TraceLeiosFetchClientTxsArrived peer LeiosPoint FetchArrivalBytes
+  | -- | The node acquired the endorser block this long after its point's slot
     -- began, if that is known.
-    TraceLeiosFetchClientBlockTxsAcquired !LeiosPoint !(Maybe NominalDiffTime)
+    TraceLeiosFetchClientBlockAcquired LeiosPoint (Maybe NominalDiffTime)
+  | -- | The node acquired all of the endorser block's transactions this long
+    -- after its point's slot began, if that is known.
+    TraceLeiosFetchClientBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
   deriving (Show, Functor)
 
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),

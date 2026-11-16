@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
@@ -28,15 +29,17 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
   , EndorserBlockHash
+  , LeiosEbByteSizes (..)
   , LeiosPoint (..)
+  , SizeRole (..)
   , TxHash
+  , idLeiosEbByteSizesLimit
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbByteSizeBounds (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
@@ -275,7 +278,7 @@ test_noRefetchOversized =
     & onOutstanding
       (acquireEbBody (point 1 'a') Jobs.emptyJobPool)
     & offersBody peerA [point 1 'a']
-    & runIterationWith (\_slot -> Right (MkLeiosEbByteSizeBounds 1024 5000))
+    & runIterationWith (\_slot -> Right (idLeiosEbByteSizesLimit (MkLeiosEbByteSizes 1024 5000)))
     & assertNoRequests
 
 -- | A peer offers only the body, with no bounds of its own, at a slot beyond the
@@ -841,14 +844,14 @@ runIterationAt = runIterationWithAt anyBounds
 
 -- | 'runIteration', with the ledger's bounds forecast thus.
 runIterationWith ::
-  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)) ->
   Scenario ->
   Map.Map Peer (NESeq LeiosFetchRequest)
 runIterationWith forecastEbBounds = runIterationWithAt forecastEbBounds minBound
 
 -- | 'runIterationAt', with the ledger's bounds forecast thus.
 runIterationWithAt ::
-  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)) ->
   SlotNo ->
   Scenario ->
   Map.Map Peer (NESeq LeiosFetchRequest)
@@ -932,5 +935,5 @@ eb c = UnsafeHash $ SBS.pack $ replicate 32 (fromIntegral (fromEnum c))
 
 -- | The bounds these scenarios forecast: large enough that nothing here trips
 -- them.
-anyBounds :: SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds
+anyBounds :: SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)
 anyBounds _slot = Right maxBound

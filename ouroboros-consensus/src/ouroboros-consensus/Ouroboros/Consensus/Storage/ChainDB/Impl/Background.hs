@@ -169,6 +169,13 @@ launchBgTasks cdb@CDB{..} nextLeiosAcquisition = do
 -- reprocess of the blocks parked on each endorser block once its closure is
 -- acquired.
 --
+-- An acquisition may name a point whose writes the LeiosDB dropped (see
+-- 'LeiosAcquisition'). This records 'AcquiredEbTxs' only for a point no older
+-- than the slot 'cdbAcquiredEbs' was last pruned to, and that set is pruned to
+-- the LeiosDB's promoted slot right after each promotion, so ChainSel sees
+-- such a point at most until then. Nor could it act on one: a block
+-- certifying that point would fork off below the immutable tip.
+--
 -- REVIEW: Would the fetch logic rather keep a fingerprinted set of the points
 -- it acquired closures at? ChainSel could read that set directly, and this
 -- runner would only reprocess what is new since the last fingerprint.
