@@ -39,11 +39,13 @@ import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Query (getKnownEndorserBlock)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( DiskSnapshot (..)
   , listSnapshots
@@ -52,13 +54,13 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBSQLite)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
-import System.FS.API
-import System.FilePath (splitDirectories)
+import System.FS.API (mkFsPath)
+import System.FilePath (splitDirectories, (</>))
 import System.IO
 import System.Random (genWord64, newStdGen)
 import Text.Printf (printf)
@@ -78,6 +80,7 @@ openLedgerDB ::
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->
+  ResolveEndorserBlock IO ->
   -- | The replay goal, i.e. the point up to which blocks from the ImmutableDB
   -- are replayed on top of the chosen snapshot. The chosen snapshot is the
   -- newest one that is not more recent than this point, and blocks are replayed
@@ -90,7 +93,7 @@ openLedgerDB ::
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args immutableDB replayGoal =
+openLedgerDB args immutableDB resolveEndorserBlock replayGoal =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, od) <- case LedgerDB.lgrBackendArgs args of
@@ -112,9 +115,7 @@ openLedgerDB args immutableDB replayGoal =
                 LedgerDB.V2.mkInitDb
                   args
                   (\_ -> pure (error "no stream"))
-                  -- TODO Resolve endorser blocks from the node's LeiosDB, to
-                  -- analyse blocks containing Leios certificates.
-                  (\_ -> error "no LeiosDB")
+                  resolveEndorserBlock
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
@@ -182,8 +183,10 @@ analyse dbaConfig args =
         throwConfigError
           "no LedgerDB backend was selected and none could be determined from the configuration."
     snapshotDelayRng <- newStdGen
-    -- TODO Open the node's LeiosDB rather than an empty one.
-    leiosDb <- newLeiosDBInMemory
+    -- The node's LeiosDB, where it keeps the endorser blocks its chain
+    -- certifies, created empty if the node has none.
+    leiosDb <-
+      newLeiosDBSQLite registry nullTracer (dbDir </> "leios.vol.db") (dbDir </> "leios.imm.db")
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case backend of
@@ -251,7 +254,7 @@ analyse dbaConfig args =
             NotOrigin slot -> getPointForSlot slot
         SStartFromLedgerState -> do
           (ledgerDB, intLedgerDB) <-
-            openLedgerDB ldbArgs immutableDB =<< case startSlot of
+            openLedgerDB ldbArgs immutableDB (getKnownEndorserBlock @blk leiosDb) =<< case startSlot of
               Origin -> pure genesisPoint
               NotOrigin slot -> getPointForSlot slot
           -- This marker divides the "loading" phase of the program, where the
