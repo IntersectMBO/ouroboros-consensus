@@ -43,12 +43,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosLedgerView (..)
   , LeiosProtocol (getLeiosLedgerView, leiosAnnouncementToCertify)
   )
-import Ouroboros.Consensus.Leios.Types
-  ( ForgedEndorserBlock (..)
-  , LeiosPoint (..)
-  , RankingBlockHash
-  , toRankingBlockHash
-  )
+import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.Node.Run
@@ -83,18 +78,20 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  -- | The Leios certificate that the forged block contains, if any. The
+  -- arguments are the point of the forged block's predecessor and the
+  -- announcement in the predecessor's header. 'forge' calls this function
+  -- only when 'leiosAnnouncementToCertify' gives that announcement.
+  (RealPoint blk -> LeiosAnnouncement -> m (Maybe LeiosCert)) ->
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
   -- block, the wall-clock onset of its slot, the Leios part of the ledger view
   -- at its slot, and the endorser block that it announces. 'forge' does not
   -- call it if it cannot compute that onset ('TraceNoSlotOnset').
   (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
-  -- | The certificate of the endorser block a ranking block announced, if the
-  -- node aggregated one.
-  (RankingBlockHash -> STM m (Maybe LeiosCert)) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb getLeiosCert currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging getLeiosCert onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -137,15 +134,12 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
-        -- ChainSel would park a block certifying a closure the node lacks.
-        leiosCertified <- lift . atomically $
+        leiosCertified <-
           case certifiableTip cfg currentSlot bcPrevPoint tickedChainDepState of
             Nothing -> pure Nothing
-            Just (rbHash, point, announcement) -> do
-              acquired <- ChainDB.getIsLeiosClosureAcquired chainDB
-              if acquired point
-                then fmap (\cert -> (cert, announcement)) <$> getLeiosCert rbHash
-                else pure Nothing
+            Just (announcingPoint, announcement) ->
+              fmap (\cert -> (cert, announcement))
+                <$> lift (getLeiosCert announcingPoint announcement)
         let leiosCert = fst <$> leiosCertified
 
         selectedTxs <- case leiosCert of
@@ -224,29 +218,23 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     (Block.rankingBlock forgeRes)
 
 -- | The announcement that a block in this slot on top of this point may
--- certify, with the hash of the ranking block that announced it and the point
--- of the announced endorser block.
+-- certify, with the point of the block that announced it.
 --
 -- It asks 'leiosAnnouncementToCertify', so that the forger applies the same
 -- rule as header validation, on the same ticked state.
 certifiableTip ::
-  forall blk.
   RunNode blk =>
   TopLevelConfig blk ->
   SlotNo ->
   Point blk ->
   Ticked (ChainDepState (BlockProtocol blk)) ->
-  Maybe (RankingBlockHash, LeiosPoint, LeiosAnnouncement)
+  Maybe (RealPoint blk, LeiosAnnouncement)
 certifiableTip cfg currentSlot prevPoint tickedChainDepState =
   case ( leiosAnnouncementToCertify (configConsensus cfg) currentSlot tickedChainDepState
        , prevPoint
        ) of
     (Right announcement, BlockPoint announcingSlot announcingHash) ->
-      Just
-        ( toRankingBlockHash (Proxy @blk) announcingHash
-        , MkLeiosPoint announcingSlot (announcementEbHash announcement)
-        , announcement
-        )
+      Just (RealPoint announcingSlot announcingHash, announcement)
     _ -> Nothing
 
 -- | Context required to forge a block
