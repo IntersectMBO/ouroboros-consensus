@@ -64,10 +64,11 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
+  , leiosOfferRelay
   , newNotifyLog
   , pruneNotifyLog
   )
@@ -87,12 +88,22 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( ClockSkew
   , SomeHeaderInFutureCheck
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchStaticEnv)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
+  ( LeiosFetchKernel
+  , LeiosPeerLifetimeId (..)
+  , leiosFetchDecisionLoop
+  , leiosFetchPruner
+  , newLeiosFetchKernel
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
+import Ouroboros.Consensus.Network.LeiosFetch (maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (leiosNotifyPruner)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -115,6 +126,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle
   , LeiosDbWriter (..)
+  , allocateWriter
   , openWriter
   , storeForgedEb
   )
@@ -238,6 +250,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- them it relays.
   , getLeiosNotifyLog :: NotifyLog m blk
   -- ^ What the node relays to its downstream peers over LeiosNotify.
+  , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
+  -- ^ What the node's LeiosFetch clients share.
   }
 
 -- | Arguments required when initializing a node
@@ -252,7 +266,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
-  -- ^ Where acquisitions of EBs are emitted.
+  -- ^ Where the node's LeiosFetch emits what it acquires.
+  , leiosFetchRng :: StdGen
+  -- ^ Seeds the LeiosFetch decision loop's PRNG.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -297,6 +313,8 @@ initNodeKernel
     , tracers
     , chainDB
     , leiosDB
+    , leiosAcquisitions
+    , leiosFetchRng
     , leiosAnnouncementAgeLimits
     , initChainDB
     , blockFetchConfiguration
@@ -442,6 +460,32 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
+    leiosWriter <- allocateWriter registry leiosDB
+    leiosFetchKernel <-
+      newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
+        MkLeiosFetchClientContext
+          { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
+          , lfcOutstanding = outstanding
+          , lfcReady = ready
+          , lfcWriter = leiosWriter
+          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
+          , lfcSystemTime = systemTime
+          , -- Each trace names the connection, not which of its registrations.
+            lfcTracer =
+              contramap
+                (fmap (\(MkLeiosPeerLifetimeId connection _registration) -> connection))
+                (leiosFetchClientTracer tracers)
+          }
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
+        leiosFetchDecisionLoop cfg chainDB btime leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchPruner" $
+        leiosFetchPruner chainDB leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
+        leiosOfferRelay leiosAcquisitions leiosNotifyLog
+
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
@@ -479,6 +523,7 @@ initNodeKernel
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState
         , getLeiosNotifyLog = leiosNotifyLog
+        , getLeiosFetchKernel = leiosFetchKernel
         }
    where
     blockForgingController ::

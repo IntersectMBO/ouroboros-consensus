@@ -1086,6 +1086,9 @@ runThreadNetwork
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , leiosAcquisitions
+              , -- Split off a generator the node uses anyway, so that the others'
+                -- streams stay as they were.
+                leiosFetchRng = fst (splitGen chainSyncRng)
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
