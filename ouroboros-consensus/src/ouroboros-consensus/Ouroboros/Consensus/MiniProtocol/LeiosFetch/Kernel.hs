@@ -340,12 +340,11 @@ onNewLeiosAnnouncement kernel valid = do
 -- The point is marked 'ReceivingFromForge' before the node offers its endorser
 -- block, so before any peer could offer it back, and so the node never fetches
 -- it. A peer's echo of the announcement is not new, so it creates nothing. The
--- election is focused on the point, unless another endorser block already
--- holds that focus, as one forged by another node with the same keys could;
--- the point is then tracked outside the focus, which is harmless, since
--- nothing is fetched for it either way. Then 'acquireForgedEb' writes and
--- acquires it. Nothing here waits for the writes to land, though submitting
--- them waits for room in the LeiosDB's write queue, which delays the forge.
+-- election is focused on the point, unless it is already focused on another
+-- endorser block, which takes another node forging with this node's keys; that
+-- costs nothing here, since nothing is ever fetched for a point the forge
+-- provides. Then 'acquireForgedEb' writes and acquires it, which waits for room
+-- in the LeiosDB's write queue and then for the writes to land.
 --
 -- The header must announce this endorser block.
 onForgedLeiosEb ::

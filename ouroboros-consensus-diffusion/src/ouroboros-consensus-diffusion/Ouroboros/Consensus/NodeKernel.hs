@@ -498,23 +498,47 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
 
-    -- The forge hands each endorser block it produces, with the header
-    -- announcing it, to the handlers an announcement and an endorser block from
-    -- a peer go through, with no peer. As for a header ChainSync validated, the
-    -- announcement needs no further check: the forge built the header.
+    -- The node takes in each endorser block its forge produces, with the header
+    -- announcing it, through the handlers an announcement and an endorser block
+    -- from a peer go through, with no peer. As for a header ChainSync validated,
+    -- the announcement needs no further check: the forge built the header.
+    --
+    -- Most of that work is done by this worker, so that neither LeiosFetch nor
+    -- the LeiosDB can delay the forge adding the ranking block, and so that
+    -- cancelling the forge, as when the forging credentials change, cannot
+    -- interrupt it: the worker stops only with the node. A point the worker has
+    -- marked 'ReceivingFromForge' is fetched from no peer until the worker
+    -- settles it, and the honest chain can need that point: another ranking
+    -- block in the same slot can announce the same endorser block. The forge
+    -- only accepts the announcement and queues the endorser block for the
+    -- worker, in one transaction, as 'onValidAnnouncement' asks.
+    --
+    -- An endorser block still queued when the node stops is never fully
+    -- written, though its ranking block may already be in the ChainDB. That
+    -- ranking block remains valid without it, and no block will ever certify it:
+    -- its announcement still diffuses, but the node offers an endorser block and
+    -- its txs only once they are written, so no honest peer will ever offer
+    -- either, and so no honest peer can vote on it. A slow (buggy, overwhelmed or
+    -- unlucky) LeiosDB widens this window: the worker takes in one endorser
+    -- block at a time, waiting for room in the LeiosDB's write queue, where it
+    -- can lose every race for a freed slot to the node's other writes, and then
+    -- for the write to land.
+    --
+    -- The queue is unbounded, but receives at most one endorser block per
+    -- ranking block the node forges, so it stays stochastically small, unless
+    -- the LeiosDB has slowed to a completely unacceptable bottleneck.
+    forgedEbs <- newTQueueIO
+    void $
+      forkLinkedThread registry "NodeKernel.forgedEndorserBlocks" $
+        forever $ do
+          (anc, forged) <- atomically $ readTQueue forgedEbs
+          onForgedLeiosEb leiosFetchKernel anc forged
     let onForgedEb hdr onset leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
-          for_ mbValid $ \valid ->
-            -- Stay alive until the announcement is accepted and its endorser
-            -- block taken in: see 'onValidAnnouncement'. When the LeiosDB's
-            -- write queue is full, this is an unusually long critical section,
-            -- since taking the endorser block in waits for room there, and so
-            -- does whatever is ending this thread. A pool leads too rarely for
-            -- that to matter.
-            uninterruptibleMask_ $ do
-              void $ atomically $ onValidAnnouncement leiosAnnounceState valid
-              onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
+          for_ mbValid $ \valid -> atomically $ do
+            void $ onValidAnnouncement leiosAnnounceState valid
+            writeTQueue forgedEbs (announcingHeader valid, forged)
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)

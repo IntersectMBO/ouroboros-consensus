@@ -107,7 +107,6 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictMVar
   , StrictTVar
   , async
-  , asyncWithUnmask
   , atomically
   , evaluate
   , labelThisThread
@@ -399,8 +398,8 @@ settleBody ctx peer point eb bodyWritten = do
     TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
 
 -- | Acquire, at this point, an endorser block the node's own forge produced, as
--- one that arrived with no peer: write it and then all its txs, and settle the
--- point once both writes are durable ('settleForgedEb').
+-- one that arrived with no peer: write it and then all its txs, wait for both
+-- writes to be durable, and then settle the point ('settleForgedEb').
 --
 -- Its bytes are not checked: the forge built the body from these very txs.
 --
@@ -415,18 +414,9 @@ acquireForgedEb ::
 acquireForgedEb ctx point forged = do
   bodyWritten <- writeEbBody lfcWriter point eb mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
-  -- Unmasked, since this may run uninterruptibly ('onValidAnnouncement' says
-  -- why), which a plain 'async' would pass on to the worker for its whole
-  -- life, its wait for the writes included.
-  link
-    =<< asyncWithUnmask
-      ( \unmask -> do
-          labelThisThread "LeiosFetch.settleForgedEb"
-          unmask $
-            settleForgedEb ctx point eb $
-              Promise $
-                await bodyWritten >> void (await txsWritten)
-      )
+  settleForgedEb ctx point eb $
+    Promise $
+      await bodyWritten >> void (await txsWritten)
  where
   MkLeiosFetchClientContext{lfcWriter} = ctx
   eb = forgedEbBody forged
