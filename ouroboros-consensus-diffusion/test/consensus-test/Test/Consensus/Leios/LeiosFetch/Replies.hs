@@ -8,6 +8,7 @@ module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , atomically
@@ -47,6 +48,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , forgeLeiosEb
   , hashLeiosTx
   , hashSerialisedEndorserBlock
   , idLeiosEbByteSizesLimit
@@ -57,6 +59,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
+  , acquireForgedEb
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -73,6 +76,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , emptyLeiosOutstanding
   , focusElectionIfUnfocused
   , leiosFetchLogicIteration
+  , markReceivingFromForge
   , pruneOutstandingToImmTip
   , recordReferencedPoint
   )
@@ -146,6 +150,15 @@ tests =
         test_overlappingTxsReplies
     , testCase "the client counts transactions for a point pruned meanwhile as evicted" $
         test_txsForPrunedPoint
+    , testCase
+        "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
+        test_forgedAfterBody
+    , testCase
+        "the client counts a body delivered while the node's own forge writes it as redundant, whether it arrives or settles meanwhile"
+        test_bodyWhileForging
+    , testCase
+        "the client counts transactions delivered while the node's own forge writes them as redundant"
+        test_txsWhileForging
     ]
 
 -- | What a notification says, comparably.
@@ -154,12 +167,13 @@ data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
 
 -- | An endorser block of two transactions, announced in slot 5.
 fixture :: (LeiosPoint, EndorserBlock, [LeiosTx])
-fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, txs)
+fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, toList fixtureTxs)
  where
-  tx0 = MkLeiosTx (BS8.pack "tx zero")
-  tx1 = MkLeiosTx (BS8.pack "tx one")
-  txs = [tx0, tx1]
-  eb = endorserBlockFromTxBytes (leiosTxBytes tx0 :| [leiosTxBytes tx1])
+  eb = endorserBlockFromTxBytes (fmap leiosTxBytes fixtureTxs)
+
+-- | The 'fixture''s transactions.
+fixtureTxs :: NonEmpty LeiosTx
+fixtureTxs = MkLeiosTx (BS8.pack "tx zero") :| [MkLeiosTx (BS8.pack "tx one")]
 
 peer :: Int
 peer = 0
@@ -365,9 +379,30 @@ test_prunedWhileWriting = do
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
 
+-- | A peer delivers the 'fixture''s body, and then the node's own forge
+-- produces the same endorser block at the same point, while the closure is
+-- still to fetch.
+test_forgedAfterBody :: Assertion
+test_forgedAfterBody = do
+  let (point, eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
+  awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  -- Long enough for any further emission to have landed.
+  threadDelay 100000
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
 assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of
   Just (MkEbState _onset NoBody) -> pure ()
+  Just (MkEbState _onset ReceivingFromForge{}) -> assertFailure "the point is being received from the forge"
   Just (MkEbState _onset BodyAcquired{}) -> assertFailure "the point holds a body"
   Nothing -> assertFailure "the point has no entry"
 
@@ -375,6 +410,7 @@ assertNoJobLeft :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoJobLeft point outstanding = case Map.lookup point (ebState outstanding) of
   Just (MkEbState _onset (BodyAcquired jobPool)) ->
     assertBool "the point has jobs left" (nullJobPool jobPool)
+  Just (MkEbState _onset ReceivingFromForge{}) -> assertFailure "the point is being received from the forge"
   Just (MkEbState _onset NoBody) -> assertFailure "the point holds no body"
   Nothing -> assertFailure "the point has no entry"
 
@@ -613,3 +649,38 @@ blockArrivals
     [TraceLeiosFetchClientEvent Int] -> [(Int, LeiosPoint, FetchArrivalBytes)]
 blockArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
 txsArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
+
+-- | One peer's delivery of the 'fixture''s body is being written when the
+-- node's own forge produces the same endorser block at that point, and another
+-- peer's arrives after.
+test_bodyWhileForging :: Assertion
+test_bodyWhileForging = do
+  let (point, eb, _txs) = fixture
+      size = encodeEndorserBlockSize eb
+      req = MkLeiosBlockRequest point size maxBound
+  written <- newEmptyTMVarIO
+  (ctx, notes, traces) <- withTraces $ newContextHolding (atomically (readTMVar written))
+  processLeiosBlock ctx peer req (serialiseEndorserBlock eb)
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  atomically $ putTMVar written ()
+  processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)
+  awaitArrivals blockArrivals traces 2
+    >>= (@?= [(peer, point, fetchArrivalExtra size), (otherPeer, point, fetchArrivalExtra size)])
+  readTVarIO notes >>= (@?= [])
+
+test_txsWhileForging :: Assertion
+test_txsWhileForging = do
+  let (point, eb, txs) = fixture
+      closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+  (ctx, notes, traces) <- withTraces newContext
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  events <- readTVarIO traces
+  txsArrivals events @?= [(peer, point, fetchArrivalExtra closure)]
