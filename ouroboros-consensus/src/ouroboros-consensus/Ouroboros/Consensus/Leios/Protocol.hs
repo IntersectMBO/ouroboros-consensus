@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Leios.Protocol
   , WhyNotCertifiable (..)
   , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   , defaultGetLeiosAnnouncement
   ) where
@@ -198,6 +199,19 @@ class ConsensusProtocol p => LeiosProtocol p where
     Ticked (ChainDepState p) ->
     Except (ValidationErr p) OCINStaleness
 
+  -- | The announcement a header at this slot may certify, or why it may
+  -- certify none, given its predecessor's chain-dependent state ticked to
+  -- that slot.
+  --
+  -- The protocol's header validation rejects a header that contains a Leios
+  -- certificate exactly when this gives 'Left', so a forger that asks first
+  -- never forges a header that its own validation rejects.
+  leiosAnnouncementToCertify ::
+    ConsensusConfig p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Either NotCertifiable LeiosAnnouncement
+
   -- | The Leios parameters this ledger view carries, or 'Nothing' if the
   -- protocol has no Leios.
   getLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
@@ -226,6 +240,15 @@ defaultValidateLeiosAnnouncement ::
   Ticked (ChainDepState p) ->
   Except (ValidationErr p) OCINStaleness
 defaultValidateLeiosAnnouncement _cfg _view _slot _st = pure FreshOCIN
+
+-- | 'leiosAnnouncementToCertify' for a protocol whose headers never announce, so that
+-- no header may certify.
+defaultLeiosAnnouncementToCertify ::
+  ConsensusConfig p ->
+  SlotNo ->
+  Ticked (ChainDepState p) ->
+  Either NotCertifiable LeiosAnnouncement
+defaultLeiosAnnouncementToCertify _cfg _slot _st = Left $ NoCertifiableAnnouncement NothingAnnounced
 
 -- | 'getLeiosLedgerView' for a protocol that has no Leios.
 defaultGetLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
