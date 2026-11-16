@@ -60,6 +60,7 @@ instance
   where
   getLeiosAnnouncement _proxy = getLeiosAnnouncement (Proxy @p)
   getContainsLeiosCert _proxy = getContainsLeiosCert (Proxy @p)
+  getCertifiableLeiosAnnouncement _proxy = getCertifiableLeiosAnnouncement (Proxy @p)
   validateLeiosAnnouncement = validateLeiosAnnouncement . mcsConfigP
   getLeiosLedgerView _proxy = getLeiosLedgerView (Proxy @p)
 

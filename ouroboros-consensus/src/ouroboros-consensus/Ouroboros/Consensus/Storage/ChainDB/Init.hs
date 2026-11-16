@@ -9,7 +9,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Init
   ) where
 
 import Data.Maybe.Strict (StrictMaybe (SNothing))
-import Ouroboros.Consensus.Block (WithOrigin (Origin))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -35,8 +34,8 @@ fromFull ::
 fromFull db =
   InitChainDB
     { addTheFirstEbb =
-        -- The first block's predecessor is genesis, and Byron has no Leios.
-        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment Origin SNothing
+        -- Byron has no Leios.
+        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment SNothing
     , getCurrentLedger =
         atomically $ ledgerState <$> ChainDB.getCurrentLedger db
     }

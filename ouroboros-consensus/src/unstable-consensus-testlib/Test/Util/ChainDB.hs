@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.NewValidClaims (ignoreNewLeiosValidClaim)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -162,5 +163,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsLeiosDb = mcdbLeiosDb
           , -- These tests fetch no endorser block, so none is acquired.
             cdbsSubscribeLeiosAcquisitions = noLeiosAcquisitions
+          , cdbsOnNewLeiosValidClaim = ignoreNewLeiosValidClaim
           }
     }

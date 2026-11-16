@@ -17,12 +17,14 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , enqueueLeiosAnnouncement
   , leiosFetchAnnouncementFocuser
   , onForgedLeiosEb
+  , leiosFetchCertificateFocuser
   , leiosFetchDecisionLoop
   , pruneLeiosFetchToImmTip
   ) where
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -45,6 +47,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -66,6 +69,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   ( LeiosFetchRequest
   , LeiosOutstanding (..)
   , PeerOffer (..)
+  , focusCertifiedEb
   , focusElectionIfUnfocused
   , initializeLeiosOutstanding
   , leiosFetchLogicIteration
@@ -302,7 +306,8 @@ leiosFetchAnnouncementFocuser kernel =
 -- One entry per election: the announcement that takes the election's focus. A
 -- second announcement for an already-focused election is an equivocation, and
 -- tracking its endorser block too would let a pool double what its won slots
--- cost us.
+-- cost us. If that one turns out to be the certified one, a verified
+-- certificate gives it an entry then.
 onNewLeiosAnnouncement ::
   IOLike m =>
   LeiosFetchKernel m peer blk ->
@@ -429,6 +434,36 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 
   loopInterval :: DiffTime
   loopInterval = 0.5
+
+-- | Move each election's focus onto the endorser block a verified certificate
+-- certifies, as ChainSel verifies such certificates.
+--
+-- This is how a node that only saw some other announcement for the election,
+-- or none, because the announcing block has been on its selection since before
+-- it started, comes to fetch the certified one. Each iteration focuses the
+-- elections certified since the one before, so a certificate verified after
+-- the offer arrived still moves the focus.
+leiosFetchCertificateFocuser ::
+  IOLike m =>
+  -- | The claims of the new Leios certifications validated since this last
+  -- returned, each with the announcement it certifies, blocking until there is
+  -- one
+  m (NonEmpty (LeiosClaim, LeiosAnnouncement)) ->
+  LeiosFetchKernel m peer blk ->
+  m Void
+leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
+  validClaims <- consumeValidClaims
+  modifyMVar_ lfcOutstanding $ \outstanding ->
+    pure $ foldl' focus outstanding validClaims
+  void $ tryPutMVar lfcReady ()
+ where
+  MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
+
+  focus outstanding (claim, ann) =
+    focusCertifiedEb
+      (ElectionId (leiosClaimSlot claim) (announcementElectee ann))
+      (announcementEbHash ann)
+      outstanding
 
 -- | Prune the node's LeiosFetch state and the peers' offers to the immutable
 -- tip's slot.

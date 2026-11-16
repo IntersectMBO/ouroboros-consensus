@@ -25,14 +25,15 @@ import Ouroboros.Consensus.Leios.Types (RankingBlockHash, toRankingBlockHash)
 
 -- | What a block containing a certificate claims: that the endorser block its
 -- predecessor announced is certified. The predecessor's hash identifies the
--- claim.
+-- claim. Claims order by slot first.
 data LeiosClaim = LeiosClaim
   { leiosClaimSlot :: !SlotNo
   -- ^ The predecessor's slot
   , leiosClaimRbHash :: !RankingBlockHash
   -- ^ The predecessor's hash
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
+  deriving NoThunks via InspectHeapNamed "LeiosClaim" LeiosClaim
 
 -- | Why a block's Leios certificate is invalid
 data LeiosCertRejection
