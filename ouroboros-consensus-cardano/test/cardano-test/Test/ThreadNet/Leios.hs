@@ -133,6 +133,12 @@ tests =
 -- No node holds enough stake to certify alone, so a certificate on the chain
 -- means votes of several nodes diffused. Every node must end on the same
 -- chain, and accept every block of it.
+--
+-- TODO: no test covers the closure check of 'getLeiosCertToForge'. Here a
+-- certificate needs the votes of all three nodes, and a node votes only for a
+-- closure that it holds, so every node with a certificate holds the closure.
+-- A test needs a node that gets a certificate before it holds the closure,
+-- for example a node whose LeiosFetch messages arrive late.
 propLeiosCertify :: Seed -> Property
 propLeiosCertify seed =
   conjoin
