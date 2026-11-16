@@ -5,6 +5,7 @@ import qualified Test.Consensus.Cardano.Capacity (tests)
 import qualified Test.Consensus.Cardano.DiffusionPipelining
 import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
+import qualified Test.Consensus.Cardano.LeiosCertifiable
 import qualified Test.Consensus.Cardano.LeiosFetch
 import qualified Test.Consensus.Cardano.LeiosNotify
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
@@ -46,6 +47,7 @@ tests =
           ]
     , Test.Consensus.Cardano.SupportedNetworkProtocolVersion.tests
     , Test.Consensus.Cardano.SupportsSanityCheck.tests
+    , Test.Consensus.Cardano.LeiosCertifiable.tests
     , Test.ThreadNet.AllegraMary.tests
     , Test.ThreadNet.Cardano.tests
     , Test.ThreadNet.Leios.tests
