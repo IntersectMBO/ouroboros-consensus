@@ -102,6 +102,7 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictTVar
   , async
   , atomically
+  , evaluate
   , labelThisThread
   , link
   , modifyMVar
@@ -248,6 +249,8 @@ processLeiosBlock ctx peer req bytes = do
     traceWith lfcTracer $
       TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
     throwIO $ ExnLeiosBlockWrongHash point (hashSerialisedEndorserBlock bytes)
+  -- Decoded before taking the lock, which the replies of every peer share.
+  verdict <- evaluate checkedEb
   -- Under the lock, decide what to do with this body. The point lacks the body
   -- until a reply's write settles, so another reply meanwhile is written
   -- too.
@@ -299,7 +302,7 @@ processLeiosBlock ctx peer req bytes = do
   requestedEbHash = pointEbHash point
   ebBytesSize = fromIntegral (BSL.length (unSerialised bytes))
   limits = lbrEbBounds req
-  verdict
+  checkedEb
     | ebBytesSize > lebBodySize limits =
         Left $ ExnLeiosBlockTooBig point ebBytesSize (lebBodySize limits)
     | otherwise = case deserialiseEndorserBlock (Proxy @DijkstraEra) bytes of
