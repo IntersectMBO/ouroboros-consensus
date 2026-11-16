@@ -43,9 +43,11 @@ import Cardano.Ledger.Block (blockBodyL, ebReferencesAnnouncementBlockHeaderL)
 import Cardano.Ledger.Core (TopTx)
 import qualified Cardano.Ledger.Core as Ledger
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams (UpgradeDijkstraPParams (..))
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
-import Cardano.Slotting.Slot (SlotNo (..))
+import Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import Control.DeepSeq (force)
 import Control.Monad (replicateM)
@@ -59,11 +61,12 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (GetHeader (..))
+import Ouroboros.Consensus.Block (GetHeader (..), blockRealPoint, blockSlot)
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock, pattern BlockDijkstra)
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractAsMempoolTxs)
+import Ouroboros.Consensus.Leios.Types (minCertificationSlot)
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.PBFT (PBftSignatureThreshold (..))
@@ -75,6 +78,7 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.STM as Sim
+import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraGenesis)
 import Test.Consensus.Cardano.ProtocolInfo
   ( Era (Dijkstra)
   , hardForkInto
@@ -101,6 +105,7 @@ import Test.ThreadNet.Infra.Shelley
   , DecentralizationParam (..)
   , genCoreNode
   , mkCredential
+  , mkEpochSize
   , mkGenesisConfig
   , mkKesConfig
   , signTx
@@ -134,6 +139,11 @@ tests =
 -- means votes of several nodes diffused. Every node must end on the same
 -- chain, and accept every block of it.
 --
+-- Each block that may certify its predecessor's announcement must certify it.
+-- With no message delay, every node holds the certificate and the closure
+-- long before the certification gap elapses, so a forger that skips such a
+-- block fails the test.
+--
 -- TODO: no test covers the closure check of 'getLeiosCertToForge'. Here a
 -- certificate needs the votes of all three nodes, and a node votes only for a
 -- closure that it holds, so every node with a certificate holds the closure.
@@ -153,6 +163,9 @@ propLeiosCertify seed =
         & counterexample "no block announces an endorser block"
     , any certifies chain
         & counterexample "no block certifies an endorser block"
+    , null skippedCertifications
+        & counterexample
+          ("blocks that may certify but do not: " <> show (blockRealPoint <$> skippedCertifications))
     ]
     & counterexample ("transactions per block: " <> show (length . extractAsMempoolTxs <$> chain))
  where
@@ -163,6 +176,22 @@ propLeiosCertify seed =
   chain = case nodeOutputs of
     nodeOutput : _ -> nodeChain nodeOutput
     [] -> []
+
+  -- The blocks that may certify their predecessor's announcement, but do not.
+  --
+  -- A block may certify once the certification gap elapses
+  -- ('earliestCertifyingSlot'), and only in the epoch of the announcement
+  -- ('AnnouncedInPreviousEpoch'). It may not certify across an era boundary
+  -- ('AnnouncedInPreviousEra'), but 'announces' holds only for a block of
+  -- Dijkstra, the last era, so its successor is in the same era.
+  skippedCertifications =
+    [ blk
+    | (predecessor, blk) <- zip chain (drop 1 chain)
+    , announces predecessor
+    , blockSlot blk >= earliestCertifyingSlot (blockSlot predecessor)
+    , epochOf (blockSlot blk) == epochOf (blockSlot predecessor)
+    , not (certifies blk)
+    ]
 
   testOutput = runThreadNet seed (NumCoreNodes 3) (NumSlots 200)
 
@@ -179,6 +208,28 @@ certifies = \case
   BlockDijkstra ShelleyBlock{shelleyBlockRaw} ->
     isSJust $ shelleyBlockRaw ^. blockBodyL . leiosCertBlockBodyL
   _ -> False
+
+-- | The earliest slot in which a block may certify the endorser block that a
+-- block in the given slot announces, with the Leios periods of the genesis
+-- that 'mkTestProtocolInfo' uses.
+earliestCertifyingSlot :: SlotNo -> SlotNo
+earliestCertifyingSlot =
+  minCertificationSlot
+    slotLength
+    (udppLeiosAnnouncementPeriodLength pparams)
+    (udppLeiosVotePeriodLength pparams)
+    (udppLeiosDiffusionPeriodLength pparams)
+ where
+  pparams = dgUpgradePParams exampleDijkstraGenesis
+
+-- | The epoch of a slot.
+--
+-- This assumes that every epoch from slot 0 has the same size, the one that
+-- 'mkGenesisConfig' gives Shelley-based eras. That holds because the test
+-- starts in Dijkstra at slot 0 ('hardForkInto' 'Dijkstra'). If the test starts
+-- in an earlier era with another epoch size, this gives wrong epochs.
+epochOf :: SlotNo -> Word64
+epochOf (SlotNo slot) = slot `div` unEpochSize (mkEpochSize securityParam activeSlotCoeff)
 
 -- * Running the network
 
