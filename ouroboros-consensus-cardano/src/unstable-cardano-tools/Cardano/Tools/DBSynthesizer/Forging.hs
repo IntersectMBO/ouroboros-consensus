@@ -186,8 +186,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 chainDB
                 mempool
                 bf
+                (\_ _ -> pure Nothing)
                 (\_ _ _ -> pure ())
-                (\_ -> pure Nothing)
                 currentSlot
         )
         blockForging
