@@ -6,6 +6,14 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.4.0.1'></a>
+## 5.4.0.1 -- 2026-11-16
+
+### Patch
+
+- When using the LSM backend: the time a thread is waiting for IO to be
+  completed no longer will be accounted as IOWAIT.
+
 <a id='changelog-5.4.0.0'></a>
 ## 5.4.0.0 -- 2026-11-04
 
