@@ -414,7 +414,12 @@ instance LeiosProtocol LeiosTestProtocol where
       HeaderCounterBelowImmTips -> StaleOCIN
   getCertifiableLeiosAnnouncement _proxy (LeiosTestChainDepState mbAnn) =
     strictMaybeToMaybe mbAnn
-  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
+
+  -- The test protocol has no epochs and no certification gap.
+  leiosAnnouncementToCertify _cfg _slot (TickedLeiosTestChainDepState (LeiosTestChainDepState mbAnn)) =
+    case mbAnn of
+      SNothing -> Left $ NoCertifiableAnnouncement NothingAnnounced
+      SJust ann -> Right ann
   getLeiosLedgerView _proxy = Just
 
 -- | The chain-dependent state as of this header
