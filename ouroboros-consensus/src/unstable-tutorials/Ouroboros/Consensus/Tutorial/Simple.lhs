@@ -537,6 +537,7 @@ Leios, which `SP` does not use:
 >   getLeiosAnnouncement = defaultGetLeiosAnnouncement
 >   getContainsLeiosCert = defaultGetContainsLeiosCert
 >   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+>   leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
 >   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 Our example requires some additional configuration instances to be defined -

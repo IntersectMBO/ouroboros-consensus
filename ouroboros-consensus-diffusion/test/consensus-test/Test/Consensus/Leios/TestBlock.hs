@@ -386,6 +386,7 @@ instance LeiosProtocol LeiosTestProtocol where
     pure $ case lthCounter hdr of
       HeaderCounterNotBelowImmTips -> FreshOCIN
       HeaderCounterBelowImmTips -> StaleOCIN
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView _proxy = Just
 
 instance PerasProtocol LeiosTestProtocol where

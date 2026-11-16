@@ -94,6 +94,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   )
 import Ouroboros.Consensus.Node.InitStorage
@@ -148,6 +149,7 @@ instance LeiosProtocol ProtocolA where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   getContainsLeiosCert = defaultGetContainsLeiosCert
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance PerasProtocol ProtocolA where

@@ -636,6 +636,7 @@ As in the simple tutorial, `PrtclD` does not use Leios:
 >   getLeiosAnnouncement = defaultGetLeiosAnnouncement
 >   getContainsLeiosCert = defaultGetContainsLeiosCert
 >   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+>   leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
 >   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 All that remains is to establish `PrtclD` as the protocol for

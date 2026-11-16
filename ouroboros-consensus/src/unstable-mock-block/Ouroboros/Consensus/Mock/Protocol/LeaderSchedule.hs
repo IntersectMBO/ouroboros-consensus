@@ -18,6 +18,7 @@ import Ouroboros.Consensus.Leios.Protocol
   , defaultGetContainsLeiosCert
   , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -50,6 +51,7 @@ instance ConsensusProtocol p => LeiosProtocol (WithLeaderSchedule p) where
   getLeiosAnnouncement = defaultGetLeiosAnnouncement
   getContainsLeiosCert = defaultGetContainsLeiosCert
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  leiosAnnouncementToCertify = defaultLeiosAnnouncementToCertify
   getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance ConsensusProtocol p => PerasProtocol (WithLeaderSchedule p) where
