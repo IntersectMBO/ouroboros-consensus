@@ -101,7 +101,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -625,6 +625,8 @@ data BlockToAdd m blk = BlockToAdd
   , blockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
   -- ^ The Leios part of the ledger view at the block's slot, as validating its
   -- header revealed it
+  , blockCertifiedAnnouncement :: !(StrictMaybe LeiosAnnouncement)
+  -- ^ The announcement the header claims its block certifies
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
   , varBlockProcessed :: !(StrictTMVar m (AddBlockResult blk))
@@ -667,9 +669,10 @@ addBlockToAdd ::
   InvalidBlockPunishment m ->
   WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
+  StrictMaybe LeiosAnnouncement ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessorSlot leiosView blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessorSlot leiosView certifiedAnnouncement blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
@@ -678,6 +681,7 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
           , blockToAdd = blk
           , blockPredecessorSlot = predecessorSlot
           , blockLeiosLedgerView = leiosView
+          , blockCertifiedAnnouncement = certifiedAnnouncement
           , varBlockWrittenToDisk
           , varBlockProcessed
           }
