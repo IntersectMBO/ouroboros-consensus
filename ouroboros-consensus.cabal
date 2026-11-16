@@ -2055,6 +2055,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.LeiosCertifiable
     Test.Consensus.Cardano.LeiosFetch
     Test.Consensus.Cardano.LeiosNotify
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
@@ -2108,6 +2109,7 @@ test-suite cardano-test
     QuickCheck,
     sop-core,
     sop-extras,
+    strict,
     strict-sop-core,
     tasty,
     tasty-hunit,
