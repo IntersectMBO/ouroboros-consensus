@@ -26,6 +26,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( BoostedBlock
   , IsPerasCert (..)
   , PerasBlockMinSlots (..)
+  , PerasBootstrapStatus (PerasBootstrapDisabled, PerasBootstrapEnabled)
   , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
@@ -97,6 +98,8 @@ data PerasVotingRulesDecisionModel
 -- real implementation. The main difference is that this model computes the
 -- result of the predicate directly over the inputs, rather than using the
 -- 'Pred' combinators to produce evidence in either direction.
+-- Computation method for VR-2B is also slightly different to make it easier to
+-- catch bugs.
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 isPerasVotingAllowedModel ::
@@ -130,34 +133,41 @@ isPerasVotingAllowedModel
         NotOrigin cert ->
           currRoundNo == getPerasCertRound (lcsCert cert) + 1
         Origin ->
-          currRoundNo == PerasRoundNo 0
+          False
     vr1a2 =
       case latestCertSeen of
         NotOrigin cert ->
           lcsArrivalSlot cert <= lcsRoundStartSlot cert + _X
         Origin ->
-          True
+          False
     vr1b =
       case latestCertSeen of
         NotOrigin cert ->
           lcsCandidateBlockExtendsCert cert
         Origin ->
-          True
+          False
+
     vr2a =
       case latestCertSeen of
         NotOrigin cert ->
           getPerasCertRound (lcsCert cert) + _R <= currRoundNo
         Origin ->
-          _R <= currRoundNo
+          True
     vr2b =
-      case latestCertOnChainRound of
-        NotOrigin certRoundNo ->
-          (currRoundNo > certRoundNo)
-            && ( (currRoundNo `rmod` _K)
-                   == (certRoundNo `rmod` _K)
-               )
-        Origin ->
-          currRoundNo `rmod` _K == _K - 1
+      -- Here we deliberately use a different computation method than in the
+      -- actual voting rules implem, because we don't care about `c` and want to
+      -- make sure the two computation methods produce the same result.
+      case (perasBootstrapStatus perasParams, latestCertOnChainRound) of
+        (PerasBootstrapEnabled b, NotOrigin certRoundNo) ->
+          if b > certRoundNo
+            then (currRoundNo >= b) && ((currRoundNo `rmod` _K) == (b `rmod` _K))
+            else (currRoundNo >= certRoundNo) && ((currRoundNo `rmod` _K) == (certRoundNo `rmod` _K))
+        (PerasBootstrapEnabled b, Origin) ->
+          (currRoundNo >= b) && ((currRoundNo `rmod` _K) == (b `rmod` _K))
+        (PerasBootstrapDisabled, NotOrigin certRoundNo) ->
+          (currRoundNo >= certRoundNo) && ((currRoundNo `rmod` _K) == (certRoundNo `rmod` _K))
+        (PerasBootstrapDisabled, Origin) ->
+          False
 
     vr3 = case (pcCandidateAge candidateBlock) of
       PerasCandidateTooYoung -> False
