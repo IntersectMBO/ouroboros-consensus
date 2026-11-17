@@ -157,10 +157,10 @@ tests =
         "the client emits nothing more for an endorser block the node forged again at a point whose closure it already acquired"
         test_forgedAgain
     , testCase
-        "the client counts a body delivered while the node's own forge writes it as redundant, whether it arrives or settles meanwhile"
+        "the client counts a body sent by a peer while the node's own forge writes it as redundant, whether it arrives or settles meanwhile"
         test_bodyWhileForging
     , testCase
-        "the client counts transactions delivered while the node's own forge writes them as redundant"
+        "the client counts transactions sent by a peer while the node's own forge writes them as redundant"
         test_txsWhileForging
     ]
 
@@ -382,7 +382,7 @@ test_prunedWhileWriting = do
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
 
--- | A peer delivers the 'fixture''s body, and then the node's own forge
+-- | A peer replies with the 'fixture''s body, and then the node's own forge
 -- produces the same endorser block at the same point, while the closure is
 -- still to fetch.
 test_forgedAfterBody :: Assertion
@@ -671,7 +671,7 @@ blockArrivals
 blockArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
 txsArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
 
--- | One peer's delivery of the 'fixture''s body is being written when the
+-- | One peer's reply with the 'fixture''s body is being written when the
 -- node's own forge produces the same endorser block at that point, and another
 -- peer's arrives after.
 test_bodyWhileForging :: Assertion
