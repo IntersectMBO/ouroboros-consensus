@@ -98,7 +98,7 @@ leiosHeaderInfo bcfg hdr =
 -------------------------------------------------------------------------------}
 
 -- | The endorser block points whose closure the LeiosDB holds: those of the
--- @AcquiredEbTxs@ acquisitions (see @LeiosEbNotification@).
+-- @AcquiredEbTxs@ acquisitions (see @LeiosAcquisition@).
 data AcquiredEbs = MkAcquiredEbs
   { alePoints :: !(Set LeiosPoint)
   , alePrunedSlot :: !SlotNo

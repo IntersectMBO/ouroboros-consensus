@@ -1,11 +1,11 @@
 -- | Where the node emits each endorser block and closure it acquires.
 --
 -- The node emits them once the LeiosDB holds them; see
--- 'LeiosEbNotification' for at which points. The ChainDB subscribes, so
+-- 'LeiosAcquisition' for at which points. The ChainDB subscribes, so
 -- that ChainSel can select a block certifying an endorser block once the node
 -- holds that endorser block's closure.
 module Ouroboros.Consensus.Leios.Acquisitions
-  ( LeiosEbNotification (..)
+  ( LeiosAcquisition (..)
   , LeiosAcquisitions (..)
   , newLeiosAcquisitions
   , noLeiosAcquisitions
@@ -31,7 +31,7 @@ import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 -- node started. So a subscriber that subscribes before it scans the LeiosDB at
 -- start-up, as the ChainDB does, hears of each point once at most, and only of
 -- one its scan did not find.
-data LeiosEbNotification
+data LeiosAcquisition
   = -- | The node holds the EB's body.
     AcquiredEb
       -- | the EB's point
@@ -51,8 +51,8 @@ data LeiosEbNotification
 -- type shows which side it is on. The ChainDB takes 'subscribeLeiosAcquisitions'
 -- itself, since it must subscribe before it scans the LeiosDB at start-up.
 data LeiosAcquisitions m = MkLeiosAcquisitions
-  { emitLeiosAcquisition :: LeiosEbNotification -> STM m ()
-  , subscribeLeiosAcquisitions :: m (STM m LeiosEbNotification)
+  { emitLeiosAcquisition :: LeiosAcquisition -> STM m ()
+  , subscribeLeiosAcquisitions :: m (STM m LeiosAcquisition)
   -- ^ Each acquisition emitted from now on, once and in order, blocking
   -- until there is one.
   }
@@ -79,5 +79,5 @@ newLeiosAcquisitions = do
 -- | In place of 'subscribeLeiosAcquisitions', for what opens a ChainDB but
 -- fetches nothing, such as a tool replaying its own databases: nothing is ever
 -- emitted.
-noLeiosAcquisitions :: MonadSTM m => m (STM m LeiosEbNotification)
+noLeiosAcquisitions :: MonadSTM m => m (STM m LeiosAcquisition)
 noLeiosAcquisitions = pure retry

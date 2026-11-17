@@ -254,7 +254,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     --
     -- FIXME Nothing emits acquisitions until #2493 wires LeiosFetch into the
     -- node, so until then the seed is all the ChainDB learns.
-    nextLeiosEbNotification <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
+    nextLeiosAcquisition <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
     initialAcquiredEbs <-
       withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
@@ -420,7 +420,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env nextLeiosEbNotification
+    when launchBgTasks $ Background.launchBgTasks env nextLeiosAcquisition
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
