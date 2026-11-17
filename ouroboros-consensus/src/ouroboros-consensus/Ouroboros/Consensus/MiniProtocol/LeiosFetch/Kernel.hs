@@ -761,15 +761,18 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
   MkLeiosFetchKernel{lfkContext, lfkPeers} = kernel
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcRuntime} = lfkContext
 
--- | Move each election's focus onto the endorser block a verified certificate
--- certifies, as ChainSel verifies such certificates.
+-- | Follow newly established verified claims in ChainDB publication order.
+-- Each batch updates focus under the existing outstanding-state lock. Exact
+-- duplicates are filtered before publication; 'focusCertifiedEb' ignores
+-- notifications whose elections have since been pruned.
 --
--- This is how a node that only saw some other announcement for the election,
--- or none, because the announcing block has been on its selection since before
--- it started, comes to fetch the certified one. Each iteration focuses the
--- elections certified since the one before, so a certificate verified after
--- the offer arrived still moves the focus.
+-- The node owns one registry-linked consumer. Unexpected failure after dequeue
+-- must end its invocation, since duplicate claims cannot replay a lost batch.
+-- Pending notifications are volatile; accepted payload work retains its own
+-- admission, drain and receipt lifetime.
 --
+-- Focus bookkeeping does not wait for body capacity or storage.
+-- See @docs/fetch-policy/leiosfetch-improved.md#verified-certificate-notifications@.
 leiosFetchCertificateFocuser ::
   IOLike m =>
   -- | The claims of the new Leios certifications validated since this last

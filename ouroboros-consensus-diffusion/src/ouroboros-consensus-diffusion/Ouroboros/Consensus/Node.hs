@@ -576,7 +576,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           let cacheGuardedLeiosDB = withCacheRetirement leiosTxCache leiosDB
           leiosAcquisitions <- newLeiosAcquisitions
           -- Where the ChainDB passes the claim of each new Leios certification
-          -- it validates, for the node kernel, its only consumer.
+          -- it validates, for the node kernel, its only consumer. Create it
+          -- before opening ChainDB so startup publications remain pending.
+          -- See @docs/fetch-policy/leiosfetch-improved.md#verified-certificate-notifications@.
           newLeiosValidClaims <- mkNewLeiosValidClaims
           (chainDB, finalArgs) <-
             openChainDB

@@ -44,6 +44,56 @@ voting keys cannot reach its configured quorum. A diffusion-only fixture without
 those keys must label any quorum override explicitly; it is not certification
 validation or a change to production quorum policy.
 
+## Cache retention
+
+The cache retains reference metadata for the 128 freshest body-bearing points
+and indexes only held transactions. Announcements alone retain no cache point.
+A held transaction follows its youngest retained reference; a landed location
+follows its youngest confirmed source. Packed reference metadata keeps hashes
+in one byte string and their exact sizes in an unboxed vector. It preserves the
+upstream body's ordered, unique-hash reference sequence and its offsets. This is
+not the body's original encoding and does not provide whole-body acquisition.
+Body acquisition requires a received body or local forge submission and a positive
+target receipt.
+
+One receipt pass publishes every confirmed held body offset: captured mempool
+validation facts select validated state; other confirmed offsets use inserted
+state. This includes confirmed DB fills. Capture the full 16-bit major protocol
+version (`VersionWord16`) during selection rather than resampling it at receipt
+completion. An inserted update preserves existing validation; an explicit
+validated update replaces that metadata without inferring temporal order from
+the version number. Network TX receipts publish inserted state only for confirmed submitted offsets.
+
+Cache publication uses a bounded list of offset, hash, size and state records,
+without transaction payload bytes. Materialize its entire spine and strict records
+before taking the cache lock. The insertion's counters describe that later cache
+state; arrival tracing retains its separate snapshot from before writer admission.
+
+Publication for an evicted point is a no-op. It cannot recreate that point or
+redirect the write through another point that references the same hash. A
+positive receipt can still settle otherwise-live logical work and release its
+exact owner, independently of cache capacity. Unavailable writes publish no
+new evidence; partial confirmation leaves missing offsets fetchable. A forged
+callback also requires complete confirmation and a still-current logical target.
+
+TX arrival classification uses one read-only, point-aware cache snapshot before
+writer admission. A nonretained point counts as evicted; a retained point's
+absent transaction counts as needed, and a held transaction as extra. Each
+selected occurrence contributes its bytes without cache insertion or deduplication.
+Saved counters do not change when another write later lands. Concurrent handlers
+can both observe missing data and count it as needed; confirmed distinct closure
+origins and mux wire bytes answer separate questions.
+
+These are in-memory index operations. Eviction can discard reuse information
+while the DB still holds the bytes. Already-captured fill descriptors remain
+usable if the writer can verify their sources. Slot pruning independently
+removes points strictly older than its monotonic boundary and prevents late
+insertion from restoring them.
+
+The cache window, 128 metadata obligations, two body-preparation entries and
+four forge entries are separate bounds. Announcements do not consume the cache
+window; only body-bearing points do.
+
 ## Serialized bodies and local validation
 
 The upstream wire codec carries the body's original bytes as CBOR-in-CBOR. Hash
@@ -135,6 +185,10 @@ to reconsider the stopped peer's credit. An unchanged no-progress pass does not
 notify itself. Runtime admission still rechecks live eligibility and credit
 atomically; pass-local stops are advisory and never extend across invocations.
 
+Verified certificates can refocus an election independently of source ranking.
+[Verified certificate notifications](#verified-certificate-notifications) describes
+publication, ordering, retirement and the consumer's lifetime.
+
 Initially request unassigned work once. When every outstanding copy of some
 still-needed work has exhausted its own eligible service allowance, permit one
 additional copy from another eligible source. The newly queued copy closes that
@@ -145,6 +199,65 @@ Service evidence belongs to a live registration. Qualifying head stalls add a
 penalty after aging existing evidence. Its half-life is 600 seconds, with scores
 at or below 0.5 forgiven. Successful service does not reset it. Removal ends
 that registration's score; stale timestamps cannot increase saved evidence.
+
+## Verified certificate notifications
+
+A validated certificate-bearing header carries `CertRbInfo`: the predecessor
+slot, the announcement named by the claim, and the Leios ledger view needed to
+check its certificate. This context does not itself establish certification.
+`ChainDB.checkLeiosCert` verifies the arriving block's claim; a peer's ChainSync
+header alone remains an offer, rather than verified evidence for refocusing.
+
+For a newly established `LeiosClaim`, ChainDB inserts the claim and calls
+`cdbOnNewLeiosValidClaim` with its announcement in the same STM transaction.
+Exact duplicates and claims below the store's retirement fence publish nothing.
+A claim's identity includes the predecessor block's slot and hash; another
+certifying block can repeat the same claim without creating another event.
+
+Node assembly creates `NewLeiosValidClaims` before opening ChainDB, so startup
+publications remain pending until the consumer starts. ChainDB receives only
+the recording capability; the node kernel receives the consuming action. The
+record callback is cheap and nonblocking: it appends the compact claim and
+announcement to an upstream `TQueue`, without body/TX payloads, storage work or
+acquisition of the fetch-state lock.
+
+This notification queue has no hard memory bound. Its expected small backlog
+depends on the rate of established claims and prompt consumer progress; include
+the batch being handled as well as queued entries. It is separate from the
+128 announcement-metadata obligations, two body-preparation entries and four
+forge payload entries. Those payload/announcement bounds remain unchanged.
+
+`leiosFetchCertificateFocuser` is the sole consumer. It handles new claims in
+publication order, applying focus changes under the existing outstanding-state
+lock. An ordinary announcement does not prevent the first verified override.
+Each later newly established claim can refocus the same election, within one
+batch or across batches; an exact earlier claim repeated after it cannot move
+focus back because ChainDB suppresses that duplicate. Conflicting valid
+certificates require committee equivocation. Latest-new-claim fetch focus does
+not arbitrate forks or introduce chain-urgency scheduling.
+
+Fetch retirement is checked when an event is consumed. A queued event older
+than the fetch frontier cannot recreate retired state; equality at the frontier remains admissible. Pruning alone emits
+no replacement notification. Focus movement retains the existing handling of
+obsolete queued requests, already-sent replies, physical credit and positively
+held data; it does not manufacture possession or cancel a paid-for exchange.
+
+Focus updates do not launch body acquisition or wait for body capacity,
+decoding, writer admission or receipts. The consumer can still wait for the
+outstanding-state lock; this does not make the publication callback wait for
+that lock.
+
+NodeKernel links this one consumer to its node-lifetime resource registry.
+Unexpected failure after dequeue must end that node invocation: the batch is
+no longer queued, and duplicate certificates do not republish it. There is no
+consumer-only restart or acknowledgement journal. The notifications are volatile
+coordination metadata, not accepted payload/storage obligations.
+
+During shutdown the consumer may remain active while payload work closes and
+drains; focus updates add no payload work. Registry
+cleanup stops and joins the consumer. Pending notifications need not be drained,
+while already-admitted payloads retain the normal drain and exceptional abort
+rules in [Ownership and shutdown](#ownership-and-shutdown).
 
 ## Readiness and effective changes
 
@@ -191,17 +304,27 @@ a maximum 500 ms idle fallback. The fallback is not a minimum planning interval.
 
 ## Ownership and shutdown
 
-Announcement acceptance and a bounded node-owned bookkeeping obligation commit
-in one STM transaction. A full metadata queue rolls back acceptance; disconnecting
-the announcing peer cannot erase admitted work. The metadata worker installs election/fetch state without waiting for database
-submission or retaining a cache point.
-It retains each obligation until that bookkeeping completes.
+A first non-proof peer announcement and its bounded node-owned focus obligation
+commit in one STM transaction. `enqueueLeiosAnnouncement` admits that obligation;
+a full metadata queue rolls back acceptance. Disconnecting the announcing peer
+cannot erase admitted work. The metadata worker installs election/fetch state
+without cache insertion or database submission. It retains the obligation until
+focus bookkeeping finishes.
 
-Metadata and known forged payloads retain separate queues, bounded at 128 and
-four queued/running entries respectively. Keeping bounded validated headers
-preserves their onset/bounds and full EB points; the global
-announcement set alone does not retain all that processing context. A blocked
-payload submission cannot occupy the metadata dispatch turn.
+A second accepted announcement for one election is an equivocation proof. It is
+classified and relayed under the upstream rules without creating another initial
+fetch-focus obligation. A verified certificate can later select that EB.
+
+Announcement metadata and known forged payloads retain separate queues, bounded at 128 and
+four queued/running entries respectively. The validated header retains the
+onset/bounds required by its worker; the global announcement set alone does not
+retain all that processing context. A blocked payload submission cannot occupy
+the metadata dispatch turn. `withLeiosFetchWorkers` supervises this bounded
+announcement processing; there is no additional announcement-focuser loop.
+
+Verified-claim notifications use their separate nonblocking stream, rather than
+this bounded announcement queue; see
+[Verified certificate notifications](#verified-certificate-notifications).
 
 Received bodies share two entries and two fixed workers. Entries remain charged while queued, preparing, waiting for writer
 admission and reconciling receipts. Admission transfers a useful network claim
@@ -225,12 +348,27 @@ tasks remain for TX responses and other producers.
 Forge admission is independent of whether a peer announced the header first.
 Admission installs a known local-payload claim for the full EB point, suppressing
 new body and transaction dispatch while its worker waits. It does not refund or
-cancel requests already sent. Matching forge callbacks share one bounded operation:
-callers wait for writer admission (or retirement), while the owner remains live through durable
-settlement. Each accepted header keeps its own announcement obligation. Only positive,
-still-current receipt confirmation allows later callbacks to skip resubmission;
-an empty or abandoned job pool is insufficient. Retirement also fences late
-completion evidence.
+cancel requests already sent. Matching forge callbacks share one bounded
+operation. Each caller returns after its atomic metadata/payload admission;
+it waits for neither writer admission nor durability. Each forged submission
+admits its metadata dependency even if that header was already accepted or is
+proof. Body insertion in the worker retains the target's cache point. Full queues
+backpressure admission and roll back acceptance if a waiting caller is cancelled;
+committed work outlives its caller.
+
+The four forge payload slots cover queued, running and receipt-waiting entries.
+After positive, still-current confirmation the owner retains only a completion
+key for deduplication, separately from those slots. The immutable-tip pruner
+retires old keys and fences late completion from reinstating them. If that
+frontier stalls while forging continues, this lightweight metadata can grow;
+there is no separate eviction cap. An empty or abandoned job pool supplies no
+completion evidence. Callback return alone emits no acquisition or offer.
+
+These bounds are retained deliberately. Saturation can delay submission of the
+ranking block before handoff is admitted. A stronger forging guarantee belongs
+to the consensus team's policy, including any reservation before EB construction
+and the decision about what to forge when capacity is unavailable. An unbounded
+queue or forked wait would hide the backlog.
 
 Workers activate inside receipt supervision. Work admitted before activation
 remains queued. Shutdown
@@ -342,14 +480,29 @@ retired location. Already-captured fill descriptors remain hints, not pins: the
 writer verifies the available source bytes, and an unavailable or stale fill
 leaves the target transaction fetchable.
 
-The mutable cache draws its two salt words from a dedicated, previously unused
-branch of the LeiosFetch RNG root. Fetch decisions keep the other branch;
-KeepAlive, peer sharing, TX submission and the surrounding node streams retain
-their existing derivations. Production and deterministic node fixtures allocate
-the salted cache and install its retirement wrapper before opening ChainDB.
-This separates stream ownership, not cryptographic secrecy: StdGen is not a
-security PRNG. Supplying a securely generated 128-bit startup secret remains
-a follow-up at the allocation split.
+The mutable cache draws its two salt words from a dedicated branch of the
+LeiosFetch RNG root; fetch decisions use the other branch. ThreadNet gives fetch,
+TX submission and ChainSync independent roots. Production and deterministic node
+fixtures allocate the salted cache and install its retirement wrapper before
+opening ChainDB. StdGen stream separation provides no cryptographic secrecy.
+Supplying a securely generated 128-bit startup secret remains a follow-up at
+the allocation split.
+
+### Immutable-tip pruning
+
+`NodeKernel.leiosImmutableTipPruner` observes one advancing immutable slot. It
+first calls `pruneLeiosNotifyToImmTip` in STM to retire peer notify state,
+accepted announcements and vote certificates. It then calls
+`pruneLeiosFetchToImmTip` for the same slot to retire cache metadata and logical
+fetch state, prune peer offers/arrival times/claims and completed forge keys,
+and publish the fetch frontier with readiness. Logical pruning still wakes the
+planner after earlier physical request cleanup.
+
+This node worker and DB promotion/collection have independent lifetimes.
+`withCacheRetirement` imposes the cache-before-promotion fence at the storage
+handle itself; it does not rely on the node worker running first. Clearing a
+cache entry deletes no DB bytes, and neither pruning path turns body metadata or
+an enqueued write into positive target possession.
 
 ## Tracing
 
@@ -380,7 +533,10 @@ to this distinct numerator.
 
 | Component | Responsibility |
 |---|---|
-| `Kernel` | Election focus, peer registrations, availability, first-offer times, shared outstanding-state lock and the event-driven planning loop. |
+| `Leios.NewValidClaims`, `ChainDB` | Atomic publication of newly established verified claims, duplicate suppression and the single-consumer notification stream. |
+| `Kernel` | Bounded announcement focus, certificate refocusing, peer registrations, offers/arrival times, the planning loop and the fetch-pruning entrypoint. |
+| `NodeKernel`, `LeiosNotify` | Shared immutable-tip pruning and node assembly; notify state is retired before fetch state at the same observed slot. |
+| `Leios.TxCache` and `Storage.LeiosDB.Cache` | Body-point/TX reuse index and the independent cache-before-promotion fence. |
 | `Decision` and `Jobs` | EB priority, ranked source traversal, whole-TX packing, least-requested job selection and logical completion/unpicking. |
 | `Runtime` and `RequestState` | Original request identities, physical outstanding credit and its live-owner index, FIFO/send/receive facts and pending submission/receipt claims. |
 | `Timing`, `PeerPenalty`, `Wait` | Pure service clocks and aged evidence, plus coalesced readiness/deadline/fallback waiting. |
@@ -461,12 +617,12 @@ missing validation metadata never fabricate validated status.
 Whole-EB names the local selection/write scope; remaining network requests keep
 the existing job partition and full-closure-offer requirement.
 
-Two admitted whole-EB operations replace the former slice gate, 20,000 B target,
-128-reference slicing and residual TX writes. Trusted ledger body/closure maxima
-B and C bound their admitted logical encoded payload by 2*(B+C), independently
-of a peer's announced size. This is not a whole-node heap bound: decoded selected
-TX graphs and encoding buffers have representation overhead; ingress, peer handlers, forged work
-and the existing DB writer have their own bounds.
+Two admitted whole-EB operations bound local preparation. Trusted ledger
+body/closure maxima B and C bound their logical encoded payload by 2*(B+C),
+independently of a peer's announced size. The 20,000 B network-job packing target
+remains separate. This is not a whole-node heap bound: decoded selected TX graphs
+and encoding buffers have representation overhead; ingress, peer handlers,
+forged work and the existing DB writer have their own bounds.
 
 Each operation writes its body, remaining DB fills and verified mempool bytes
 once. The receipt proves body presence and held target offsets after commit,
@@ -476,6 +632,14 @@ target locations. Missing
 fills remain fetchable. Body acquisition follows that combined commit; closure
 acquisition follows it only if every offset is confirmed. The forged path also
 uses one body/all-TX write and requires complete, still-relevant confirmation.
+A tracked forged target does not need to be the election's network-fetch focus.
+Already-pruned callbacks are ignored before receipt classification and publish
+no locations. An unavailable forged target explicitly leaves its temporary
+forge state for the terminal no-fetch state, without acquisition or coverage.
+Present-but-incomplete confirmation of that full-payload local write violates
+the storage contract and reaches node supervision, releasing its owners during
+teardown. This assertion is specific to the forge: ordinary body/local-fill
+writes may confirm a partial closure and leave missing transactions fetchable.
 
 Source-selection counts and the cache insertion summary describe captured
 choices/cache state, separately from confirmed durable origins in the closure
@@ -493,46 +657,6 @@ network or local cleanup from erasing another operation's claim.
 
 [Ownership and shutdown](#ownership-and-shutdown) describes admission,
 saturation, retirement and cleanup.
-
-## Cache retention
-
-The cache retains reference metadata for the 128 freshest body-bearing points
-and indexes only held transactions. Announcements alone retain no cache point.
-A held transaction follows its youngest retained reference; a landed location
-follows its youngest confirmed source. Packed reference metadata keeps hashes
-in one byte string and their exact sizes in an unboxed vector. It preserves the
-upstream body's ordered, unique-hash reference sequence and its offsets. This is
-not the body's original encoding and does not provide whole-body acquisition.
-Body acquisition requires a received body or local forge submission and a positive
-target receipt.
-
-One receipt pass publishes every confirmed held body offset: captured mempool
-validation facts select validated state; other confirmed offsets use inserted
-state. This includes confirmed DB fills. Capture the full 16-bit major protocol
-version (`VersionWord16`) during selection rather than resampling it at receipt
-completion. An inserted update preserves existing validation; an explicit
-validated update replaces that metadata without inferring temporal order from
-the version number. Network TX receipts publish inserted state only for confirmed submitted offsets.
-
-Cache publication uses a bounded list of offset, hash, size and state records,
-without transaction payload bytes. Materialize its entire spine and strict records
-before taking the cache lock. The insertion's counters describe that later cache
-state; arrival tracing retains its separate snapshot from before writer admission.
-
-Publication for an evicted point is a no-op. It cannot recreate that point or
-redirect the write through another point that references the same hash. A
-positive receipt can still settle otherwise-live logical work and release its
-exact owner, independently of cache capacity. Unavailable writes publish no
-new evidence; partial confirmation leaves missing offsets fetchable. A forged
-callback also requires complete confirmation and a still-current logical target.
-
-TX arrival classification uses one read-only, point-aware cache snapshot before
-writer admission. A nonretained point counts as evicted; a retained point's
-absent transaction counts as needed, and a held transaction as extra. Each
-selected occurrence contributes its bytes without cache insertion or deduplication.
-Saved counters do not change when another write later lands. Concurrent handlers
-can both observe missing data and count it as needed; confirmed distinct closure
-origins and mux wire bytes answer separate questions.
 
 ## Practical limits and follow-ups
 

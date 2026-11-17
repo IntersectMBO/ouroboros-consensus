@@ -478,8 +478,8 @@ focusElectionIfUnfocused elId ebHash outstanding
 -- block.
 --
 -- It does nothing for an election older than what has been pruned: its
--- certificate may have been read before the pruning, and focusing it now would
--- track what the pruning dropped.
+-- notification may have been published before the pruning, and focusing it now
+-- would track what the pruning dropped.
 focusCertifiedEb ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
 focusCertifiedEb elId ebHash outstanding
@@ -519,6 +519,7 @@ trackCertifiedEb point outstanding
 -- valid certificates require committee equivocation; this is fetch-focus
 -- policy, not chain-urgency or fork arbitration. This helper overwrites an
 -- existing focus whenever it is called.
+-- See @docs/fetch-policy/leiosfetch-improved.md#verified-certificate-notifications@.
 focusElection ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of

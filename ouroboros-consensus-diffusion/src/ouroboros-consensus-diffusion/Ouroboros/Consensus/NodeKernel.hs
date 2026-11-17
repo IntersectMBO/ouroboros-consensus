@@ -288,7 +288,9 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ The claims of the new Leios certifications validated since this last
   -- returned, each with the announcement it certifies, blocking until there is
   -- one; see 'Ouroboros.Consensus.Leios.NewValidClaims.NewLeiosValidClaims'.
-  -- The node kernel is its only consumer.
+  -- The node kernel is its only consumer. Pending notifications are volatile,
+  -- separate from accepted payload work; see
+  -- @docs/fetch-policy/leiosfetch-improved.md#verified-certificate-notifications@.
   , leiosFetchRng :: StdGen
   -- ^ Root whose left split seeds fetch decisions. Early cache allocation
   -- takes only its right split for salts; neither consumer uses the root directly.
@@ -556,6 +558,8 @@ initNodeKernel
           leiosVoteState
           leiosNotifyClientStates
           leiosFetchKernel
+    -- A dequeued batch cannot be recovered by a duplicate certificate.
+    -- Keep unexpected focuser failure linked to the node invocation.
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
         leiosFetchCertificateFocuser (atomically nextNewLeiosValidClaims) leiosFetchKernel
