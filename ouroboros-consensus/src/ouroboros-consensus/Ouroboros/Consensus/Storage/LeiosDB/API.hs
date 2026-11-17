@@ -149,7 +149,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- The LeiosDB allocates the closure at the size the body declares.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> Map TxOffset ByteString -> m (Promise m (Set TxOffset))
+      LeiosPoint -> Map TxOffset ByteString -> m (Promise m ())
   -- ^ Persist the bytes of txs, by offset into the EB body, for the EB at this
   -- point, and only there. Whether that completes the EB is for the caller to
   -- know: the LeiosDB does not track it.
@@ -163,9 +163,6 @@ data LeiosDbWriter m = LeiosDbWriter
   -- body, or its size is not the one the body declares.
   --
   -- A transaction written again overwrites itself, with the same bytes.
-  --
-  -- Returns the offsets of the transactions dropped for their size: no such
-  -- closure can be stored, and an honest peer never serves one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 

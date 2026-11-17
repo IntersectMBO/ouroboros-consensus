@@ -171,11 +171,7 @@ rwInsertEbBodyFilling :: RW -> LeiosPoint -> EndorserBlock -> LocalFills -> IO [
 rwInsertEbBodyFilling rw point eb fills = Set.toAscList <$> (await =<< writeEbBody (rwWriter rw) point eb fills)
 
 rwInsertTxs :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO ()
-rwInsertTxs rw point txs = void $ rwInsertTxsDropped rw point txs
-
--- | Also the offsets dropped for their size.
-rwInsertTxsDropped :: RW -> LeiosPoint -> [(TxOffset, BS.ByteString)] -> IO [TxOffset]
-rwInsertTxsDropped rw point txs = Set.toAscList <$> (await =<< writeTxs (rwWriter rw) point (Map.fromList txs))
+rwInsertTxs rw point txs = await =<< writeTxs (rwWriter rw) point (Map.fromList txs)
 
 rwScanComplete :: RW -> SlotNo -> IO [LeiosPoint]
 rwScanComplete = scanCompleteEbClosuresNotOlderThanSlot . rwReader
@@ -617,17 +613,14 @@ test_malformedTxWritesDropped db = do
       offsets = [0, 1]
   withRW db $ \con -> do
     rwInsertEbBody con point eb
-    -- An offset the body does not declare, and wrong-sized bytes. Only the
-    -- latter are reported.
-    dropped <-
-      rwInsertTxsDropped
-        con
-        point
-        [ (2, txBytesFor eb 0)
-        , (0, BS.snoc (txBytesFor eb 0) 0)
-        , (1, BS.take 1 (txBytesFor eb 1))
-        ]
-    dropped @?= [0, 1]
+    -- An offset the body does not declare, and wrong-sized bytes.
+    rwInsertTxs
+      con
+      point
+      [ (2, txBytesFor eb 0)
+      , (0, BS.snoc (txBytesFor eb 0) 0)
+      , (1, BS.take 1 (txBytesFor eb 1))
+      ]
     retrieved <- rwBatchRetrieveTxs con point offsets
     retrieved @?= Map.empty
     rwInsertTxs con point [(0, txBytesFor eb 0)]

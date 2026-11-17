@@ -469,12 +469,10 @@ settleTxs ::
   -- the txs arrived, and so were not written, as classified then
   FetchArrivalBytes ->
   -- | the write of the txs
-  Promise m (Set TxOffset) ->
+  Promise m () ->
   m ()
 settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written discarded txsWritten = do
-  -- The offsets of the txs the LeiosDB dropped for their size: none, since
-  -- 'checkJobCommitment' checked each one's.
-  _droppedForSize <- await txsWritten
+  await txsWritten
   traces <- modifyMVar lfcOutstanding $ \outstanding -> do
     let outstanding' = completeTxRequest peer req outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
