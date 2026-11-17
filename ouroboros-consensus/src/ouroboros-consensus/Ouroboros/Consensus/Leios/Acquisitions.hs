@@ -44,6 +44,12 @@ data LeiosEbNotification
       LeiosPoint
 
 -- | A broadcast of the node's acquisitions.
+--
+-- Only the code that wires up a node holds the whole broadcast. Whatever only
+-- emits takes just 'emitLeiosAcquisition', and whatever only reads takes just
+-- 'subscribeLeiosAcquisitions' or the 'STM' action it returns, so that its
+-- type shows which side it is on. The ChainDB takes 'subscribeLeiosAcquisitions'
+-- itself, since it must subscribe before it scans the LeiosDB at start-up.
 data LeiosAcquisitions m = MkLeiosAcquisitions
   { emitLeiosAcquisition :: LeiosEbNotification -> STM m ()
   , subscribeLeiosAcquisitions :: m (STM m LeiosEbNotification)
