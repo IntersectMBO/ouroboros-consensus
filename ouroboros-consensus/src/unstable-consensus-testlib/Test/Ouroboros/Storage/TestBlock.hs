@@ -857,9 +857,10 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
         -- accordance with the 'ChunkInfo' directly, but that would require an
         -- overhaul of how test config is propagated all over this file.
         -- See https://github.com/tweag/cardano-peras/issues/257
-        eraPerasRoundLength =
-          PerasEnabled . PerasRoundLength $
-            divisorClosestToQuotient numRegularBlocks 3
+        eraPerasStatus =
+          HardFork.DuringShelleyPerasEnabled
+            (PerasBlockMaxSlots $ unNonZero (maxRollbacks k) * 20)
+            (PerasRoundLength $ divisorClosestToQuotient numRegularBlocks 3)
       }
 
 instance ImmutableEraParams TestBlock where

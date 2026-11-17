@@ -445,10 +445,9 @@ getPerasVotingView ledgerConfig roundNo env = do
         hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
       let params = pecParams epochContext
           blockMinSlots = perasBlockMinSlots params
-          blockMaxSlots = perasBlockMaxSlots params
       case ( runPerasQry summary $
                mkPerasVotingView params roundNo latestCertSeen latestCertOnChainRoundNo
-                 =<< perasChainAtCandidateBlock blockMinSlots blockMaxSlots roundNo currentChain
+                 =<< perasChainAtCandidateBlock blockMinSlots roundNo currentChain
            ) of
         Left err ->
           pure $ Left $ PerasVotingViewQryException err
