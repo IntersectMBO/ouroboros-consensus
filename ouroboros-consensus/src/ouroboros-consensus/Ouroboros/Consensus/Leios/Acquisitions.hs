@@ -1,6 +1,6 @@
 -- | Where the node emits each endorser block and closure it acquires.
 --
--- The node emits them once each write is durable; see
+-- The node emits them once the LeiosDB holds them; see
 -- 'LeiosEbNotification' for at which points. The ChainDB subscribes, so
 -- that ChainSel can select a block certifying an endorser block once the node
 -- holds that endorser block's closure.
@@ -25,12 +25,12 @@ import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 
 -- | Something the node acquired at a 'LeiosPoint'.
 --
--- The node emits each at most once per point: 'AcquiredEb' once the point's
--- body is durable, and 'AcquiredEbTxs' once its closure is. It emits neither
--- for a point whose closure the LeiosDB already held when the node started. So
--- a subscriber that subscribes before it scans the LeiosDB at start-up, as the
--- ChainDB does, hears of each point once at most, and only of one its scan did
--- not find.
+-- The node emits each at most once per point: 'AcquiredEb' once the LeiosDB
+-- holds the point's body, and 'AcquiredEbTxs' once it holds its closure. It
+-- emits neither for a point whose closure the LeiosDB already held when the
+-- node started. So a subscriber that subscribes before it scans the LeiosDB at
+-- start-up, as the ChainDB does, hears of each point once at most, and only of
+-- one its scan did not find.
 data LeiosEbNotification
   = -- | The node holds the EB's body.
     AcquiredEb
