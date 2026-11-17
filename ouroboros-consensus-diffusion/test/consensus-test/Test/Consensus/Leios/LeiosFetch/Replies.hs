@@ -594,11 +594,12 @@ test_forgedAgain = do
         submitFixtureForge ctx point (forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs))
         Timeout.timeout 5000000 (atomically (W.awaitReadiness (lfcReady ctx)))
           >>= maybe (assertFailure "timed out waiting for the forge's writes to settle") pure
-  forgeAndSettle
-  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
-  forgeAndSettle
-  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
-  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
+  withBodyWorkers ctx $ do
+    forgeAndSettle
+    reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+    forgeAndSettle
+    reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+    readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
 
 assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of

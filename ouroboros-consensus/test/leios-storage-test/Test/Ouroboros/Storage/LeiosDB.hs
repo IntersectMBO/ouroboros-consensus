@@ -11,7 +11,7 @@
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes, hashToStringAsHex)
-import Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, newTVarIO, writeTVar)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -25,7 +25,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Function ((&))
-import Data.List (nub)
+import Data.List (foldl', nub)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy (..))
@@ -120,6 +120,12 @@ tests =
     forEachImplementation mkTestGroups
       <> [testGroup "confirmed receipts" (forEachImplementation receiptTests)]
       <> [ testCase ("promotion fences cache/" <> name) (testCacheFence makeCache)
+         | (name, makeCache) <-
+             [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
+         ]
+      <> [ testCase
+             ("late positive receipt preserves newer cache location/" <> name)
+             (testLateCacheReceipt makeCache)
          | (name, makeCache) <-
              [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
          ]
@@ -516,7 +522,7 @@ test_bodyKeepsReceivedBytes db = do
         BS.concat
           [BS.pack [0xa1, 0x58, 0x20], hashToBytes (testTxHash 0 101), BS.pack [0x1a, 0, 0, 0, 101]]
     point = mkTestPoint (SlotNo 1) 1
-  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @ConwayEra) received
+  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @DijkstraEra) received
   assertBool
     "the ledger encodes these references in other bytes"
     (serialiseEndorserBlock (mkEndorserBlock (endorserBlockReferences eb)) /= received)
@@ -1811,3 +1817,50 @@ testCacheFence makeCache = do
   case result of
     Nothing -> assertFailure "cache lock was held across promotion"
     Just () -> pure ()
+
+-- Delay publication of an actual positive receipt until after retirement,
+-- while a newer body keeps the same TX in the cache.
+testLateCacheReceipt ::
+  IO (Cache.LeiosTxCache IO () VersionWord16 Cache.PackedEndorserBlock) -> Assertion
+testLateCacheReceipt makeCache = do
+  cache <- makeCache
+  raw <- newLeiosDBInMemory
+  let oldBody = mkTestEb 1
+      newBody = mkTestEb 2
+      old = MkLeiosPoint 1 (endorserBlockHash oldBody)
+      newer = MkLeiosPoint 10 (endorserBlockHash newBody)
+      tx = fst (head (endorserBlockReferences oldBody))
+      db = withCacheRetirement cache raw
+      insert point body = void $ Cache.insertBody cache point (Cache.packEndorserBlock body)
+      land point offsets = do
+        let landed = [Cache.MkLandedTx off tx 1 (Cache.TxInserted ()) | off <- Set.toList offsets]
+            !() = foldl' (\() !_ -> ()) () landed
+        void $ Cache.insertLandedTxs cache point landed
+  insert old oldBody
+  insert newer newBody
+  withWriter db $ \writer -> do
+    oldReceipt <-
+      await =<< writeEbBody writer old oldBody Map.empty (Map.singleton 0 (txBytesFor oldBody 0))
+    oldReceipt @?= BodyPresent (Set.singleton 0)
+    ( await
+        =<< writeEbBody writer newer newBody Map.empty (Map.fromList [(i, txBytesFor newBody i) | i <- [0, 1]])
+      )
+      >>= (@?= BodyPresent (Set.fromList [0, 1]))
+    land newer (Set.singleton 0)
+    leiosDbPromoteToImmutable db 5 []
+    garbageCollect db
+    case oldReceipt of
+      BodyPresent offsets -> land old offsets
+      BodyUnavailable -> assertFailure "the saved positive receipt disappeared"
+    (_, locations) <-
+      Cache.insertBodyAndFoldl'
+        cache
+        newer
+        (Cache.packEndorserBlock newBody)
+        []
+        (\acc off _ _ loc -> (off, loc) : acc)
+    lookup 0 locations @?= Just (Just (MkTxLocation newer 0))
+    Cache.classifyTxs cache old [(tx, 1)] >>= (@?= Cache.bucketTxArrival Cache.TxEvicted 1)
+  withReader db $ \reader -> do
+    lookupEbBody reader old >>= (@?= Nothing)
+    batchRetrieveTxs reader newer (Set.singleton 0) >>= (@?= Map.singleton 0 (txBytesFor oldBody 0))

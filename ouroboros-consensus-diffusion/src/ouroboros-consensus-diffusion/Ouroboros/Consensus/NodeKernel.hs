@@ -563,9 +563,32 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
 
-    -- Announcements and forged payloads enter the bounded node-owned workers
-    -- atomically. The callback waits for writer admission, while accepted
-    -- receipt work survives cancellation of the forge and drains with the node.
+    -- Take in each forged endorser block, with its announcing header, through
+    -- the same acquisition path as data from a peer. Storage work belongs to
+    -- the existing node-owned workers. Replacing forging credentials must not
+    -- interrupt an already accepted operation. At this stage the callback waits
+    -- for writer admission; durable settlement continues under node ownership.
+    --
+    -- Acceptance, metadata and payload admission, and the exact-point local
+    -- claim commit together. The claim suppresses network fetches even before
+    -- the worker marks ReceivingFromForge; another ranking block in the same
+    -- slot can announce this EB and make the honest chain need it meanwhile.
+    -- A worker waits for metadata, submits the combined body/TX write and
+    -- settles positive confirmation before offering either half to peers.
+    --
+    -- Queued, running and receipt-waiting payloads share four slots. A full
+    -- queue backpressures the forge before acceptance. Once accepted, this
+    -- callback waits for writer admission, but not durability. Normal node
+    -- shutdown drains accepted work before storage closes. Exceptional shutdown
+    -- cancels and joins its owners; callback return never proves possession.
+    --
+    -- Retain these bounds, including the separate 128-entry metadata queue.
+    -- Saturation can delay submission of the ranking block before acceptance.
+    -- TODO(consensus team): A guarantee that EB handling never delays that
+    -- submission needs an explicit forging policy, such as reserving capacity
+    -- before constructing the EB and deciding what to forge when capacity is
+    -- unavailable. Moving the wait to an unbounded queue or forked thread hides
+    -- the backlog rather than settling that policy.
     let onForgedEb onset hdr leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
