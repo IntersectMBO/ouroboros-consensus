@@ -95,6 +95,12 @@ import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Driver.Limits (ProtocolSizeLimits, TraceSendRecv)
 import Ouroboros.Network.Driver.Progress
+  ( MessageReceipt (receiptObservedAt)
+  , ProgressLimits (..)
+  , ReceiveScope (..)
+  , progressDriverWithLimits
+  , progressTrailingBytes
+  )
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolLimits (..)
@@ -209,6 +215,9 @@ runLeiosFetchClient tracer codec sizes ctx client peer channel = do
                     ++ A.headChanges (A.headSummary source before) (A.headSummary source following)
                 )
           emitContextObservations ctx events
+        -- This policy consumes complete replies through the ordinary codec.
+        -- Ignore the general driver's element emitter; the annotator conversion
+        -- ignores its extra input bytes and does not add per-TX prefix salvage.
         driver =
           progressDriverWithLimits
             tracer
