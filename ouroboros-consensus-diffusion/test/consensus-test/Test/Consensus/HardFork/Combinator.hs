@@ -287,8 +287,8 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
       <*> AB
-        (mkPerasRoundLength (getA testSetupEpochSize))
-        (mkPerasRoundLength (getB testSetupEpochSize))
+        (mkEraPerasParams (getA testSetupEpochSize))
+        (mkEraPerasParams (getB testSetupEpochSize))
 
   -- Epoch size is a number between 1 and 10 perasRoundLength should divide it.
   -- Picking the closest divisor to get us about 2 Peras rounds per epoch gives
@@ -298,10 +298,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
   -- TODO: it would be better to generate PerasRoundLength randomly in
   -- accordance with the epoch length directly, see:
   -- https://github.com/tweag/cardano-peras/issues/257
-  mkPerasRoundLength epochSize =
-    History.PerasEnabled $
-      PerasRoundLength $
-        divisorClosestToQuotient (unEpochSize epochSize) 2
+  mkEraPerasParams epochSize =
+    History.PerasEnabled
+      ( PerasBlockMaxSlots $ (unNonZero $ maxRollbacks k) * 2
+      , PerasRoundLength $ divisorClosestToQuotient (unEpochSize epochSize) 2
+      )
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB

@@ -122,10 +122,10 @@ genEraParams = do
   eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
-  eraPerasRoundLength <-
+  eraPerasParams <-
     frequency
       [ (1, return HF.NoPerasEnabled)
-      , (3, HF.PerasEnabled <$> genPerasRoundLength eraEpochSize)
+      , (3, fmap HF.PerasEnabled $ (,) <$> genPerasBlockMaxSlots <*> (genPerasRoundLength eraEpochSize))
       ]
   return HF.EraParams{..}
  where
@@ -142,6 +142,9 @@ genEraParams = do
     PerasRoundLength
       <$> choose (1, 10) `suchThat` \x ->
         unEpochSize epochSize `mod` x == 0
+
+  genPerasBlockMaxSlots :: Gen PerasBlockMaxSlots
+  genPerasBlockMaxSlots = PerasBlockMaxSlots <$> choose (1, 10)
 
 -- | Generate 'EpochNo' for the start of the next era
 genStartOfNextEra :: EpochNo -> HF.EraParams -> Gen (Maybe EpochNo)

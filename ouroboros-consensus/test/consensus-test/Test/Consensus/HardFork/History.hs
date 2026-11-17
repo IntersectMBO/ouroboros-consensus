@@ -287,7 +287,7 @@ eventPerasRoundNoToSlot chain@ArbitraryChain{..} =
     eventTime arbitraryEvent
   eventSlotInPerasEnabledEra =
     case find eventSlotMatchesEraBounds (getSummary arbitrarySummary) of
-      Just EraSummary{eraParams = EraParams{eraPerasRoundLength = PerasEnabled _}} -> True
+      Just EraSummary{eraParams = EraParams{eraPerasParams = HF.PerasEnabled _}} -> True
       _ -> False
   eventSlotMatchesEraBounds EraSummary{..} =
     boundSlot eraStart <= eventTimeSlot
@@ -633,13 +633,14 @@ stepEventTime HF.EraParams{..} EventTime{..} =
       else (eventTimeEpochNo, succ eventTimeEpochSlot)
 
   (roundNo', slotInRound') =
-    case eraPerasRoundLength of
-      HF.NoPerasEnabled ->
-        (eventTimePerasRoundNo, eventTimeSlotInPerasRound)
-      HF.PerasEnabled (PerasRoundLength roundLength) ->
+    case eraPerasParams of
+      HF.PerasEnabled (_, PerasRoundLength roundLength) ->
         if succ eventTimeSlotInPerasRound == roundLength
           then (succ eventTimePerasRoundNo, 0)
           else (eventTimePerasRoundNo, succ eventTimeSlotInPerasRound)
+      _ ->
+        -- We are before Shelley era, or Peras is disabled
+        (eventTimePerasRoundNo, eventTimeSlotInPerasRound)
 
 {-------------------------------------------------------------------------------
   Chain model

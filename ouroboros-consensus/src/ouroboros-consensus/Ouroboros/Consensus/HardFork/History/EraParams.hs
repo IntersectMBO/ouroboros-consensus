@@ -28,6 +28,7 @@ import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
 import Control.Monad (void)
+import Data.Functor ((<&>))
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -142,7 +143,7 @@ data EraParams = EraParams
   , eraSlotLength :: !SlotLength
   , eraSafeZone :: !SafeZone
   , eraGenesisWin :: !GenesisWindow
-  , eraPerasRoundLength :: !(PerasEnabled PerasRoundLength)
+  , eraPerasParams :: !(PerasEnabled (PerasBlockMaxSlots, PerasRoundLength))
   -- ^ Optional, as not every era will be Peras-enabled
   }
   deriving stock (Show, Eq, Generic)
@@ -157,6 +158,8 @@ data EraParams = EraParams
 -- * the upper bound to 'NoLowerBound'
 -- * the Peras Round Length is set to @2*k@ slots if peras is enabled
 --   (because it must be a divisor of the epoch size)
+-- * perasBlockMaxSlots is set to 20*k. We assume we always are during Shelley,
+--   and that the active slot coefficient is 1/20
 --
 -- This is primarily useful for tests.
 defaultEraParams ::
@@ -170,10 +173,12 @@ defaultEraParams (SecurityParam k) slotLength perasEnabled =
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
-    , eraPerasRoundLength =
-        fmap
-          (\_ -> PerasRoundLength (unNonZero k * 2))
-          perasEnabled
+    , eraPerasParams =
+        perasEnabled
+          <&> const
+            ( PerasBlockMaxSlots (unNonZero k * 20)
+            , PerasRoundLength (unNonZero k * 2)
+            )
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place
@@ -253,17 +258,20 @@ decodeSafeBeforeEpoch = do
 instance Serialise EraParams where
   encode EraParams{..} =
     mconcat $
-      [ encodeListLen $ case eraPerasRoundLength of
+      [ encodeListLen $ case eraPerasParams of
           NoPerasEnabled -> 4
-          PerasEnabled{} -> 5
+          PerasEnabled _ -> 6
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
       ]
-        <> case eraPerasRoundLength of
+        <> case eraPerasParams of
           NoPerasEnabled -> []
-          PerasEnabled rl -> [encode (unPerasRoundLength rl)]
+          PerasEnabled (bms, rl) ->
+            [ encode (unPerasBlockMaxSlots bms)
+            , encode (unPerasRoundLength rl)
+            ]
 
   decode = do
     len <- decodeListLen
@@ -271,9 +279,12 @@ instance Serialise EraParams where
     eraSlotLength <- decode
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
-    eraPerasRoundLength <-
+    eraPerasParams <-
       case len of
         4 -> pure NoPerasEnabled
-        5 -> PerasEnabled . PerasRoundLength <$> decode
+        6 -> do
+          bms <- PerasBlockMaxSlots <$> decode
+          rl <- PerasRoundLength <$> decode
+          pure $ PerasEnabled (bms, rl)
         _ -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
     return EraParams{..}

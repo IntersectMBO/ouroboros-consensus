@@ -67,6 +67,7 @@ import Control.Monad.Except (Except, throwError)
 import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Proxy
 import Data.SOP.Counting
@@ -151,7 +152,9 @@ mkUpperBound EraParams{..} lo hiEpoch =
   inEraSlots = inEraEpochs * unEpochSize eraEpochSize
 
   inEraPerasRounds :: PerasEnabled Word64
-  inEraPerasRounds = div <$> PerasEnabled inEraSlots <*> (unPerasRoundLength <$> eraPerasRoundLength)
+  inEraPerasRounds =
+    eraPerasParams
+      <&> (\(_, (PerasRoundLength rl)) -> inEraSlots `div` rl)
 
   inEraTime :: NominalDiffTime
   inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
@@ -254,8 +257,12 @@ newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
 
 -- | 'Summary' for a ledger that never forks
 neverForksSummary ::
-  EpochSize -> SlotLength -> GenesisWindow -> PerasEnabled PerasRoundLength -> Summary '[x]
-neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
+  EpochSize ->
+  SlotLength ->
+  GenesisWindow ->
+  PerasEnabled (PerasBlockMaxSlots, PerasRoundLength) ->
+  Summary '[x]
+neverForksSummary epochSize slotLen genesisWindow perasParams =
   Summary $
     NonEmptyOne $
       EraSummary
@@ -267,7 +274,7 @@ neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
               , eraSlotLength = slotLen
               , eraSafeZone = UnsafeIndefiniteSafeZone
               , eraGenesisWin = genesisWindow
-              , eraPerasRoundLength = perasRoundLength
+              , eraPerasParams = perasParams
               }
         }
 
@@ -298,7 +305,7 @@ summaryPerasBounds (Summary summary) =
   go acc (EraSummary{eraStart, eraEnd, eraParams} : rest) =
     case acc of
       NoPerasEnabled ->
-        case eraPerasRoundLength eraParams of
+        case eraPerasParams eraParams of
           NoPerasEnabled ->
             go NoPerasEnabled rest
           PerasEnabled _ ->
@@ -308,7 +315,7 @@ summaryPerasBounds (Summary summary) =
              in
               go (PerasEnabled (lo, mbHi)) rest
       PerasEnabled (lo, _mbHi) ->
-        case eraPerasRoundLength eraParams of
+        case eraPerasParams eraParams of
           NoPerasEnabled ->
             go acc rest
           PerasEnabled _ ->
@@ -544,9 +551,9 @@ invariantSummary = \(Summary summary) ->
               , " (INV-2b)"
               ]
 
-        case eraPerasRoundLength curParams of
+        case eraPerasParams curParams of
           NoPerasEnabled -> pure ()
-          PerasEnabled perasRoundLength ->
+          PerasEnabled (_, perasRoundLength) ->
             unless
               ( (unEpochSize $ eraEpochSize curParams)
                   `mod` (unPerasRoundLength perasRoundLength)
