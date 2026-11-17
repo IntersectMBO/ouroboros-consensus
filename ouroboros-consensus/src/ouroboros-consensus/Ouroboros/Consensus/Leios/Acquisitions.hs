@@ -70,11 +70,8 @@ newLeiosAcquisitions = do
       , subscribeLeiosAcquisitions = readTChan <$> atomically (dupTChan chan)
       }
 
--- | For what opens a ChainDB but fetches nothing, such as a tool replaying its
--- own databases: nothing is ever emitted.
-noLeiosAcquisitions :: MonadSTM m => LeiosAcquisitions m
-noLeiosAcquisitions =
-  MkLeiosAcquisitions
-    { emitLeiosAcquisition = \_ -> pure ()
-    , subscribeLeiosAcquisitions = pure retry
-    }
+-- | In place of 'subscribeLeiosAcquisitions', for what opens a ChainDB but
+-- fetches nothing, such as a tool replaying its own databases: nothing is ever
+-- emitted.
+noLeiosAcquisitions :: MonadSTM m => m (STM m LeiosEbNotification)
+noLeiosAcquisitions = pure retry
