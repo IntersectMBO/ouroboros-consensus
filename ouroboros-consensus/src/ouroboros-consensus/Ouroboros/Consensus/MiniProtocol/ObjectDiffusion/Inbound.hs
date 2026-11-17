@@ -284,14 +284,12 @@ objectDiffusionInbound
       let pendingObjects' = Map.insert objectId Nothing (pendingObjects st)
           (objectIdsToAck, outstandingFifo') =
             Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
-       in setOutstandingFifoSuffix
-            outstandingFifo'
-            ( st
-                { canRequestNext = Set.delete objectId (canRequestNext st)
-                , pendingObjects = Foldable.foldl' (flip Map.delete) pendingObjects' objectIdsToAck
-                , numToAckOnNextReq = numToAckOnNextReq st + fromIntegral (Seq.length objectIdsToAck)
-                }
-            )
+       in setOutstandingFifoSuffix outstandingFifo' $
+            st
+              { canRequestNext = Set.delete objectId (canRequestNext st)
+              , pendingObjects = Foldable.foldl' (flip Map.delete) pendingObjects' objectIdsToAck
+              , numToAckOnNextReq = numToAckOnNextReq st + fromIntegral (Seq.length objectIdsToAck)
+              }
 
     -- Computes how many new IDs we can request so that receiving all of them
     -- won't make 'outstandingFifo' exceed 'maxFifoLength'.
