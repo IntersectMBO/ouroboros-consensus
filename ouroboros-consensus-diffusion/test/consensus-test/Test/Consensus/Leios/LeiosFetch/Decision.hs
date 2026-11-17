@@ -7,7 +7,7 @@ module Test.Consensus.Leios.LeiosFetch.Decision (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..))
-import Cardano.Slotting.Slot (SlotNo (..))
+import Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.Foldable as F
@@ -23,7 +23,7 @@ import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
-import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Forecast (OutsideForecastRange (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
@@ -102,6 +102,9 @@ tests =
         , testCase
             "an endorser block rejected as too big at a point is never fetched again at that point"
             test_noRefetchOversized
+        , testCase
+            "a body offered beyond the forecast range is kept, and requested once a forecast reaches it"
+            test_bodyBeyondForecastKept
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
         , testCase
@@ -274,6 +277,32 @@ test_noRefetchOversized =
     & offersBody peerA [point 1 'a']
     & runIterationWith (\_slot -> Right (MkLeiosEbByteSizeBounds 1024 5000))
     & assertNoRequests
+
+-- | A peer offers only the body, with no bounds of its own, at a slot beyond the
+-- range the ledger's bounds can be forecast for. Nothing is requested and the
+-- offer is not pruned, so a later iteration whose forecast reaches the slot
+-- requests the body from that same offer.
+test_bodyBeyondForecastKept :: IO ()
+test_bodyBeyondForecastKept = do
+  assertNoRequests reqs1
+  assertBool "the offer is pruned" (Map.notMember peerA prunes1)
+  assertBodyRequest peerA p 1024 reqs2
+ where
+  p = point 1 'a'
+  offers0 = Map.singleton p (MkPeerOffer SNothing (OfferedBody 1024))
+  beyondForecast slot = Left (OutsideForecastRange Origin slot slot)
+  decide forecastEbBounds outstanding offers =
+    leiosFetchLogicIteration
+      env
+      forecastEbBounds
+      (Just (minBound, priorityWindow))
+      (Map.singleton peerA offers)
+      Map.empty
+      outstanding
+  (outstanding1, reqs1, prunes1) =
+    decide beyondForecast (scOutstanding (empty & withMissingBody p 1024)) offers0
+  offers1 = pruneOffers (maybe Map.empty NEMap.toMap (Map.lookup peerA prunes1)) offers0
+  (_, reqs2, _) = decide anyBounds outstanding1 offers1
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
