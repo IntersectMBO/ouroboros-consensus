@@ -100,6 +100,41 @@ tests =
           _ -> assertFailure "missing resumption"
         -- The callback is still pending; a terminal already clears wire blockage.
         void (pure out)
+    , testCase "small jobs share peer credit across EBs and activate only the FIFO head" $ withClient $ \rt client -> do
+        let (point, _, _) = fixture
+            request jid =
+              LeiosBlockTxsRequest
+                ( MkLeiosBlockTxsRequest
+                    point{pointSlotNo = SlotNo (5 + fromIntegral (jid `mod` 2))}
+                    ( NEIntMap.singleton
+                        jid
+                        (Jobs.MkLeiosJob (IntSet.singleton jid) 20000 (Jobs.jobCommitmentOfTxs []))
+                    )
+                )
+        offered <- forM [0 .. 13] $ \jid ->
+          atomically (tryEnqueueRequest client (Time 0) (request jid))
+        let keys = [key | Just key <- offered]
+        length keys @?= 13
+        last offered @?= Nothing
+        forM_ keys $ \key -> atomically $ R.commitRequest client key >>= check >> R.observeSend client (Time 0)
+        state <- atomically (readTVar (R.runtimeFacts rt))
+        L.usage 0 (R.ledger state) @?= L.Usage 260000 0 13
+        let active st =
+              [ key
+              | key <- keys
+              , Just attempt <- [Map.lookup key (R.attempts st)]
+              , Just _ <- [T.deadline (R.attemptClock attempt)]
+              ]
+        active state @?= take 1 keys
+        atomically $ R.completeWire client (head keys) (Time 0.1)
+        arrived <- atomically (readTVar (R.runtimeFacts rt))
+        L.usage 0 (R.ledger arrived) @?= L.Usage 260000 0 13
+        atomically $ R.finishHandler client (head keys) (R.workOf (request 0)) (Time 0.1)
+        finished <- atomically (readTVar (R.runtimeFacts rt))
+        L.usage 0 (R.ledger finished) @?= L.Usage 240000 0 12
+        active finished @?= take 1 (drop 1 keys)
+        replacement <- atomically $ tryEnqueueRequest client (Time 0.1) (request 13)
+        assertBool "settled credit admits the next whole job" (maybe False (const True) replacement)
     , testCase "zero-byte jobs are bounded by the command count despite free byte credit" $ withClient $ \rt client -> do
         let (point, _, _) = fixture
             job = Jobs.MkLeiosJob (IntSet.singleton 0) 0 (Jobs.jobCommitmentOfTxs [])

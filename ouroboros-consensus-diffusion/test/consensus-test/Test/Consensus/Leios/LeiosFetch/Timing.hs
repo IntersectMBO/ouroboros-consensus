@@ -41,6 +41,12 @@ tests =
         snapshotTransfer s @?= fromRational (65536 * 8 / 300000)
         snapshotCold s @?= 0.45
         snapshotRttSource s @?= KeepAliveSample
+        small <- inputs 20000
+        snapshotTransfer small @?= fromRational (20000 * 8 / 300000)
+        snapshotCold small @?= 0.3
+        solo <- inputs 32768
+        snapshotTransfer solo @?= fromRational (32768 * 8 / 300000)
+        snapshotCold solo @?= 0.3
         s14 <- inputs 14600
         snapshotCold s14 @?= 0.15
         s43 <- inputs 43800
