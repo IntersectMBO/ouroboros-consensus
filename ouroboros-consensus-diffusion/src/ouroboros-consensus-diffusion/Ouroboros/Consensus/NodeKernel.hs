@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
@@ -250,6 +251,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , chainDB :: ChainDB m blk
   , leiosDB :: LeiosDbHandle m
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
+  , leiosAcquisitions :: LeiosAcquisitions m
+  -- ^ Where acquisitions of EBs are emitted.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()

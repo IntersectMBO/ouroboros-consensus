@@ -19,11 +19,12 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , Message (..)
   , SingLeiosFetch (..)
   , TxBitmaps
-  , bitmapOffsets
+  , bitmapToOffsets
   , byteLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
   , maxLeiosTxsRequestBytesSize
+  , offsetsToBitmap
   , timeLimitsLeiosFetch
   ) where
 
@@ -36,6 +37,8 @@ import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
 import qualified Data.Bits as Bits
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
 import Data.Kind (Type)
 import Data.List (unfoldr)
 import Data.Proxy (Proxy (..))
@@ -133,8 +136,8 @@ instance StateTokenI StDone where stateToken = SingDone
 type TxBitmaps = [(Word16, Word64)]
 
 -- | The offsets of the transactions the bitmaps name, in the bitmaps' order.
-bitmapOffsets :: TxBitmaps -> [Int]
-bitmapOffsets = unfoldr next
+bitmapToOffsets :: TxBitmaps -> [Int]
+bitmapToOffsets = unfoldr next
  where
   next = \case
     [] -> Nothing
@@ -143,6 +146,19 @@ bitmapOffsets = unfoldr next
       | otherwise ->
           let i = Bits.countLeadingZeros bitmap
            in Just (64 * fromIntegral index + i, (index, Bits.clearBit bitmap (63 - i)) : rest)
+
+-- | The bitmaps that name these offsets, in ascending order of index.
+offsetsToBitmap :: IntSet.IntSet -> TxBitmaps
+offsetsToBitmap offsets =
+  [ (fromIntegral q, bm)
+  | (q, bm) <- IntMap.toAscList chunks
+  ]
+ where
+  chunks =
+    IntSet.foldr
+      (\off -> let (q, r) = off `divMod` 64 in IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)))
+      IntMap.empty
+      offsets
 
 instance Protocol (LeiosFetch point eb tx) where
   data Message (LeiosFetch point eb tx) from to where
