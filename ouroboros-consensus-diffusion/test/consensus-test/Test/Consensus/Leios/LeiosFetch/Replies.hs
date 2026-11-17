@@ -8,7 +8,6 @@ module Test.Consensus.Leios.LeiosFetch.Replies (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTVar
   , atomically
@@ -21,13 +20,13 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVar
   , readTVarIO
   )
-import Control.Exception (SomeException, try)
+import Control.Exception (try)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
-import Data.List (isInfixOf, sortOn)
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -111,7 +110,7 @@ tests =
         "the client acquires nothing for a body whose point was pruned while it was being written, and fetches the endorser block again at a newer point"
         test_prunedWhileWriting
     , testCase
-        "the client acquires no closure whose transactions are not the sizes its endorser block declares, fetches no more of it, and disconnects the peer that served them"
+        "the client disconnects a peer whose transactions are not the sizes the endorser block declares, even if they add up to their job's size, without writing them"
         test_wrongSizedTxs
     , testCase
         "the client takes a body of the right hash but not the offered size, emits its acquisition, and then disconnects the peer"
@@ -256,11 +255,8 @@ closureRequest ctx point = do
     _ -> assertFailure $ "expected one request, got " <> show (length reqs)
 
 -- | An endorser block that misstates the sizes of its first two transactions,
--- by amounts that cancel out, so that their job's count, total size and hashes
--- all check out. Its third transaction is too big to share their job. The
--- LeiosDB drops the first two, so the client acquires no closure, fetches no
--- more of it, not even the third's job, and its settlement throws, through its
--- link to the client's thread.
+-- by amounts that cancel out, so that their job's count and total size check
+-- out. Its third transaction is too big to share their job.
 test_wrongSizedTxs :: Assertion
 test_wrongSizedTxs = do
   let tx0 = MkLeiosTx (BS8.pack "tx zero")
@@ -268,28 +264,23 @@ test_wrongSizedTxs = do
       tx2 = MkLeiosTx (BS8.replicate (64 * 1024) 'x')
       eb = mkEndorserBlock [(hashLeiosTx tx0, 6), (hashLeiosTx tx1, 7), (hashLeiosTx tx2, 64 * 1024)]
       point = MkLeiosPoint (SlotNo 5) (endorserBlockHash eb)
-      expected = ExnLeiosBlockTxsWrongSize point [0, 1]
   (ctx, notes) <- newContextAt point (pure ())
   processLeiosBlock ctx peer (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound) eb
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   MkLeiosBlockTxsRequest _point jobs <- closureRequest ctx point
   NEIntMap.size jobs @?= 2
   result <-
-    try $ do
+    try $
       processLeiosBlockTxs
         ctx
         peer
         (MkLeiosBlockTxsRequest point (uncurry NEIntMap.singleton (NEIntMap.findMin jobs)))
         (V.fromList [tx0, tx1])
-      -- Until the settlement's exception interrupts this.
-      threadDelay 2000000
   case result of
-    Left (exn :: SomeException)
-      | show expected `isInfixOf` show exn -> pure ()
-      | otherwise -> assertFailure $ "unexpected exception: " <> show exn
-    Right () -> assertFailure "the client settled the transactions without disconnecting the peer"
+    Left (ExnLeiosBlockTxsJobMismatch p _job JobCommitmentMismatch) -> p @?= point
+    Left exn -> assertFailure $ "unexpected exception: " <> show exn
+    Right () -> assertFailure "the client took transactions of other sizes than the endorser block declares"
   readTVarIO notes >>= (@?= [AcquiredBody point])
-  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
 
 test_wrongHash :: Assertion
 test_wrongHash = do

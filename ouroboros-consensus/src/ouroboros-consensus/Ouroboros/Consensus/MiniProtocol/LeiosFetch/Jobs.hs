@@ -17,7 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
     LeiosJob (..)
   , LeiosJobId (..)
   , JobCommitment (..)
-  , jobCommitmentOfTxHashes
+  , jobCommitmentOfTxs
 
     -- * Pools
   , LeiosJobPool
@@ -38,6 +38,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs
 import qualified Cardano.Crypto.Hash as Hash
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BSB
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.IntSet (IntSet)
@@ -48,22 +49,34 @@ import Data.Word (Word32)
 import Ouroboros.Consensus.Leios.Types (TxHash)
 import System.Random (StdGen, uniformR)
 
--- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
--- concatenated tx hashes (in ascending offset order), via
--- 'jobCommitmentOfTxHashes'. It lets an arriving @MsgLeiosBlockTxs@ be
--- validated against the job /without/ retaining the EB body -- crucial, since
--- up to ~10k EBs (each up to ~600 kB) could have txs in flight at once, far too
--- much to hold in memory.
+-- | A job's commitment to which txs it covers, at which sizes: the Blake2b-256
+-- hash of each tx's hash followed by its size in four big-endian bytes (in
+-- ascending offset order), via 'jobCommitmentOfTxs'. It lets an arriving
+-- @MsgLeiosBlockTxs@ be validated against the job /without/ retaining the EB
+-- body -- crucial, since up to ~10k EBs (each up to ~600 kB) could have txs in
+-- flight at once, far too much to hold in memory.
+--
+-- A tx that is not the size the body declares for it fails the validation,
+-- even if it is the tx the body names. So the validation cannot tell a peer
+-- that sends the wrong tx from an endorser block that declares the wrong size
+-- for the right one: the node never notices such an endorser block, and only
+-- disconnects each peer that serves it. Separate commitments to the hashes and
+-- to the sizes would tell the two apart, but they would double the
+-- commitments' footprint in the heap, which is already non-trivial, and they
+-- would only guard against a suboptimal adversary, which could send a tx with
+-- the wrong txhash instead of with the wrong size and have wasted the same
+-- resources.
 newtype JobCommitment = MkJobCommitment ByteString
   deriving (Eq, Show)
 
-jobCommitmentOfTxHashes :: [TxHash] -> JobCommitment
-jobCommitmentOfTxHashes =
+jobCommitmentOfTxs :: [(TxHash, Word32)] -> JobCommitment
+jobCommitmentOfTxs =
   MkJobCommitment
     . Hash.hashToBytes
     . Hash.hashWith @Hash.Blake2b_256 id
-    . BS.concat
-    . map Hash.hashToBytes
+    . BS.toStrict
+    . BSB.toLazyByteString
+    . foldMap (\(txHash, size) -> BSB.byteString (Hash.hashToBytes txHash) <> BSB.word32BE size)
 
 -- | A unit of tx-fetch work: some of an EB's txs, fetched by one
 -- @MsgLeiosBlockTxsRequest@.
@@ -116,7 +129,7 @@ data LeiosJobPool = UnsafeLeiosJobPool
 --
 -- Each miss is its offset within the EB body mapped to its tx hash and its
 -- on-the-wire byte size. Each job's 'JobCommitment' is computed here via
--- 'jobCommitmentOfTxHashes' over its covered tx hashes.
+-- 'jobCommitmentOfTxs' over its covered txs' hashes and sizes.
 --
 -- The jobs are numbered from 0.
 mkJobPool :: Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
@@ -134,15 +147,15 @@ mkJobPool maxJobBytes maxJobTxCount misses =
  where
   ijbs = zip [0 ..] $ case IntMap.toAscList misses of
     [] -> []
-    ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
+    ((off0, ref0@(_h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [ref0] rest
 
-  flush !cur !bytes hashesRev = MkLeiosJob cur bytes (jobCommitmentOfTxHashes (reverse hashesRev))
+  flush !cur !bytes refsRev = MkLeiosJob cur bytes (jobCommitmentOfTxs (reverse refsRev))
 
-  grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
-  grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
+  grow !cur !bytes !_count refsRev [] = [flush cur bytes refsRev]
+  grow !cur !bytes !count refsRev ((off, ref@(_h, sz)) : rest)
     | count < maxJobTxCount && bytes + sz <= maxJobBytes =
-        grow (IntSet.insert off cur) (bytes + sz) (count + 1) (h : hashesRev) rest
-    | otherwise = flush cur bytes hashesRev : grow (IntSet.singleton off) sz 1 [h] rest
+        grow (IntSet.insert off cur) (bytes + sz) (count + 1) (ref : refsRev) rest
+    | otherwise = flush cur bytes refsRev : grow (IntSet.singleton off) sz 1 [ref] rest
 
 -- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
 nullJobPool :: LeiosJobPool -> Bool

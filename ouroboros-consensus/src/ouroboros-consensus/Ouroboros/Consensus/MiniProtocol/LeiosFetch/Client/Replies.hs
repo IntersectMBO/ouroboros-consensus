@@ -463,20 +463,10 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
 -- wrote any txs, trace its arrival: a written job's bytes were needed only if
 -- no other reply's write of that job settled first.
 --
--- If the LeiosDB dropped some of the txs, the endorser block references them
--- with sizes other than their own, so no peer can complete its closure: no more
--- of it is fetched at this point ('abandonClosure'), nothing is emitted, and
--- the peer is disconnected.
---
--- Only an adversary's txs get here: no honest peer offers such a closure, and
--- their size errors must cancel out within their job to pass 'checkJobSize'.
--- Otherwise 'checkJobSize' disconnects the peer before anything is written,
--- and the job stays, to be asked of each peer that offers the closure until
--- the point is pruned.
---
--- TODO Include each tx's declared size in its job's commitment. Then a tx whose
--- size is wrong fails 'checkJobCommitment' on its own, and none reaches the
--- LeiosDB.
+-- If the LeiosDB dropped some of the txs for their size, no more of the
+-- closure is fetched at this point ('abandonClosure'), nothing is emitted, and
+-- the peer is disconnected. 'checkJobCommitment' rejects such txs before they
+-- are written, though.
 --
 -- See 'settleBody' on the LeiosDB's GC overtaking the fetch state's pruning.
 settleTxs ::
@@ -588,7 +578,7 @@ checkJobSize point aligned jid (Jobs.MkLeiosJob offs expectedBytes _commitment)
   sub = IntMap.restrictKeys aligned offs
 
 -- | Content validation of one /pending/ job we intend to ingest: hash its
--- arriving txs and check their hashes against the job's commitment.
+-- arriving txs and check their hashes and sizes against the job's commitment.
 -- Gives those txs, with their hashes.
 --
 -- Only runs for the first reply for a job, in addition to 'checkJobSize'.
@@ -599,7 +589,8 @@ checkJobCommitment ::
   Jobs.LeiosJob ->
   Either ExnLeiosFetchInvalidReply [(Int, TxHash, BS.ByteString)]
 checkJobCommitment point aligned jid (Jobs.MkLeiosJob offs _expectedBytes commitment)
-  | Jobs.jobCommitmentOfTxHashes [h | (_, h, _) <- hashed] /= commitment =
+  | Jobs.jobCommitmentOfTxs [(h, fromIntegral (BS.length bytes)) | (_, h, bytes) <- hashed]
+      /= commitment =
       Left $ ExnLeiosBlockTxsJobMismatch point jid JobCommitmentMismatch
   | otherwise = Right hashed
  where
