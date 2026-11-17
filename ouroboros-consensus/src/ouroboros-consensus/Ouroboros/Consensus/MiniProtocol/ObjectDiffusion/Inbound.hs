@@ -145,14 +145,32 @@ data InboundSt objectId object = InboundSt
 initialInboundSt :: InboundSt objectId object
 initialInboundSt = InboundSt 0 Seq.empty Set.empty Map.empty 0
 
+-- | The result of scanning the unrequested entries of the 'outstandingFifo' in
+-- FIFO order: the longest prefix of object IDs that can currently be
+-- requested, together with the object ID (if any) that stopped the scan.
 data RequestablePrefix objectId = RequestablePrefix
   { selectedObjectIds :: ![objectId]
+  -- ^ The object IDs to request next, in FIFO order, truncated to at most
+  -- @maxNumObjectsToReq@ entries. May be empty.
   , blockedAtObjectId :: !(Maybe objectId)
+  -- ^ The first unrequested object ID in the FIFO that is not yet requestable
+  -- because local validation state has not advanced far enough
+  -- ('ObjectIdTooNew'). 'Nothing' if the scan reached the end of the FIFO
+  -- without being blocked. When this is 'Just', we must not request more IDs
+  -- from the peer, since a later FIFO entry is already known to be blocked.
   }
 
+-- | The outcome of 'selectObjectsToRequest', which inspects the unrequested
+-- entries of the 'outstandingFifo' in FIFO order.
 data RequestSelection objectId
-  = RequestSelection !(RequestablePrefix objectId)
-  | RequestSelectionTooOld !objectId
+  = -- | No unrequested object ID was too old; this is the 'RequestablePrefix'
+    -- found, which may be empty and may end at a blocked object ID.
+    RequestSelection !(RequestablePrefix objectId)
+  | -- | The given object ID is too old to be requested (it was either too old
+    -- when advertised, or became so while we waited). This is not a protocol
+    -- violation: the caller must skip its download (see 'skipTooOldObject')
+    -- and select again.
+    RequestSelectionTooOld !objectId
 
 objectDiffusionInbound ::
   forall objectId object m.
@@ -211,6 +229,24 @@ objectDiffusionInbound
       )
         $> st{outstandingFifo = outstandingFifoNew}
 
+    -- Scans the unrequested IDs of the 'outstandingFifo' in FIFO order and
+    -- classifies each one using the pool's 'opwObjectIdRequestability':
+    --
+    -- - 'ObjectIdRequestable': add it to the requestable prefix and continue.
+    --
+    -- - 'ObjectIdTooNew': stop scanning and return the prefix gathered so far,
+    --   recording this ID as the one we are blocked at.
+    --
+    -- - 'ObjectIdTooOld': short-circuit the whole selection with
+    --   'RequestSelectionTooOld', discarding any prefix gathered so far. The
+    --   callers ('go' and 'waitForRequestableObject') react by calling
+    --   'skipTooOldObject', which marks the object as skipped (so it is
+    --   pre-acknowledged without being downloaded), acknowledges any
+    --   now-complete FIFO prefix, and updates 'InboundSt' accordingly. They then
+    --   resume the normal logic ('go') with that updated state, which re-runs
+    --   this selection. Handling a too old ID before anything else is what
+    --   guarantees we never request it, and that earlier requestable IDs are
+    --   re-selected from the updated state rather than from a stale one.
     selectObjectsToRequest ::
       InboundSt objectId object ->
       STM m (RequestSelection objectId)
@@ -232,8 +268,11 @@ objectDiffusionInbound
           select requestablePrefix = \case
             [] -> finish requestablePrefix Nothing
             objectId : objectIds -> case objectIdRequestability objectId of
+              -- Abort the scan: the caller must skip this object and update its
+              -- state before any further selection is attempted.
               ObjectIdTooOld -> RequestSelectionTooOld objectId
               ObjectIdRequestable -> select (objectId : requestablePrefix) objectIds
+              -- Everything before this ID is still requestable; stop here.
               ObjectIdTooNew -> finish requestablePrefix (Just objectId)
       pure $ select [] unrequestedInFifo
 
