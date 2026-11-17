@@ -6,12 +6,16 @@
 -- LeiosDB, and acquires and relays it as it would one fetched from a peer.
 module Test.Consensus.Leios.Forge (tests) where
 
-import Control.Monad.Class.MonadTimer.SI (threadDelay)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as S
+import Control.Monad (unless, void)
+import Control.Monad.Class.MonadThrow (finally)
+import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (isNothing)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract (GetTip (..))
 import Ouroboros.Consensus.Leios.Acquisitions
@@ -26,8 +30,14 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
-import Ouroboros.Consensus.Util.IOLike (atomically, orElse)
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , withReader
+  )
+import Ouroboros.Consensus.Util.IOLike (atomically, check, orElse)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
@@ -42,6 +52,8 @@ tests =
     [ testCase
         "the node stores, acquires and relays each endorser block that it forges, at the point that the header announces"
         unit_storesForgedEbs
+    , testCase "the ranking block reaches ChainDB while its EB writer is blocked" $
+        runSimOrThrow rankingBlockBeforeEbWrite @?= True
     ]
 
 -- | The node runs 'forkBlockForging' with 'ebForging' for slots 0 to 3. Then
@@ -69,6 +81,53 @@ unit_storesForgedEbs = do
   sort relayed
     @?= sort
       (concat [[RelayedAnnouncement point, RelayedBody point, RelayedClosure point] | point <- points])
+
+-- Gate the writer implementation supplied to the real node. The admission
+-- callback must release the forge before this gate opens, without publishing
+-- possession. This tests the actual forge-to-ChainDB path, not just callback
+-- return or a hand-built stand-in ranking block.
+rankingBlockBeforeEbWrite :: IOSim s Bool
+rankingBlockBeforeEbWrite = do
+  db <- newLeiosDBInMemory
+  entered <- S.newEmptyTMVarIO
+  release <- S.newEmptyTMVarIO
+  let blocked =
+        db
+          { openWriter = do
+              writer <- openWriter db
+              pure
+                writer
+                  { writeEbBody = \point body fills txs -> do
+                      atomically $ void (S.tryPutTMVar entered point)
+                      atomically $ S.readTMVar release
+                      writeEbBody writer point body fills txs
+                  }
+          }
+  withNodeOver blocked $ \node ->
+    ( do
+        next <- subscribeLeiosAcquisitions (nodeLeiosAcquisitions node)
+        setBlockForging (nodeKernel node) [MkBlockForging (pure ebForging)]
+        point <- atomically $ S.readTMVar entered
+        progressed <- timeout 0.5 $ atomically $ do
+          chain <- getCurrentChain (nodeChainDB node)
+          check (any (announces point) (AF.toOldestFirst chain))
+        before <- atomically $ (Just <$> next) `orElse` pure Nothing
+        stored <- withReader (getLeiosDB (nodeKernel node)) $ \reader -> lookupEbBody reader point
+        unless (isNothing before && isNothing stored) (error "writer-blocked forge published possession")
+        atomically $ S.putTMVar release ()
+        let awaitClosure =
+              atomically next >>= \case
+                AcquiredEbTxs acquired | acquired == point -> pure ()
+                _ -> awaitClosure
+        awaitClosure
+        held <- withReader (getLeiosDB (nodeKernel node)) $ \reader -> lookupEbClosure reader point
+        pure (progressed == Just () && maybe False (not . null) held)
+    )
+      `finally` atomically (void (S.tryPutTMVar release ()))
+ where
+  announces point header =
+    blockSlot header == pointSlotNo point
+      && maybe False ((== pointEbHash point) . fst) (lthAnnouncement header)
 
 -- | What the chain and the LeiosDB hold after the node forges.
 data ForgeOutcome = ForgeOutcome

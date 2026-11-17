@@ -19,6 +19,7 @@ import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.ResourceRegistry (forkLinkedThread, withRegistry)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Short as SBS
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (foldl', isInfixOf)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -40,6 +41,7 @@ import Ouroboros.Consensus.Config (SecurityParam (..), configLedger)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..), subscribeLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.AnnounceState
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.NewValidClaims
@@ -55,7 +57,9 @@ import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LandedTx (..)
   , LeiosTxCache (..)
+  , TxArrivalPrior (..)
   , TxState (..)
+  , bucketTxArrival
   , evictOlderThan
   , insertBody
   , packEndorserBlock
@@ -63,11 +67,13 @@ import Ouroboros.Consensus.Leios.TxCache.API
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork as Owned
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
 import qualified Ouroboros.Consensus.NodeKernel as NK
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -80,7 +86,12 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
 import Test.Cardano.Crypto.Leios.Gen (mkCommitteeFromTestSeats)
-import Test.Consensus.Leios.LeiosFetch.Replies (fixture, newContext, tryEnqueueRequest)
+import Test.Consensus.Leios.LeiosFetch.Replies
+  ( assignRequests
+  , fixture
+  , newContext
+  , tryEnqueueRequest
+  )
 import qualified Test.Consensus.Leios.NodeUnderTest as Node
 import Test.Consensus.Leios.TestBlock
   ( LeiosTestBlock (..)
@@ -98,6 +109,17 @@ import Test.Util.Orphans.IOLike ()
 
 assertM :: Applicative m => String -> Bool -> m ()
 assertM message ok = unless ok (error message)
+
+data WorkerFault = WorkerFault deriving Show
+
+instance Exception WorkerFault
+
+isWorkerFault :: SomeException -> Bool
+isWorkerFault err = case E.fromException err of
+  Just WorkerFault -> True
+  Nothing -> case E.fromException err of
+    Just (ExceptionInLinkedThread _ cause) -> isWorkerFault cause
+    Nothing -> False
 
 -- These have already passed header validation; the fixture varies ownership
 -- events, not validation. Distinct headers exercise global acceptance and
@@ -154,6 +176,134 @@ newKernel ctx =
         , lfcDetailTracer = nullTracer
         }
 
+kernelReady :: IOLike m => LeiosFetchKernel m peer blk -> m Bool
+kernelReady kernel =
+  atomically $
+    orElse (W.awaitReadiness (lfcReady (lfkContext kernel)) >> pure True) (pure False)
+
+offerReadiness :: IOSim s Bool
+offerReadiness = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (p, _, _) = fixture
+      offer = MkPeerOffer SNothing (OfferedBody 100)
+      trusted = MkPeerOffer (SJust maxBound) (OfferedBody 100)
+      changed = MkPeerOffer (SJust maxBound) (OfferedBody 200)
+  withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \_ peer -> do
+    recordLeiosOffer kernel peer p offer
+    first <- kernelReady kernel
+    threadDelay 1
+    recordLeiosOffer kernel peer p offer
+    duplicate <- kernelReady kernel
+    recordLeiosOffer kernel peer p (MkPeerOffer SNothing OfferedClosure)
+    closure <- kernelReady kernel
+    original <- atomically (readTVar (lfpOfferTimes peer))
+    recordLeiosOffer kernel peer p trusted
+    bounds <- kernelReady kernel
+    recordLeiosOffer kernel peer p trusted
+    sameBounds <- kernelReady kernel
+    recordLeiosOffer kernel peer p changed
+    size <- kernelReady kernel
+    recordLeiosOffer kernel peer p changed
+    sameSize <- kernelReady kernel
+    times <- atomically (readTVar (lfpOfferTimes peer))
+    offers <- atomically (readTVar (lfpOfferings peer))
+    -- An equal offer with missing arrival metadata still changes ranking facts.
+    atomically (modifyTVar (lfpOfferTimes peer) (Map.delete p))
+    recordLeiosOffer kernel peer p changed
+    repaired <- kernelReady kernel
+    pure $
+      [first, duplicate, closure, bounds, sameBounds, size, sameSize, repaired]
+        == [True, False, True, True, False, True, False, True]
+        && times == original
+        && Map.lookup p times == Just (OfferTimes (Just (Time 0)) (Just (Time 1)))
+        && Map.lookup p offers == Just (MkPeerOffer (SJust maxBound) (OfferedBodyAndClosure 200))
+
+prunedOfferReadiness :: IOSim s Bool
+prunedOfferReadiness = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (p, _, _) = fixture
+      frontier = pointSlotNo p + 1
+      newer = p{pointSlotNo = frontier}
+      offer = MkPeerOffer SNothing (OfferedBody 100)
+  atomically (writeTVar (lfkPrunedSlot kernel) frontier)
+  withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \_ peer -> do
+    recordLeiosOffer kernel peer p offer
+    old <- kernelReady kernel
+    empty <-
+      atomically $
+        (&&)
+          <$> (Map.null <$> readTVar (lfpOfferings peer))
+          <*> (Map.null <$> readTVar (lfpOfferTimes peer))
+    recordLeiosOffer kernel peer newer offer
+    current <- kernelReady kernel
+    pure (not old && empty && current)
+
+unregisterReadiness :: IOSim s Bool
+unregisterReadiness = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let local = lfkContext kernel
+      rt = lfcRuntime local
+      (p, eb, _) = fixture
+      election = ancElectionId (announcingHeader (validAt p 0))
+      pool = Jobs.mkJobPool 20000 128 (IntMap.fromList (zip [0 ..] (endorserBlockReferences eb)))
+  modifyMVar_ (lfcOutstanding local) $
+    pure
+      . acquireEbBody p pool
+      . focusElectionIfUnfocused election (pointEbHash p)
+      . recordReferencedPoint p SNothing
+  before <- withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \lifetime peer -> do
+    client <- atomically (R.openClient rt lifetime False (lfpRequestsToSend peer) (pure Nothing))
+    modifyMVar_ (lfcOutstanding local) $
+      assignRequests rt (Time 0) (const (Right maxBound)) Nothing Map.empty $
+        Map.singleton lifetime (Map.singleton p (MkPeerOffer (SJust maxBound) OfferedClosure))
+    atomically (R.closeClient client)
+    _ <- kernelReady kernel
+    out <- readMVar (lfcOutstanding local)
+    pure (Map.member lifetime (requestedJobsPerPeer out))
+  dirty <- kernelReady kernel
+  out <- readMVar (lfcOutstanding local)
+  pure (before && dirty && Map.null (requestedJobsPerPeer out))
+
+prunerReadiness :: IOSim s Bool
+prunerReadiness = Node.withNode $ \node -> do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (original, _, _) = fixture
+      p = original{pointSlotNo = SlotNo 1}
+      local = lfkContext kernel
+      election = ancElectionId (announcingHeader (validAt p 0))
+  modifyMVar_ (lfcOutstanding local) $
+    pure . focusElectionIfUnfocused election (pointEbHash p) . recordReferencedPoint p SNothing
+  withLeiosFetchPeer kernel () IsNotBigLedgerPeer $ \lifetime peer -> do
+    recordLeiosOffer kernel peer p (MkPeerOffer SNothing (OfferedBody 100))
+    client <-
+      atomically (R.openClient (lfcRuntime local) lifetime False (lfpRequestsToSend peer) (pure Nothing))
+    modifyMVar_ (lfcOutstanding local) $
+      assignRequests (lfcRuntime local) (Time 0) (const (Right maxBound)) Nothing Map.empty $
+        Map.singleton lifetime (Map.singleton p (MkPeerOffer (SJust maxBound) (OfferedBody 100)))
+    before <- readTVarIO (R.runtimeFacts (lfcRuntime local))
+    assertM "fixture did not reserve a request" (not (Map.null (L.leases (R.ledger before))))
+    atomically (R.closeClient client)
+    after <- readTVarIO (R.runtimeFacts (lfcRuntime local))
+    assertM "client cleanup retained physical debt" (Map.null (L.leases (R.ledger after)))
+    _ <- kernelReady kernel
+    threadDelay 14
+    Node.addBlocks node (take 14 (iterate successorLeiosBlock (firstLeiosBlock 0)))
+    boundary <- atomically $ do
+      ledger <- ChainDB.getImmutableLedger (Node.nodeChainDB node)
+      case getTipSlot (ledgerState ledger) of
+        NotOrigin slot | slot > SlotNo 1 -> pure slot
+        _ -> retry
+    pruneLeiosFetchToImmTip kernel boundary
+    dirty <- kernelReady kernel
+    out <- readMVar (lfcOutstanding local)
+    (offers, times) <-
+      atomically $ (,) <$> readTVar (lfpOfferings peer) <*> readTVar (lfpOfferTimes peer)
+    pure (dirty && Map.notMember p (ebState out) && Map.notMember p offers && Map.notMember p times)
+
 newAnnouncements :: IOLike m => m (AnnounceState m LeiosTestBlock)
 newAnnouncements = newAnnounceState defaultLeiosAnnouncementAgeLimits =<< Log.newNotifyLog
 
@@ -181,14 +331,29 @@ tests :: TestTree
 tests =
   testGroup
     "node-owned announcement and forge work"
-    [ testCase "accepted metadata survives caller death before activation" $
+    [ testCase "offer readiness ignores repetitions but preserves new metadata" $
+        runSimOrThrow offerReadiness @?= True
+    , testCase "pruned offers are silent and the frontier remains inclusive" $
+        runSimOrThrow prunedOfferReadiness @?= True
+    , testCase "kernel unregister still wakes logical release after client cleanup" $
+        runSimOrThrow unregisterReadiness @?= True
+    , testCase "real pruning publishes readiness with its advanced frontier" $
+        runSimOrThrow prunerReadiness @?= True
+    , testCase "announcement processing does not evict a retained body" $
+        runSimOrThrow announcementRetention @?= True
+    , testCase "the node shared pruner retires announcements, body references and completed forge work" $
+        runSimOrThrow sharedPruner @?= True
+    , testCase "accepted metadata survives caller death before activation" $
         runSimOrThrow peerDeath @?= True
     , testCase "full metadata admission rolls back global acceptance" $
         runSimOrThrow fullAdmission @?= (False, True)
     , testCase "full forged admission rolls back acceptance, metadata and forge claims" $
         runSimOrThrow fullForgedAdmission @?= True
-    , testCase "forge after peer acceptance joins payload work and preserves header refs" $
-        runSimOrThrow forgeJoin @?= (1, 0, 2)
+    , testCase
+        "forge callbacks return after admission, share payload work and preserve accepted announcements"
+        $ runSimOrThrow forgeJoin @?= (1, 0, 2)
+    , testCase "incomplete forged receipt preserves its supervised cause and releases owners" $
+        runSimOrThrow incompleteForgedReceipt @?= True
     , testCase "work admitted before activation drains during normal close" $
         runSimOrThrow earlyDrain @?= 2
     , testCase "queued forge suppresses both body and TX dispatch" $
@@ -199,6 +364,13 @@ tests =
     , testCase "cancelled joiner does not cancel a shared producer" $ runSimOrThrow cancelledJoin @?= 1
     , testCase "worker failure interrupts drain instead of stranding it" $
         runSimOrThrow failedDrain @?= True
+    , testCase "failed workers close dependent operations but preserve the supervised cause" $
+        runSimOrThrow failureSignals @?= True
+    , testProperty
+        "normal drain closes new admission but completes admitted joins"
+        propNormalDrainJoin
+    , testCase "failed owned work releases its dependent without another fatal cause" $
+        runSimOrThrow failedDependency @?= True
     , testCase "failed startup clears forge claims admitted before workers start" $
         runSimOrThrow failedStartup @?= True
     , testCase "retirement before worker activation does not recreate state or submit payloads" $
@@ -375,7 +547,13 @@ forgeJoin = do
     waitMetadata kernel first
     withAsync (onForgedLeiosEb kernel announcements first forged) $ \caller -> do
       atomically (S.readTMVar entered)
+      returned <- SI.timeout 0.01 (wait caller)
+      assertM "forge callback waited for writer admission" (returned == Just ())
+      before <- S.readTVarIO notes
+      assertM "callback return implied acquisition before writer admission" (null before)
       withAsync (onForgedLeiosEb kernel announcements second forged) $ \joiner -> do
+        joined <- SI.timeout 0.01 (wait joiner)
+        assertM "joined callback waited for writer admission" (joined == Just ())
         cancel caller
         -- Storage A is blocked; unrelated metadata B still registers.
         _ <- atomically (accept kernel announcements other)
@@ -454,14 +632,30 @@ lateCompletion = do
   queue <- Owned.newOwnedWork "test.retiredCompletion" 1 (pure False)
   release <- S.newEmptyTMVarIO
   _ <- atomically $ Owned.submitWork queue (0 :: Int) ()
-  Owned.withOwnedWork queue (\_ _ -> pure (atomically (S.readTMVar release) >> pure True)) $ do
+  let process key _ = pure $ do
+        when (key == 0) (atomically $ S.readTMVar release)
+        pure True
+      available key = atomically $ Owned.canSubmitWork queue key >>= check
+  Owned.withOwnedWork queue process $ do
     joined <- atomically $ Owned.submitWork queue 0 ()
     atomically $ Owned.awaitAdmission joined
-    atomically $ Owned.pruneCompleted queue (const False) >> S.putTMVar release ()
-    atomically $ do
-      fresh <- Owned.submitWork queue 0 ()
-      check (Owned.newlyOwned fresh)
-      pure True
+    atomically $ Owned.pruneCompleted queue (>= 1) >> S.putTMVar release ()
+    available 1
+    -- Completion after retirement must not bank the old key.
+    old <- atomically $ Owned.submitWork queue 0 ()
+    assertM "late completion recreated retired evidence" (Owned.newlyOwned old)
+    available 1
+    _ <- atomically $ Owned.submitWork queue 1 ()
+    available 2
+    _ <- atomically $ Owned.submitWork queue 2 ()
+    available 3
+    -- Two positive completion keys coexist with a one-payload hard bound.
+    (one, two) <- atomically $ (,) <$> Owned.submitWork queue 1 () <*> Owned.submitWork queue 2 ()
+    assertM "recent completion lost deduplication" (not (Owned.newlyOwned one || Owned.newlyOwned two))
+    atomically $ Owned.pruneCompleted queue (>= 2)
+    (pruned, retained) <-
+      atomically $ (,) <$> Owned.submitWork queue 1 () <*> Owned.submitWork queue 2 ()
+    pure (Owned.newlyOwned pruned && not (Owned.newlyOwned retained))
 
 cancelledJoin :: IOSim s Int
 cancelledJoin = do
@@ -491,6 +685,200 @@ failedDrain = do
     try @_ @SomeException $
       Owned.withOwnedWork queue (\_ _ -> throwIO (userError "producer failure")) (pure ())
   pure $ either (const True) (const False) result
+
+-- Keep the supervising application inside its original fault handler while
+-- exercising dependents. This observes the failed pool before abort clears it,
+-- without exposing a production scheduling hook or delaying an async exception
+-- under an uninterruptible mask.
+failureSignals :: forall s. IOSim s Bool
+failureSignals = do
+  queue <- Owned.newOwnedWork "test.failureSignals" 1 (pure False)
+  entered <- S.newEmptyTMVarIO
+  failNow <- S.newEmptyTMVarIO
+  observed <- S.newEmptyTMVarIO
+  releaseOwner <- S.newEmptyTMVarIO
+  joined <- S.newTVarIO False
+  admission <- atomically $ Owned.submitWork queue (0 :: Int) ()
+  let process _ _ =
+        ( do
+            atomically $ S.putTMVar entered ()
+            atomically $ S.readTMVar failNow
+            throwIO WorkerFault
+        )
+          `finally` atomically (S.writeTVar joined True)
+      ownerAction :: IOSim s (Either SomeException ())
+      ownerAction =
+        try $
+          Owned.withOwnedWork queue process $
+            atomically retry `catch` \(err :: ExceptionInLinkedThread) -> do
+              atomically $ S.putTMVar observed (toException err)
+              atomically $ S.readTMVar releaseOwner
+              throwIO err
+      expectClosed :: IOSim s a -> IOSim s ()
+      expectClosed action = do
+        result <- try @_ @Owned.WorkClosed action
+        assertM
+          "dependent operation did not report WorkClosed"
+          (either (const True) (const False) result)
+      submit = atomically $ Owned.submitWork queue 1 ()
+      capacity = atomically $ Owned.canSubmitWork queue 1 >>= check
+      join = atomically $ Owned.awaitAdmission admission
+  withAsync ownerAction $ \owner -> do
+    atomically $ S.readTMVar entered
+    withAsync (expectClosed submit) $ \submitter ->
+      withAsync (expectClosed capacity) $ \waiter ->
+        withAsync (expectClosed join) $ \joiner -> do
+          -- Logical time advances only after runnable actors reach their waits.
+          threadDelay 0.001
+          forM_ [submitter, waiter, joiner] $ \actor ->
+            poll actor
+              >>= assertM "dependent did not wait before failure" . maybe True (const False)
+          atomically $ S.putTMVar failNow ()
+          atomically (S.readTMVar observed)
+            >>= assertM "supervisor lost the original cause" . isWorkerFault
+          mapM_ wait [submitter, waiter, joiner]
+          expectClosed submit
+          expectClosed (atomically $ Owned.canSubmitWork queue 1)
+          expectClosed join
+          atomically $ S.putTMVar releaseOwner ()
+          outcome <- wait owner
+          assertM
+            "scope did not propagate the original cause"
+            (either isWorkerFault (const False) outcome)
+          expectClosed submit
+          expectClosed (atomically $ Owned.canSubmitWork queue 1)
+          expectClosed join
+  threadDelay 0.001
+  S.readTVarIO joined
+
+normalDrainJoin :: IOSim s Bool
+normalDrainJoin = do
+  closing <- S.newTVarIO False
+  queue <- Owned.newOwnedWork "test.normalDrain" 1 (S.readTVar closing)
+  entered <- S.newEmptyTMVarIO
+  release <- S.newEmptyTMVarIO
+  admission <- atomically $ Owned.submitWork queue (0 :: Int) ()
+  let process _ _ = do
+        atomically $ S.putTMVar entered ()
+        atomically $ S.readTMVar release
+        pure (pure False)
+  withAsync (Owned.withOwnedWork queue process (atomically $ S.readTMVar entered)) $ \owner -> do
+    -- Observe admission closing while the accepted operation is still running.
+    atomically $ do
+      closed <- (False <$ Owned.canSubmitWork queue 1) `catch` \Owned.WorkClosed -> pure True
+      check closed
+    atomically $ S.writeTVar closing True
+    withAsync (atomically $ Owned.awaitAdmission admission) $ \joiner -> do
+      threadDelay 0.001
+      poll joiner
+        >>= assertM "normal drain rejected or completed a pending join" . maybe True (const False)
+      atomically $ S.putTMVar release ()
+      wait joiner
+    wait owner
+  atomically $ Owned.awaitAdmission admission
+  pure True
+
+propNormalDrainJoin :: Property
+propNormalDrainJoin = exploreSimTrace id (exploreRaces >> normalDrainJoin) $ \_ trace ->
+  case traceResult False trace of
+    Left err -> counterexample (show err) False
+    Right ok -> property ok
+
+-- A metadata-cache failure is no longer a possible production boundary.
+-- Exercise the remaining dependency contract through the public OwnedWork
+-- callbacks: a failed parent must wake a dependent admission wait, run its
+-- cleanup and preserve the parent's original supervised cause.
+failedDependency :: IOSim s Bool
+failedDependency = do
+  parent <- Owned.newOwnedWork "test.parent" 1 (pure False)
+  dependent <- Owned.newOwnedWork "test.dependent" 1 (pure False)
+  parentReady <- S.newEmptyTMVarIO
+  childReady <- S.newEmptyTMVarIO
+  gate <- S.newEmptyTMVarIO
+  held <- S.newTVarIO True
+  writes <- S.newTVarIO (0 :: Int)
+  admission <- atomically $ Owned.submitWork parent (0 :: Int) ()
+  _ <- atomically $ Owned.submitWork dependent (0 :: Int) ()
+  let failParent _ _ = do
+        atomically $ S.putTMVar parentReady ()
+        atomically $ S.readTMVar gate
+        throwIO WorkerFault
+      child _ _ =
+        ( do
+            atomically $ S.putTMVar childReady ()
+            atomically $ Owned.awaitAdmission admission
+            atomically $ S.modifyTVar writes (+ 1)
+            pure (pure False)
+        )
+          `finally` atomically (S.writeTVar held False)
+          `catch` \Owned.WorkClosed -> pure (pure False)
+  result <-
+    try @_ @SomeException $
+      Owned.withOwnedWork parent failParent $
+        Owned.withOwnedWork dependent child $
+          ( do
+              atomically $ S.readTMVar parentReady >> S.readTMVar childReady >> S.putTMVar gate ()
+              atomically retry
+          )
+            `catch` \(err :: ExceptionInLinkedThread) -> do
+              assertM "parent fault was replaced" (isWorkerFault (toException err))
+              atomically $ do
+                Owned.canSubmitWork dependent 0 >>= check
+                S.readTVar held >>= check . not
+              throwIO err
+  stillHeld <- S.readTVarIO held
+  count <- S.readTVarIO writes
+  pure (not stillHeld && count == 0 && either isWorkerFault (const False) result)
+
+-- Violate confirmation only after the real in-memory full write. The receipt
+-- supervisor must keep that local invariant fault while cancelling the waiting
+-- forge worker and clearing its exact local-payload claim.
+incompleteForgedReceipt :: IOSim s Bool
+incompleteForgedReceipt = do
+  (base, notes) <- newContext
+  locations <- S.newTVarIO (0 :: Int)
+  let (point, _, txs) = fixture
+      valid = validAt point 0
+      forged = forgeLeiosEb minBound (NE.fromList (leiosTxBytes <$> txs))
+      writer = lfcWriter base
+      cache = lfcTxCache base
+      ctx =
+        base
+          { lfcWriter =
+              writer
+                { writeEbBody = \p eb fills given -> do
+                    written <- writeEbBody writer p eb fills given
+                    pure $ Promise $ await written >> pure (BodyPresent (Set.singleton 0))
+                }
+          , lfcTxCache =
+              cache
+                { insertLandedTxs = \p entries -> do
+                    atomically $ S.modifyTVar locations (+ 1)
+                    insertLandedTxs cache p entries
+                }
+          }
+  kernel <- newKernel ctx
+  announcements <- newAnnouncements
+  onForgedLeiosEb kernel announcements valid forged
+  result <- try @_ @SomeException $ withLeiosFetchWorkers kernel (atomically retry)
+  original <- case result of
+    Left err -> case E.fromException err of
+      Just (ExnLeiosForgedWriteIncomplete p expected held) ->
+        pure (p == point && expected == 2 && held == 1)
+      Nothing -> pure False
+    Right () -> pure False
+  out <- readMVar (lfcOutstanding (lfkContext kernel))
+  facts <- readTVarIO (R.runtimeFacts (lfcRuntime (lfkContext kernel)))
+  acquired <- S.readTVarIO notes
+  published <- S.readTVarIO locations
+  pure
+    ( original
+        && null acquired
+        && published == 0
+        && Map.null (closureCoverage out)
+        && Map.null (R.pending facts)
+        && Set.null (R.localForges facts)
+    )
 
 unmaskedWorker :: Assertion
 unmaskedWorker = do
@@ -550,7 +938,10 @@ retiredBeforeActivation = do
   _ <- evictOlderThan (lfcTxCache ctx) (SlotNo 6)
   modifyMVar_ (lfcOutstanding (lfkContext kernel)) (pure . pruneOutstandingToImmTip (SlotNo 6))
   atomically $ writeTVar (lfkPrunedSlot kernel) (SlotNo 6)
-  withLeiosFetchWorkers kernel (pure ())
+  withLeiosFetchWorkers kernel $ do
+    waitMetadata kernel valid
+    -- A new callback at an already retired point cannot recreate payload work.
+    onForgedLeiosEb kernel announcements valid forged
   out <- readMVar (lfcOutstanding (lfkContext kernel))
   acquired <- S.readTVarIO notes
   count <- S.readTVarIO calls
@@ -916,3 +1307,61 @@ propFailuresWith receiptAlso = exploreSimTrace id (exploreRaces >> simultaneousF
   case traceResult False trace of
     Left err -> counterexample (show err) False
     Right ok -> property ok
+
+-- The old model evicted a seed body after 128 new announcements. Drain the
+-- real metadata worker so this checks processing rather than queue admission.
+announcementRetention :: IOSim s Bool
+announcementRetention = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  announcements <- newAnnouncements
+  let (point, eb, _) = fixture
+      other = point{pointEbHash = UnsafeHash (SBS.replicate 32 77)}
+      valid n = validAt other{pointSlotNo = pointSlotNo point + fromIntegral n} n
+      cache = lfcTxCache (lfkContext kernel)
+  void $ insertBody cache point (packEndorserBlock eb)
+  withLeiosFetchWorkers kernel $ do
+    forM_ [1 .. 129] $ \n -> atomically (accept kernel announcements (valid n)) >>= assertM "first announcement rejected"
+    waitMetadata kernel (valid 129)
+  observed <- classifyTxs cache point [(fst (head (endorserBlockReferences eb)), 1)]
+  pure (observed == bucketTxArrival TxWasAbsent 1)
+
+-- Use the worker installed by initNodeKernel and a real positive forged-write
+-- receipt before advancing the actual ChainDB's immutable tip.
+sharedPruner :: IOSim s Bool
+sharedPruner = Node.withNode $ \node -> do
+  let kernel = NK.getLeiosFetchKernel (Node.nodeKernel node)
+      announcements = NK.getLeiosAnnounceState (Node.nodeKernel node)
+      ctx = lfkContext kernel
+      (seed, _, txs) = fixture
+      point = seed{pointSlotNo = 1}
+      valid = validAt point 0
+      forged = forgeLeiosEb minBound (NE.fromList (leiosTxBytes <$> txs))
+      key = announcingRbHash (announcingHeader valid)
+  next <- subscribeLeiosAcquisitions (Node.nodeLeiosAcquisitions node)
+  onForgedLeiosEb kernel announcements valid forged
+  let awaitClosure = do
+        acquired <- next
+        case acquired of
+          AcquiredEbTxs p | p == point -> pure ()
+          _ -> awaitClosure
+  atomically awaitClosure
+  atomically $ Owned.canSubmitWork (lfkForged kernel) point >>= check
+  previous <- atomically $ Owned.submitWork (lfkForged kernel) point (forged, pure ())
+  assertM "positive forge completion was not retained" (not (Owned.newlyOwned previous))
+  before <- classifyTxs (lfcTxCache ctx) point [(hashLeiosTx (head txs), 1)]
+  assertM "the confirmed point was not retained" (before == bucketTxArrival TxWasHeld 1)
+  threadDelay 14
+  Node.addBlocks node (take 14 (iterate successorLeiosBlock (firstLeiosBlock 0)))
+  atomically $ readTVar (lfkPrunedSlot kernel) >>= check . (> pointSlotNo point)
+  seen <- atomically $ hasAnnouncement announcements (pointSlotNo point) key
+  after <- classifyTxs (lfcTxCache ctx) point [(hashLeiosTx (head txs), 1)]
+  out <- readMVar (lfcOutstanding ctx)
+  following <- atomically $ Owned.submitWork (lfkForged kernel) point (forged, pure ())
+  atomically $ Owned.awaitAdmission following
+  pure
+    ( not seen
+        && after == bucketTxArrival TxEvicted 1
+        && Map.notMember point (ebState out)
+        && Owned.newlyOwned following
+    )

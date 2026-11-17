@@ -596,9 +596,17 @@ registerAnnouncement kernel valid = do
 --
 -- Admission installs an exact-point local-payload claim before the metadata
 -- or storage worker runs. The worker marks 'ReceivingFromForge' and submits
--- its data. Matching callbacks share that operation through durable settlement;
--- callers wait for writer admission, not durability. Caller cancellation never
--- cancels the shared worker. Announcement novelty does not gate the payload.
+-- its data. Matching callbacks share that operation through durable settlement.
+-- The callback returns when the bounded admission transaction commits; it does
+-- not wait for writer admission or durability. Full queues still backpressure
+-- the forge. Caller cancellation after admission never cancels the shared
+-- worker. Announcement novelty does not gate the payload.
+--
+-- Four payload slots cover queued, running and receipt-waiting operations;
+-- metadata has a separate 128-entry bound. Retain this bounded backpressure:
+-- saturation can delay ranking-block submission, even though admitted callers
+-- return before storage completes. The consensus team owns any stronger forging
+-- guarantee; see the TODO at the node's forged-EB handoff.
 --
 -- The header must announce this endorser block.
 onForgedLeiosEb ::
@@ -609,29 +617,20 @@ onForgedLeiosEb ::
   ValidAnnouncement blk ->
   ForgedEndorserBlock ->
   m ()
-onForgedLeiosEb kernel announcements valid forged = do
-  admitted <- atomically $ do
-    closing <- R.runtimeClosing (lfcRuntime (lfkContext kernel))
-    if closing
-      then pure Nothing
-      else do
-        void $ onValidAnnouncement announcements valid
-        metadata <-
-          Owned.submitWork
-            (lfkAnnouncements kernel)
-            (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
-            valid
-        W.notifyReadiness (lfcReady (lfkContext kernel))
-        pruned <- readTVar (lfkPrunedSlot kernel)
-        if pointSlotNo point < pruned
-          then pure Nothing
-          else do
-            admission <- Owned.submitWork (lfkForged kernel) point (forged, Owned.awaitAdmission metadata)
-            when (Owned.newlyOwned admission) $ R.claimLocalForge (lfcRuntime (lfkContext kernel)) point
-            pure (Just admission)
-  -- The caller may be cancelled here; the queued operation is already owned.
-  -- Joined callbacks wait for the same admission without cancelling its worker.
-  forM_ admitted (atomically . Owned.awaitAdmission)
+onForgedLeiosEb kernel announcements valid forged = atomically $ do
+  closing <- R.runtimeClosing (lfcRuntime (lfkContext kernel))
+  unless closing $ do
+    void $ onValidAnnouncement announcements valid
+    metadata <-
+      Owned.submitWork
+        (lfkAnnouncements kernel)
+        (toRankingBlockHash (Proxy @blk) (headerHash (ancHeader anc)))
+        valid
+    W.notifyReadiness (lfcReady (lfkContext kernel))
+    pruned <- readTVar (lfkPrunedSlot kernel)
+    unless (pointSlotNo point < pruned) $ do
+      admission <- Owned.submitWork (lfkForged kernel) point (forged, Owned.awaitAdmission metadata)
+      when (Owned.newlyOwned admission) $ R.claimLocalForge (lfcRuntime (lfkContext kernel)) point
  where
   anc = announcingHeader valid
   point = MkLeiosPoint (electionSlot (ancElectionId anc)) (endorserBlockHash (forgedEbBody forged))

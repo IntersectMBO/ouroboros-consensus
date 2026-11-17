@@ -7,32 +7,47 @@ module Test.Consensus.Leios.LeiosFetch.Wire (tests) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Codec.CBOR.Read
 import qualified Codec.CBOR.Write as CBOR
-import Control.Monad (void, when)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as S
+import Control.Exception (AsyncException (ThreadKilled))
+import Control.Monad (unless, void, when)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
-import Control.Tracer (nullTracer)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft, isRight)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
 import qualified Network.TypedProtocol.Codec
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as T
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( FetchRoutine (..)
+  , TraceLeiosFetchClientEvent (..)
+  , fetchArrivalEvicted
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch (runLeiosFetchClient)
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..), Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbWriter (..)
+  , Promise (..)
+  , TxWriteReceipt (..)
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -58,7 +73,9 @@ tests :: TestTree
 tests =
   testGroup
     "ordinary observed wire"
-    [ testCase "body framing and inner payload limits are independent" testBodyFraming
+    [ testCase "logical discard still wakes after physical credit already disappeared" $
+        runSimOrThrow logicalDiscardReadiness @?= True
+    , testCase "body framing and inner payload limits are independent" testBodyFraming
     , testCase "already received input cannot earn a stall while our decoder is paused" testDecodePause
     , testCase
         "needing more input after decoding retains the original absolute deadline"
@@ -75,6 +92,31 @@ tests =
         "early body reply precedes send return; individual jobs pipeline through unchanged codec/server"
         testPipeline
     , testCase "one accepted body owner suppresses competing delivery through disconnect" testPendingBody
+    , testCase
+        "body-pool closure discards a reply and drains without a peer failure"
+        testBodyPoolClosure
+    , testGroup
+        "discarded TX submission"
+        [ testCase label (runSimOrThrow (discardedTx mode) @?= True)
+        | (label, mode) <-
+            [ ("completed work bypasses blocked writer admission", TxCompleted)
+            , ("pruned work bypasses blocked writer admission", TxPruned)
+            , ("forge-owned work bypasses blocked writer admission", TxForged)
+            , ("completed work still checks reply count", TxBadCount)
+            , ("completed work still checks job size", TxBadSize)
+            ]
+        ]
+    , testCase "discarded copy can retry after its unsubmitted winner is cancelled" $
+        runSimOrThrow retryDiscardedCopy @?= True
+    , testCase "an early receipt and late trace failure preserve the next logical assignment" $
+        runSimOrThrow earlyReceiptTraceFailure @?= True
+    , testCase "accepted transfer failure closes admission before exact-owner cleanup" $
+        runSimOrThrow (failedReceiptTransfer InstallFault) @?= True
+    , testCase "peer cancellation before receipt installation is supervised" $
+        runSimOrThrow (failedReceiptTransfer PeerCancelled) @?= True
+    , testProperty
+        "aborting a pre-install receipt transfer retains the scope failure under POR"
+        propAbortReceiptTransfer
     ]
 
 codec :: MonadST m => NetworkCodec m
@@ -106,6 +148,353 @@ request client req = do
   now <- getMonotonicTime
   atomically (tryEnqueueRequest client now req)
     >>= maybe (assertFailure "request rejected" >> fail "unreachable") pure
+
+type TxCopy m = (R.Client m Int, L.AttemptKey Int, LeiosBlockTxsRequest)
+
+ensure :: MonadFail m => String -> Bool -> m ()
+ensure message ok = unless ok (fail message)
+
+-- Use actual planner picks and runtime leases; the second copy is admitted only
+-- after the first source's head expires. No logical multiplicities are invented.
+withTxCopies ::
+  (LeiosFetchClientContext (IOSim s) Int -> TxCopy (IOSim s) -> TxCopy (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withTxCopies action = do
+  (ctx, notes) <- newContext
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ withBodyWorkers ctx $ do
+    let (point, eb, _) = fixture
+        bodyRequest = MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound
+    Fixtures.processLeiosBlock ctx 0 bodyRequest eb
+    atomically $ S.readTVar notes >>= check . (not . null)
+    a <- open ctx 0
+    b <- open ctx 1
+    ( do
+        first <- enqueueTx ctx a
+        dispatchTx first
+        threadDelay 10
+        now <- getMonotonicTime
+        atomically $
+          modifyTVar (R.runtimeFacts (lfcRuntime ctx)) (expireRuntimeHeads now (const True))
+        second <- enqueueTx ctx b
+        dispatchTx second
+        action ctx first second
+      )
+      `finally` atomically (R.closeClient a >> R.closeClient b)
+
+enqueueTx :: IOLike m => LeiosFetchClientContext m Int -> R.Client m Int -> m (TxCopy m)
+enqueueTx ctx client = do
+  now <- getMonotonicTime
+  let (point, _, _) = fixture
+      offer =
+        Map.singleton (R.clientPeer client) $
+          Map.singleton point (MkPeerOffer SNothing OfferedClosure)
+  mask_ $ modifyMVar_ (lfcOutstanding ctx) $
+    assignRequests (lfcRuntime ctx) now (const (Right maxBound)) Nothing Map.empty offer
+  next <- atomically $ R.takeRequest client
+  case next of
+    Just (key, LeiosBlockTxsRequest req) -> pure (client, key, req)
+    _ -> throwIO (userError "planner did not assign the expected TX job")
+
+dispatchTx :: IOLike m => TxCopy m -> m ()
+dispatchTx (client, key, _) = do
+  now <- getMonotonicTime
+  atomically $ do
+    R.commitRequest client key >>= check
+    R.observeSend client now
+    R.installReceiver client key
+
+deliverTx ::
+  IOLike m => LeiosFetchClientContext m Int -> TxCopy m -> V.Vector LeiosTx -> m ()
+deliverTx ctx (client, key, req) txs = do
+  now <- getMonotonicTime
+  atomically $ R.completeWire client key now
+  processLeiosBlockTxs
+    (requestReplyOwnership ctx key (LeiosBlockTxsRequest req)) ctx (R.clientPeer client) req txs
+    `finally` do
+      at <- getMonotonicTime
+      atomically (R.finishHandler client key (R.workOf (LeiosBlockTxsRequest req)) at)
+
+data TxDiscardCase = TxCompleted | TxPruned | TxForged | TxBadCount | TxBadSize
+  deriving Eq
+
+discardedTx :: TxDiscardCase -> IOSim s Bool
+discardedTx mode = withTxCopies $ \ctx first second@(_, key, _) -> do
+  let (point, _, txs) = fixture
+      rt = lfcRuntime ctx
+  case mode of
+    TxPruned -> modifyMVar_ (lfcOutstanding ctx) (pure . pruneOutstandingToImmTip (SlotNo 6))
+    TxForged -> modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
+    _ -> do
+      deliverTx ctx first (V.fromList txs)
+      atomically $ readTVar (R.runtimeFacts rt) >>= check . Map.null . R.pending
+  calls <- uncheckedNewTVarM (0 :: Int)
+  let blocked =
+        ctx
+          { lfcWriter = (lfcWriter ctx)
+              { writeTxs = \_ _ -> do
+                  atomically $ modifyTVar calls (+ 1)
+                  atomically retry
+              }
+          }
+      payload = case mode of
+        TxBadCount -> V.empty
+        TxBadSize -> V.fromList (MkLeiosTx (BS.snoc (leiosTxBytes (head txs)) 0) : tail txs)
+        _ -> V.fromList txs
+  result <- try $ deliverTx blocked second payload
+  correct <- case (mode, result) of
+    (TxBadCount, Left ExnLeiosBlockTxsWrongCount{}) -> pure True
+    (TxBadSize, Left ExnLeiosBlockTxsJobMismatch{}) -> pure True
+    (_, Right ()) -> pure (mode /= TxBadCount && mode /= TxBadSize)
+    _ -> pure False
+  count <- readTVarIO calls
+  out <- readMVar (lfcOutstanding ctx)
+  facts <- readTVarIO (R.runtimeFacts rt)
+  pure
+    ( correct && count == 0 && Map.notMember 1 (requestedJobsPerPeer out)
+        && Map.notMember key (L.leases (R.ledger facts))
+    )
+
+logicalDiscardReadiness :: forall s. IOSim s Bool
+logicalDiscardReadiness = withTxCopies $ \ctx (a, key, req) _ -> do
+  let takeReady = atomically $
+        orElse (W.awaitReadiness (lfcReady ctx) >> pure True) (pure False)
+  atomically (R.closeClient a)
+  _ <- takeReady
+  before <- readMVar (lfcOutstanding ctx)
+  -- Bypass the outer protocol handler's finalizer to isolate the real
+  -- submission-scope unpick signal. No lease or pending owner can wake it.
+  outcome <-
+    try
+      (processLeiosBlockTxs
+        (requestReplyOwnership ctx key (LeiosBlockTxsRequest req)) ctx 0 req V.empty)
+      :: IOSim s (Either SomeException ())
+  dirty <- takeReady
+  following <- readMVar (lfcOutstanding ctx)
+  pure $
+    isLeft outcome && dirty
+      && Map.member 0 (requestedJobsPerPeer before)
+      && Map.notMember 0 (requestedJobsPerPeer following)
+      && Map.member 1 (requestedJobsPerPeer following)
+
+retryDiscardedCopy :: IOSim s Bool
+retryDiscardedCopy = withTxCopies $ \ctx first@(_, winnerKey, req) second@(b, loserKey, _) -> do
+  entered <- newEmptyTMVarIO
+  calls <- uncheckedNewTVarM (0 :: Int)
+  let writer = lfcWriter ctx
+      gated =
+        ctx
+          { lfcWriter = writer
+              { writeTxs = \_ _ -> do
+                  atomically $ putTMVar entered ()
+                  atomically retry
+              }
+          }
+      blocked =
+        ctx
+          { lfcWriter = writer
+              { writeTxs = \_ _ -> do
+                  atomically $ modifyTVar calls (+ 1)
+                  atomically retry
+              }
+          }
+      (point, _, txs) = fixture
+      rt = lfcRuntime ctx
+  withAsync (deliverTx gated first (V.fromList txs)) $ \winner -> do
+    atomically $ readTMVar entered
+    deliverTx blocked second (V.fromList txs)
+    out <- readMVar (lfcOutstanding ctx)
+    facts <- readTVarIO (R.runtimeFacts rt)
+    ensure "loser erased the winning claim" $
+      Map.lookup (R.workOf (LeiosBlockTxsRequest req)) (R.pending facts)
+        == Just (R.NetworkOwner winnerKey, False)
+    ensure "loser retained its assignment or physical credit" $
+      Map.notMember 1 (requestedJobsPerPeer out)
+        && Map.notMember loserKey (L.leases (R.ledger facts))
+    cancel winner
+  fresh <- enqueueTx ctx b
+  dispatchTx fresh
+  deliverTx ctx fresh (V.fromList txs)
+  atomically $ readTVar (R.runtimeFacts rt) >>= check . Map.null . R.pending
+  out <- readMVar (lfcOutstanding ctx)
+  count <- readTVarIO calls
+  pure $ count == 0 && case Map.lookup point (ebState out) of
+    Just (MkEbState _ (BodyAcquired pool)) -> Jobs.nullJobPool pool
+    _ -> False
+
+-- The first receipt intentionally confirms no offsets, exercising the documented
+-- retry path. Its accepted pending owner is gone before a new planner pick, while
+-- the old handler is still blocked in an application tracer.
+earlyReceiptTraceFailure :: IOSim s Bool
+earlyReceiptTraceFailure = withTxCopies $ \ctx first@(a, _, _) second -> do
+  receiptRelease <- newEmptyTMVarIO
+  traceEntered <- newEmptyTMVarIO
+  traceRelease <- newEmptyTMVarIO
+  let writer = lfcWriter ctx
+      partial = writer
+        { writeTxs = \p payload -> do
+            accepted <- writeTxs writer p payload
+            pure $ Promise $ do
+              atomically $ readTMVar receiptRelease
+              void $ await accepted
+              pure (TxWriteReceipt Set.empty Set.empty True)
+        }
+      failing =
+        ctx
+          { lfcWriter = partial
+          , lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientTxsArrived{} -> do
+                atomically $ putTMVar traceEntered ()
+                atomically $ readTMVar traceRelease
+                throwIO (userError "late TX trace failure")
+              _ -> pure ()
+          }
+      (point, _, txs) = fixture
+      rt = lfcRuntime ctx
+  withAsync (try (deliverTx failing first (V.fromList txs))) $ \old -> do
+    atomically $ readTMVar traceEntered
+    deliverTx ctx second (V.fromList txs)
+    atomically $ putTMVar receiptRelease ()
+    atomically $ readTVar (R.runtimeFacts rt) >>= check . Map.null . R.pending
+    fresh <- enqueueTx ctx a
+    atomically $ putTMVar traceRelease ()
+    outcome <- wait old
+    ensure "post-handoff trace failure vanished" (isLeft (outcome :: Either SomeException ()))
+    out <- readMVar (lfcOutstanding ctx)
+    ensure "old cleanup erased the next logical pick" $
+      Map.member 0 (requestedJobsPerPeer out) && case Map.lookup point (ebState out) of
+        Just (MkEbState _ (BodyAcquired pool)) ->
+          Jobs.jobMultiplicities pool == IntMap.singleton 0 1
+        _ -> False
+    dispatchTx fresh
+    deliverTx ctx fresh (V.fromList txs)
+  atomically $ readTVar (R.runtimeFacts rt) >>= check . Map.null . R.pending
+  pure True
+
+data TransferFault = TransferFault
+  deriving (Eq, Show)
+
+instance Exception TransferFault
+
+data TransferFailure = InstallFault | PeerCancelled | ScopeAborted
+
+-- Submit a real write and exercise the shared pre-install failure boundary.
+-- This fails the installation action, not allocation inside 'forkReceipt'. The
+-- other cases interrupt that action before installation. All must close
+-- admission before dropping the accepted owner, without inventing a receipt.
+failedReceiptTransfer :: TransferFailure -> IOSim s Bool
+failedReceiptTransfer failure = do
+  cleaned <- uncheckedNewTVarM False
+  start <- newEmptyTMVarIO
+  entered <- newEmptyTMVarIO
+  -- Keep the peer's enclosing async scope outside the receipt scope, so its
+  -- automatic cancellation cannot pre-empt the node's own abort ordering.
+  withAsync (atomically (takeTMVar start) >>= id) $ \producer -> do
+    outcome <- try $ withTxCopies $ \ctx (a, key, req) (b, _, _) -> do
+      let rt = lfcRuntime ctx
+          tasks = lfcReceiptTasks ctx
+          ownership = requestReplyOwnership ctx key (LeiosBlockTxsRequest req)
+          (point, _, txs) = fixture
+      -- Remove the other physical copy, so admission would succeed if closing
+      -- and accepted-owner cleanup were wrongly separated.
+      atomically $ R.closeClient b
+      candidate <- open ctx 2
+      let transfer = Receipts.withReceiptSubmission tasks $ do
+            now <- getMonotonicTime
+            claimed <- atomically $ do
+              R.completeWire a key now
+              claimUsefulReply ownership
+            ensure "useful transfer never claimed its job" claimed
+            _ <- writeTxs (lfcWriter ctx) point (Map.fromList (zip [0 ..] (map leiosTxBytes txs)))
+            let abandon = do
+                  closing <- Receipts.receiptClosing tasks
+                  before <- readTVar (R.runtimeFacts rt)
+                  abandonAccepted ownership
+                  replacement <- tryEnqueueRequest candidate now (LeiosBlockTxsRequest req)
+                  facts <- readTVar (R.runtimeFacts rt)
+                  writeTVar cleaned $
+                    closing && replacement == Nothing && Map.null (R.pending facts)
+                      && Map.lookup (R.workOf (LeiosBlockTxsRequest req)) (R.pending before)
+                        == Just (R.NetworkOwner key, True)
+            transferred <- Receipts.withReceiptTransfer tasks abandon $ do
+              void $ atomically (acceptedReply ownership now)
+              atomically $ putTMVar entered ()
+              case failure of
+                InstallFault -> throwIO TransferFault
+                _ -> atomically retry
+            ensure "failed transfer acquired a receipt owner" (transferred == (Nothing :: Maybe ()))
+      ( do
+          atomically $ putTMVar start transfer
+          atomically $ readTMVar entered
+          case failure of
+            InstallFault -> atomically retry
+            PeerCancelled -> throwTo (asyncThreadId producer) ThreadKilled >> atomically retry
+            ScopeAborted -> throwIO TransferFault
+        )
+        `finally` atomically (R.closeClient candidate)
+    original <- case outcome of
+      Left err -> pure $ case failure of
+        PeerCancelled -> fromException err == Just ThreadKilled
+        _ -> fromException err == Just TransferFault
+      Right () -> pure False
+    joined <- isRight <$> waitCatch producer
+    released <- readTVarIO cleaned
+    pure (original && joined && released)
+
+propAbortReceiptTransfer :: Property
+propAbortReceiptTransfer =
+  exploreSimTrace id (exploreRaces >> failedReceiptTransfer ScopeAborted) $ \_ tr ->
+    case traceResult False tr of
+      Left err -> counterexample (show err) False
+      Right ok -> property ok
+
+-- A late complete reply can reach local admission after body workers close.
+-- Exercise the actual client/codec/server and its physical-request finalizers.
+testBodyPoolClosure :: Assertion
+testBodyPoolClosure = bounded $ do
+  (base, notes) <- newContext
+  withBodyWorkers base (pure ())
+  control <- uncheckedNewTVarM Continue
+  closed <- newEmptyTMVarIO
+  let (point, eb, _) = fixture
+      ctx =
+        base
+          { lfcTracer = mkTracer $ \case
+              TraceLeiosFetchClientBlockArrived _ arrived bytes -> do
+                arrived @?= point
+                bytes @?= fetchArrivalEvicted (encodeEndorserBlockSize eb)
+                atomically $ writeTVar control Terminate
+              TraceLeiosFetchClientPolicy _ _ (FetchInvocationClosed _ failed) ->
+                atomically $ putTMVar closed failed
+              _ -> pure ()
+          }
+  Receipts.withReceiptTasks (lfcReceiptTasks ctx) $ do
+    client <- open ctx 0
+    void $ request client $
+      LeiosBlockRequest (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (local, remote) <- createConnectedBufferedChannelsUnbounded
+    let server :: LeiosFetchServerPeer LeiosPoint (Serialised EndorserBlock) LeiosTx IO ()
+        server = leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
+          MsgLeiosBlockRequest _ -> pure (MsgLeiosBlock (serialiseEndorserBlock eb))
+          MsgLeiosBlockTxsRequest{} -> fail "closed body pool requested closure TXs"
+        peer =
+          toLeiosFetchClientPeerPipelined $
+            leiosFetchClientPeerPipelined
+              150
+              (awaitTerminate (readTVar control)) (nextLeiosFetchJob ctx client)
+    void $
+      concurrently
+        ( runPeerWithLimits nullTracer codec (byteLimitsLeiosFetch (fromIntegral . BL.length))
+            timeLimitsLeiosFetch remote server
+        )
+        ( runLeiosFetchClient nullTracer codec (byteLimitsLeiosFetch (fromIntegral . BL.length))
+            ctx client peer local
+        )
+    atomically (readTMVar closed) >>= (@?= False)
+    facts <- readTVarIO (R.runtimeFacts (lfcRuntime ctx))
+    assertBool "closed reply retained its original credit or local owner" $
+      Map.null (L.leases (R.ledger facts)) && Map.null (R.pending facts)
+        && Map.notMember 0 (R.sessions facts)
+    S.readTVarIO notes >>= (@?= [])
 
 testPipeline :: Assertion
 testPipeline = bounded $ do

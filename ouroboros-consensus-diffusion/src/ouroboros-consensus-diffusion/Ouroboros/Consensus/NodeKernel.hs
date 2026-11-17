@@ -565,9 +565,9 @@ initNodeKernel
 
     -- Take in each forged endorser block, with its announcing header, through
     -- the same acquisition path as data from a peer. Storage work belongs to
-    -- the existing node-owned workers. Replacing forging credentials must not
-    -- interrupt an already accepted operation. At this stage the callback waits
-    -- for writer admission; durable settlement continues under node ownership.
+    -- the existing node-owned workers: waiting for LeiosDB must not hold up
+    -- submission of the ranking block after bounded admission, and replacing
+    -- forging credentials must not interrupt an already accepted operation.
     --
     -- Acceptance, metadata and payload admission, and the exact-point local
     -- claim commit together. The claim suppresses network fetches even before
@@ -577,8 +577,8 @@ initNodeKernel
     -- settles positive confirmation before offering either half to peers.
     --
     -- Queued, running and receipt-waiting payloads share four slots. A full
-    -- queue backpressures the forge before acceptance. Once accepted, this
-    -- callback waits for writer admission, but not durability. Normal node
+    -- queue backpressures the forge before acceptance; otherwise this callback
+    -- returns without waiting for writer admission or durability. Normal node
     -- shutdown drains accepted work before storage closes. Exceptional shutdown
     -- cancels and joins its owners; callback return never proves possession.
     --

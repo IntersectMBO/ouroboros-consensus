@@ -26,7 +26,9 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | Queued and running entries share a hard bound. A running entry retains its
 -- identity until settlement, not merely until its worker starts. Only positively
--- completed keys are remembered afterwards; these contain no payload.
+-- completed keys are remembered afterwards; these contain no payload and do
+-- not consume active capacity. Their owner prunes them at its retirement
+-- frontier; if that frontier stalls, completion metadata can accumulate.
 data OwnedWork m key payload = OwnedWork
   { state :: !(StrictTVar m (WorkState m key payload))
   , capacity :: !Int
@@ -121,8 +123,9 @@ pruneCompleted :: IOLike m => OwnedWork m key payload -> (key -> Bool) -> STM m 
 pruneCompleted work keep = modifyTVar (state work) $ \st -> st{completed = Set.filter keep (completed st), retainCompletion = keep}
 
 -- | Activate under the receipt supervisor, before exposing node applications.
--- Each handler returns a settlement action after writer admission. Forge callers
--- regain control then, while the entry remains owned until that action finishes.
+-- Each handler returns a settlement action after writer admission, releasing
+-- 'awaitAdmission' waiters. The forge callback itself returns at queue admission;
+-- the entry remains owned until the returned settlement action finishes.
 -- True means positively confirmed completion; empty/abandoned jobs are not proof.
 -- Normal shutdown closes admission and drains; failure cancels/joins the worker.
 withOwnedWork ::
