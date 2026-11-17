@@ -20,7 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlockTxs
   ) where
 
-import Control.Monad (unless, void, when)
+import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import Data.Foldable (fold)
@@ -67,7 +67,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
-  , abandonClosure
   , acquireEbBody
   , completeTxRequest
   , newLeiosJobPool
@@ -165,11 +164,6 @@ data ExnLeiosFetchInvalidReply
   | -- | The transactions that arrived for a job are not the ones its
     -- endorser block lists.
     ExnLeiosBlockTxsJobMismatch !LeiosPoint !Jobs.LeiosJobId !JobMismatch
-  | -- | Transactions arrived whose sizes are not the ones their endorser block
-    -- declares, at these offsets, so the LeiosDB took none of them. An honest
-    -- peer offers only a closure it holds, and its LeiosDB would not have taken
-    -- these either.
-    ExnLeiosBlockTxsWrongSize !LeiosPoint ![TxOffset]
   deriving Show
 
 instance Exception ExnLeiosFetchInvalidReply
@@ -463,11 +457,6 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
 -- wrote any txs, trace its arrival: a written job's bytes were needed only if
 -- no other reply's write of that job settled first.
 --
--- If the LeiosDB dropped some of the txs for their size, no more of the
--- closure is fetched at this point ('abandonClosure'), nothing is emitted, and
--- the peer is disconnected. 'checkJobCommitment' rejects such txs before they
--- are written, though.
---
 -- See 'settleBody' on the LeiosDB's GC overtaking the fetch state's pruning.
 settleTxs ::
   (Ord peer, IOLike m) =>
@@ -479,20 +468,16 @@ settleTxs ::
   -- | the bytes of the covered jobs that were already completed or pruned when
   -- the txs arrived, and so were not written, as classified then
   FetchArrivalBytes ->
-  -- | the offsets of the txs the LeiosDB dropped
+  -- | the write of the txs
   Promise m (Set TxOffset) ->
   m ()
-settleTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) written discarded txsWritten = do
-  wrongSize <- toIntSet <$> await txsWritten
+settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written discarded txsWritten = do
+  -- The offsets of the txs the LeiosDB dropped for their size: none, since
+  -- 'checkJobCommitment' checked each one's.
+  _droppedForSize <- await txsWritten
   traces <- modifyMVar lfcOutstanding $ \outstanding -> do
     let outstanding' = completeTxRequest peer req outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of
-      _
-        | not (IntSet.null wrongSize) ->
-            pure
-              ( abandonClosure point outstanding'
-              , \_now -> arrived (fetchArrivalInvalid (jobsBytesSize (NEIntMap.toMap jobs)))
-              )
       -- This reply's write completed the closure.
       ( Just (MkEbState _ (BodyAcquired before))
         , Just (MkEbState onset (BodyAcquired after))
@@ -516,11 +501,6 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) written discarded txs
   -- Read after emitting, so that the acquisition's age runs until then.
   now <- systemTimeCurrent lfcSystemTime
   mapM_ (traceWith lfcTracer) (traces now)
-  -- Through the link to the client's thread, this disconnects the peer, if
-  -- the client still runs.
-  unless (IntSet.null wrongSize) $
-    throwIO $
-      ExnLeiosBlockTxsWrongSize point (IntSet.toList wrongSize)
  where
   MkLeiosFetchClientContext
     { lfcOutstanding
