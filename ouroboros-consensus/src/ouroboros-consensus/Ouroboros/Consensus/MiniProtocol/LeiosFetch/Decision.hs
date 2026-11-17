@@ -513,18 +513,12 @@ trackCertifiedEb point outstanding
 -- keep the body if we acquired it, and we still take whatever was already
 -- requested for it, since those bytes are paid for either way.
 --
--- NOTE One election, one certified endorser block --- which holds only while
--- enough of the committee's weight is honest, since two valid certificates for
--- one election means the committee equivocated. Should that ever happen, this
--- is last-claim-wins: the focus lands on whichever certificate we validated
--- most recently, so the node can be left fetching the endorser block of one
--- fork while the chain it would select needs the other, and it stays stuck
--- there until something moves the focus again. The recourse is to restart the
--- node and hope the certificates arrive in the other order, since this state is
--- in memory only and the order they come back in is the network's to decide. We
--- deliberately do not spend complexity on that case here, since it requires
--- catastrophically buggy nodes and/or an amount of adversarial stake the
--- protocol itself is not designed to resist.
+-- The certificate focuser assumes at most one certified endorser block per
+-- election. It notices newly certified election keys, not a changed hash under
+-- an existing key. Conflicting valid certificates require committee equivocation
+-- and have no guaranteed system-level winner. This helper itself overwrites an
+-- existing focus whenever it is directly called; it does not arbitrate such
+-- certificates or promise that the latest verified claim reaches it.
 focusElection ::
   ElectionId -> EndorserBlockHash -> LeiosOutstanding peer -> LeiosOutstanding peer
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of

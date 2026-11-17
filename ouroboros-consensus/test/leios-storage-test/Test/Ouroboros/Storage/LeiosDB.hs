@@ -11,7 +11,7 @@
 module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes, hashToStringAsHex)
-import Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, newTVarIO, writeTVar)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -120,6 +120,10 @@ tests =
     forEachImplementation mkTestGroups
       <> [testGroup "confirmed receipts" (forEachImplementation receiptTests)]
       <> [ testCase ("promotion fences cache/" <> name) (testCacheFence makeCache)
+         | (name, makeCache) <-
+             [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
+         ]
+      <> [ testCase ("late positive receipt preserves newer cache location/" <> name) (testLateCacheReceipt makeCache)
          | (name, makeCache) <-
              [("reference", Cache.newPureLeiosTxCache 6), ("optimized", Cache.newHashTableLeiosTxCache 6 0 1)]
          ]
@@ -516,7 +520,7 @@ test_bodyKeepsReceivedBytes db = do
         BS.concat
           [BS.pack [0xa1, 0x58, 0x20], hashToBytes (testTxHash 0 101), BS.pack [0x1a, 0, 0, 0, 101]]
     point = mkTestPoint (SlotNo 1) 1
-  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @ConwayEra) received
+  eb <- either (assertFailure . show) pure $ deserialiseEndorserBlock (Proxy @DijkstraEra) received
   assertBool
     "the ledger encodes these references in other bytes"
     (serialiseEndorserBlock (mkEndorserBlock (endorserBlockReferences eb)) /= received)
@@ -1816,3 +1820,36 @@ testCacheFence makeCache = do
   case result of
     Nothing -> assertFailure "cache lock was held across promotion"
     Just () -> pure ()
+
+-- Delay publication of an actual positive receipt until after retirement,
+-- while a newer body keeps the same TX in the cache.
+testLateCacheReceipt :: IO (Cache.LeiosTxCache IO () ProtVerParity Cache.PackedEndorserBlock) -> Assertion
+testLateCacheReceipt makeCache = do
+  cache <- makeCache
+  raw <- newLeiosDBInMemory
+  let oldBody = mkTestEb 1
+      newBody = mkTestEb 2
+      old = MkLeiosPoint 1 (endorserBlockHash oldBody)
+      newer = MkLeiosPoint 10 (endorserBlockHash newBody)
+      tx = fst (head (endorserBlockReferences oldBody))
+      db = withCacheRetirement cache raw
+      insert point body = void $ Cache.insertBody cache point (Cache.packEndorserBlock body) () (\acc _ _ _ _ -> acc)
+  insert old oldBody
+  insert newer newBody
+  withWriter db $ \writer -> do
+    oldReceipt <- await =<< writeEbBody writer old oldBody Map.empty (Map.singleton 0 (txBytesFor oldBody 0))
+    oldReceipt @?= BodyPresent (Set.singleton 0)
+    (await =<< writeEbBody writer newer newBody Map.empty (Map.fromList [(i, txBytesFor newBody i) | i <- [0, 1]]))
+      >>= (@?= BodyPresent (Set.fromList [0, 1]))
+    Cache.setTxLocations cache newer [(0, tx)]
+    leiosDbPromoteToImmutable db 5 []
+    garbageCollect db
+    case oldReceipt of
+      BodyPresent offsets -> Cache.setTxLocations cache old [(off, tx) | off <- Set.toList offsets]
+      BodyUnavailable -> assertFailure "the saved positive receipt disappeared"
+    (_, locations) <- Cache.insertBody cache newer (Cache.packEndorserBlock newBody) [] (\acc off _ _ loc -> (off, loc) : acc)
+    lookup 0 locations @?= Just (Just (MkTxLocation newer 0))
+    Cache.lookupBody cache (pointEbHash old) >>= assertBool "retired cache point was restored" . not . isJust
+  withReader db $ \reader -> do
+    lookupEbBody reader old >>= (@?= Nothing)
+    batchRetrieveTxs reader newer (Set.singleton 0) >>= (@?= Map.singleton 0 (txBytesFor oldBody 0))

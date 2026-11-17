@@ -1064,7 +1064,7 @@ test-suite leios-storage-test
     base,
     bytestring,
     cardano-crypto-class,
-    cardano-ledger-conway,
+    cardano-ledger-dijkstra,
     cardano-slotting,
     containers,
     contra-tracer,

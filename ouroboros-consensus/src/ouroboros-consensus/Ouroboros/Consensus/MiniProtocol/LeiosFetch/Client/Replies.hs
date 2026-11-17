@@ -151,8 +151,6 @@ import Ouroboros.Consensus.Util.IOLike
   , StrictMVar
   , Time
   , atomically
-  , evaluate
-  , labelThisThread
   , catch
   , check
   , evaluate
