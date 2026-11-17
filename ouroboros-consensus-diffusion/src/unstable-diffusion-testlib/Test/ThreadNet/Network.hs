@@ -89,7 +89,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -753,6 +753,7 @@ runThreadNetwork
       Tracer m (ChainDB.TracePipeliningEvent blk) ->
       NodeDBs (StrictTMVar m MockFS) ->
       LeiosDbHandle m ->
+      LeiosAcquisitions m ->
       CoreNodeId ->
       ChainDbArgs Identity m blk
     mkArgs
@@ -766,6 +767,7 @@ runThreadNetwork
       pipeliningTracer
       nodeDBs
       leiosDB
+      leiosAcquisitions
       _coreNodeId =
         let args =
               fromMinimalChainDbArgs
@@ -797,6 +799,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
+                    , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions leiosAcquisitions
                     , cdbsTracer = instrumentationTracer <> nullDebugTracer
                     }
               }
@@ -875,6 +878,7 @@ runThreadNetwork
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
       leiosDB <- newLeiosDBInMemory
+      leiosAcquisitions <- newLeiosAcquisitions
       let chainDbArgs =
             mkArgs
               registry
@@ -887,6 +891,7 @@ runThreadNetwork
               pipeliningTracer
               nodeInfoDBs
               leiosDB
+              leiosAcquisitions
               coreNodeId
       chainDB <-
         snd
@@ -1080,9 +1085,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , -- These nodes' ChainDBs subscribe to nothing; see
-                -- 'fromMinimalChainDbArgs'.
-                leiosAcquisitions = noLeiosAcquisitions
+              , leiosAcquisitions
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
