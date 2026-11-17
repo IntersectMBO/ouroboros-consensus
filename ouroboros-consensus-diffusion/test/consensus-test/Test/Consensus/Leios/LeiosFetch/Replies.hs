@@ -9,6 +9,7 @@ module Test.Consensus.Leios.LeiosFetch.Replies
   , fixture
   , tryEnqueueRequest
   , claimReceivedBody
+  , claimReceivedBodyFrom
   , submitFixtureForge
   , assignRequests
   , expireRuntimeHeads
@@ -1315,6 +1316,14 @@ claimReceivedBody ::
   IOLike m => R.Runtime m Int -> LeiosPoint -> IOLike.STM m (Maybe Natural)
 claimReceivedBody rt point = do
   state <- IOLike.readTVar (R.runtimeFacts rt)
+  let peerId = head [n | n <- [-1, -2 ..], Map.notMember n (R.sessions state)]
+  claimReceivedBodyFrom rt peerId point
+
+-- | Use a caller-supplied fresh test connection for non-Int peer types.
+claimReceivedBodyFrom ::
+  (IOLike m, Ord peer) => R.Runtime m peer -> peer -> LeiosPoint -> IOLike.STM m (Maybe Natural)
+claimReceivedBodyFrom rt peerId point = do
+  state <- IOLike.readTVar (R.runtimeFacts rt)
   if Map.member work (R.pending state) || Set.member point (R.localForges state)
     then pure Nothing
     else case R.workOwners work state of
@@ -1325,7 +1334,6 @@ claimReceivedBody rt point = do
           then pure Nothing
           else do
             commands <- Checked.newTVar Seq.empty
-            let peerId = head [n | n <- [-1, -2 ..], Map.notMember n (R.sessions state)]
             client <- R.openClient rt peerId False commands (pure Nothing)
             admitted <- R.enqueueRequest client (IOLike.Time 0) request
             token <- either (const (pure Nothing)) transfer admitted
@@ -1337,6 +1345,7 @@ claimReceivedBody rt point = do
   transfer key = do
     claimed <- R.claimUseful rt key
     if claimed then R.transferBodyClaim rt key else pure Nothing
+
 data ForgeReceiptCase
   = ForgeComplete
   | ForgeImmutable

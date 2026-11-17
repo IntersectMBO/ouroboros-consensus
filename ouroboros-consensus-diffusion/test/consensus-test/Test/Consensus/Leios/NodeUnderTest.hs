@@ -37,6 +37,8 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeAgeLimits
   , withNodeCommittee
   , withNodeForecastingOnly
+  , withNodeObservingClaims
+  , withNodeOverObservingClaims
   , withNodeOver
   , withNodeOverDBs
   , withNodeOverDBsAfterUncleanShutdown
@@ -97,7 +99,11 @@ import Ouroboros.Consensus.HeaderValidation (certRbInfo)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
+import Ouroboros.Consensus.Leios.NewValidClaims
+  ( NewLeiosValidClaims (..)
+  , ignoreNewLeiosValidClaim
+  , mkNewLeiosValidClaims
+  )
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -321,7 +327,20 @@ withNodeUnderTest ::
   LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
+withNodeUnderTest = withNodeUnderTestObservingClaims ignoreNewLeiosValidClaim
+
+-- The observer is part of the fixture's real ChainDB callback transaction,
+-- after publication and the independent observation map. A retry therefore
+-- rolls all three back; no production synchronization point is introduced.
+withNodeUnderTestObservingClaims ::
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  NodeUnderTestConfig ->
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeUnderTestObservingClaims observe cfg tracers nodeDBs rawLeiosDB body = do
   let seeds = configSeeds cfg
       (_, _, leiosFetchRoot, _) = splitNodeKernelRngs (seedKeepAliveAndPeerSharing seeds)
   leiosTxCache <- newNodeLeiosTxCache leiosFetchRoot
@@ -336,6 +355,7 @@ withNodeUnderTest cfg tracers nodeDBs rawLeiosDB body = do
   let onNewLeiosValidClaim claim ann = do
         modifyTVar validClaimsSinceStart (Map.insert claim ann)
         recordNewLeiosValidClaim newLeiosValidClaims claim ann
+        observe claim ann
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -470,6 +490,32 @@ withNodeForecastingOnly range body = do
   leiosDB <- newLeiosDBInMemory
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold range)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
+
+-- | 'withNode', observing each actual new-claim publication transaction.
+-- The observer must not consume the stream used by the node's focuser.
+withNodeObservingClaims ::
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeObservingClaims observe body = do
+  leiosDB <- newLeiosDBInMemory
+  withNodeOverObservingClaims leiosDB observe body
+
+-- | 'withNodeOver' with the same transaction observer as 'withNodeObservingClaims'.
+withNodeOverObservingClaims ::
+  LeiosDbHandle (IOSim s) ->
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverObservingClaims leiosDB observe body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTestObservingClaims
+    observe
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
     nullTracers
     nodeDBs
     leiosDB

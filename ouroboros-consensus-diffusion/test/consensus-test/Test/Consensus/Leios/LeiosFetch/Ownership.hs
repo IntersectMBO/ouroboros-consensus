@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,10 +14,12 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import qualified Control.Exception as E
 import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Class.MonadTest (exploreRaces)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
-import Control.ResourceRegistry (withRegistry)
+import Control.ResourceRegistry (forkLinkedThread, withRegistry)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Short as SBS
+import Data.List (foldl', isInfixOf)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -38,9 +41,25 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.AnnounceState
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
+import Ouroboros.Consensus.Leios.NewValidClaims
+  ( NewLeiosValidClaims (..)
+  , mkNewLeiosValidClaims
+  )
 import qualified Ouroboros.Consensus.Leios.NotifyLog as Log
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (..))
-import Ouroboros.Consensus.Leios.TxCache.API (evictOlderThan)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement
+  , LeiosLedgerView (..)
+  , OCINStaleness (..)
+  )
+import Ouroboros.Consensus.Leios.TxCache.API
+  ( LandedTx (..)
+  , LeiosTxCache (..)
+  , TxState (..)
+  , evictOlderThan
+  , insertBody
+  , packEndorserBlock
+  )
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -52,7 +71,11 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
 import qualified Ouroboros.Consensus.NodeKernel as NK
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( BodyWriteReceipt (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
@@ -180,6 +203,27 @@ tests =
         runSimOrThrow failedStartup @?= True
     , testCase "retirement before worker activation does not recreate state or submit payloads" $
         runSimOrThrow retiredBeforeActivation @?= (0, True)
+    , testGroup
+        "verified claim delivery"
+        [ testCase "a queued initial claim is focused once and pruning alone does not resume consumption" $
+            runSimOrThrow certifiedNotifications @?= True
+        , testCase "a queued retired claim cannot restore work or start body preparation" $
+            runSimOrThrow delayedCertifiedNotification @?= True
+        , testCase "a queued claim exactly at the fetch pruning fence remains admissible" $
+            runSimOrThrow certifiedFenceEquality @?= True
+        , testCase "ordered claims in one batch override an ordinary announcement" $
+            runSimOrThrow (certifiedClaimOrder True) @?= True
+        , testCase "ordered claims across batches override an ordinary announcement" $
+            runSimOrThrow (certifiedClaimOrder False) @?= True
+        , testCase "a closed body owner does not block claim delivery or submit body work" $
+            runSimOrThrow certifiedWhileClosing @?= True
+        , testCase "failure after a real dequeue reaches the owning registry scope" $
+            runSimOrThrow certifiedDequeueFailure @?= True
+        , testCase "shutdown joins a focuser waiting for its first claim" $
+            runSimOrThrow (certifiedShutdown False) @?= True
+        , testCase "shutdown joins a focuser waiting for the outstanding lock and leaves pending input" $
+            runSimOrThrow (certifiedShutdown True) @?= True
+        ]
     , testCase "decision loop forecasts unpruned work at the newer immutable anchor" $
         runSimOrThrow forecastBehindAnchor @?= True
     , testCase "the real HardFork clock retains its slot/onset pair through a tolerated rewind" $
@@ -511,6 +555,244 @@ retiredBeforeActivation = do
   acquired <- S.readTVarIO notes
   count <- S.readTVarIO calls
   pure (count, Map.null (ebState out) && null acquired)
+
+-- Fixture inputs are already-verified claims, not a certificate validator.
+-- Separate ChainDB tests exercise publication, validation and deduplication.
+claimEvent :: LeiosPoint -> Word -> (LeiosClaim, LeiosAnnouncement)
+claimEvent point branch =
+  (LeiosClaim (pointSlotNo point) (announcingRbHash anc), ancAnnouncement anc)
+ where
+  anc = announcingHeader (validAt point branch)
+
+-- Count entry into the public consume action, not trace observation or a read
+-- by another consumer. Attempt n+1 proves that batch n was fully processed.
+withClaimFocuser ::
+  NewLeiosValidClaims (IOSim s) ->
+  LeiosFetchKernel (IOSim s) () LeiosTestBlock ->
+  (StrictTVar (IOSim s) Int -> IOSim s a) ->
+  IOSim s a
+withClaimFocuser stream kernel action = do
+  attempts <- newTVarIO 0
+  let consume = do
+        atomically $ modifyTVar attempts (+ 1)
+        atomically $ consumeNewLeiosValidClaims stream
+  withAsync (leiosFetchCertificateFocuser consume kernel) $ \worker -> do
+    link worker
+    action attempts
+
+awaitClaimPass :: StrictTVar (IOSim s) Int -> Int -> IOSim s ()
+awaitClaimPass attempts n = atomically $ readTVar attempts >>= check . (> n)
+
+certifiedNotifications :: IOSim s Bool
+certifiedNotifications = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  stream <- mkNewLeiosValidClaims
+  let (point, _, _) = fixture
+      (claim, ann) = claimEvent point 0
+  atomically $ recordNewLeiosValidClaim stream claim ann
+  withClaimFocuser stream kernel $ \attempts -> do
+    awaitClaimPass attempts 1
+    before <- readMVar (lfcOutstanding (lfkContext kernel))
+    assertM "queued initial event was ignored" (isFocusedPoint point before)
+    pruneLeiosFetchToImmTip kernel (pointSlotNo point + 1)
+    resumed <- SI.timeout 0.01 (awaitClaimPass attempts 2)
+    after <- readMVar (lfcOutstanding (lfkContext kernel))
+    pure (resumed == Nothing && Map.null (ebState after) && Map.null (elFocus after))
+
+delayedCertifiedNotification :: IOSim s Bool
+delayedCertifiedNotification = do
+  (base, notes) <- newContext
+  submissions <- newTVarIO (0 :: Int)
+  let cache = lfcTxCache base
+      writer = lfcWriter base
+      (point, body, txs) = fixture
+      source = point{pointSlotNo = pointSlotNo point + 10}
+      (claim, ann) = claimEvent point 0
+      counted =
+        writer
+          { writeEbBody = \p eb fills given ->
+              atomically (modifyTVar submissions (+ 1)) >> writeEbBody writer p eb fills given
+          }
+  -- Even a live newer point holding the same transactions cannot revive the
+  -- retired target or supply an unreceived body. Confirm the warm source first.
+  receipt <-
+    await
+      =<< writeEbBody writer source body Map.empty (Map.fromList (zip [0 ..] (map leiosTxBytes txs)))
+  assertM "warm source did not commit" (receipt == BodyPresent (Set.fromList [0, 1]))
+  _ <- insertBody cache source (packEndorserBlock body)
+  let landed =
+        [ MkLandedTx off h size (TxInserted ())
+        | (off, (h, size)) <- zip [0 ..] (endorserBlockReferences body)
+        ]
+      !() = foldl' (\() !_ -> ()) () landed
+  _ <- insertLandedTxs cache source landed
+  kernel <- newKernel base{lfcWriter = counted}
+  stream <- mkNewLeiosValidClaims
+  atomically $ recordNewLeiosValidClaim stream claim ann
+  pruneLeiosFetchToImmTip kernel (pointSlotNo point + 1)
+  out <- withLeiosFetchWorkers kernel $ withClaimFocuser stream kernel $ \attempts -> do
+    awaitClaimPass attempts 1
+    readMVar (lfcOutstanding (lfkContext kernel))
+  -- Both the focuser pass and normal worker drain have completed.
+  count <- readTVarIO submissions
+  acquired <- S.readTVarIO notes
+  pure (Map.null (ebState out) && Map.null (elFocus out) && count == 0 && null acquired)
+
+certifiedFenceEquality :: IOSim s Bool
+certifiedFenceEquality = do
+  (ctx, notes) <- newContext
+  kernel <- newKernel ctx
+  stream <- mkNewLeiosValidClaims
+  let (point, _, _) = fixture
+      (claim, ann) = claimEvent point 0
+  pruneLeiosFetchToImmTip kernel (pointSlotNo point)
+  atomically $ recordNewLeiosValidClaim stream claim ann
+  withLeiosFetchWorkers kernel $ withClaimFocuser stream kernel $ \attempts -> do
+    awaitClaimPass attempts 1
+    out <- readMVar (lfcOutstanding (lfkContext kernel))
+    acquired <- S.readTVarIO notes
+    pure
+      ( outstandingPrunedSlot out == pointSlotNo point
+          && isFocusedPoint point out
+          && Map.member point (ebState out)
+          && null acquired
+      )
+
+certifiedClaimOrder :: Bool -> IOSim s Bool
+certifiedClaimOrder together = do
+  (ctx, notes) <- newContext
+  kernel <- newKernel ctx
+  stream <- mkNewLeiosValidClaims
+  announcements <- newAnnouncements
+  let (first, _, _) = fixture
+      second = first{pointEbHash = UnsafeHash (SBS.replicate 32 7)}
+      ordinary = first{pointEbHash = UnsafeHash (SBS.replicate 32 8)}
+      valid = validAt ordinary 2
+      publish (claim, ann) = recordNewLeiosValidClaim stream claim ann
+      local = lfkContext kernel
+  withLeiosFetchWorkers kernel $ do
+    _ <- atomically $ accept kernel announcements valid
+    waitMetadata kernel valid
+    initial <- readMVar (lfcOutstanding local)
+    assertM "ordinary announcement was not installed" (isFocusedPoint ordinary initial)
+    atomically $ do
+      publish (claimEvent first 0)
+      when together $ publish (claimEvent second 1)
+    withClaimFocuser stream kernel $ \attempts -> do
+      awaitClaimPass attempts 1
+      unless together $ do
+        firstOut <- readMVar (lfcOutstanding local)
+        assertM "first verified claim did not override the ordinary focus" (isFocusedPoint first firstOut)
+        atomically $ publish (claimEvent second 1)
+        awaitClaimPass attempts 2
+      out <- readMVar (lfcOutstanding local)
+      acquired <- S.readTVarIO notes
+      pure
+        ( isFocusedPoint second out
+            && not (isFocusedPoint first out)
+            && Map.member first (ebState out)
+            && Map.member second (ebState out)
+            && null acquired
+        )
+
+certifiedWhileClosing :: IOSim s Bool
+certifiedWhileClosing = do
+  (base, notes) <- newContext
+  submissions <- newTVarIO (0 :: Int)
+  let writer = lfcWriter base
+      counted =
+        writer
+          { writeEbBody = \p eb fills given ->
+              atomically (modifyTVar submissions (+ 1)) >> writeEbBody writer p eb fills given
+          }
+      (point, _, _) = fixture
+      (claim, ann) = claimEvent point 0
+  kernel <- newKernel base{lfcWriter = counted}
+  -- Exercise the real interval after normal worker closure and before the
+  -- registry would stop claim delivery, without setting production flags.
+  withLeiosFetchWorkers kernel (pure ())
+  let local = lfkContext kernel
+  closing <- atomically $ R.runtimeClosing (lfcRuntime local)
+  assertM "worker scope did not close" closing
+  stream <- mkNewLeiosValidClaims
+  atomically $ recordNewLeiosValidClaim stream claim ann
+  withClaimFocuser stream kernel $ \attempts -> do
+    awaitClaimPass attempts 1
+    out <- readMVar (lfcOutstanding local)
+    count <- readTVarIO submissions
+    acquired <- S.readTVarIO notes
+    pure (isFocusedPoint point out && count == 0 && null acquired)
+
+certifiedDequeueFailure :: IOSim s Bool
+certifiedDequeueFailure = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  stream <- mkNewLeiosValidClaims
+  dequeued <- newTVarIO False
+  let (point, _, _) = fixture
+      (claim, ann) = claimEvent point 0
+      consume = do
+        _ <- atomically $ do
+          batch <- consumeNewLeiosValidClaims stream
+          writeTVar dequeued True
+          pure batch
+        throwIO (userError "verified-claim failure after dequeue")
+  atomically $ recordNewLeiosValidClaim stream claim ann
+  result <- try @_ @SomeException $ withRegistry $ \registry -> do
+    _ <-
+      forkLinkedThread registry "test.certificateFocuser" $ leiosFetchCertificateFocuser consume kernel
+    atomically retry
+  reached <- readTVarIO dequeued
+  out <- readMVar (lfcOutstanding (lfkContext kernel))
+  pure
+    ( reached
+        && Map.null (ebState out)
+        && either (isInfixOf "verified-claim failure after dequeue" . displayException) (const False) result
+    )
+
+certifiedShutdown :: Bool -> IOSim s Bool
+certifiedShutdown holdLock = do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  stream <- mkNewLeiosValidClaims
+  entered <- newTVarIO False
+  dequeued <- newTVarIO False
+  stopped <- newTVarIO False
+  let (point, _, _) = fixture
+      (claim, ann) = claimEvent point 0
+      pending = claimEvent point{pointSlotNo = pointSlotNo point + 1} 1
+      local = lfkContext kernel
+      consume = do
+        atomically $ writeTVar entered True
+        atomically $ do
+          batch <- consumeNewLeiosValidClaims stream
+          writeTVar dequeued True
+          pure batch
+      owningLock action =
+        if holdLock
+          then bracket (takeMVar (lfcOutstanding local)) (putMVar (lfcOutstanding local)) (const action)
+          else action
+  when holdLock $ atomically $ recordNewLeiosValidClaim stream claim ann
+  owningLock $ withRegistry $ \registry -> do
+    _ <-
+      forkLinkedThread registry "test.certificateFocuser" $
+        leiosFetchCertificateFocuser consume kernel `finally` atomically (writeTVar stopped True)
+    atomically $ readTVar (if holdLock then dequeued else entered) >>= check
+    -- IOSim runs runnable children before advancing this timer. With the lock
+    -- held, a real batch has been dequeued; without it, the empty read was entered.
+    threadDelay 0.001
+    readTVarIO stopped >>= assertM "consumer stopped before registry shutdown" . not
+    when holdLock $ atomically $ uncurry (recordNewLeiosValidClaim stream) pending
+  joined <- readTVarIO stopped
+  out <- readMVar (lfcOutstanding local)
+  -- Inspect remaining input only after the sole production consumer is joined.
+  remaining <- atomically $ (Just <$> consumeNewLeiosValidClaims stream) `orElse` pure Nothing
+  pure
+    ( joined
+        && Map.null (ebState out)
+        && if holdLock then fmap NE.toList remaining == Just [pending] else remaining == Nothing
+    )
 
 -- A separate real kernel retains old work while the real ChainDB advances.
 -- Its pruner has not caught up. A fixture clock isolates forecast anchoring from
