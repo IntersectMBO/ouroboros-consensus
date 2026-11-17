@@ -124,8 +124,8 @@ data LeiosJobPool = UnsafeLeiosJobPool
 
 -- | Partition the missing txs into jobs, greedily in offset order: a job grows
 -- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, but
--- always holds at least one tx (so an oversized tx would form a solo job, in
--- the unintended case of max tx size exceeding max job size).
+-- always holds at least one tx. A transaction larger than the target forms
+-- a solo job; independent protocol and peer-credit bounds still apply.
 --
 -- Each miss is its offset within the EB body mapped to its tx hash and its
 -- on-the-wire byte size. Each job's 'JobCommitment' is computed here via
@@ -157,7 +157,8 @@ mkJobPool maxJobBytes maxJobTxCount misses =
         grow (IntSet.insert off cur) (bytes + sz) (count + 1) (ref : refsRev) rest
     | otherwise = flush cur bytes refsRev : grow (IntSet.singleton off) sz 1 [ref] rest
 
--- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
+-- | No unfinished jobs remain. This also holds for a terminal/unavailable
+-- empty pool; emptiness alone is not evidence of durable closure possession.
 nullJobPool :: LeiosJobPool -> Bool
 nullJobPool = IntMap.null . jobs
 
@@ -193,8 +194,9 @@ pickLeastRequestedJobExcept prng excluded pool =
     Nothing -> Nothing
     Just (m, diff) ->
       -- Draw a uniform index into the eligible bucket's non-excluded jobs.
-      -- 'Data.IntSet' has no indexed access, but a bucket holds at most the ~184
-      -- jobs of one EB, so indexing the ascending list is cheap.
+      -- 'Data.IntSet' has no indexed access, so this traverses the bucket's
+      -- ascending list. Smaller job targets can increase the number of jobs;
+      -- the EB's transaction count bounds it independently of the target.
       let (i, prng') = uniformR (0, IntSet.size diff - 1) prng
           jid = IntSet.toAscList diff !! i
        in case IntMap.alterF (bump1 m) jid (jobs pool) of

@@ -42,7 +42,7 @@ defaultLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
     { maxRequestedBytesSizePerPeer = 262144
     , maxRequestedBytesSizePerBigLedgerPeer = 262144
-    , maxJobBytesSize = 65536
+    , maxJobBytesSize = 20000
     , maxBodiesPerPeer = 4
     , minimumServiceRate = 300000
     , maxJobTxCount = 20000

@@ -117,13 +117,16 @@ across concurrent EBs. Admit a whole job before queueing it. Each TX request
 contains one immutable job, including its original offsets and commitment.
 A transaction larger than the target forms a one-transaction job. Otherwise
 pack whole transactions without crossing the target. Every complete job must
-fit the peer's credit and protocol bounds.
+fit the peer's credit and protocol bounds. The 20,000 B setting is a packing
+target, not a new wire limit: a legal larger TX is still a solo job. Each full
+job reply can be validated and submitted independently of the next pipelined
+job. This reduces the all-or-nothing reply unit without per-TX prefix salvage.
 
 | Starting setting | Default |
 |---|---:|
 | Regular peer TX credit | 262,144 B |
 | Big ledger peer TX credit | 262,144 B |
-| Whole-transaction job target | 65,536 B |
+| Whole-transaction job target | 20,000 B |
 | Outstanding bodies per peer | 4 |
 | Shared outstanding requests per peer | 150 |
 | Minimum service benchmark | 300,000 bit/s |

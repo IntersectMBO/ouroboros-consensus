@@ -54,6 +54,20 @@ tests =
     , testCase
         "late confirmation completes globally without restoring departed owner"
         test_settleRemovedPeerConfirmed
+    , testCase "small default jobs preserve exact fits, short tails and a legal oversized TX" $ do
+        let sizes = [9000, 11000, 1, 20000, 32768, 7000, 12000, 1000, 999]
+            refs = IntMap.fromList [(off, (txHashOf off, bytes)) | (off, bytes) <- zip [0 ..] sizes]
+            pool = newLeiosJobPool defaultLeiosFetchStaticEnv refs
+            jobs =
+              [ job
+              | jid <- IntMap.keys (Jobs.jobMultiplicities pool)
+              , Just job <- [Jobs.lookupJob (Jobs.MkLeiosJobId jid) pool]
+              ]
+        [(IntSet.toAscList offsets, bytes) | Jobs.MkLeiosJob offsets bytes _ <- jobs]
+          @?= [([0, 1], 20000), ([2], 1), ([3], 20000), ([4], 32768), ([5, 6, 7], 20000), ([8], 999)]
+        [commitment | Jobs.MkLeiosJob _ _ commitment <- jobs]
+          @?= map (Jobs.jobCommitmentOfTxs . map (refs IntMap.!)) [[0, 1], [2], [3], [4], [5, 6, 7], [8]]
+        assertBool "job reverse index remains exact" (Jobs.hasExactReverseIndex pool)
     , testCase "random least multiplicity drawing retains exclusions and reverse indices" test_pickJobs
     , testCase "consensus voting tiers precede freshest stale work" test_fetchPriorityOrder
     , testCase "priority window arithmetic does not wrap at the maximum slot" $
