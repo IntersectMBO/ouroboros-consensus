@@ -13,6 +13,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as S
 import qualified Control.Exception as E
 import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Class.MonadTest (exploreRaces)
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Short as SBS
@@ -39,11 +40,13 @@ import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.OwnedWork as Owned
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.ReceiptTasks as Receipts
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Wait as W
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
 import qualified Ouroboros.Consensus.NodeKernel as NK
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbWriter (..))
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM (Fingerprint (..), WithFingerprint (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer (..))
 import System.Random (mkStdGen)
 import Test.Cardano.Crypto.Leios.Gen (mkCommitteeFromTestSeats)
@@ -172,6 +175,8 @@ tests =
         runSimOrThrow failedStartup @?= True
     , testCase "retirement before worker activation does not recreate state or submit payloads" $
         runSimOrThrow retiredBeforeActivation @?= (0, True)
+    , testCase "initial certified view, prune-only silence and stale snapshots use the real focuser" $
+        runSimOrThrow certifiedNotifications @?= True
     , testCase "decision loop forecasts unpruned work at the newer immutable anchor" $
         runSimOrThrow forecastBehindAnchor @?= True
     , testCase "simultaneous producer failures have one supervised teardown" $
@@ -526,6 +531,50 @@ retiredBeforeActivation = do
   acquired <- S.readTVarIO notes
   count <- S.readTVarIO calls
   pure (count, Map.null (ebState out) && null acquired)
+
+-- Override only the ChainDB getter and use a separate kernel: the fixture
+-- node's ordinary focuser cannot make these assertions pass. Version-zero
+-- contents test initial acquisition, not a fabricated certificate-validation
+-- history. Subsequent publications exercise the same production loop.
+certifiedNotifications :: IOSim s Bool
+certifiedNotifications = Node.withNode $ \node -> do
+  (ctx, _) <- newContext
+  kernel <- newKernel ctx
+  let (first, _, _) = fixture
+      next = first{pointSlotNo = pointSlotNo first + 1}
+      stale = first{pointSlotNo = pointSlotNo first - 1}
+      election point = ancElectionId (announcingHeader (validAt point 0))
+      initial = WithFingerprint (Map.singleton (election first) (pointEbHash first)) (Fingerprint 0)
+      local = lfkContext kernel
+  snapshots <- S.newTVarIO initial
+  let database = (Node.nodeChainDB node){ChainDB.getLeiosCertifiedEbs = S.readTVar snapshots}
+      awaitFocus = atomically $ W.awaitReadiness (lfcReady local)
+  withAsync (leiosFetchCertificateFocuser database kernel) $ \focuser -> do
+    link focuser
+    awaitFocus
+    firstOut <- readMVar (lfcOutstanding local)
+    assertM "initial version-zero snapshot was ignored" (isFocusedPoint first firstOut)
+    atomically $ S.writeTVar snapshots (WithFingerprint Map.empty (Fingerprint 0))
+    quiet <- SI.timeout 0.01 awaitFocus
+    assertM "pruning alone woke the focuser" (quiet == Nothing)
+    modifyMVar_ (lfcOutstanding local) (pure . pruneOutstandingToImmTip (pointSlotNo next))
+    atomically $ do
+      writeTVar (lfkPrunedSlot kernel) (pointSlotNo next)
+      S.writeTVar
+        snapshots
+        ( WithFingerprint
+            (Map.fromList [(election stale, pointEbHash stale), (election next, pointEbHash next)])
+            (Fingerprint 1)
+        )
+    awaitFocus
+    following <- readMVar (lfcOutstanding local)
+    pure
+      ( isFocusedPoint next following
+          && Map.member next (ebState following)
+          && not (isFocusedPoint stale following)
+          && Map.notMember stale (ebState following)
+          && Map.notMember first (ebState following)
+      )
 
 -- A separate real kernel retains old work while the real ChainDB advances.
 -- Its pruner has not caught up. A fixture clock isolates forecast anchoring from

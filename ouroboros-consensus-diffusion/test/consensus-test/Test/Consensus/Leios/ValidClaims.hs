@@ -4,6 +4,7 @@ module Test.Consensus.Leios.ValidClaims (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..))
 import qualified Data.ByteString.Short as SBS
+import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
@@ -12,8 +13,10 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( emptyLeiosValidClaims
   , insertLeiosValidClaim
   , isLeiosValidClaim
+  , leiosCertifiedEbs
   , pruneLeiosValidClaims
   )
+import Ouroboros.Consensus.Util.STM (Fingerprint (..), WithFingerprint (..))
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -24,6 +27,16 @@ tests =
     [ testCase "a recorded claim is valid, and others are not" $
         map (`isLeiosValidClaim` claims) [rbA, rbB, rbC, rbD]
           @?= [True, True, True, False]
+    , testCase "new claims advance the fingerprint; repeats and pruning do not" $ do
+        let empty = emptyLeiosValidClaims
+            first = insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) announcement empty
+            repeated = insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) announcement first
+            pruned = pruneLeiosValidClaims (SlotNo 2) claims
+            later = insertLeiosValidClaim (LeiosClaim (SlotNo 3) rbD) announcement pruned
+        map (getFingerprint . leiosCertifiedEbs) [empty, first, repeated, claims, pruned, later]
+          @?= map Fingerprint [0, 1, 1, 3, 3, 4]
+        map (Map.size . forgetFingerprint . leiosCertifiedEbs) [claims, pruned, later]
+          @?= [3, 1, 2]
     , testCase "pruning forgets the claims older than the slot" $
         map (`isLeiosValidClaim` pruneLeiosValidClaims (SlotNo 2) claims) [rbA, rbB, rbC]
           @?= [False, False, True]
