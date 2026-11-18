@@ -7,7 +7,7 @@
 -- | Run one leadership check and, if we are leader, forge and adopt a block.
 --
 -- This is spawned once per forge-credentials thread by
--- 'Ouroboros.Consensus.NodeKernel.forkBlockForging'.
+-- 'Ouroboros.Consensus.NodeKernel.forkBlockProducer'.
 module Ouroboros.Consensus.NodeKernel.Forge
   ( forge
   ) where

@@ -68,7 +68,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..))
+import Ouroboros.Consensus.Leios.Acquisitions
+  ( LeiosAcquisition (..)
+  , LeiosAcquisitions (..)
+  )
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState
   , newAnnounceState
@@ -80,7 +83,11 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , newNotifyLog
   , pruneNotifyLog
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement (..)
+  , LeiosLedgerView
+  , LeiosProtocol (..)
+  )
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types
   ( ForgedEndorserBlock
@@ -91,6 +98,10 @@ import Ouroboros.Consensus.Leios.Types
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.Leios.VoteState (VoteState, getCertificate, newVoteState, pruneVotes)
+import Ouroboros.Consensus.Leios.Voting
+  ( VotingEnv (..)
+  , runLeiosVoting
+  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -146,7 +157,10 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle, allocateWriter)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbHandle
+  , allocateWriter
+  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -480,6 +494,18 @@ initNodeKernel
         (salt0, saltRng') = uniform saltRng
         (salt1, _) = uniform saltRng'
     leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
+    let votingEnv =
+          MkVotingEnv
+            { votingConfig = cfg
+            , votingChainDB = chainDB
+            , votingLeiosDb = leiosDB
+            , votingTxCache = leiosTxCache
+            , votingAnnounceState = leiosAnnounceState
+            , votingVoteState = leiosVoteState
+            , votingSystemTime = systemTime
+            , votingTracer = leiosVotingTracer tracers
+            , votingSubscribeClosures = subscribeLeiosClosures leiosAcquisitions
+            }
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
@@ -564,7 +590,11 @@ initNodeKernel
             writeTQueue forgedEbs (announcingHeader valid, forged)
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st onForgedEb leiosVoteState (LazySTM.takeTMVar blockForgingVar)
+        blockForgingController
+          st
+          onForgedEb
+          votingEnv
+          (LazySTM.takeTMVar blockForgingVar)
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -609,16 +639,19 @@ initNodeKernel
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
-      VoteState m blk ->
+      VotingEnv m blk ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st onForgedEb voteState getBlockForging = go []
+    blockForgingController st onForgedEb votingEnv getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st onForgedEb voteState) blockForging
+        blockForging' <-
+          traverse
+            (forkBlockProducer st onForgedEb votingEnv)
+            blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -747,41 +780,57 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
-forkBlockForging ::
+-- | Subscribe to the points whose closure the node acquires from now on, each
+-- once.
+subscribeLeiosClosures :: IOLike m => LeiosAcquisitions m -> m (STM m LeiosPoint)
+subscribeLeiosClosures acquisitions = do
+  next <- subscribeLeiosAcquisitions acquisitions
+  let nextClosure =
+        next >>= \case
+          AcquiredEbTxs point -> pure point
+          AcquiredEb{} -> nextClosure
+  pure nextClosure
+
+-- | Forge with a set of credentials, and vote with its BLS keys, if any.
+forkBlockProducer ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk) =>
+  (IOLike m, SI.MonadTimer m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
   -- | What 'forge' does with each endorser block it produces
   (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
-  -- | Where 'forge' looks up the certificate the node aggregated
-  VoteState m blk ->
+  -- | Also where 'forge' looks up the certificate the node aggregated
+  VotingEnv m blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} onForgedEb voteState (MkBlockForging blockForgingM) =
-  forkLinkedWatcherAllocate
-    registry
-    label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
-        \currentSlot ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              cfg
-              chainDB
-              mempool
-              bf
-              ( getLeiosCertToForge
-                  (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
-                  chainDB
-                  voteState
-              )
-              onForgedEb
-              currentSlot
-    )
+forkBlockProducer IS{..} onForgedEb votingEnv (MkBlockForging blockForgingM) =
+  forkLinkedThread registry label $ do
+    (key, bf) <- allocate registry (const blockForgingMLabel) finalize
+    withWatcher label (forging bf) (voting bf) `finally` release key
  where
+  forging bf = knownSlotWatcher btime $
+    \currentSlot ->
+      withEarlyExit_ $
+        forge
+          (forgeTracer tracers)
+          (forgeStateInfoTracer tracers)
+          cfg
+          chainDB
+          mempool
+          bf
+          ( getLeiosCertToForge
+              (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
+              chainDB
+              (votingVoteState votingEnv)
+          )
+          onForgedEb
+          currentSlot
+
+  voting bf =
+    case leiosBLSKeys (Proxy @(BlockProtocol blk)) (canBeLeader bf) of
+      -- Nothing to vote with.
+      [] -> forever $ threadDelay 86400
+      keys -> runLeiosVoting votingEnv keys
+
   label :: String
   label = "NodeKernel.blockForging"
 
