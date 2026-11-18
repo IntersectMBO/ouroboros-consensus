@@ -1,0 +1,362 @@
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Tests of the node voting for endorser blocks, against the peers of
+-- "Test.Consensus.Leios.Relay": the node votes with the BLS keys of its block
+-- forging, and a downstream peer records the votes it relays.
+--
+-- One-second slots: the window to vote in the election of slot 1 opens 4 s in,
+-- and closes 8 s in.
+module Test.Consensus.Leios.Voting (tests) where
+
+import Cardano.Crypto.DSIGN.Class (genKeyDSIGN)
+import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Crypto.Leios (LeiosCert, LeiosSigningKey)
+import Cardano.Crypto.Seed (mkSeedFromBytes)
+import Cardano.Ledger.Binary (Version)
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( atomically
+  , modifyTVar
+  , newTVarIO
+  , readTVarIO
+  )
+import Control.Monad.Class.MonadAsync (forConcurrently, withAsync)
+import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
+import Control.Monad.Class.MonadTimer.SI (threadDelay)
+import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Control.Tracer (mkTracer)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
+import Data.Foldable (for_)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SJust))
+import qualified Data.Text as Text
+import Data.Traversable (for)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot)
+import Ouroboros.Consensus.Block.Forging
+  ( BlockForging (..)
+  , ForgeStateUpdateInfo (..)
+  , MkBlockForging (..)
+  )
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..), LeiosAcquisitions (..))
+import Ouroboros.Consensus.Leios.TxCache
+  ( LandedTx (..)
+  , LeiosTxCache (..)
+  , TxState (..)
+  , insertBody
+  , packEndorserBlock
+  )
+import Ouroboros.Consensus.Leios.Types
+  ( EndorserBlockHash
+  , LeiosPoint (..)
+  , TxHash
+  , mkEndorserBlock
+  )
+import Ouroboros.Consensus.Leios.VoteState (getCertificate)
+import Ouroboros.Consensus.Leios.Voting (NotVotedReason (..), TraceLeiosVoting (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
+import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
+import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosDbWriter (..)
+  , await
+  , withWriter
+  )
+import Test.Consensus.Leios.NodeUnderTest
+  ( Blk
+  , NodeUnderTest (..)
+  , PeerAddr (..)
+  , addBlocksAfter
+  , defaultNodeUnderTestConfig
+  , withNodeUnderTest
+  )
+import Test.Consensus.Leios.Relay
+  ( Notification (..)
+  , PeerOutcome (..)
+  , PeerSpec (..)
+  , announce
+  , announceAt
+  , equivocation
+  , k
+  , ledgerConfig
+  , rbHashOf
+  , runPeer
+  , seatKeys
+  , someAnnouncingBlock
+  , voteOf
+  , voteTimes
+  , votes
+  )
+import Test.Consensus.Leios.TestBlock
+  ( Header (..)
+  , LeiosTestBlock (..)
+  , heavyEbTx
+  , inapplicableEbTx
+  , invalidEbTx
+  , invalidEbTxError
+  , setAnnouncement
+  , successorLeiosBlock
+  )
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (assertBool, testCase, (@?=))
+import Test.Util.ChainDB (emptyNodeDBs)
+
+tests :: TestTree
+tests =
+  testGroup
+    "Voting"
+    [ testCase "the node votes for the endorser block its tip announces, once the window opens" $ do
+        let Outcome{down} = runVoting voting
+        votes down @?= [voteOf someAnnouncingBlock 0]
+        voteTimes down @?= [Time 4]
+    , testCase "the node validates a closure before the window opens" $ do
+        let Outcome{down} = runVoting voting{validating = const 1.5}
+        voteTimes down @?= [Time 4]
+    , testCase "a slow validation delays no vote for another endorser block" $ do
+        let Outcome{down, notVoted} =
+              runVoting
+                voting
+                  { ups = [[announce someAnnouncingBlock, announceAt 2.2 nextAnnouncingBlock]]
+                  , adopts = [(1.5, someAnnouncingBlock), (2.5, nextAnnouncingBlock)]
+                  , closures = [(2, someAnnouncingBlock, validTxs), (3, nextAnnouncingBlock, validTxs)]
+                  , validating = \slot -> if slot == 1 then 10 else 0
+                  }
+        votes down @?= [voteOf nextAnnouncingBlock 0]
+        -- The window of the election of slot 2 opens 5 s in.
+        voteTimes down @?= [Time 5]
+        -- The node stopped validating the first once it targeted the second,
+        -- and by the end of the first's window it had voted in slot 2.
+        notVoted @?= [Superseded 3]
+    , testCase "the node votes with each of its keys that holds a seat" $ do
+        let Outcome{down} = runVoting voting{credentials = [take 2 seatKeys]}
+        votes down @?= map (voteOf someAnnouncingBlock) [0, 1]
+    , testCase "the node votes once per election, with the seats of all its credentials" $ do
+        let Outcome{down, validated} = runVoting voting{credentials = [take 1 seatKeys, take 1 (drop 1 seatKeys)]}
+        -- In whichever order the credentials' threads add their keys.
+        length (votes down) @?= 2
+        for_ [0, 1] $ \seat -> assertBool "a vote per seat" (voteOf someAnnouncingBlock seat `elem` votes down)
+        length validated @?= 1
+    , testCase "the node's votes count towards a certificate" $ do
+        let Outcome{certified} = runVoting voting{credentials = [seatKeys]}
+        fmap (const ()) certified @?= Just ()
+    , testCase "the node does not vote with a key that holds no seat" $ do
+        let Outcome{down, notVoted} = runVoting voting{credentials = [[keyOfNoSeat]]}
+        votes down @?= []
+        notVoted @?= [NotOnCommittee]
+    , testCase "the node does not vote for an invalid endorser block" $ do
+        let Outcome{down, notVoted} =
+              runVoting voting{closures = [(2, someAnnouncingBlock, [invalidEbTx])]}
+        votes down @?= []
+        notVoted @?= [EbInvalid (Text.pack (show invalidEbTxError))]
+    , testCase "the node does not vote for an endorser block with a transaction that does not apply" $ do
+        let Outcome{down, notVoted} =
+              runVoting voting{closures = [(2, someAnnouncingBlock, [inapplicableEbTx])]}
+        votes down @?= []
+        notVoted @?= [EbInvalid "LeiosTestTxRejected"]
+    , testCase "the node does not vote for an endorser block claiming more than one may hold" $ do
+        -- Before it decodes a transaction, so the invalid one makes no difference.
+        let Outcome{down, notVoted} =
+              runVoting
+                voting{closures = [(2, someAnnouncingBlock, [BS.replicate 1000 1, invalidEbTx])]}
+        votes down @?= []
+        notVoted @?= [EbOverCapacity]
+    , testCase
+        "the node does not vote for an endorser block whose transactions take more than one may hold"
+        $ do
+          let Outcome{down, notVoted} =
+                runVoting voting{closures = [(2, someAnnouncingBlock, [heavyEbTx, "a valid transaction"])]}
+          votes down @?= []
+          notVoted @?= [EbOverCapacity]
+    , testCase "the node does not vote for an endorser block its tip does not announce" $ do
+        let Outcome{down, notVoted} = runVoting voting{adopts = []}
+        votes down @?= []
+        notVoted @?= [TipDoesNotAnnounce]
+    , testCase "the node does not vote when it saw an equivocation by the time the window opens" $ do
+        let Outcome{down, notVoted} =
+              runVoting voting{ups = [[announce someAnnouncingBlock, announceAt 2 equivocation]]}
+        votes down @?= []
+        notVoted @?= [Equivocated]
+    , testCase "the node does not vote once the window closed" $ do
+        let Outcome{down, notVoted} = runVoting voting{closures = [(8.5, someAnnouncingBlock, validTxs)]}
+        votes down @?= []
+        notVoted @?= [TooLate]
+    , testCase "the node does not vote for an announcement it did not accept" $ do
+        let Outcome{down, notVoted} = runVoting voting{ups = []}
+        votes down @?= []
+        notVoted @?= [NotAccepted]
+    , testCase "the node does not vote for an announcement it accepted later than L_hdr" $ do
+        let Outcome{down, notVoted} =
+              runVoting
+                voting
+                  { ups = [[announceAt 2.5 someAnnouncingBlock]]
+                  , closures = [(3, someAnnouncingBlock, validTxs)]
+                  }
+        votes down @?= []
+        notVoted @?= [AnnouncedLate 1.5]
+    , testCase "the node reapplies a transaction it validated before" $ do
+        let Outcome{down, validated} =
+              runVoting voting{validatedBefore = Map.singleton (txHashOf 0) minBound}
+        votes down @?= [voteOf someAnnouncingBlock 0]
+        validated @?= [(1, 0)]
+    , testCase "the node validates in full a transaction validated under another protocol version" $ do
+        let Outcome{validated} =
+              runVoting voting{validatedBefore = Map.singleton (txHashOf 0) maxBound}
+        validated @?= [(0, 1)]
+    , testCase "the node records the transactions it validated in full" $ do
+        let Outcome{validatedAfter} = runVoting voting
+        validatedAfter @?= Map.singleton (txHashOf 0) minBound
+    , testCase "the node validates no transaction of a closure with one that does not decode" $ do
+        let Outcome{notVoted, validatedAfter} =
+              runVoting voting{closures = [(2, someAnnouncingBlock, validTxs <> [invalidEbTx])]}
+        notVoted @?= [EbInvalid (Text.pack (show invalidEbTxError))]
+        validatedAfter @?= Map.empty
+    ]
+
+-- | What happens around the node: the announcements its upstream peers send
+-- it, when it adopts which blocks and acquires which closures, and how long it
+-- takes to validate a closure.
+data Voting = Voting
+  { credentials :: [[LeiosSigningKey]]
+  -- ^ The BLS keys of each of the node's credentials.
+  , ups :: [[(DiffTime, Notification)]]
+  , adopts :: [(DiffTime, LeiosTestBlock)]
+  , closures :: [(DiffTime, LeiosTestBlock, [BS.ByteString])]
+  , validating :: SlotNo -> DiffTime
+  -- ^ Beyond what validating takes in the simulation, by the slot of the
+  -- endorser block.
+  , validatedBefore :: Map TxHash Version
+  -- ^ The transactions the node validated before it acquires each closure.
+  }
+
+-- | The node holds seat 0, an upstream peer announces 'someAnnouncingBlock',
+-- and the node adopts it, then acquires its closure.
+voting :: Voting
+voting =
+  Voting
+    { credentials = [take 1 seatKeys]
+    , ups = [[announce someAnnouncingBlock]]
+    , adopts = [(1.5, someAnnouncingBlock)]
+    , closures = [(2, someAnnouncingBlock, validTxs)]
+    , validating = const 0
+    , validatedBefore = Map.empty
+    }
+
+data Outcome = Outcome
+  { down :: PeerOutcome
+  -- ^ What a downstream peer received.
+  , notVoted :: [NotVotedReason]
+  , certified :: Maybe LeiosCert
+  -- ^ The certificate of 'someAnnouncingBlock', if any.
+  , validated :: [(Int, Int)]
+  -- ^ For each closure the node validated, how many transactions it reapplied
+  -- and how many it validated in full.
+  , validatedAfter :: Map TxHash Version
+  -- ^ The transactions the node validated, once it stopped.
+  }
+
+-- | Run the node with the given credentials for 20 s.
+runVoting :: Voting -> Outcome
+runVoting Voting{credentials, ups, adopts, closures, validating, validatedBefore} = runSimOrThrow $ do
+  traced <- newTVarIO []
+  nodeDBs <- emptyNodeDBs
+  leiosDB <- newLeiosDBInMemory
+  let tracers =
+        nullTracers
+          { leiosVotingTracer = mkTracer $ \ev -> do
+              case ev of
+                TraceLeiosEbValidated MkLeiosPoint{pointSlotNo} _reapplied _applied ->
+                  threadDelay (validating pointSlotNo)
+                _ -> pure ()
+              atomically $ modifyTVar traced (ev :)
+          }
+  withNodeUnderTest (defaultNodeUnderTestConfig k ledgerConfig) tracers nodeDBs leiosDB $ \node -> do
+    setBlockForging (nodeKernel node) [MkBlockForging (pure (votingOnly keys)) | keys <- credentials]
+    withAsync (adopt node) $ \_ -> withAsync (acquire node) $ \_ -> do
+      outcomes <-
+        forConcurrently (zip [1 ..] (map (PeerSpec 0 []) ups <> [PeerSpec 0 [] []])) $ \(i, spec) ->
+          runPeer node 20 (PeerAddr i) spec
+      certified <-
+        atomically $
+          getCertificate (getLeiosVoteState (nodeKernel node)) (rbHashOf (ltbHeader someAnnouncingBlock))
+      evs <- readTVarIO traced
+      validatedAfter <-
+        withLookupTx (txCacheOf node) $ \lookupTx -> do
+          found <-
+            for [txHashOf i | (_at, _blk, txs) <- closures, i <- [0 .. length txs - 1]] $ \txHash ->
+              (,) txHash <$> lookupTx txHash
+          pure $ Map.fromList [(txHash, protVer) | (txHash, SJust (TxValidated protVer)) <- found]
+      pure
+        Outcome
+          { down = last outcomes
+          , notVoted = reverse [reason | TraceLeiosNotVoted _ reason <- evs]
+          , certified
+          , validated = reverse [(reapplied, applied) | TraceLeiosEbValidated _ reapplied applied <- evs]
+          , validatedAfter
+          }
+ where
+  -- Each block extends the one adopted before it.
+  adopt node = for_ (zip (Origin : map (NotOrigin . snd) adopts) adopts) $
+    \(predecessor, (at, blk)) -> do
+      waitUntil at
+      addBlocksAfter node predecessor [blk]
+
+  acquire node = for_ closures $ \(at, blk, txs) -> do
+    waitUntil at
+    let eb = mkEndorserBlock [(txHashOf i, fromIntegral (BS.length tx)) | (i, tx) <- zip [0 ..] txs]
+        point = MkLeiosPoint (blockSlot blk) (ebHashOf blk)
+    withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
+      _ <- await =<< writeEbBody writer point eb Map.empty (Map.fromList (zip [0 ..] txs))
+      pure ()
+    -- As the node's LeiosFetch would, before the voter looks the txs up.
+    let txCache = txCacheOf node
+    _ <- insertBody txCache point (packEndorserBlock eb)
+    _ <-
+      insertLandedTxs
+        txCache
+        point
+        [ MkLandedTx off (txHashOf off) (fromIntegral (BS.length tx)) $
+            maybe (TxInserted ()) TxValidated (Map.lookup (txHashOf off) validatedBefore)
+        | (off, tx) <- zip [0 ..] txs
+        ]
+    atomically $ emitLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs point)
+
+  txCacheOf node = lfcTxCache (lfkContext (getLeiosFetchKernel (nodeKernel node)))
+
+waitUntil :: DiffTime -> IOSim s ()
+waitUntil at = do
+  Time now <- getMonotonicTime
+  threadDelay (max 0 (at - now))
+
+-- | A node that never leads, but votes with these keys.
+votingOnly :: [LeiosSigningKey] -> BlockForging (IOSim s) Blk
+votingOnly keys =
+  BlockForging
+    { forgeLabel = "voting"
+    , canBeLeader = keys
+    , updateForgeState = \_ _ _ -> pure (ForgeStateUpdated ())
+    , checkCanForge = \_ _ _ _ _ -> Right ()
+    , forgeBlock = \_ -> error "votingOnly: the node never leads"
+    , finalize = pure ()
+    }
+
+-- | Announces an endorser block in slot 2, extending 'someAnnouncingBlock'.
+nextAnnouncingBlock :: LeiosTestBlock
+nextAnnouncingBlock = setAnnouncement (UnsafeHash (SBS.replicate 32 5)) 1000 (successorLeiosBlock someAnnouncingBlock)
+
+ebHashOf :: LeiosTestBlock -> EndorserBlockHash
+ebHashOf blk = case lthAnnouncement (ltbHeader blk) of
+  Just (ebHash, _size) -> ebHash
+  Nothing -> error "ebHashOf: the block announces nothing"
+
+txHashOf :: Int -> TxHash
+txHashOf i = UnsafeHash (SBS.toShort (BS.replicate 31 0 <> BS.singleton (fromIntegral i)))
+
+validTxs :: [BS.ByteString]
+validTxs = ["a valid transaction"]
+
+-- | A key of no seat in the committee.
+keyOfNoSeat :: LeiosSigningKey
+keyOfNoSeat = genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 42))
