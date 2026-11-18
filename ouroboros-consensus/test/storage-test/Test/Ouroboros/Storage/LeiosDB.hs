@@ -562,6 +562,8 @@ test_singleSubscriber db = do
       notifPoint @?= point
     AcquiredEbTxs _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
+    AcquiredEbTxsPending _ ->
+      assertFailure "expected AcquiredEb, got AcquiredEbTxsPending"
 
 -- | Test that multiple subscribers each receive the notification.
 test_multipleSubscribers :: LeiosDbHandle IO -> IO ()
@@ -600,6 +602,8 @@ test_correctData db = do
       notifSize @?= expectedSize
     AcquiredEbTxs _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
+    AcquiredEbTxsPending _ ->
+      assertFailure "expected AcquiredEb, got AcquiredEbTxsPending"
 
 -- | Test that a subscriber who subscribes after an insertion does not receive
 -- the past notification.
@@ -687,6 +691,8 @@ test_offerBlockTxs db = do
     let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
     _ <- rwInsertTxs con point txsToInsert
     -- FIXME: blocks forever if impl not working
+    pending <- atomically $ readTChan chan
+    assertOfferBlockTxsPending point pending
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
 
@@ -710,6 +716,7 @@ test_crossEbFill db = do
     void $ rwInsertEbBody con pointA ebA
     _ <- rwInsertTxs con pointA [(i, txBytesFor ebA i) | i <- [0 .. 2]]
     _ <- atomically $ tryReadTChan chan -- AcquiredEb A
+    _ <- atomically $ tryReadTChan chan -- AcquiredEbTxsPending A
     _ <- atomically $ tryReadTChan chan -- AcquiredEbTxs A
     -- B: body write with fills from A, plus one from a source that does not
     -- exist -- the vanished-source case must fill nothing for that offset.
@@ -772,6 +779,8 @@ test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
       Just _ -> assertFailure "pre-body fills must not complete the closure"
     -- The same fills now land on the allocated rows and complete it.
     _ <- rwInsertTxs con point txsToInsert
+    pendingTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxsPending"
+    assertOfferBlockTxsPending point pendingTxs
     acquiredTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
     assertOfferBlockTxs point acquiredTxs
 
@@ -795,6 +804,12 @@ test_noReNotifyCompletedEbs db = do
     let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
     _ <- rwInsertTxs con point txsToInsert
     -- Consume the AcquiredEbTxs notification
+    -- The writer publishes the closure from memory first (NITEN voter hand-off),
+    -- then the durable notification after the commit.
+    pendingTxs <- atomically $ tryReadTChan chan
+    case pendingTxs of
+      Just (AcquiredEbTxsPending p) -> p @?= point
+      _ -> assertFailure "expected AcquiredEbTxsPending notification before AcquiredEbTxs"
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
       Just (AcquiredEbTxs p) -> p @?= point
@@ -833,6 +848,12 @@ test_noReNotifyOnRelatedTxReinsert db = do
     -- Insert all EB-referenced txs → EB completes, one AcquiredEbTxs.
     let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
     _ <- rwInsertTxs con point txsToInsert
+    -- The writer publishes the closure from memory first (NITEN voter hand-off),
+    -- then the durable notification after the commit.
+    pendingTxs <- atomically $ tryReadTChan chan
+    case pendingTxs of
+      Just (AcquiredEbTxsPending p) -> p @?= point
+      _ -> assertFailure "expected AcquiredEbTxsPending notification before AcquiredEbTxs"
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
       Just (AcquiredEbTxs p) -> p @?= point
@@ -899,12 +920,16 @@ test_multipleSlotsSameHash db = do
         con
         point1
         [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
-    -- Both rows must notify completion, once each.
+    -- Both rows must notify completion, once each: a pending notification
+    -- (closure in memory) followed by the durable one.
     completionNotifs <- drainNotifications
     let completionPoints =
           [p | AcquiredEbTxs p <- completionNotifs]
+        pendingPoints =
+          [p | AcquiredEbTxsPending p <- completionNotifs]
     completionPoints `setEquals` [point1, point2]
-    length completionNotifs @?= 2
+    pendingPoints `setEquals` [point1, point2]
+    length completionNotifs @?= 4
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
@@ -930,6 +955,17 @@ assertOfferBlock expectedPoint = \case
     actualPoint @?= expectedPoint
   AcquiredEbTxs _ ->
     assertFailure "expected AcquiredEb, got AcquiredEbTxs"
+  AcquiredEbTxsPending _ ->
+    assertFailure "expected AcquiredEb, got AcquiredEbTxsPending"
+
+-- | Assert that a notification is AcquiredEbTxsPending with the expected point
+-- (always emitted just before AcquiredEbTxs for the same point).
+assertOfferBlockTxsPending :: LeiosPoint -> LeiosEbNotification -> IO ()
+assertOfferBlockTxsPending expectedPoint = \case
+  AcquiredEbTxsPending actualPoint ->
+    actualPoint @?= expectedPoint
+  _ ->
+    assertFailure "expected AcquiredEbTxsPending (emitted before AcquiredEbTxs)"
 
 -- | Assert that a notification is AcquiredEbTxs with the expected point.
 assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
@@ -938,6 +974,8 @@ assertOfferBlockTxs expectedPoint = \case
     actualPoint @?= expectedPoint
   AcquiredEb _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
+  AcquiredEbTxsPending _ ->
+    assertFailure "expected AcquiredEbTxs, got AcquiredEbTxsPending"
 
 -- * Property tests for lookupEbClosure
 

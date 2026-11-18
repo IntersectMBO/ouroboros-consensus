@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
   , sqlLookupEbBody
   , sqlBatchRetrieveTxs
   , sqlLookupEbClosure
+  , sqlLookupVolClosureInTxn
   , sqlScanBodiedPointsSince
   , EbIndex (..)
   , decodeStoredTxHashes
@@ -51,6 +52,8 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection (Conn (..))
+import qualified Data.Map.Strict as Map
+import Control.Concurrent.Class.MonadSTM.Strict (readTVarIO)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Queries (sql_scan_bodied_points_since)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Statements
@@ -135,8 +138,14 @@ sqlBatchRetrieveTxs conn ebHash offsets = (evaluate . force =<<) $ do
 -- was written, or 'Nothing' if the body is not stored.
 sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
 sqlLookupEbClosure conn ebHash = (evaluate . force =<<) $ do
-  vol <- dbWithTransaction volDb $ closureFrom volReads
-  maybe (closureFrom immReads) (pure . Just) vol
+  -- A closure the writer completed but has not committed yet: serve it from
+  -- memory, so the voting thread is independent of the disk ('connPending').
+  pending <- Map.lookup ebHash <$> readTVarIO (connPending conn)
+  case pending of
+    Just closure -> pure (Just closure)
+    Nothing -> do
+      vol <- dbWithTransaction volDb $ closureFrom ebHash volReads
+      maybe (closureFrom ebHash immReads) (pure . Just) vol
  where
   Conn
     { conVolDb = volDb
@@ -144,7 +153,16 @@ sqlLookupEbClosure conn ebHash = (evaluate . force =<<) $ do
     , connImmStmts = ImmStmts{immReads}
     } = conn
 
-  closureFrom ReadStmts{rsLookupEbClosure = stmt} =
+-- | The volatile partition's view of a closure, read on the caller's
+-- connection inside whatever transaction it has open: the writer uses it to
+-- read back a closure it has just completed, before committing, so it can
+-- hand it to 'connPending'.
+sqlLookupVolClosureInTxn :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupVolClosureInTxn Conn{connVolStmts = VolStmts{stReads = volReads}} ebHash =
+  (evaluate . force =<<) $ closureFrom ebHash volReads
+
+closureFrom :: EbHash -> ReadStmts -> IO (Maybe [(TxHash, ByteString)])
+closureFrom ebHash ReadStmts{rsLookupEbClosure = stmt} =
     useStmt stmt $ do
       dbBindBlob stmt 1 (ebHashBytes ebHash)
       dbStep stmt >>= \case

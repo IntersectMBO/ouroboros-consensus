@@ -855,6 +855,10 @@ mkHandlers
                     offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
                   AcquiredEbTxs point ->
                     offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
+                  -- NITEN voter hand-off patch: the pending notification is for the
+                  -- voting thread only; the peer is offered the closure on the
+                  -- durable AcquiredEbTxs that follows it.
+                  AcquiredEbTxsPending{} -> pure Nothing
                 )
                 <|> (getNextVote <&> \vote -> Just $ MsgLeiosVotes [vote])
 

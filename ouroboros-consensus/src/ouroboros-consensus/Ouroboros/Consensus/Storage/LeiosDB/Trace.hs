@@ -39,6 +39,16 @@ data TraceLeiosDb
       Int
       -- | seconds the writer spent on it
       Double
+  | -- | The checkpointer thread ran a passive checkpoint on a partition.
+    TraceLeiosDbCheckpoint
+      -- | partition file
+      FilePath
+      -- | WAL frames in the log when it ran
+      Int
+      -- | frames it checkpointed (fewer than the log means a reader held a snapshot)
+      Int
+      -- | seconds it took
+      Double
   | -- | A body write's local fills that did not land, so their txs are
     -- fetched instead: the source no longer or not yet holds the bytes, or
     -- the tx cache located them wrongly.

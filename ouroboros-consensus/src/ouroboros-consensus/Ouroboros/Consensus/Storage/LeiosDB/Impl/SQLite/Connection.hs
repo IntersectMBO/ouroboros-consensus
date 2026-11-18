@@ -6,7 +6,8 @@
 -- files, and 'Conn': a reader's (or the writer's) pair of connections with
 -- their prepared statements.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
-  ( -- * Partition files
+  ( PendingClosures
+  , -- * Partition files
     initialiseLeiosDbFiles
   , openRawConnection
   , withReadOnlyConn
@@ -33,6 +34,9 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
+import Data.ByteString (ByteString)
+import qualified Data.Map.Strict as Map
+import Ouroboros.Consensus.Leios.Types (EbHash, TxHash)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -95,11 +99,17 @@ connectionPragmas =
     "pragma busy_timeout = 1000;"
   , "pragma synchronous = normal;"
   , "pragma mmap_size = 268435500;"
-  , -- SQLite's own default, spelled out because it is what keeps the log
-    -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
-    -- no connection is sitting on a stale read snapshot. One that is will
-    -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
-    "pragma wal_autocheckpoint = 1000;"
+  , -- No automatic checkpoints: an auto-checkpoint runs inside the committing
+    -- connection, so on the writer it turns a commit into hundreds of random
+    -- page writes plus two fsyncs, and every job queued behind it -- and the
+    -- 'AcquiredEbTxs' notification the voting thread waits for -- stalls for
+    -- the duration (measured at 1-2 s per checkpoint on an HDD-class disk).
+    -- 'startCheckpointer' runs passive checkpoints from its own connection on
+    -- its own thread instead, so the writer only ever appends WAL frames.
+    -- The bound on the WAL is the checkpointer's cadence plus
+    -- 'journal_size_limit'; see 'dbWithWriteTransaction' for the stale-reader
+    -- caveat, which is unchanged.
+    "pragma wal_autocheckpoint = 0;"
   , -- Sweep-sized sorts otherwise spill to a temp file.
     "pragma temp_store = memory;"
   , -- Without this the WAL keeps whatever high-water mark it ever reached:
@@ -129,6 +139,9 @@ creationPragmas =
   , "pragma journal_mode = WAL;"
   ]
 
+-- | See 'connPending'.
+type PendingClosures = Map.Map EbHash [(TxHash, ByteString)]
+
 data Conn = Conn
   { conVolDb :: !DB.Database
   -- ^ The connection to the volatile partition.
@@ -138,6 +151,12 @@ data Conn = Conn
   -- ^ So the write path can report exhausting SQLite's own busy timeout.
   , connStats :: !(StrictTVar IO LeiosDbStats)
   -- ^ Usage stats for this connection.
+  , connPending :: !(StrictTVar IO PendingClosures)
+  -- ^ Closures the writer has completed and announced ('AcquiredEbTxs') but
+  -- whose transaction has not yet committed. Readers consult this before the
+  -- partitions, so the voting thread never waits for the disk; the writer
+  -- drops an entry once its commit is through (or failed). Bounded by the
+  -- closures in flight in the write queue. Shared by every 'Conn' of a handle.
   , conImmDb :: !DB.Database
   -- ^ The connection to the immutable partition.
   , connImmStmts :: !ImmStmts
@@ -150,10 +169,11 @@ data Conn = Conn
 mkConn ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
+  StrictTVar IO PendingClosures ->
   DB.Database ->
   DB.Database ->
   IO Conn
-mkConn tracer statsVar volDb immDb = do
+mkConn tracer statsVar pendingVar volDb immDb = do
   stmts <- prepareVolStmts volDb
   immStmts <- prepareImmStmts immDb `onException` finalizeVolStmts stmts
   pure
@@ -162,6 +182,7 @@ mkConn tracer statsVar volDb immDb = do
       , connVolStmts = stmts
       , connTracer = tracer
       , connStats = statsVar
+      , connPending = pendingVar
       , conImmDb = immDb
       , connImmStmts = immStmts
       }

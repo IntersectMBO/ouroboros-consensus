@@ -24,6 +24,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Monad (foldM, forM, forM_, unless, when)
+import Control.Monad.Class.MonadThrow (onException)
 import Control.Tracer (traceWith)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -60,7 +61,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance (bumpVolatileStats)
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read
-  ( EbIndex (..)
+  ( sqlLookupVolClosureInTxn
+  , EbIndex (..)
   , boundAt
   , encodeTxBounds
   , lookupEbIndex
@@ -276,7 +278,9 @@ sqlInsertTxs ::
   IO CompletedEbs
 sqlInsertTxs conn missingVar notify point txBytesWithOffsets = do
   missing0 <- readTVarIO missingVar
+  let dropHandoff = atomically $ modifyTVar (connPending conn) $ Map.delete (pointEbHash point)
   mbCompleted <-
+    (`onException` dropHandoff) $
     dbWithWriteTransaction conn $
       lookupEbIndex rsLookupEbIndex (pointEbHash point) >>= \case
         Nothing -> pure Nothing
@@ -307,17 +311,35 @@ sqlInsertTxs conn missingVar notify point txBytesWithOffsets = do
             Just offs -> do
               let offs' = offs `IntSet.difference` IntSet.fromDistinctAscList (map fst accepted)
               if IntSet.null offs'
-                then Just . Left <$> lookupPoints conn point
+                then do
+                  completed <- lookupPoints conn point
+                  -- HAND-OFF: the closure is complete in this connection's view.
+                  -- Publish it from memory and notify the voting thread now,
+                  -- before this transaction commits, so a slow commit (or a
+                  -- checkpoint behind it) can no longer eat the vote window.
+                  -- Readers see the EB complete "early" only through
+                  -- 'connPending', which serves exactly these bytes; the
+                  -- partition itself is unchanged until the commit. The durable
+                  -- copy still lands; if the commit fails the entry is dropped
+                  -- and the voter sees nothing, as today.
+                  mbClosure <- sqlLookupVolClosureInTxn conn (pointEbHash point)
+                  atomically $ do
+                    forM_ mbClosure $ modifyTVar (connPending conn) . Map.insert (pointEbHash point)
+                    modifyTVar missingVar $ Map.delete (pointEbHash point)
+                  forM_ completed $ notify . AcquiredEbTxsPending
+                  pure $ Just $ Left completed
                 else pure $ Just $ Right offs'
-  -- After the commit, so no reader sees the EB complete early. Only the
-  -- writer changes 'Missing', so it has not changed since it was read.
+  -- The commit is through: the partition is the source of truth again, and
+  -- only now may anything durable (the ChainDB's acquired set) learn of the
+  -- closure. Only the writer changes 'Missing', so it has not changed since
+  -- it was read.
+  dropHandoff
   case mbCompleted of
     Nothing -> pure []
     Just (Right still) -> do
       atomically $ modifyTVar missingVar $ Map.insert (pointEbHash point) still
       pure []
     Just (Left completed) -> do
-      atomically $ modifyTVar missingVar $ Map.delete (pointEbHash point)
       forM_ completed $ notify . AcquiredEbTxs
       pure completed
  where

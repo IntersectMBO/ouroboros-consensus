@@ -190,6 +190,10 @@ leiosAcquiredEbsRunner CDB{..} = do
   forever $
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
+      -- Pre-commit: for the voter only. The acquired set gates block adoption
+      -- and is rebuilt from disk at startup, so it must not learn of a closure
+      -- before it is durable.
+      AcquiredEbTxsPending{} -> pure ()
       AcquiredEbTxs point -> do
         mNovel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs

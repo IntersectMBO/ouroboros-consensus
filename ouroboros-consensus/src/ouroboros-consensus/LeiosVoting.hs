@@ -289,7 +289,11 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
       let takeEbNotification =
             readTChan chan >>= \case
               AcquiredEb{} -> pure Nothing
-              AcquiredEbTxs point -> pure (Just point)
+              -- The closure is readable from memory now; the commit may still
+              -- be in flight, and a vote needs validity, not durability.
+              AcquiredEbTxsPending point -> pure (Just point)
+              -- Always preceded by the pending notification for the same point.
+              AcquiredEbTxs{} -> pure Nothing
 
       VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
         newVoteTimers tracer lcfg chainDB systemTime

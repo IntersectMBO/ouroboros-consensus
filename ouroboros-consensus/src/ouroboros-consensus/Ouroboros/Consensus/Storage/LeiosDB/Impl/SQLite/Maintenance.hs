@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
     -- * Stats
   , initialStats
   , startVolatileStatsSampler
+  , startCheckpointer
   , bumpVolatileStats
   , bumpVolatileStatsVar
   , bumpImmutableStats
@@ -59,6 +60,7 @@ import Data.Int (Int64)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
+import GHC.Clock (getMonotonicTime)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Leios.Types
   ( EbHash
@@ -341,6 +343,50 @@ initialStats volPath immPath = do
  where
   countEbs path =
     fromIntegral <$> withReadOnlyConn path (\db -> queryInt64 db "SELECT COUNT(*) FROM ebs")
+
+-- * Checkpointing
+
+-- | Fork a thread that runs a passive WAL checkpoint on each partition every
+-- 'checkpointEveryMicros', on its own read-write connections. Passive
+-- checkpoints never block the writer or readers; they checkpoint as many
+-- frames as no open read snapshot pins, and 'journal_size_limit' truncates the
+-- log once it is fully reset. The writer's own connection has
+-- @wal_autocheckpoint = 0@ ('connectionPragmas'), so this thread is the only
+-- place the volatile partition's random page writes and fsyncs happen -- off
+-- the commit path and off the 'AcquiredEbTxs' notification path.
+startCheckpointer ::
+  ResourceRegistry IO ->
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  IO (Thread IO ())
+startCheckpointer registry tracer volPath immPath =
+  forkLinkedThread registry "leiosdb-checkpointer" $
+    bracket (openRawConnection volPath) closeChecked $ \volDb ->
+      bracket (openRawConnection immPath) closeChecked $ \immDb ->
+        forever $ do
+          threadDelay checkpointEveryMicros
+          checkpoint volDb volPath
+          checkpoint immDb immPath
+ where
+  -- Two seconds: a WAL frame is one 4 KiB page, so this keeps the volatile
+  -- log to a few MB at today's ingest without ever making a commit wait.
+  checkpointEveryMicros = 2000000
+
+  checkpoint db path = do
+    t0 <- getMonotonicTime
+    -- (busy, frames in the log, frames checkpointed)
+    (logFrames, ckptFrames) <- queryCheckpoint db
+    t1 <- getMonotonicTime
+    traceWith tracer $
+      TraceLeiosDbCheckpoint path logFrames ckptFrames (t1 - t0)
+
+  -- @pragma wal_checkpoint(PASSIVE)@ returns one row: busy, log, checkpointed.
+  queryCheckpoint db =
+    withStmt db "pragma wal_checkpoint(PASSIVE);" $ \stmt ->
+      dbStep stmt >>= \case
+        DB.Row -> (,) <$> (fromIntegral <$> DB.columnInt64 stmt 1) <*> (fromIntegral <$> DB.columnInt64 stmt 2)
+        DB.Done -> pure (0, 0)
 
 -- * Stats sampling
 

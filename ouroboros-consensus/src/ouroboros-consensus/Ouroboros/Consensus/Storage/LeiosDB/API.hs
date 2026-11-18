@@ -185,6 +185,14 @@ data LeiosEbNotification
     AcquiredEbTxs
       -- | the EB's point
       LeiosPoint
+  | -- | Every tx of the EB is held in memory and readable through
+    -- 'lookupEbClosure', but the transaction that makes them durable has not
+    -- committed yet. Emitted strictly before the 'AcquiredEbTxs' for the same
+    -- point. ONLY the voting thread may act on this: anything that adopts a
+    -- block, or that must survive a restart, waits for 'AcquiredEbTxs'.
+    AcquiredEbTxsPending
+      -- | the EB's point
+      LeiosPoint
 
 -- | Await every promise, in order.
 awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()

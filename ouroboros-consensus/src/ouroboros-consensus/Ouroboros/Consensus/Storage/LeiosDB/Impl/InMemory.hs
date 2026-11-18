@@ -267,6 +267,7 @@ imInsertEbPoint stateVar notificationChan point ebBytesSize = atomically $ do
             then do
               modifyTVar stateVar $ \s ->
                 s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+              writeTChan notificationChan $ AcquiredEbTxsPending point
               writeTChan notificationChan $ AcquiredEbTxs point
               pure [point]
             else pure []
@@ -372,6 +373,7 @@ imInsertEbBody stateVar notificationChan point eb fills = do
         then do
           modifyTVar stateVar $ \s ->
             s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+          writeTChan notificationChan $ AcquiredEbTxsPending point
           writeTChan notificationChan $ AcquiredEbTxs point
           pure [point]
         else pure []
@@ -440,7 +442,8 @@ imInsertTxs stateVar notificationChan point offBytes = atomically $ do
       }
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  forM_ completed $ \p ->
+  forM_ completed $ \p -> do
+    writeTChan notificationChan $ AcquiredEbTxsPending p
     writeTChan notificationChan $ AcquiredEbTxs p
   pure completed
 

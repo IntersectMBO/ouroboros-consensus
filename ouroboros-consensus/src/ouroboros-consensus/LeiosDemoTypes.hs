@@ -1864,6 +1864,14 @@ jsonLeiosDb = \case
       , "fills" .= wanted
       , "unfilled" .= unfilled
       ]
+  TraceLeiosDbCheckpoint path logFrames ckptFrames seconds ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCheckpoint"
+      , "partition" .= path
+      , "logFrames" .= logFrames
+      , "checkpointedFrames" .= ckptFrames
+      , "durationMillis" .= (seconds * 1000)
+      ]
   TraceLeiosDbWriteJobDone job bytes seconds ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbWriteJobDone"
@@ -2233,6 +2241,7 @@ data LeiosKernelNS
   | LKNSDbCopyError
   | LKNSDbWriteAbandoned
   | LKNSDbWriteJobDone
+  | LKNSDbCheckpoint
   | LKNSDbFillsRejected
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
@@ -2269,6 +2278,7 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
   TraceLeiosDb TraceLeiosDbWriteAbandoned{} -> LKNSDbWriteAbandoned
   TraceLeiosDb TraceLeiosDbWriteJobDone{} -> LKNSDbWriteJobDone
+  TraceLeiosDb TraceLeiosDbCheckpoint{} -> LKNSDbCheckpoint
   TraceLeiosDb TraceLeiosDbFillsRejected{} -> LKNSDbFillsRejected
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
@@ -2369,6 +2379,7 @@ leiosKernelNSInfo = \case
       LSWarning
       [("leiosDbWritesAbandoned", "LeiosDb: writes abandoned before being enqueued")]
   LKNSDbWriteJobDone -> LeiosNSInfo ["Db", "WriteJobDone"] LSDebug []
+  LKNSDbCheckpoint -> LeiosNSInfo ["Db", "Checkpoint"] LSDebug []
   LKNSDbFillsRejected ->
     LeiosNSInfo
       ["Db", "FillsRejected"]
