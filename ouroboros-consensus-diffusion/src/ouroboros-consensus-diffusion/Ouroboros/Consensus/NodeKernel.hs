@@ -93,6 +93,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (defaultLeiosFetchSt
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , LeiosPeerLifetimeId (..)
+  , leiosFetchAnnouncementFocuser
   , leiosFetchDecisionLoop
   , newLeiosFetchKernel
   , pruneLeiosFetchToImmTip
@@ -488,6 +489,11 @@ initNodeKernel
           leiosVoteState
           leiosNotifyClientStates
           leiosFetchKernel
+    -- Its death takes the node down, as 'leiosFetchAnnouncementFocuser'
+    -- requires.
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
+        leiosFetchAnnouncementFocuser leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog

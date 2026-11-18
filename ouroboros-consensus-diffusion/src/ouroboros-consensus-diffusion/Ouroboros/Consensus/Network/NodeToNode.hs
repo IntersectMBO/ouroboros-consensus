@@ -97,7 +97,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchPeer
   , LeiosPeerLifetimeId
-  , onNewLeiosAnnouncement
+  , enqueueLeiosAnnouncement
   , recordLeiosOffer
   , withLeiosFetchPeer
   )
@@ -518,7 +518,7 @@ mkHandlers
             systemTime
             chainSyncFutureCheck
             maxClockSkew
-            (onNewLeiosAnnouncement getLeiosFetchKernel)
+            (enqueueLeiosAnnouncement getLeiosFetchKernel)
             (recordLeiosOffer getLeiosFetchKernel peerVars)
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog

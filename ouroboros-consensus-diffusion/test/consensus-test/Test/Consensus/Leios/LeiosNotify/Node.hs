@@ -391,7 +391,8 @@ runNodeClientAgainst node next target = do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer node
+          , -- The node requests what the peer offers.
+            epLeiosFetchServer = silentLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection node (PeerAddr 1) envPeer $ \conn -> do

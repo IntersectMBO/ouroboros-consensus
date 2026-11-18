@@ -73,6 +73,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
 import Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState (ageLimits)
+  , WhetherEquivocationProof (..)
   , WhetherNewAnnouncement (..)
   , onValidAnnouncement
   )
@@ -99,7 +100,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , mkAnnouncingHeader
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, MonadMask (..), atomically)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, STM, atomically)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -297,7 +298,8 @@ instance
 -- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
 -- An accepted announcement goes on to the node's 'AnnounceState', and, if it
--- is new there, to the given action. The two happen uninterruptibly.
+-- is new there and proves no equivocation, to the given action, in the same
+-- transaction.
 onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
@@ -308,15 +310,15 @@ onLeiosNotifyAnnouncement ::
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   AnnounceState m blk ->
-  -- | what to do with an announcement new to the node; it runs
-  -- uninterruptibly, so it must not block for long
-  (ValidAnnouncement blk -> m ()) ->
+  -- | what to do with an announcement new to the node that proves no
+  -- equivocation, within the transaction that accepts it
+  (ValidAnnouncement blk -> STM m ()) ->
   -- | the immutable tip's ledger state
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
   ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
-onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState onNew immLedger st hdr = do
+onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState onNewFirst immLedger st hdr = do
   anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
   withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
     announcements <-
@@ -325,12 +327,11 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg announceState onNew immLedg
     -- 'StaleOCIN' announcement counts against the peer.
     valid <-
       announcementValidity (ageLimits announceState) systemTime futureCheck cfg immLedger anc
-    -- Stay alive until a new announcement is both accepted and acted on: see
-    -- 'onValidAnnouncement'.
     lift $
-      uninterruptibleMask_ $
-        atomically (onValidAnnouncement announceState valid) >>= \case
-          NewAnnouncement -> onNew valid
+      atomically $
+        onValidAnnouncement announceState valid >>= \case
+          NewAnnouncement NotEquivocationProof -> onNewFirst valid
+          NewAnnouncement EquivocationProof -> pure ()
           NotNewAnnouncement -> pure ()
     pure
       st
