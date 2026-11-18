@@ -15,10 +15,12 @@ module Ouroboros.Consensus.Leios.AnnounceState
   , newAnnounceState
   , onValidAnnouncement
   , WhetherNewAnnouncement (..)
+  , WhetherEquivocationProof (..)
   , pruneAnnounceState
   ) where
 
 import Control.Monad (when)
+import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
@@ -71,7 +73,11 @@ newAnnounceState limits notifyLog =
     <*> pure limits
 
 -- | Whether the node accepted an announcement it had not accepted before.
-data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
+data WhetherNewAnnouncement = NewAnnouncement !WhetherEquivocationProof | NotNewAnnouncement
+
+-- | Whether a new announcement is the second of its election, which proves
+-- that the election's electee equivocated.
+data WhetherEquivocationProof = EquivocationProof | NotEquivocationProof
 
 -- | Accept a valid announcement, and relay it if it is new and fresh enough,
 -- until 'maxAnnouncementAgeSend' after its election slot began.
@@ -80,11 +86,10 @@ data WhetherNewAnnouncement = NewAnnouncement | NotNewAnnouncement
 -- one of an election already pruned, while it was validated, is not new.
 --
 -- Once this accepts an announcement, no copy of it is new again, from any
--- peer. So a caller must act on a new announcement uninterruptibly, together
--- with this: if its thread died in between, as when its peer disconnects, the
--- announcement would stay accepted but never be acted on, and nothing would
--- act on it later. What the caller does there should be brief, since it delays
--- whatever is ending the thread.
+-- peer. So a caller that acts on a new announcement must commit to doing so
+-- within this same transaction: if it acted afterwards, and its thread died in
+-- between, as when its peer disconnects, the announcement would stay accepted
+-- but never be acted on, and nothing would act on it later.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
@@ -105,7 +110,9 @@ onValidAnnouncement st valid = do
               relayLog
               (NotifyAnnouncement announcingHeader)
               (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
-          pure NewAnnouncement
+          pure $ NewAnnouncement $ case Map.lookup electionId (Announcements.live seen) of
+            Nothing -> NotEquivocationProof
+            Just _first -> EquivocationProof
  where
   electionId = ancElectionId announcingHeader
 

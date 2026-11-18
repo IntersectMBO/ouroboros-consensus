@@ -6,7 +6,8 @@
 
 -- | The node's LeiosFetch state, which all its LeiosFetch clients share, and
 -- the threads that maintain it: the decision loop, which assigns the peers'
--- offers to requests, and the pruner.
+-- offers to requests, the pruner, and the worker that acts on new
+-- announcements.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
@@ -14,7 +15,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , newLeiosFetchKernel
   , withLeiosFetchPeer
   , recordLeiosOffer
-  , onNewLeiosAnnouncement
+  , enqueueLeiosAnnouncement
+  , leiosFetchAnnouncementFocuser
   , leiosFetchDecisionLoop
   , leiosFetchPruner
   ) where
@@ -83,8 +85,10 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
   , IOLike
+  , STM
   , StrictMVar
   , StrictTVar
+  , TQueue
   , atomically
   , bracket
   , diffTime
@@ -92,6 +96,8 @@ import Ouroboros.Consensus.Util.IOLike
   , modifyMVar
   , modifyMVar_
   , modifyTVar
+  , newTQueueIO
+  , readTQueue
   , readTVar
   , retry
   , takeMVar
@@ -100,6 +106,7 @@ import Ouroboros.Consensus.Util.IOLike
   , uncheckedNewEmptyMVar
   , uncheckedNewMVar
   , uncheckedNewTVarM
+  , writeTQueue
   , writeTVar
   )
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer)
@@ -118,6 +125,9 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
   -- to. Nothing older is recorded afterwards, so that an offer that arrives
   -- after the pruning cannot undo it.
+  , lfkAnnouncements :: !(TQueue m (ValidAnnouncement blk))
+  -- ^ The announcements 'leiosFetchAnnouncementFocuser' has yet to act on; see
+  -- 'enqueueLeiosAnnouncement'.
   }
 
 -- | Identifies one registration of an upstream peer with the decision loop,
@@ -176,12 +186,14 @@ newLeiosFetchKernel chainDB leiosDb prng mkContext = do
   lfkPeers <- uncheckedNewTVarM Map.empty
   lfkNextLifetimeId <- uncheckedNewTVarM 0
   lfkPrunedSlot <- uncheckedNewTVarM immTipSlot
+  lfkAnnouncements <- newTQueueIO
   pure
     MkLeiosFetchKernel
       { lfkContext = mkContext outstanding ready
       , lfkPeers
       , lfkNextLifetimeId
       , lfkPrunedSlot
+      , lfkAnnouncements
       }
 
 -- | Run the action with this peer's LeiosFetch state and the
@@ -253,6 +265,34 @@ recordLeiosOffer kernel MkLeiosFetchPeer{lfpOfferings} point offer = do
     unless (pointSlotNo point < prunedSlot) $
       modifyTVar lfpOfferings (Map.insertWith (<>) point offer)
   void $ tryPutMVar (lfcReady (lfkContext kernel)) ()
+
+-- | Commit, within the transaction in which
+-- 'Ouroboros.Consensus.Leios.AnnounceState.onValidAnnouncement' accepts this
+-- announcement as new and as proving no equivocation, to
+-- 'leiosFetchAnnouncementFocuser' acting on it.
+enqueueLeiosAnnouncement ::
+  IOLike m =>
+  LeiosFetchKernel m peer blk ->
+  ValidAnnouncement blk ->
+  STM m ()
+enqueueLeiosAnnouncement kernel = writeTQueue (lfkAnnouncements kernel)
+
+-- | Act on each announcement 'enqueueLeiosAnnouncement' commits to, in turn.
+--
+-- This thread must be carefully arranged to die if and only if the node is
+-- shutting down. Then the transaction that accepts an announcement need only
+-- include an enqueue, which this thread will definitely eventually handle.
+--
+-- The queue doesn't need an explicit bound, because it's only written to
+-- after dedup and age checks, and only for an election's first announcement,
+-- so it can't have more entries than there are volatile elections (at most
+-- ~10000).
+leiosFetchAnnouncementFocuser ::
+  IOLike m =>
+  LeiosFetchKernel m peer blk ->
+  m Void
+leiosFetchAnnouncementFocuser kernel =
+  forever $ atomically (readTQueue (lfkAnnouncements kernel)) >>= onNewLeiosAnnouncement kernel
 
 -- | List the endorser block a new announcement names as one to fetch, if it
 -- takes its election's focus.
