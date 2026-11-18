@@ -533,43 +533,25 @@ objectDiffusionInbound
                 (pendingObjects st)
                 collectedObjects
 
+        (_successfullyAdded, needRetrying) <- opwAddObjects $ catMaybes $ toList $ pendingObjects'
+
+        let
             -- We then find the longest prefix of 'outstandingFifo' for which we have
             -- all the corresponding IDs in 'pendingObjects'.
             -- We remove this prefix from 'outstandingFifo'.
             (objectIdsToAck, outstandingFifo') =
               Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
 
-            -- These are the objects we need to submit to the object pool
-            --
-            -- Note that objects are submitted in the same order as the order of
-            -- announcement, for consistency with TX-Submission, and for
-            -- simplicity of implementation/acknowledgment. However this is not
-            -- a strict requirement of the protocol, so we could consider
-            -- changing this in the future if we wanted to (e.g. for
-            -- optimizations reasons).
-            objectsToAck =
-              catMaybes $
-                (((Map.!) pendingObjects') <$> toList objectIdsToAck)
-
-        (_successfullyAdded, needRetrying) <- opwAddObjects objectsToAck
-
-        -- We also remove from 'pendingObjects' the longest prefix of
-        -- 'outstandingFifo' for which we have all the corresponding IDs in
-        -- 'pendingObjects'.
-        --
-        -- Note that unlike in TX-Submission, we made sure the outstanding
-        -- FIFO couldn't have duplicate IDs, so we don't have to worry about
-        -- re-adding the duplicate IDs to 'pendingObjects' for future
-        -- acknowledgment.
-        let pendingObjects'' =
-              Foldable.foldl'
-                (flip Map.delete)
-                pendingObjects'
-                (Seq.filter (`Set.notMember` needRetrying) objectIdsToAck)
+            outstandingFifoSet = Set.fromList (toList outstandingFifo')
+            processPendingObject objectId o
+              | objectId `Set.member` needRetrying = Just o
+              | objectId `Set.notMember` outstandingFifoSet = Nothing
+              | otherwise = Just Nothing
+            pendingObjects'' = Map.mapMaybeWithKey processPendingObject pendingObjects'
 
         traceWith tracer $
           TraceObjectDiffusionInboundAddedObjects
-            (NumObjectsProcessed (fromIntegral $ length objectsToAck))
+            (NumObjectsProcessed (fromIntegral $ length objectIdsToAck))
 
         !st' <-
           setOutstandingFifoSuffix
