@@ -403,6 +403,8 @@ The core contributors to consensus codebase are:
 
 -   [Drazen Popovic](https://github.com/bladyjoker)
 
+-   [Sebastian Nagel](https://github.com/ch1bo)
+
 # Code of conduct
 
 See [Cardano engineering
