@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -49,6 +50,10 @@ module Test.Consensus.Leios.TestBlock
 
     -- * Ledger
   , LedgerState (..)
+  , heavyEbTx
+  , inapplicableEbTx
+  , invalidEbTx
+  , invalidEbTxError
   , LeiosTestBlockError (..)
   , LeiosTestLedgerConfig (..)
   , leiosTestInitExtLedger
@@ -63,9 +68,16 @@ module Test.Consensus.Leios.TestBlock
   , singleNodeLeiosTestConfig
   ) where
 
-import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Cardano.Binary
+  ( DecoderError (DecoderErrorCustom)
+  , decodeMaybe
+  , encodeMaybe
+  , enforceSize
+  , fromCBOR
+  , toCBOR
+  )
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.Leios (LeiosCert)
+import Cardano.Crypto.Leios (LeiosCert, LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
@@ -85,6 +97,7 @@ import Control.Monad (guard, replicateM, replicateM_, when)
 import Control.Monad.Except (Except, throwError)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
@@ -127,11 +140,14 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.ClosureValidation (validateClosureInMempool)
 import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
+  , ProtVerParity (EvenProtVer)
   , decodeLeiosPoint
   , encodeLeiosPoint
   )
@@ -381,15 +397,16 @@ data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
 instance ConsensusProtocol LeiosTestProtocol where
   type ChainDepState LeiosTestProtocol = LeiosTestChainDepState
   type IsLeader LeiosTestProtocol = ()
-  type CanBeLeader LeiosTestProtocol = ()
+  type CanBeLeader LeiosTestProtocol = [LeiosSigningKey]
   type LedgerView LeiosTestProtocol = LeiosLedgerView
   type ValidationErr LeiosTestProtocol = LeiosTestInvalidHeader
   type ValidateView LeiosTestProtocol = Header LeiosTestBlock
 
   protocolSecurityParam = ltpcSecurityParam
 
-  -- Every node leads in every slot; the test itself decides what gets minted.
-  checkIsLeader _ _ _ _ = Just ()
+  -- A node with BLS keys only votes; one without leads in every slot. Either
+  -- way, the test itself decides what gets minted.
+  checkIsLeader _ keys _ _ = if null keys then Just () else Nothing
 
   tickChainDepState _ _ _ = TickedLeiosTestChainDepState
 
@@ -416,6 +433,7 @@ instance LeiosProtocol LeiosTestProtocol where
   getContainsLeiosCert _proxy hdr = case lthLeiosCert hdr of
     NoLeiosTestCert -> False
     HasLeiosTestCert{} -> True
+  leiosBLSKeys _proxy = id
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of
@@ -849,13 +867,14 @@ deriving via
 {-------------------------------------------------------------------------------
   Mempool
 
-  'RunNode' demands a mempool. This one rejects every transaction, so a forged
-  block holds none.
+  'RunNode' demands a mempool. A transaction is the bytes an endorser block
+  references. Each applies, bar 'inapplicableEbTx', and changes nothing, but no
+  test submits one to the mempool, so a forged block holds none.
 -------------------------------------------------------------------------------}
 
-data instance GenTx LeiosTestBlock = LeiosTestGenTx
+newtype instance GenTx LeiosTestBlock = LeiosTestGenTx BS.ByteString
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialise, NoThunks)
+  deriving newtype (Serialise, NoThunks)
 
 newtype instance Validated (GenTx LeiosTestBlock) = ValidatedLeiosTestGenTx
   { forgetValidatedLeiosTestGenTx :: GenTx LeiosTestBlock
@@ -878,19 +897,54 @@ instance ShowProxy (TxId (GenTx LeiosTestBlock))
 instance ShowProxy LeiosTestTxRejected
 
 instance HasTxId (GenTx LeiosTestBlock) where
-  txId LeiosTestGenTx = LeiosTestTxId 0
+  txId _ = LeiosTestTxId 0
 
 instance ConvertRawTxId (GenTx LeiosTestBlock) where
   toRawTxIdHash = SBS.toShort . BL.toStrict . serialise
 
+-- | The bytes of the one endorsed transaction that does not decode.
+invalidEbTx :: BS.ByteString
+invalidEbTx = "invalid"
+
+-- | Why 'invalidEbTx' does not decode.
+invalidEbTxError :: DecoderError
+invalidEbTxError = DecoderErrorCustom "endorsed transaction" "invalid"
+
+-- | The bytes of the one endorsed transaction that does not apply.
+inapplicableEbTx :: BS.ByteString
+inapplicableEbTx = "inapplicable"
+
+-- | The bytes of the one endorsed transaction that takes all of an endorser
+-- block's capacity, whatever its size.
+heavyEbTx :: BS.ByteString
+heavyEbTx = "heavy"
+
 instance LedgerSupportsMempool LeiosTestBlock where
-  applyTx _cfg _wti _slot _tx _st = throwError LeiosTestTxRejected
-  reapplyTx _cfg _slot _tx _st = throwError LeiosTestTxRejected
+  applyTx _cfg _wti _slot tx st
+    | tx == LeiosTestGenTx inapplicableEbTx = throwError LeiosTestTxRejected
+    | otherwise = pure (st `withLedgerTables` emptyLedgerTables, ValidatedLeiosTestGenTx tx)
+  reapplyTx _cfg _slot vtx st
+    | forgetValidatedLeiosTestGenTx vtx == LeiosTestGenTx inapplicableEbTx =
+        throwError LeiosTestTxRejected
+    | otherwise = pure st
   txForgetValidated = forgetValidatedLeiosTestGenTx
   getTransactionKeySets _tx = emptyLedgerTables
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
   txLeiosBytes = nothingTxLeiosBytes
   tickedLedgerProtVer = nothingTickedLedgerProtVer
+
+-- | What a transaction takes of an endorser block: its bytes.
+newtype LeiosTestEbMeasure = LeiosTestEbMeasure (IgnoringOverflow ByteSize32)
+  deriving stock (Eq, Show)
+  deriving newtype (NoThunks, Measure.Measure)
+
+instance TxEbMeasureByteSize LeiosTestEbMeasure where
+  txEbMeasureByteSize (LeiosTestEbMeasure (IgnoringOverflow bytes)) = bytes
+  txEbMeasureTxsByteSize (LeiosTestEbMeasure (IgnoringOverflow bytes)) = bytes
+
+-- | What an endorser block may hold.
+leiosTestEbCapacity :: ByteSize32
+leiosTestEbCapacity = ByteSize32 1000
 
 instance TxLimits LeiosTestBlock where
   type TxMeasurePhase1 LeiosTestBlock = IgnoringOverflow ByteSize32
@@ -898,12 +952,14 @@ instance TxLimits LeiosTestBlock where
   txWireSize = const 0
   blockCapacityTxMeasure _cfg _st =
     TxMeasure (IgnoringOverflow (ByteSize32 (100 * 1024))) TrivialTxMeasurePhase2
-  txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasurePhase1 _cfg _st (LeiosTestGenTx bytes)
+    | bytes == heavyEbTx = pure $ IgnoringOverflow leiosTestEbCapacity
+    | otherwise = pure $ IgnoringOverflow $ ByteSize32 $ fromIntegral $ BS.length bytes
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
-  type TxEbMeasure LeiosTestBlock = TxMeasure LeiosTestBlock
-  txEbMeasure _ = id
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  mempoolEbReservation _ = id
+  type TxEbMeasure LeiosTestBlock = LeiosTestEbMeasure
+  txEbMeasure _ (TxMeasure bytes TrivialTxMeasurePhase2) = LeiosTestEbMeasure bytes
+  ebCapacityTxMeasure _cfg _st = LeiosTestEbMeasure (IgnoringOverflow leiosTestEbCapacity)
+  mempoolEbReservation _ (LeiosTestEbMeasure bytes) = TxMeasure bytes TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Queries
@@ -951,6 +1007,7 @@ instance NodeInitStorage LeiosTestBlock where
 instance BlockSupportsMetrics LeiosTestBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+-- | Every endorsed transaction decodes, bar 'invalidEbTx'.
 instance BlockSupportsLeios LeiosTestBlock where
   blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
     NoLeiosTestCert -> Nothing
@@ -961,6 +1018,13 @@ instance BlockSupportsLeios LeiosTestBlock where
   -- The ledger has no transactions, so an endorser block applies nothing,
   -- whatever transactions it references.
   applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
+
+  validateLeiosClosure = validateClosureInMempool decodeTx (const EvenProtVer) assumeValidated
+   where
+    decodeTx (MkLeiosTx bytes)
+      | bytes == invalidEbTx = Left invalidEbTxError
+      | otherwise = Right (LeiosTestGenTx bytes)
+    assumeValidated _cfg _slot _st = Just . ValidatedLeiosTestGenTx
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

@@ -21,6 +21,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
+import Ouroboros.Consensus.HardFork.Combinator.Mempool ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
