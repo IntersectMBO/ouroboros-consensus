@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Shelley.Node.Common
   , shelleyBlockIssuerVKey
   ) where
 
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -55,6 +56,8 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 
 data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
   { shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c
+  , shelleyLeaderCredentialsBLSKey :: Maybe LeiosSigningKey
+  -- ^ The BLS key to vote in Leios with, if any.
   , shelleyLeaderCredentialsLabel :: Text
   -- ^ Identifier for this set of credentials.
   --
