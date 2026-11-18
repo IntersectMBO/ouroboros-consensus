@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 
 -- | What the node's LeiosFetch clients request, decided for all of them at
@@ -8,7 +9,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
     LeiosFetchRequest (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
-  , LeiosEbByteSizeBounds (..)
 
     -- * Offers
   , OfferedHalves (..)
@@ -78,8 +78,9 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
   , EndorserBlockHash
-  , LeiosEbByteSizeBounds (..)
+  , LeiosEbByteSizes
   , LeiosPoint (..)
+  , SizeRole (..)
   , TxHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
@@ -101,7 +102,7 @@ data LeiosBlockRequest = MkLeiosBlockRequest
   , lbrOfferedSize :: !BytesSize
   -- ^ The size the peer offered this endorser block at; not sent, but used by
   -- the reply handler.
-  , lbrEbBounds :: !LeiosEbByteSizeBounds
+  , lbrEbBounds :: !(LeiosEbByteSizes SizeLimit)
   -- ^ The ledger's bounds on this block; not sent, but used by the reply
   -- handler.
   }
@@ -174,7 +175,7 @@ instance Semigroup OfferedHalves where
 
 -- | What one peer has offered for one endorser block point.
 data PeerOffer = MkPeerOffer
-  { poEbBounds :: !(StrictMaybe LeiosEbByteSizeBounds)
+  { poEbBounds :: !(StrictMaybe (LeiosEbByteSizes SizeLimit))
   -- ^ The ledger's bounds on this offered EB. It's 'SNothing' if
   -- the offer arrived via LeiosNotify, and 'SJust' if it arrived via ChainSync.
   --
@@ -747,7 +748,7 @@ leiosFetchLogicIteration ::
   -- cannot fail: the announcement backing such an offer was accepted by
   -- forecasting from the immutable tip to that same slot. See
   -- 'poEbBounds'.
-  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)) ->
   -- | The current slot, and how many slots before it a point is still worth
   -- voting on, as of the ledger there (see 'fetchPriorityTiers'); or 'Nothing'
   -- when either is not yet known (i.e. we are syncing), in which case we fetch
@@ -852,7 +853,7 @@ fetchPriorityTiers mbHorizon offers =
 assignPeer ::
   Ord peer =>
   LeiosFetchStaticEnv ->
-  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)) ->
   Maybe (SlotNo, Word64) ->
   IsBigLedgerPeer ->
   peer ->
@@ -950,13 +951,13 @@ data WhetherPeerSaturated = PeerSaturated | PeerNotSaturated
 assignBody ::
   Ord peer =>
   -- | The ledger's bounds on an EB, forecast for a slot. See 'poEbBounds'.
-  (SlotNo -> Either OutsideForecastRange LeiosEbByteSizeBounds) ->
+  (SlotNo -> Either OutsideForecastRange (LeiosEbByteSizes SizeLimit)) ->
   -- | The peer's remaining budget ('peerBudget')
   Int ->
   peer ->
   LeiosPoint ->
   -- | The offer's own bounds, if any
-  StrictMaybe LeiosEbByteSizeBounds ->
+  StrictMaybe (LeiosEbByteSizes SizeLimit) ->
   -- | The size the peer offered the body at
   BytesSize ->
   (LeiosOutstanding peer, Seq LeiosFetchRequest) ->

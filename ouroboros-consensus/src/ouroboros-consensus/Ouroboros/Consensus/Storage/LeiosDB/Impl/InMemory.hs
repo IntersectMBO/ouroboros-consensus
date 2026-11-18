@@ -280,24 +280,23 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   Map TxOffset ByteString ->
-  m (Set TxOffset)
+  m ()
 imInsertTxs stateVar point offBytes = atomically $ do
   s <- readTVar stateVar
   -- Mirrors the SQLite backend's in-place fill: a tx only lands at an offset
   -- the body declared at the point, at the declared size.
   case guard (not (isPromoted s point)) *> Map.lookup point (imVolatile s) of
-    Nothing -> pure Set.empty
+    Nothing -> pure ()
     Just row -> do
       let inBody = Map.intersectionWith (,) offBytes (rowTxSizes row)
           sized (bytes, size) = fromIntegral (BS.length bytes) == size
-          (accepted, missized) = Map.partition sized inBody
+          accepted = Map.filter sized inBody
       unless (Map.null accepted) $
         writeTVar
           stateVar
           s
             { imVolatile = Map.insert point row{rowTxs = Map.union (fst <$> accepted) (rowTxs row)} (imVolatile s)
             }
-      pure (Map.keysSet missized)
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete where its reads go

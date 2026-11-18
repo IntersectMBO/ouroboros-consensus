@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (forM, forM_, unless, when)
+import Control.Monad (forM, forM_, unless, void, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
@@ -158,18 +158,17 @@ sqlInsertEbBody conn point eb fills = do
 --
 -- PREREQ: each tx's bytes hash to the tx hash the body lists at its offset.
 -- So a tx written twice is the same bytes, and overwriting it is harmless.
---
--- Returns the offsets of the txs dropped for their size.
 sqlInsertTxs ::
   Conn ->
   -- | The EB the txs belong to
   LeiosPoint ->
   -- | Tx bytes by offset into the EB's body
   Map TxOffset ByteString ->
-  IO (Set TxOffset)
+  IO ()
 sqlInsertTxs conn point txBytesByOffset =
-  dbWithWriteTransaction conn $
-    writeTxBytes conn point txBytesByOffset
+  void $
+    dbWithWriteTransaction conn $
+      writeTxBytes conn point txBytesByOffset
 
 -- | Write txs into the closure of the EB at the point, and mark them written,
 -- within the caller's transaction, and return the offsets of those dropped for

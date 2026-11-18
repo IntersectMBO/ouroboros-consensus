@@ -1,7 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -62,7 +64,10 @@ module Ouroboros.Consensus.Leios.Types
   , decodeSerialisedEndorserBlock
   , sizeEndorserBlockReference
   , encodeEndorserBlockSize
-  , LeiosEbByteSizeBounds (..)
+  , LeiosEbByteSizes (..)
+  , SizeRole (..)
+  , leiosEbByteSizes
+  , idLeiosEbByteSizesLimit
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -127,7 +132,7 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
@@ -492,21 +497,44 @@ maxTxsPerEndorserBlock =
 encodeEndorserBlockSize :: EndorserBlock -> BytesSize
 encodeEndorserBlockSize (MkEndorserBlock references) = fromIntegral $ originalBytesSize references
 
--- | The ledger's bounds on the byte sizes of an endorser block, as of its
--- slot: what LeiosFetch holds the block's body and transactions to.
+-- | The byte sizes of an endorser block that the ledger bounds: its body's,
+-- and the total of the transactions it references. The index says whether
+-- these are the ledger's limits, as of a slot, which LeiosFetch holds an
+-- endorser block to, or an endorser block's actual sizes.
 --
 -- The ledger bounds an endorser block in other ways too, such as the most
 -- execution units its transactions may take (@maxEndorserBlockExUnits@). Those
 -- are not LeiosFetch's to enforce: they concern what the transactions do, which
 -- is judged once they are applied, after LeiosFetch has fetched them.
-data LeiosEbByteSizeBounds = MkLeiosEbByteSizeBounds
-  { lebMaxBodySize :: !BytesSize
-  -- ^ the largest body the ledger admits
-  , lebMaxTxsSize :: !BytesSize
-  -- ^ the largest total size of the transactions a body may reference
+data LeiosEbByteSizes (r :: SizeRole) = MkLeiosEbByteSizes
+  { lebBodySize :: !BytesSize
+  -- ^ the size of the body, as 'encodeEndorserBlock' encodes it
+  , lebTxsSize :: !Word64
+  -- ^ the total size of the transactions the body references. We use Word64 so
+  -- we can always safely compute this, /even for invalid EBs/. Our CBOR
+  -- decoders will reject any EB body that is enough bytes to include enough
+  -- Word32 sizes to overflow Word64.
   }
   deriving stock (Eq, Show, Bounded, Generic)
   deriving anyclass NoThunks
+
+-- | Which sizes a 'LeiosEbByteSizes' holds.
+data SizeRole
+  = -- | the most the ledger admits for the corresponding slot
+    SizeLimit
+  | -- | an endorser block's own
+    SizeActual
+
+leiosEbByteSizes :: EndorserBlock -> LeiosEbByteSizes SizeActual
+leiosEbByteSizes eb =
+  MkLeiosEbByteSizes
+    (encodeEndorserBlockSize eb)
+    (sum [fromIntegral size | (_txHash, size) <- endorserBlockReferences eb])
+
+-- | 'id', to fix the index where a 'LeiosEbByteSizes' is built and nothing else
+-- fixes it.
+idLeiosEbByteSizesLimit :: LeiosEbByteSizes SizeLimit -> LeiosEbByteSizes SizeLimit
+idLeiosEbByteSizesLimit = id
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

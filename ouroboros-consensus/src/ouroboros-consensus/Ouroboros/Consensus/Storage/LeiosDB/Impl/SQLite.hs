@@ -275,7 +275,7 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
               pure Continue
             WriteTxs point txs resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure Set.empty else sqlInsertTxs conn point txs
+              resolve =<< if promoted then pure () else sqlInsertTxs conn point txs
               pure Continue
             Flush resolve -> do
               resolve ()
