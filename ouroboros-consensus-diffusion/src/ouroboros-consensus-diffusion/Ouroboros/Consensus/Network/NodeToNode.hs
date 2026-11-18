@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -71,7 +72,8 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.AnnounceState
-  ( WhetherNewAnnouncement (..)
+  ( WhetherEquivocationProof (..)
+  , WhetherNewAnnouncement (..)
   , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.Types
@@ -103,7 +105,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchPeer
   , LeiosPeerLifetimeId
   , enqueueLeiosAnnouncement
-  , onNewLeiosAnnouncement
   , recordLeiosCertOffer
   , recordLeiosJumpOffers
   , recordLeiosOffer
@@ -437,13 +438,13 @@ mkHandlers
                   -- it would one from a LeiosNotify peer.
                   mbValid <-
                     validHeaderAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
-                  -- Stay alive until a new announcement is both accepted and
-                  -- acted on: see 'onValidAnnouncement'.
-                  for_ mbValid $ \valid -> uninterruptibleMask_ $ do
-                    whetherNew <- atomically $ onValidAnnouncement getLeiosAnnounceState valid
-                    case whetherNew of
-                      NewAnnouncement -> onNewLeiosAnnouncement getLeiosFetchKernel valid
-                      NotNewAnnouncement -> pure ()
+                  for_ mbValid $ \valid ->
+                    atomically $
+                      onValidAnnouncement getLeiosAnnounceState valid >>= \case
+                        NewAnnouncement NotEquivocationProof ->
+                          enqueueLeiosAnnouncement getLeiosFetchKernel valid
+                        NewAnnouncement EquivocationProof -> pure ()
+                        NotNewAnnouncement -> pure ()
                   for_ mbLeiosPeer $ \peerVars ->
                     recordLeiosCertOffer getTopLevelConfig getLeiosFetchKernel peerVars hdr predState
               , CsClient.leiosJumpAcceptedCallback = \jumpInfo ->
