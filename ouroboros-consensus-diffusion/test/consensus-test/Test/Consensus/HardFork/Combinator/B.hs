@@ -496,6 +496,7 @@ instance BlockSupportsLeios BlockB where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  validateLeiosClosure = defaultValidateLeiosClosure
 
 deriving via
   SelectViewDiffusionPipelining BlockB
