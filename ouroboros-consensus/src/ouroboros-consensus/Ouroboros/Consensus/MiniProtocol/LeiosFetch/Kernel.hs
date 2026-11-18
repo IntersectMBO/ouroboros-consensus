@@ -19,7 +19,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , ExnLeiosTwoCertificationClaims (..)
   , enqueueLeiosAnnouncement
   , leiosFetchAnnouncementFocuser
-  , onNewLeiosAnnouncement
   , onForgedLeiosEb
   , leiosFetchCertificateFocuser
   , leiosFetchDecisionLoop
