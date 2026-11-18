@@ -23,8 +23,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPastLedger
   , getPerasWeightSnapshot
   , getLatestPerasCertSeen
-  , getPerasCertsAfter
-  , getPerasCertIds
+  , getVolatilePerasCertsAfter
+  , getVolatilePerasCertIds
   , getPerasVotesAfter
   , getPerasVoteIds
   , getLatestPerasCertOnChainRound
@@ -376,15 +376,15 @@ getLatestPerasCertSeen ::
   STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
 getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
 
-getPerasCertsAfter ::
+getVolatilePerasCertsAfter ::
   ChainDbEnv m blk ->
   PerasRoundNo ->
   STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
-getPerasCertsAfter CDB{..} = PerasCertDB.getCertsAfter cdbPerasCertDB
+getVolatilePerasCertsAfter CDB{..} = PerasCertDB.getVolatileCertsAfter cdbPerasCertDB
 
-getPerasCertIds ::
+getVolatilePerasCertIds ::
   ChainDbEnv m blk -> STM m (Set PerasRoundNo)
-getPerasCertIds CDB{..} = PerasCertDB.getCertIds cdbPerasCertDB
+getVolatilePerasCertIds CDB{..} = PerasCertDB.getVolatileCertIds cdbPerasCertDB
 
 getPerasVotesAfter ::
   ChainDbEnv m blk ->
@@ -481,7 +481,7 @@ getPerasCertInclusionView roundNo env =
           latestCertOnChainRoundNo <-
             withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
           certsInChainDB <-
-            getPerasCertIds env
+            getVolatilePerasCertIds env
           pure $
             Right $
               Just $

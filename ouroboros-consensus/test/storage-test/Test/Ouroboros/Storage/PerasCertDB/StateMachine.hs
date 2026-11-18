@@ -53,6 +53,7 @@ import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (Some (..))
+import Test.Util.Peras.Common (mockSystemTime)
 import Test.Util.TestBlock (CodecConfig (..), TestBlock, TestHash (..))
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
@@ -180,6 +181,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
               { PerasCertDB.pcdbaTracer = nullTracer
               , PerasCertDB.pcdbaCodecConfig = TestBlockCodecConfig
               , PerasCertDB.pcdbaHasFS = SomeHasFS $ simHasFS fs
+              , PerasCertDB.pcdbaSystemTime = mockSystemTime
               , PerasCertDB.pcdbaIntegrityCheckPolicy = PerasCertDB.CheckOnRead
               }
       put perasCertDB
@@ -195,7 +197,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       lift $ atomically $ PerasCertDB.getLatestCertSeen perasCertDB
     GarbageCollect slotNo -> do
       perasCertDB <- get
-      lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
+      lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB (const (pure True)) slotNo
 
   postcondition (Model model, _) (AddCert cert) _ actual = do
     let expected = fst $ Model.addCert model cert

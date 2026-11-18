@@ -12,6 +12,7 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makeTestPerasCertPoolWriterFromCertDB
   ) where
 
+import Control.Monad (join)
 import Data.Foldable (traverse_)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -83,7 +84,7 @@ makeTestPerasCertPoolReaderFromCertDB ::
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasRoundNo m
 makeTestPerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReader
-    (PerasCertDB.getCertsAfter perasCertDB)
+    (PerasCertDB.getVolatileCertsAfter perasCertDB)
 
 makePerasCertPoolReaderFromChainDB ::
   ( IOLike m
@@ -93,7 +94,7 @@ makePerasCertPoolReaderFromChainDB ::
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasRoundNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReader
-    (ChainDB.getPerasCertsAfter chainDB)
+    (ChainDB.getVolatilePerasCertsAfter chainDB)
 
 -------------------------------------------------------------------------------
 -- Writers
@@ -116,8 +117,8 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     { opwObjectId = getPerasCertRound
     , opwAddObjects = \certs -> do
         now <- systemTimeCurrent systemTime
-        atomically $ do
-          alreadyInDb <- PerasCertDB.getCertIds perasCertDB
+        join $ atomically $ do
+          alreadyInDb <- PerasCertDB.getVolatileCertIds perasCertDB
           let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
           validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
           -- Some certs are invalid => reject the whole batch
@@ -125,9 +126,11 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
           -- NOTE: we could combine the two 'traverse' operations into one in
           -- which case any validated cert would be immediately added no matter
           -- what is the validity of the other certs in the batch.
-          traverse_ (PerasCertDB.addCert perasCertDB . WithArrivalTime now) validatedCerts
+          -- Run the side-effects of adding each certificate (tracing and
+          -- persisting it) once the transaction has committed.
+          sequence_ <$> traverse (PerasCertDB.addCert perasCertDB . WithArrivalTime now) validatedCerts
     , opwHasObject = do
-        certIds <- PerasCertDB.getCertIds perasCertDB
+        certIds <- PerasCertDB.getVolatileCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
     }
 
@@ -147,7 +150,7 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
         , opwAddObjects = \certs -> do
             now <- systemTimeCurrent systemTime
             validatedCerts <- atomically $ do
-              alreadyInDb <- ChainDB.getPerasCertIds chainDB
+              alreadyInDb <- ChainDB.getVolatilePerasCertIds chainDB
               let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
               traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
             -- Some certs are invalid => reject the whole batch
@@ -157,6 +160,6 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
             -- matter what is the validity of the other certs in the batch.
             traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
         , opwHasObject = do
-            certIds <- ChainDB.getPerasCertIds chainDB
+            certIds <- ChainDB.getVolatilePerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds
         }

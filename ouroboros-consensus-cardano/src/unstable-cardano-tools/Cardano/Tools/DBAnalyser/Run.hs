@@ -21,7 +21,9 @@ import Data.SOP (All, Top)
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Config.SupportsNode (getSystemStart)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -195,6 +197,7 @@ analyse dbaConfig args =
             shfs
             shfs
             snapshotDelayRng
+            (defaultSystemTime (getSystemStart (configBlock cfg)) nullTracer)
             flavargs
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever

@@ -535,6 +535,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkImmutableHasFS
               llrnMkVolatileHasFS
               snapshotDelayRng
+              systemTime
               llrnLdbFlavorArgs
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
@@ -856,13 +857,14 @@ openChainDB ::
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | RNG used to randomise snapshot delays
   StdGen ->
+  SystemTime m ->
   LedgerDbBackendArgs m blk ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng systemTime flavorArgs defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -874,6 +876,7 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs defArgs cust
             fsImm
             fsVol
             delayRng
+            systemTime
             flavorArgs
             defArgs
    in (,args) <$> ChainDB.openDB args

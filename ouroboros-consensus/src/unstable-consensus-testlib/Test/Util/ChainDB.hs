@@ -46,6 +46,7 @@ import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
 import System.Random (mkStdGen)
 import Test.Util.Orphans.NoThunks ()
+import Test.Util.Peras.Common (mockSystemTime)
 import Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 
 -- | A vector with an element for each database of a node
@@ -144,6 +145,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           { pcdbaCodecConfig = configCodec mcdbTopLevelConfig
           , pcdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasCert mcdbNodeDBs)
           , pcdbaTracer = nullTracer
+          , pcdbaSystemTime = mockSystemTime
           , pcdbaIntegrityCheckPolicy = PerasCertDB.CheckOnRead
           }
     , cdbPerasImmutableCertDbArgs =

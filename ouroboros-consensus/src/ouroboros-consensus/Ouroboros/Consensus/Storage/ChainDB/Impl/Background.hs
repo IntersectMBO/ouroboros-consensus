@@ -457,8 +457,14 @@ garbageCollectPeras ::
   SlotNo ->
   m ()
 garbageCollectPeras CDB{..} slotNo = do
-  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB isImmutable slotNo
   join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
+ where
+  -- Whether a boosted block is part of the immutable chain, i.e. whether its
+  -- certificate is to be promoted to a historical one.
+  isImmutable :: Point blk -> m Bool
+  isImmutable =
+    withOrigin (pure True) (ImmutableDB.hasBlock cdbImmutableDB) . pointToWithOriginRealPoint
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections

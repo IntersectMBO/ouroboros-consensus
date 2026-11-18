@@ -35,9 +35,11 @@ import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
+import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
-import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
+import Ouroboros.Consensus.Config (TopLevelConfig, configBlock, configStorage)
+import Ouroboros.Consensus.Config.SupportsNode (getSystemStart)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
@@ -177,6 +179,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           (Node.stdMkChainDbHasFS confDbDir)
           (Node.stdMkChainDbHasFS confDbDir)
           snapshotDelayRng
+          (defaultSystemTime (getSystemStart (configBlock pInfoConfig)) nullTracer)
           flavargs
           $ ChainDB.defaultArgs
 

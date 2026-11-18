@@ -21,6 +21,7 @@ import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (SystemTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -184,6 +185,9 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Randomised snapshot delay RNG
   StdGen ->
+  -- | Used to assign an arrival time to the volatile Peras certificates loaded
+  -- from disk when opening the 'PerasCertDB.PerasCertDB'
+  SystemTime m ->
   LedgerDbBackendArgs m blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
@@ -197,6 +201,7 @@ completeChainDbArgs
   mkImmFS
   mkVolFS
   snapshotDelayRNG
+  systemTime
   flavorArgs
   defArgs =
     defArgs
@@ -228,6 +233,7 @@ completeChainDbArgs
           (cdbPerasCertDbArgs defArgs)
             { PerasCertDB.pcdbaCodecConfig = configCodec cdbsTopLevelConfig
             , PerasCertDB.pcdbaHasFS = mkImmFS $ RelativeMountPoint "perascert"
+            , PerasCertDB.pcdbaSystemTime = systemTime
             }
       , cdbPerasImmutableCertDbArgs =
           (cdbPerasImmutableCertDbArgs defArgs)

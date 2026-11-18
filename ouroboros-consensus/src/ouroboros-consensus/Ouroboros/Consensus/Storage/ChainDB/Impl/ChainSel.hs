@@ -498,11 +498,13 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
     -- Add the certificate to the PerasCertDB.
     certRes <- lift $ lift $ join $ atomically $ PerasCertDB.addCert cdbPerasCertDB cert
     -- Here:
-    -- \* if the certificate is already in the PerasCertDB, we exit early with that result
+    -- \* if the certificate is already in the PerasCertDB, or boosts a block older
+    --   than its last garbage collection, we exit early with that result
     -- \* if the certificate is newly added to the PerasCertDB, we bind  the result value that we will return in any of the branches below
     addedCertRes <-
       case certRes of
         PerasCertDB.PerasCertAlreadyInDB -> idExitEarly $ PerasCertProcessed PerasCertDB.PerasCertAlreadyInDB
+        PerasCertDB.PerasCertTooOld -> idExitEarly $ PerasCertProcessed PerasCertDB.PerasCertTooOld
         PerasCertDB.AddedPerasCertToDB -> pure $ PerasCertProcessed PerasCertDB.AddedPerasCertToDB
 
     -- If the certificate boosts a block on our current chain (including the

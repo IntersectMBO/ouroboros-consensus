@@ -61,6 +61,7 @@ newCertDB certs = do
         { PerasCertDB.pcdbaTracer = nullTracer
         , PerasCertDB.pcdbaCodecConfig = TestBlockCodecConfig
         , PerasCertDB.pcdbaHasFS = SomeHasFS $ simHasFS fs
+        , PerasCertDB.pcdbaSystemTime = mockSystemTime
         , PerasCertDB.pcdbaIntegrityCheckPolicy = PerasCertDB.CheckOnRead
         }
   mapM_
@@ -69,6 +70,7 @@ newCertDB certs = do
         case result of
           AddedPerasCertToDB -> pure ()
           PerasCertAlreadyInDB -> throwIO (userError "Expected AddedPerasCertToDB, but cert was already in DB")
+          PerasCertTooOld -> throwIO (userError "Expected AddedPerasCertToDB, but cert was too old")
     )
     certs
   pure db
@@ -101,7 +103,7 @@ prop_smoke =
                   getAllPoolContent pool = do
                     certsMap <-
                       atomically $
-                        PerasCertDB.getCertsAfter pool zeroPerasRoundNo
+                        PerasCertDB.getVolatileCertsAfter pool zeroPerasRoundNo
                     certs' <- sequence (Map.elems certsMap)
                     pure $ vpcCert . forgetArrivalTime <$> certs'
 

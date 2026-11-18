@@ -322,8 +322,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
-            , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter
-            , getPerasCertIds = getEnvSTM h Query.getPerasCertIds
+            , getVolatilePerasCertsAfter = getEnvSTM1 h Query.getVolatilePerasCertsAfter
+            , getVolatilePerasCertIds = getEnvSTM h Query.getVolatilePerasCertIds
             , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
             , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
             , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
@@ -463,6 +463,7 @@ closeDB (CDBHandle varState) = do
     VolatileDB.closeDB cdbVolatileDB
     LedgerDB.closeDB cdbLedgerDB
     PerasImmutableCertDB.closeDB cdbPerasImmutableCertDB
+    PerasCertDB.closeDB cdbPerasCertDB
 
     chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 

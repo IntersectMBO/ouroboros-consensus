@@ -465,15 +465,15 @@ data ChainDB m blk = ChainDB
   , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
   -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
   -- be weightier than our current selection, this will trigger a fork switch.
-  , getPerasCertsAfter ::
+  , getVolatilePerasCertsAfter ::
       PerasRoundNo ->
       STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
-  -- ^ Get all known Peras certs with a ticket number strictly greater than the
-  -- given one, in ascending order. The values are 'm' actions to allow
+  -- ^ Get all /volatile/ Peras certs with a round number strictly greater than
+  -- the given one, in ascending order. The values are 'm' actions to allow
   -- implementations with on-disk storage.
-  , getPerasCertIds :: STM m (Set PerasRoundNo)
-  -- ^ Get the set of all Peras certificate round numbers currently in the
-  -- database.
+  , getVolatilePerasCertIds :: STM m (Set PerasRoundNo)
+  -- ^ Get the set of the round numbers of all the /volatile/ Peras
+  -- certificates currently in the database.
   , addPerasVoteWithAsyncCertHandling ::
       WithArrivalTime (ValidatedPerasVote blk) ->
       m (AddPerasVoteResult blk, Maybe (AddPerasCertPromise m))
@@ -642,8 +642,10 @@ data AddPerasCertChainSelOutcome
     PerasCertIgnoredTooOld
   | -- | The certificate was not processed because the ChainDB was closing.
     PerasCertNotProcessedClosing
-  | -- | The certificate was processed; whether it was actually added to the DB
-    -- or was a duplicate is captured by the inner 'AddPerasCertResult'.
+  | -- | The certificate was processed; whether it was actually added to the DB,
+    -- was a duplicate, or boosts a block older than the last garbage
+    -- collection of the PerasCertDB is captured by the inner
+    -- 'AddPerasCertResult'.
     PerasCertProcessed AddPerasCertResult
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
