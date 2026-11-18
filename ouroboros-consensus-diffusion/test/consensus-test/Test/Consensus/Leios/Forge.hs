@@ -248,12 +248,12 @@ certForging =
     , finalize = pure ()
     }
 
--- | The node runs 'forkBlockForging' with 'ebForging' for slots 0 to 3. Then
+-- | The node runs 'forkBlockProducer' with 'ebForging' for slots 0 to 3. Then
 -- the test reads the chain and the LeiosDB.
 --
 -- * If the node forges no block, the other checks pass with no data. The
 --   first check catches this.
--- * If 'forkBlockForging' does not hand the endorser block on from 'forge', or
+-- * If 'forkBlockProducer' does not hand the endorser block on from 'forge', or
 --   if the node writes it at a slot or a hash that differs from the
 --   announcement in the header, the second check fails.
 -- * If the node does not write the transaction bytes, the third check fails.
