@@ -614,14 +614,20 @@ class TxEbMeasureByteSize msr where
   -- The Leios measure @DijkstraEbMeasure@ counts these bytes.
   txEbMeasureByteSize :: msr -> ByteSize32
 
+  -- | The bytes of the transactions themselves, which the endorser block's
+  -- closure holds.
+  txEbMeasureTxsByteSize :: msr -> ByteSize32
+
 instance TxEbMeasureByteSize (TxMeasure blk) where
   -- Zero, because 'TxMeasure' has no field for reference bytes.
   txEbMeasureByteSize _ = ByteSize32 0
+  txEbMeasureTxsByteSize _ = ByteSize32 0
 
 instance TxEbMeasureByteSize (IgnoringOverflow ByteSize32) where
   -- Zero, because only test blocks without endorser blocks use this type as
   -- their 'TxEbMeasure'.
   txEbMeasureByteSize _ = ByteSize32 0
+  txEbMeasureTxsByteSize _ = ByteSize32 0
 
 instance TxMeasurePhase1Metrics ByteSize32 where
   txMeasureMetricTxSizeBytes = id
