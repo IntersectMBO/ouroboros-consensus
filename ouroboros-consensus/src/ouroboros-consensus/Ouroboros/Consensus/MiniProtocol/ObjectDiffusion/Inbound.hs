@@ -533,7 +533,7 @@ objectDiffusionInbound
                 (pendingObjects st)
                 collectedObjects
 
-        (_successfullyAdded, needRetrying) <- opwAddObjects $ catMaybes $ toList $ pendingObjects'
+        (_successfullyAdded, needRetrying) <- opwAddObjects $ catMaybes $ toList $ pendingObjects' -- at this point, we might want to replace `pendingObjects :: Map objectId (Maybe object)` with `pendingObjects :: Map objectId object` and `skipObjects :: Set objectId` to avoid the `catMaybes` call here.
 
         let
             -- We then find the longest prefix of 'outstandingFifo' for which we have
@@ -542,8 +542,8 @@ objectDiffusionInbound
             (objectIdsToAck, outstandingFifo') =
               Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
 
-            outstandingFifoSet = Set.fromList (toList outstandingFifo')
-            objectIdsToAckSet = Set.fromList (toList objectIdsToAck)
+            outstandingFifoSet = Set.fromList (toList outstandingFifo') -- unfortunate
+            objectIdsToAckSet = Set.fromList (toList objectIdsToAck) -- unfortunate
             processPendingObject objectId o
               | objectId `Set.member` needRetrying = Just o
               | objectId `Set.member` objectIdsToAckSet = Nothing
