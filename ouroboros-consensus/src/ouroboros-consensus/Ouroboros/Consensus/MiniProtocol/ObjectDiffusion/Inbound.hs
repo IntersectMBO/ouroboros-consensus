@@ -543,9 +543,11 @@ objectDiffusionInbound
               Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
 
             outstandingFifoSet = Set.fromList (toList outstandingFifo')
+            objectIdsToAckSet = Set.fromList (toList objectIdsToAck)
             processPendingObject objectId o
               | objectId `Set.member` needRetrying = Just o
-              | objectId `Set.notMember` outstandingFifoSet = Nothing
+              | objectId `Set.member` objectIdsToAckSet = Nothing
+              | Just _ <- o, objectId `Set.notMember` outstandingFifoSet = Nothing
               | otherwise = Just Nothing
             pendingObjects'' = Map.mapMaybeWithKey processPendingObject pendingObjects'
 
