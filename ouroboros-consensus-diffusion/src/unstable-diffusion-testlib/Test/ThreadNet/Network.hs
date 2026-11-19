@@ -1061,7 +1061,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, chainSyncRng) = splitGen rng''
+          (psRng, rng''') = splitGen rng''
+          (lfRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1086,9 +1087,7 @@ runThreadNetwork
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , leiosAcquisitions
-              , -- Split off a generator the node uses anyway, so that the others'
-                -- streams stay as they were.
-                leiosFetchRng = fst (splitGen chainSyncRng)
+              , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
