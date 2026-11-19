@@ -359,7 +359,7 @@ genBlock pt =
     dummyBlk :: TestBlockWith ()
     dummyBlk = mkBlockFrom (castPoint pt) ()
 
-extLedgerDbConfig :: SecurityParam -> LedgerDbCfg ExtLedgerState TestBlock
+extLedgerDbConfig :: SecurityParam -> LedgerDbCfg TestBlock
 extLedgerDbConfig secParam =
   LedgerDbCfg
     { ledgerDbCfgSecParam = secParam
