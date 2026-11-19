@@ -95,8 +95,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , LeiosPeerLifetimeId (..)
   , leiosFetchAnnouncementFocuser
   , leiosFetchDecisionLoop
-  , leiosFetchPruner
   , newLeiosFetchKernel
+  , pruneLeiosFetchToImmTip
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
@@ -105,7 +105,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
 import Ouroboros.Consensus.Network.LeiosFetch (maxLeiosFetchIngressBytes)
-import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (leiosNotifyPruner)
+import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (pruneLeiosNotifyToImmTip)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis
@@ -243,7 +243,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosNotifyClientStates ::
       StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
   -- ^ The state of each LeiosNotify client, by upstream peer, which
-  -- 'leiosNotifyPruner' prunes.
+  -- 'leiosImmutableTipPruner' prunes.
   , getLeiosAnnounceState :: AnnounceState m blk
   -- ^ The announcements the node has accepted, from whichever peer.
   , getLeiosVoteState :: VoteState m blk
@@ -459,9 +459,6 @@ initNodeKernel
     leiosVoteState <- newVoteState (leiosVoteStateTracer tracers) leiosAnnounceState leiosNotifyLog
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
-      forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
-        leiosNotifyPruner chainDB leiosAnnounceState leiosVoteState leiosNotifyClientStates
-    void $
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
@@ -485,8 +482,13 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosFetchDecisionLoop" $
         leiosFetchDecisionLoop cfg chainDB btime leiosFetchKernel
     void $
-      forkLinkedThread registry "NodeKernel.leiosFetchPruner" $
-        leiosFetchPruner chainDB leiosFetchKernel
+      forkLinkedThread registry "NodeKernel.leiosImmutableTipPruner" $
+        leiosImmutableTipPruner
+          chainDB
+          leiosAnnounceState
+          leiosVoteState
+          leiosNotifyClientStates
+          leiosFetchKernel
     -- Its death takes the node down, as 'leiosFetchAnnouncementFocuser'
     -- requires.
     void $
@@ -718,6 +720,32 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 {-------------------------------------------------------------------------------
   Leios pruning
 -------------------------------------------------------------------------------}
+
+-- | Prune what the node holds only until the immutable tip passes it, each time
+-- the immutable tip's slot advances: every LeiosNotify client's state, the
+-- 'AnnounceState', the 'VoteState''s certificates, and the LeiosFetch state.
+leiosImmutableTipPruner ::
+  (IOLike m, RunNode blk) =>
+  ChainDB m blk ->
+  AnnounceState m blk ->
+  VoteState m blk ->
+  StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
+  LeiosFetchKernel m peer' blk ->
+  m Void
+leiosImmutableTipPruner chainDB announceState voteState notifyStatesVar leiosFetchKernel =
+  go (SlotNo 0)
+ where
+  go prunedSlot = do
+    immTipSlot <- atomically $ do
+      immLedger <- ChainDB.getImmutableLedger chainDB
+      case getTipSlot (ledgerState immLedger) of
+        NotOrigin slot
+          | prunedSlot < slot -> do
+              pruneLeiosNotifyToImmTip announceState voteState notifyStatesVar slot
+              pure slot
+        _ -> retry
+    pruneLeiosFetchToImmTip leiosFetchKernel immTipSlot
+    go immTipSlot
 
 -- | Prune what the node relays only until a deadline, the notify log and the
 -- votes, every 'leiosDeadlinePrunerInterval'.

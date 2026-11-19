@@ -10,7 +10,7 @@
 module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
   ( leiosNotifyClient
   , leiosNotifyMiniProtocol
-  , leiosNotifyPruner
+  , pruneLeiosNotifyToImmTip
   , leiosNotifyServer
   , withLeiosNotifyClientState
   ) where
@@ -24,13 +24,10 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
-import Ouroboros.Consensus.Ledger.Abstract (GetTip, LedgerState, getTipSlot)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, pruneAnnounceState)
 import Ouroboros.Consensus.Leios.NotifyLog
@@ -243,33 +240,19 @@ withLeiosNotifyClientState statesVar peer =
     (\_stateVar -> atomically $ modifyTVar statesVar (Map.delete peer))
 
 -- | Prune every LeiosNotify client's state, the node's 'AnnounceState', and the
--- certificates of its 'VoteState', each time the immutable tip's slot advances.
-leiosNotifyPruner ::
-  ( IOLike m
-  , GetTip (LedgerState blk)
-  , ConvertRawHash blk
-  , GetHeader blk
-  ) =>
-  ChainDB m blk ->
+-- certificates of its 'VoteState', to the immutable tip's slot.
+pruneLeiosNotifyToImmTip ::
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
   AnnounceState m blk ->
   VoteState m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
-  m Void
-leiosNotifyPruner chainDB announceState voteState statesVar = go (SlotNo 0)
- where
-  go prunedSlot = do
-    immTipSlot <- atomically $ do
-      immLedger <- ChainDB.getImmutableLedger chainDB
-      case getTipSlot (ledgerState immLedger) of
-        NotOrigin slot
-          | prunedSlot < slot -> do
-              states <- readTVar statesVar
-              mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
-              pruneAnnounceState announceState slot
-              pruneCertificates voteState slot
-              pure slot
-        _ -> retry
-    go immTipSlot
+  SlotNo ->
+  STM m ()
+pruneLeiosNotifyToImmTip announceState voteState statesVar immTipSlot = do
+  states <- readTVar statesVar
+  mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState immTipSlot)) states
+  pruneAnnounceState announceState immTipSlot
+  pruneCertificates voteState immTipSlot
 
 -- | LeiosNotify as a node-to-node mini-protocol.
 leiosNotifyMiniProtocol ::

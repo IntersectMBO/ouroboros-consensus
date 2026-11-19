@@ -6,8 +6,7 @@
 
 -- | The node's LeiosFetch state, which all its LeiosFetch clients share, and
 -- the threads that maintain it: the decision loop, which assigns the peers'
--- offers to requests, the pruner, and the worker that acts on new
--- announcements.
+-- offers to requests, and the worker that acts on new announcements.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
   , LeiosFetchPeer (..)
@@ -18,7 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , enqueueLeiosAnnouncement
   , leiosFetchAnnouncementFocuser
   , leiosFetchDecisionLoop
-  , leiosFetchPruner
+  , pruneLeiosFetchToImmTip
   ) where
 
 import Control.Monad (forM_, forever, unless, void, when)
@@ -35,7 +34,6 @@ import Ouroboros.Consensus.Block
   ( BlockProtocol
   , Proxy (..)
   , SlotNo (..)
-  , WithOrigin (..)
   , withOrigin
   )
 import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), CurrentSlot (..))
@@ -99,7 +97,6 @@ import Ouroboros.Consensus.Util.IOLike
   , newTQueueIO
   , readTQueue
   , readTVar
-  , retry
   , takeMVar
   , threadDelay
   , tryPutMVar
@@ -122,9 +119,9 @@ data LeiosFetchKernel m peer blk = MkLeiosFetchKernel
   -- ^ What tells the next registration's 'LeiosPeerLifetimeId' apart from
   -- every earlier one.
   , lfkPrunedSlot :: !(StrictTVar m SlotNo)
-  -- ^ The slot 'leiosFetchPruner' has most recently pruned the peers' offers
-  -- to. Nothing older is recorded afterwards, so that an offer that arrives
-  -- after the pruning cannot undo it.
+  -- ^ The slot 'pruneLeiosFetchToImmTip' has most recently pruned the peers'
+  -- offers to. Nothing older is recorded afterwards, so that an offer that
+  -- arrives after the pruning cannot undo it.
   , lfkAnnouncements :: !(TQueue m (ValidAnnouncement blk))
   -- ^ The announcements 'leiosFetchAnnouncementFocuser' has yet to act on; see
   -- 'enqueueLeiosAnnouncement'.
@@ -415,30 +412,21 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
   loopInterval :: DiffTime
   loopInterval = 0.5
 
--- | Prune the node's LeiosFetch state and the peers' offers each time the
--- immutable tip's slot advances.
-leiosFetchPruner ::
-  forall m peer blk.
-  (IOLike m, LedgerSupportsProtocol blk) =>
-  ChainDB m blk ->
+-- | Prune the node's LeiosFetch state and the peers' offers to the immutable
+-- tip's slot.
+pruneLeiosFetchToImmTip ::
+  IOLike m =>
   LeiosFetchKernel m peer blk ->
-  m Void
-leiosFetchPruner chainDB kernel = go (SlotNo 0)
+  SlotNo ->
+  m ()
+pruneLeiosFetchToImmTip kernel immTipSlot = do
+  modifyMVar_ lfcOutstanding $ pure . pruneOutstandingToImmTip immTipSlot
+  -- Offers are keyed by point, which orders by slot first.
+  atomically $ do
+    writeTVar lfkPrunedSlot immTipSlot
+    peersVars <- readTVar lfkPeers
+    forM_ peersVars $ \vars ->
+      modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
  where
   MkLeiosFetchKernel{lfkContext, lfkPeers, lfkPrunedSlot} = kernel
   MkLeiosFetchClientContext{lfcOutstanding} = lfkContext
-
-  go prunedSlot = do
-    immTipSlot <- atomically $ do
-      immLedger <- ChainDB.getImmutableLedger chainDB
-      case getTipSlot (ledgerState immLedger) of
-        NotOrigin slot | prunedSlot < slot -> pure slot
-        _ -> retry
-    modifyMVar_ lfcOutstanding $ pure . pruneOutstandingToImmTip immTipSlot
-    -- Offers are keyed by point, which orders by slot first.
-    atomically $ do
-      writeTVar lfkPrunedSlot immTipSlot
-      peersVars <- readTVar lfkPeers
-      forM_ peersVars $ \vars ->
-        modifyTVar (lfpOfferings vars) (Map.dropWhileAntitone ((< immTipSlot) . pointSlotNo))
-    go immTipSlot
