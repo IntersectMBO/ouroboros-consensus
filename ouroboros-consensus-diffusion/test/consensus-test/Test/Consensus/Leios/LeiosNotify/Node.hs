@@ -273,10 +273,13 @@ tests =
         runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
     , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
         runSimOrThrow (timeout 100 nodeServerExcessive) @?= Just (ExcessiveOutcome Disconnected)
-    , testCase "the node runs LeiosNotify from NodeToNodeV_16 on" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_16)) @?= Just (True, True)
-    , testCase "the node does not run LeiosNotify before NodeToNodeV_16" $
-        runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_15)) @?= Just (False, False)
+    , testCase "the node runs LeiosNotify from NodeToNodeV_16 on, and not before" $
+        for_ [minBound .. maxBound] $ \ntnVersion ->
+          let runs = ntnVersion >= NodeToNodeV_16
+           in assertEqual
+                (show ntnVersion)
+                (Just (runs, runs))
+                (runSimOrThrow (timeout 100 (nodeRunsLeiosNotify ntnVersion)))
     ]
 
 -- | The node's LeiosNotify client on the connection.
@@ -388,7 +391,8 @@ runNodeClientAgainst node next target = do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests next
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer node
+          , -- The node requests what the peer offers.
+            epLeiosFetchServer = silentLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection node (PeerAddr 1) envPeer $ \conn -> do
@@ -493,7 +497,8 @@ nodePrunesClientState = withNodeCommittee committee 100000 $ \node -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec node) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
-          , epLeiosFetchServer = refusingLeiosFetchServer node
+          , -- The node requests what the peer offers.
+            epLeiosFetchServer = silentLeiosFetchServer node
           , epLeiosFetchClient = Nothing
           }
   withAsync

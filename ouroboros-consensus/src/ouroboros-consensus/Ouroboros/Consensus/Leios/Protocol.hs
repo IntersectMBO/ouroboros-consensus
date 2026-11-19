@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -13,6 +14,7 @@ module Ouroboros.Consensus.Leios.Protocol
   , decodeLeiosAnnouncement
   , encodeLeiosAnnouncement
   , LeiosLedgerView (..)
+  , leiosEbByteSizeBounds
   , LeiosProtocol (..)
   , OCINStaleness (..)
   , defaultGetContainsLeiosCert
@@ -36,7 +38,12 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (BlockProtocol, SlotNo)
-import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , EndorserBlockHash
+  , LeiosEbByteSizes (..)
+  , SizeRole (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked (Ticked)
 
@@ -89,6 +96,10 @@ data LeiosLedgerView = MkLeiosLedgerView
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
+
+leiosEbByteSizeBounds :: LeiosLedgerView -> LeiosEbByteSizes SizeLimit
+leiosEbByteSizeBounds llv =
+  MkLeiosEbByteSizes (llvMaxEbBodySize llv) (fromIntegral (llvMaxEbTxsSize llv))
 
 -- | Whether an announcement's operational certificate issue number (OCIN) is
 -- at least the one our immutable tip records for its issuer.

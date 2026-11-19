@@ -14,10 +14,13 @@ module Ouroboros.Consensus.Leios.AnnounceState
   , hasAnnouncement
   , newAnnounceState
   , onValidAnnouncement
+  , WhetherNewAnnouncement (..)
+  , WhetherEquivocationProof (..)
   , pruneAnnounceState
   ) where
 
 import Control.Monad (when)
+import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
@@ -69,29 +72,47 @@ newAnnounceState limits notifyLog =
     <*> pure notifyLog
     <*> pure limits
 
+-- | Whether the node accepted an announcement it had not accepted before.
+data WhetherNewAnnouncement = NewAnnouncement !WhetherEquivocationProof | NotNewAnnouncement
+
+-- | Whether a new announcement is the second of its election, which proves
+-- that the election's electee equivocated.
+data WhetherEquivocationProof = EquivocationProof | NotEquivocationProof
+
 -- | Accept a valid announcement, and relay it if it is new and fresh enough,
 -- until 'maxAnnouncementAgeSend' after its election slot began.
 --
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
+--
+-- Once this accepts an announcement, no copy of it is new again, from any
+-- peer. So a caller that acts on a new announcement must commit to doing so
+-- within this same transaction: if it acted afterwards, and its thread died in
+-- between, as when its peer disconnects, the announcement would stay accepted
+-- but never be acted on, and nothing would act on it later.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
   ValidAnnouncement blk ->
-  STM m ()
+  STM m WhetherNewAnnouncement
 onValidAnnouncement st valid = do
   pruned <- readTVar prunedTo
-  when (announcementStaleness == FreshOCIN && electionSlot electionId >= pruned) $ do
-    seen <- readTVar announced
-    case Announcements.insert @_ @Void electionId announcingHeader seen of
-      Left _repeatedOrThird -> pure ()
-      Right seen' -> do
-        writeTVar announced seen'
-        when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
-          appendNotifyLog
-            relayLog
-            (NotifyAnnouncement announcingHeader)
-            (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
+  if announcementStaleness /= FreshOCIN || electionSlot electionId < pruned
+    then pure NotNewAnnouncement
+    else do
+      seen <- readTVar announced
+      case Announcements.insert @_ @Void electionId announcingHeader seen of
+        Left _repeatedOrThird -> pure NotNewAnnouncement
+        Right seen' -> do
+          writeTVar announced seen'
+          when (announcementAge <= maxAnnouncementAgeSend ageLimits) $
+            appendNotifyLog
+              relayLog
+              (NotifyAnnouncement announcingHeader)
+              (addRelTime (maxAnnouncementAgeSend ageLimits) announcementOnset)
+          pure $ NewAnnouncement $ case Map.lookup electionId (Announcements.live seen) of
+            Nothing -> NotEquivocationProof
+            Just _first -> EquivocationProof
  where
   electionId = ancElectionId announcingHeader
 
