@@ -17,8 +17,8 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , enqueueLeiosAnnouncement
   , leiosFetchAnnouncementFocuser
   , onForgedLeiosEb
+  , leiosFetchCertificateFocuser
   , leiosFetchDecisionLoop
-  , leiosFetchFocuser
   , pruneLeiosFetchToImmTip
   ) where
 
@@ -443,12 +443,12 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- it started, comes to fetch the certified one. Each iteration focuses the
 -- elections certified since the one before, so a certificate verified after
 -- the offer arrived still moves the focus. A pruning alone does not wake it.
-leiosFetchFocuser ::
+leiosFetchCertificateFocuser ::
   IOLike m =>
   ChainDB m blk ->
   LeiosFetchKernel m peer blk ->
   m Void
-leiosFetchFocuser chainDB kernel = go SNothing
+leiosFetchCertificateFocuser chainDB kernel = go SNothing
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
 
