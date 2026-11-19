@@ -175,7 +175,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
     CanUpgradeLedgerTables (..)
   , LedgerDB (..)
-  , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
   , ResolveBlock
@@ -216,7 +215,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
 
     -- * Testing
   , TestInternals (..)
-  , TestInternals'
   , WhereToTakeSnapshot (..)
   ) where
 
@@ -286,22 +284,21 @@ type LedgerDbSerialiseConstraints blk =
   )
 
 -- | The core API of the LedgerDB component
-type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
-data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l blk EmptyMK)
+type LedgerDB :: (Type -> Type) -> Type -> Type
+data LedgerDB m blk = LedgerDB
+  { getVolatileTip :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l blk EmptyMK)
+  , getImmutableTip :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
+  , getPastLedgerState :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
   -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
-      l ~ ExtLedgerState =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , openForkerAtTarget ::
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l blk))
+      m (Either GetForkerError (Forker m blk))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
@@ -309,23 +306,17 @@ data LedgerDB m l blk = LedgerDB
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
   , validateFork ::
-      l ~ ExtLedgerState =>
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      SuccessForkerAction m l blk ->
-      m (ValidateResult l blk)
+      SuccessForkerAction m blk ->
+      m (ValidateResult ExtLedgerState blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
   --
   -- The passed continuation will be executed if the result of validation is
   -- fully successful, given the headers of the validated blocks.
-  --
-  -- TODO The @l ~ ExtLedgerState@ constraint could be removed if validation
-  -- returned the states the validated blocks produced instead of their
-  -- 'HeaderWithTime's, leaving the ChainDB to build those, at the cost of the
-  -- ChainDB zipping those states with the headers.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()
@@ -357,24 +348,22 @@ data LedgerDB m l blk = LedgerDB
   --
   -- Should only be called on shutdown.
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "LedgerDB" (LedgerDB m l blk)
+  deriving NoThunks via OnlyCheckWhnfNamed "LedgerDB" (LedgerDB m blk)
 
-type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
-
-type LedgerDB' m blk = LedgerDB m ExtLedgerState blk
+type instance HeaderHash (LedgerDB m blk) = HeaderHash blk
 
 currentPoint ::
-  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
-  LedgerDB m l blk ->
+  (IsLedger LedgerState blk, Functor (STM m)) =>
+  LedgerDB m blk ->
   STM m (Point blk)
 currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
 
 data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 
-data TestInternals m l blk = TestInternals
+data TestInternals m blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
+  , push :: ExtLedgerState blk DiffMK -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -388,30 +377,28 @@ data TestInternals m l blk = TestInternals
   , getNumLedgerTablesHandles :: m Word64
   -- ^ Get the number of referenced 'LedgerTablesHandle's.
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
-
-type TestInternals' m blk = TestInternals m ExtLedgerState blk
+  deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m blk)
 
 {-------------------------------------------------------------------------------
   Config
 -------------------------------------------------------------------------------}
 
-data LedgerDbCfgF f l blk = LedgerDbCfg
+data LedgerDbCfgF f blk = LedgerDbCfg
   { ledgerDbCfgSecParam :: !(HKD f SecurityParam)
-  , ledgerDbCfg :: !(HKD f (LedgerCfg l blk))
+  , ledgerDbCfg :: !(HKD f (LedgerCfg ExtLedgerState blk))
   , ledgerDbCfgComputeLedgerEvents :: !ComputeLedgerEvents
   }
   deriving Generic
 
-type LedgerDbCfg l = Complete LedgerDbCfgF l
+type LedgerDbCfg = Complete LedgerDbCfgF
 
-deriving instance NoThunks (LedgerCfg l blk) => NoThunks (LedgerDbCfg l blk)
+deriving instance NoThunks (LedgerCfg ExtLedgerState blk) => NoThunks (LedgerDbCfg blk)
 
 configLedgerDb ::
   ConsensusProtocol (BlockProtocol blk) =>
   TopLevelConfig blk ->
   ComputeLedgerEvents ->
-  LedgerDbCfg ExtLedgerState blk
+  LedgerDbCfg blk
 configLedgerDb config evs =
   LedgerDbCfg
     { ledgerDbCfgSecParam = configSecurityParam config
@@ -442,8 +429,8 @@ data LedgerDbError
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
   IOLike m =>
-  LedgerDB m l blk ->
-  (Forker m l blk -> m a) ->
+  LedgerDB m blk ->
+  (Forker m blk -> m a) ->
   m a
 withTipForker ldb =
   bracket
@@ -458,15 +445,15 @@ withTipForker ldb =
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
   IOLike m =>
-  LedgerDB m l blk ->
+  LedgerDB m blk ->
   m Statistics
 getTipStatistics ldb = withTipForker ldb forkerReadStatistics
 
 openReadOnlyForker ::
   MonadSTM m =>
-  LedgerDB m l blk ->
+  LedgerDB m blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l blk))
+  m (Either GetForkerError (ReadOnlyForker m ExtLedgerState blk))
 openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
@@ -502,13 +489,13 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
+  , initReapplyBlock :: !(LedgerDbCfg blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
-      !(db -> m (LedgerDB' m blk, TestInternals' m blk))
+      !(db -> m (LedgerDB m blk, TestInternals m blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
   -- steps.
   }
@@ -544,7 +531,7 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  LedgerDbCfg ExtLedgerState blk ->
+  LedgerDbCfg blk ->
   StreamAPI m blk blk ->
   Point blk ->
   -- | Whether the block at the replay goal is an EBB. Used to decide whether
@@ -675,7 +662,7 @@ replayStartingWith ::
   , HasCallStack
   ) =>
   Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayProgressEvent blk) ->
-  LedgerDbCfg ExtLedgerState blk ->
+  LedgerDbCfg blk ->
   StreamAPI m blk blk ->
   db ->
   Point blk ->

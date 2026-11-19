@@ -76,7 +76,7 @@ openDB ::
   -- | How to get the endorser blocks that blocks certify from the LeiosDB
   ResolveEndorserBlock m ->
   GetVolatileSuffix m blk ->
-  WithTempRegistry st m (LedgerDB' m blk)
+  WithTempRegistry st m (LedgerDB m blk)
 openDB
   args
   stream
@@ -127,7 +127,7 @@ doOpenDB ::
   StreamAPI m blk blk ->
   Point blk ->
   IsEBB ->
-  m (LedgerDB' m blk)
+  m (LedgerDB m blk)
 doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB =
   fst <$> openDBInternal args initDb snapManager stream replayGoal replayGoalIsEBB
 
@@ -144,7 +144,7 @@ openDBInternal ::
   StreamAPI m blk blk ->
   Point blk ->
   IsEBB ->
-  m (LedgerDB' m blk, TestInternals' m blk)
+  m (LedgerDB m blk, TestInternals m blk)
 openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal replayGoalIsEBB = do
   createDirectoryIfMissing fs True (mkFsPath [])
   (_initLog, db) <-

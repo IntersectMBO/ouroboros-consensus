@@ -129,7 +129,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
-  ( LedgerDB'
+  ( LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
@@ -309,7 +309,7 @@ data ChainDbEnv m blk = CDB
   -- after a Mithril bootstrap, a db-truncater run or the loss of VolatileDB
   -- files. The garbage collection removes only blocks from slots before the
   -- ImmutableDB tip's.
-  , cdbLedgerDB :: !(LedgerDB' m blk)
+  , cdbLedgerDB :: !(LedgerDB m blk)
   , cdbChain :: !(StrictTVar m (InternalChain blk))
   -- ^ Contains the current chain fragment.
   --
