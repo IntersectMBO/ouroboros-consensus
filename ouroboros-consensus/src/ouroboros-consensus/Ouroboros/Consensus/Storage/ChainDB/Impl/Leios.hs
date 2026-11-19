@@ -208,19 +208,24 @@ data LeiosValidClaims = LeiosValidClaims
   --
   -- The 'Fingerprint' changes every time an election is added, but not when
   -- elections are pruned.
+  , lvcPrunedSlot :: !SlotNo
+  -- ^ The slot this has most recently been pruned to, so that a claim established
+  -- after the pruning cannot undo it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyLeiosValidClaims :: LeiosValidClaims
 emptyLeiosValidClaims =
-  LeiosValidClaims Map.empty Map.empty (WithFingerprint Map.empty (Fingerprint 0))
+  LeiosValidClaims Map.empty Map.empty (WithFingerprint Map.empty (Fingerprint 0)) (SlotNo 0)
 
 -- | Record that some valid certificate established the claim, and that the
--- claim's announcing block made this announcement.
+-- claim's announcing block made this announcement, unless that block is older
+-- than what has been pruned.
 insertLeiosValidClaim ::
   LeiosClaim -> LeiosAnnouncement -> LeiosValidClaims -> LeiosValidClaims
-insertLeiosValidClaim (LeiosClaim slot rbHash) ann claims@(LeiosValidClaims slots bySlot certified)
+insertLeiosValidClaim (LeiosClaim slot rbHash) ann claims@(LeiosValidClaims slots bySlot certified prunedSlot)
+  | slot < prunedSlot = claims
   | Map.member rbHash slots = claims
   | otherwise =
       LeiosValidClaims
@@ -234,6 +239,7 @@ insertLeiosValidClaim (LeiosClaim slot rbHash) ann claims@(LeiosValidClaims slot
             )
             (succ (getFingerprint certified))
         )
+        prunedSlot
 
 -- | The endorser block each election has had certified, as far as the
 -- established claims tell.
@@ -247,12 +253,13 @@ isLeiosValidClaim rbHash = Map.member rbHash . lvcSlot
 -- immutable tip has passed it, no block that ChainSel has yet to select can
 -- make the claim.
 pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
-pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot certified) =
+pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot certified prunedSlot) =
   LeiosValidClaims
     (slots `Map.withoutKeys` foldMap NESet.toSet pruned)
     kept
     -- 'ElectionId' orders by slot first.
     (Map.dropWhileAntitone ((< slot) . electionSlot) <$> certified)
+    (max slot prunedSlot)
  where
   (pruned, kept) = Map.spanAntitone (< slot) bySlot
 
