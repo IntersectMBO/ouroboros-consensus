@@ -107,7 +107,7 @@
         },
         "Testing": {
             "DijkstraGenesisFile": "dijkstra-genesis.json",
-            "DijkstraGenesisHash": "e4083c5aa30ab51061082ebc686e15d26b93f6b6c8d063b2361d75771e4d8c16",
+            "DijkstraGenesisHash": "2a541fc3b322b39c271a159a4f73e9d53a0ce0c09a6f1729c5fc11ca9e273879",
             "TestAllegraHardForkAtEpoch": 0,
             "TestAlonzoHardForkAtEpoch": 0,
             "TestBabbageHardForkAtEpoch": 0,

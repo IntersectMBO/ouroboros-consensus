@@ -59,6 +59,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveEndorserBlock
+  , applyCertifiedEndorserBlock
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -233,29 +237,30 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk) =>
+  (IOLike m, ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState) =>
+  ResolveEndorserBlock m ->
   LedgerDbCfg l blk ->
   blk ->
   LedgerSeq m l blk ->
   m (LedgerSeq m l blk)
-reapplyThenPush cfg ap db = do
-  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush doResolveEb cfg ap db = do
+  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) doResolveEb ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
 
 reapplyBlock ::
-  (ApplyBlock l blk, IOLike m) =>
+  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
+  ResolveEndorserBlock m ->
   blk ->
   LedgerSeq m l blk ->
   m (StateRef m l blk)
-reapplyBlock evs cfg b db = do
-  let ks = getBlockKeySets b
-      StateRef st tbs = currentHandle db
-  vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
+reapplyBlock evs cfg doResolveEb b db = do
+  let StateRef st tbs = currentHandle db
+  (vals, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (read tbs st) b st
+  let st' = finish $ tickThenReapply evs cfg b vals
       newst = forgetLedgerTables st'
 
   newtbs <- duplicateWithDiffs tbs st st'

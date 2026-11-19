@@ -492,6 +492,8 @@ instance BlockSupportsMetrics BlockB where
 
 instance BlockSupportsLeios BlockB where
   blockLeiosCert = defaultBlockLeiosCert
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 deriving via
   SelectViewDiffusionPipelining BlockB
@@ -503,7 +505,7 @@ instance SingleEraBlock BlockB where
   singleEraTransition = \_ _ _ _ -> Nothing
 
 instance HasTxs BlockB where
-  extractTxs = const []
+  extractAsMempoolTxs = const []
 
 {-------------------------------------------------------------------------------
   Condense

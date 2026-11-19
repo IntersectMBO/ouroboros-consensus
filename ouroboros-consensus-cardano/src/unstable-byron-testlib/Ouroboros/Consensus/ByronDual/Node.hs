@@ -277,6 +277,8 @@ instance BlockSupportsMetrics DualByronBlock where
 
 instance BlockSupportsLeios DualByronBlock where
   blockLeiosCert = defaultBlockLeiosCert
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 instance BlockSupportsSanityCheck DualByronBlock where
   configAllSecurityParams = pure . configSecurityParam

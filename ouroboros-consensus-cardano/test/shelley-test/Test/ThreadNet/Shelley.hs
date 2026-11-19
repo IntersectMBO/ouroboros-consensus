@@ -27,7 +27,7 @@ import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
+import Ouroboros.Consensus.Ledger.SupportsMempool (extractAsMempoolTxs)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -204,7 +204,7 @@ prop_simple_real_tpraos_convergence
       $ prop_general
         PropGeneralArgs
           { pgaBlockProperty = const $ property True
-          , pgaCountTxs = fromIntegral . length . extractTxs
+          , pgaCountTxs = fromIntegral . length . extractAsMempoolTxs
           , pgaExpectedCannotForge = noExpectedCannotForges
           , pgaFirstBlockNo = 0
           , pgaFixedMaxForkLength = Nothing

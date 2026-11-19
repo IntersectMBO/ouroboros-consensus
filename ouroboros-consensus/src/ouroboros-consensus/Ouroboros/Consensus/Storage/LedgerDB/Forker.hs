@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -42,6 +43,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , AnnLedgerError (..)
   , AnnLedgerError'
   , ResolveBlock
+  , ResolveEndorserBlock
+  , ExnUndecodableEndorserBlock (..)
+  , applyCertifiedEndorserBlock
   , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
@@ -54,6 +58,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
 import Control.Monad.Except
   ( runExcept
   )
@@ -82,6 +87,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , leiosLedgerViewAtTip
   )
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffForKeysOnTables, prependDiffs)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, SerialisedEndorserBlock)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -292,6 +299,8 @@ readOnlyForker forker =
 data ValidateArgs m l blk = ValidateArgs
   { resolve :: !(ResolveBlock m blk)
   -- ^ How to retrieve blocks from headers
+  , resolveEndorserBlock :: !(ResolveEndorserBlock m)
+  -- ^ How to retrieve the endorser blocks that blocks certify
   , validateConfig :: !(LedgerCfg l blk)
   -- ^ The config
   , addPrevApplied :: !([RealPoint blk] -> STM m ())
@@ -321,6 +330,7 @@ validate ::
   , l ~ ExtLedgerState
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , BlockSupportsLeios blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
@@ -337,12 +347,14 @@ validate evs args = do
         trace
         aps
         resolve
+        resolveEndorserBlock
         onSuccess
   atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint $ NE.toList hdrs))
   pure res
  where
   ValidateArgs
     { resolve
+    , resolveEndorserBlock
     , validateConfig
     , addPrevApplied
     , prevApplied
@@ -393,9 +405,11 @@ validate evs args = do
 switch ::
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadThrow m
   , l ~ ExtLedgerState
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , BlockSupportsLeios blk
   ) =>
   (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
@@ -406,13 +420,14 @@ switch ::
   -- | New blocks to apply, with their headers
   NonEmpty (Header blk, Ap m l blk) ->
   ResolveBlock m blk ->
+  ResolveEndorserBlock m ->
   SuccessForkerAction m l blk ->
   m
     ( Either
         GetForkerError
         (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
     )
-switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
+switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve doResolveEb onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . snd . NE.head $ newBlocks
         goal = PushGoal . toRealPoint . snd . NE.last $ newBlocks
@@ -424,6 +439,7 @@ switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSucc
         (NE.toList newBlocks)
         fo
         doResolve
+        doResolveEb
     case ePush of
       Left err -> pure (Left err)
       Right validated -> do
@@ -457,14 +473,15 @@ toRealPoint (ApplyRef rp) = rp
 -- | Apply blocks to the given forker
 applyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, MonadSTM m) =>
+  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadSTM m, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
+  ResolveEndorserBlock m ->
   m (Either (AnnLedgerError l blk) (l blk DiffMK))
-applyBlock evs cfg ap fo doResolveBlock = case ap of
+applyBlock evs cfg ap fo doResolveBlock doResolveEb = case ap of
   ReapplyVal b ->
     withValues b (return . Right . tickThenReapply evs cfg b)
   ApplyVal b ->
@@ -477,10 +494,10 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
       )
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ReapplyVal b) fo doResolveBlock
+    applyBlock evs cfg (ReapplyVal b) fo doResolveBlock doResolveEb
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ApplyVal b) fo doResolveBlock
+    applyBlock evs cfg (ApplyVal b) fo doResolveBlock doResolveEb
  where
   withValues ::
     blk ->
@@ -488,21 +505,56 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
     m (Either (AnnLedgerError l blk) (l blk DiffMK))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
-    vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)
-    f vs
+    (vs, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (forkerReadTables fo) blk l
+    fmap finish <$> f vs
+
+-- | Prepare to apply a block on a state.
+--
+-- A block containing a Leios certificate applies after the endorser block it
+-- certifies, which applies on the state its predecessor left, and whose
+-- differences come first.
+applyCertifiedEndorserBlock ::
+  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadThrow m) =>
+  LedgerCfg l blk ->
+  ResolveEndorserBlock m ->
+  ReadLedgerTables m blk ->
+  blk ->
+  l blk EmptyMK ->
+  m
+    ( -- The resulting ledger state with values loaded for blk.
+      l blk ValuesMK
+    , -- Prepends the diffs of the endorser block once we have applied the blk.
+      l blk DiffMK -> l blk DiffMK
+    )
+applyCertifiedEndorserBlock cfg doResolveEb readTables blk st =
+  case ledgerAnnouncedLeiosPoint (ledgerState st) <* blockLeiosCert blk of
+    Nothing -> do
+      values <- readTables keys
+      pure (st `withLedgerTables` values, id)
+    Just point -> do
+      serialised <- doResolveEb point
+      ebDiffs <-
+        applyEndorserBlock (configLedger (getExtLedgerCfg cfg)) readTables serialised (ledgerState st)
+          >>= either (throwIO . ExnUndecodableEndorserBlock point) pure
+      let ebSt = st{ledgerState = ebDiffs}
+      values <- readTables keys
+      pure (applyDiffForKeysOnTables values keys ebSt, prependDiffs ebSt)
+ where
+  keys = getBlockKeySets blk
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker, and return it.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadSTM m, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
+  ResolveEndorserBlock m ->
   m (Either (AnnLedgerError l blk) (l blk DiffMK))
-applyThenPush evs cfg ap fo doResolve = do
-  eLerr <- applyBlock evs cfg ap fo doResolve
+applyThenPush evs cfg ap fo doResolve doResolveEb = do
+  eLerr <- applyBlock evs cfg ap fo doResolve doResolveEb
   case eLerr of
     Left err -> pure (Left err)
     Right st -> Right st <$ forkerPush fo st
@@ -512,6 +564,8 @@ applyThenPush evs cfg ap fo doResolve = do
 applyThenPushMany ::
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadThrow m
+  , BlockSupportsLeios blk
   , l ~ ExtLedgerState
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
@@ -522,8 +576,9 @@ applyThenPushMany ::
   [(Header blk, Ap m l blk)] ->
   Forker m l blk ->
   ResolveBlock m blk ->
+  ResolveEndorserBlock m ->
   m (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
-applyThenPushMany trace evs cfg aps fo doResolveBlock = do
+applyThenPushMany trace evs cfg aps fo doResolveBlock doResolveEb = do
   start <- atomically $ forkerGetLedgerState fo
   pushAndTrace (AF.Empty (anchorOf start)) (chainDepOf start) aps
  where
@@ -539,7 +594,7 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
   pushAndTrace acc _predChainDep [] = pure $ Right acc
   pushAndTrace acc predChainDep ((hdr, ap) : aps') = do
     trace $ Pushing . toRealPoint $ ap
-    res <- applyThenPush evs cfg ap fo doResolveBlock
+    res <- applyThenPush evs cfg ap fo doResolveBlock doResolveEb
     case res of
       Left err -> pure (Left err)
       Right st -> do
@@ -576,6 +631,19 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
 -- corruption must have happened and the 'ChainDB' should trigger
 -- validation mode.
 type ResolveBlock m blk = RealPoint blk -> m blk
+
+-- | Load the endorser block a block certifies, at the point its predecessor
+-- announced it.
+--
+-- Like 'ResolveBlock', the endorser block must exist, or data corruption must have
+-- happened.
+type ResolveEndorserBlock m = LeiosPoint -> m SerialisedEndorserBlock
+
+-- | An endorser block a block certifies does not decode, so
+-- data corruption must have happened.
+data ExnUndecodableEndorserBlock = ExnUndecodableEndorserBlock LeiosPoint DecoderError
+  deriving Show
+  deriving anyclass Exception
 
 {-------------------------------------------------------------------------------
   Validation

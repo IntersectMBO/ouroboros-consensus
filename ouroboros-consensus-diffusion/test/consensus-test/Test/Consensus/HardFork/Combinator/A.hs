@@ -594,6 +594,8 @@ instance BlockSupportsMetrics BlockA where
 
 instance BlockSupportsLeios BlockA where
   blockLeiosCert = defaultBlockLeiosCert
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 deriving via
   SelectViewDiffusionPipelining BlockA
@@ -652,7 +654,7 @@ instance SingleEraBlock BlockA where
         (boundEpoch eraStart)
 
 instance HasTxs BlockA where
-  extractTxs = blkA_body
+  extractAsMempoolTxs = blkA_body
 
 {-------------------------------------------------------------------------------
   Condense
