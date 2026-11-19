@@ -65,6 +65,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
+  , LeiosPoint (..)
   , encodeEndorserBlockSize
   , endorserBlockHash
   , endorserBlockReferences
@@ -1532,6 +1533,31 @@ instance
                 $ blockPrevHash blk
             )
       ]
+  forMachine _dtal (TraceForgedCertifyingBlock slotNo rbHash announcingPoint ebHash) =
+    mconcat
+      [ "kind" .= String "TraceForgedCertifyingBlock"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "block" .= String (renderHeaderHash (Proxy @blk) rbHash)
+      , "announcingBlock" .= String (renderRealPoint announcingPoint)
+      , "endorserBlock" .= String (Crypto.hashToTextAsHex ebHash)
+      ]
+  forMachine _dtal (TraceForgeNotCertifiable slotNo notCertifiable) =
+    mconcat
+      [ "kind" .= String "TraceForgeNotCertifiable"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "reason" .= String (showT notCertifiable)
+      ]
+  forMachine _dtal (TraceForgeNoLeiosCert announcingPoint) =
+    mconcat
+      [ "kind" .= String "TraceForgeNoLeiosCert"
+      , "announcingBlock" .= String (renderRealPoint announcingPoint)
+      ]
+  forMachine _dtal (TraceForgeLeiosClosureNotAcquired point) =
+    mconcat
+      [ "kind" .= String "TraceForgeLeiosClosureNotAcquired"
+      , "announcingSlot" .= toJSON (unSlotNo (pointSlotNo point))
+      , "endorserBlock" .= String (Crypto.hashToTextAsHex (pointEbHash point))
+      ]
   forMachine _dtal (TraceForgedEndorserBlock slotNo rbHash eb ebMeasure) =
     mconcat
       [ "kind" .= String "TraceForgedEndorserBlock"
@@ -1661,6 +1687,25 @@ instance
       <> showT (unSlotNo mpSlot)
   forHuman (TraceForgedBlock slotNo _ _ _ _) =
     "Forged block in slot " <> showT (unSlotNo slotNo)
+  forHuman (TraceForgedCertifyingBlock slotNo _ announcingPoint ebHash) =
+    "Forged a block in slot "
+      <> showT (unSlotNo slotNo)
+      <> " that certifies endorser block "
+      <> Crypto.hashToTextAsHex ebHash
+      <> ", announced by "
+      <> renderRealPointAsPhrase announcingPoint
+  forHuman (TraceForgeNotCertifiable slotNo notCertifiable) =
+    "The block in slot "
+      <> showT (unSlotNo slotNo)
+      <> " cannot certify an endorser block: "
+      <> showT notCertifiable
+  forHuman (TraceForgeNoLeiosCert announcingPoint) =
+    "No Leios certificate for the endorser block announced by "
+      <> renderRealPointAsPhrase announcingPoint
+  forHuman (TraceForgeLeiosClosureNotAcquired point) =
+    "Not certifying endorser block "
+      <> Crypto.hashToTextAsHex (pointEbHash point)
+      <> ", because the node does not hold its closure"
   forHuman (TraceForgedEndorserBlock slotNo rbHash eb _) =
     "Forged endorser block in slot "
       <> showT (unSlotNo slotNo)
@@ -1736,6 +1781,10 @@ instance
     [ IntM "forgedSlotLast" (fromIntegral $ unSlotNo slot)
     , CounterM "Forge.forged" Nothing
     ]
+  asMetrics TraceForgedCertifyingBlock{} = []
+  asMetrics TraceForgeNotCertifiable{} = []
+  asMetrics TraceForgeNoLeiosCert{} = []
+  asMetrics TraceForgeLeiosClosureNotAcquired{} = []
   asMetrics TraceForgedEndorserBlock{} = []
   asMetrics TraceNoSlotOnset{} = []
   asMetrics (TraceDidntAdoptBlock _slot _) =
@@ -1778,6 +1827,14 @@ instance MetaTrace (TraceForgeEvent blk) where
     Namespace [] ["ForgingMempoolSnapshot"]
   namespaceFor TraceForgedBlock{} =
     Namespace [] ["ForgedBlock"]
+  namespaceFor TraceForgedCertifyingBlock{} =
+    Namespace [] ["ForgedCertifyingBlock"]
+  namespaceFor TraceForgeNotCertifiable{} =
+    Namespace [] ["ForgeNotCertifiable"]
+  namespaceFor TraceForgeNoLeiosCert{} =
+    Namespace [] ["ForgeNoLeiosCert"]
+  namespaceFor TraceForgeLeiosClosureNotAcquired{} =
+    Namespace [] ["ForgeLeiosClosureNotAcquired"]
   namespaceFor TraceForgedEndorserBlock{} =
     Namespace [] ["ForgedEndorserBlock"]
   namespaceFor TraceNoSlotOnset{} =
@@ -1806,6 +1863,10 @@ instance MetaTrace (TraceForgeEvent blk) where
   severityFor (Namespace _ ["ForgeTickedLedgerState"]) _ = Just Debug
   severityFor (Namespace _ ["ForgingMempoolSnapshot"]) _ = Just Debug
   severityFor (Namespace _ ["ForgedBlock"]) _ = Just Info
+  severityFor (Namespace _ ["ForgedCertifyingBlock"]) _ = Just Info
+  severityFor (Namespace _ ["ForgeNotCertifiable"]) _ = Just Debug
+  severityFor (Namespace _ ["ForgeNoLeiosCert"]) _ = Just Info
+  severityFor (Namespace _ ["ForgeLeiosClosureNotAcquired"]) _ = Just Info
   severityFor (Namespace _ ["ForgedEndorserBlock"]) _ = Just Info
   severityFor (Namespace _ ["NoSlotOnset"]) _ = Just Error
   severityFor (Namespace _ ["DidntAdoptBlock"]) _ = Just Error
@@ -2004,6 +2065,33 @@ instance MetaTrace (TraceForgeEvent blk) where
         , "\n"
         , "  * ForgedInvalidBlock (hopefully never, this would indicate a bug)"
         ]
+  documentFor (Namespace _ ["ForgedCertifyingBlock"]) =
+    Just $
+      mconcat
+        [ "We forged a block that contains a Leios certificate. We record the"
+        , "  current slot number, the hash of the forged block, the point of the"
+        , "  block that announces the certified endorser block, and the hash of"
+        , "  that endorser block."
+        ]
+  documentFor (Namespace _ ["ForgeNotCertifiable"]) =
+    Just $
+      mconcat
+        [ "The block in this slot cannot contain a Leios certificate. We record"
+        , "  the current slot number and the reason. We trace this in each slot"
+        , "  where the node leads."
+        ]
+  documentFor (Namespace _ ["ForgeNoLeiosCert"]) =
+    Just $
+      mconcat
+        [ "The node has no Leios certificate for the endorser block that the"
+        , "  block at this point announces, so the forged block certifies nothing."
+        ]
+  documentFor (Namespace _ ["ForgeLeiosClosureNotAcquired"]) =
+    Just $
+      mconcat
+        [ "The node does not hold the closure of this endorser block, so the"
+        , "  forged block does not certify it."
+        ]
   documentFor (Namespace _ ["ForgedEndorserBlock"]) =
     Just $
       mconcat
@@ -2072,6 +2160,10 @@ instance MetaTrace (TraceForgeEvent blk) where
     , Namespace [] ["ForgeTickedLedgerState"]
     , Namespace [] ["ForgingMempoolSnapshot"]
     , Namespace [] ["ForgedBlock"]
+    , Namespace [] ["ForgedCertifyingBlock"]
+    , Namespace [] ["ForgeNotCertifiable"]
+    , Namespace [] ["ForgeNoLeiosCert"]
+    , Namespace [] ["ForgeLeiosClosureNotAcquired"]
     , Namespace [] ["ForgedEndorserBlock"]
     , Namespace [] ["NoSlotOnset"]
     , Namespace [] ["DidntAdoptBlock"]

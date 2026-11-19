@@ -469,6 +469,7 @@ instance CanHardFork xs => LeiosProtocol (HardForkProtocol xs) where
       K (Maybe LeiosAnnouncement) blk
     getOne (WrapChainDepState s) = K $ getCertifiableLeiosAnnouncement (Proxy @(BlockProtocol blk)) s
   validateLeiosAnnouncement = validateAnnouncement
+  leiosAnnouncementToCertify = announcementToCertify
   getLeiosLedgerView _proxy view =
     hcollapse $
       hcmap proxySingle getOne $
@@ -480,6 +481,36 @@ instance CanHardFork xs => LeiosProtocol (HardForkProtocol xs) where
       WrapLedgerView blk ->
       K (Maybe LeiosLedgerView) blk
     getOne (WrapLedgerView v) = K $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) v
+
+-- | The current era's answer.
+announcementToCertify ::
+  forall xs.
+  CanHardFork xs =>
+  ConsensusConfig (HardForkProtocol xs) ->
+  SlotNo ->
+  Ticked (HardForkChainDepState xs) ->
+  Either NotCertifiable LeiosAnnouncement
+announcementToCertify HardForkConsensusConfig{..} slot (TickedHardForkChainDepState chainDepState ei) =
+  hcollapse $ hczipWith proxySingle announcementToCertifyEra cfgs (State.tip chainDepState)
+ where
+  cfgs =
+    hcmap
+      proxySingle
+      (completeConsensusConfig'' ei)
+      (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
+
+  announcementToCertifyEra ::
+    forall blk.
+    SingleEraBlock blk =>
+    WrapConsensusConfig blk ->
+    (Ticked :.: WrapChainDepState) blk ->
+    K (Either NotCertifiable LeiosAnnouncement) blk
+  announcementToCertifyEra cfg (Comp st) =
+    K $
+      leiosAnnouncementToCertify
+        (unwrapConsensusConfig cfg)
+        slot
+        (unwrapTickedChainDepState st)
 
 -- | Like 'update'.
 validateAnnouncement ::

@@ -12,6 +12,7 @@ module Ouroboros.Consensus.NodeKernel.Forge
   ( forge
   ) where
 
+import Cardano.Crypto.Leios (LeiosCert)
 import Control.Monad
 import Control.Monad.Except
 import Control.Tracer
@@ -30,7 +31,6 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
-  , certifiedLeiosAnnouncement
   , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract
@@ -39,9 +39,11 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Leios.Protocol
-  ( LeiosAnnouncement
-  , LeiosLedgerView
-  , LeiosProtocol (getLeiosLedgerView)
+  ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
+  , LeiosProtocol (getLeiosLedgerView, leiosAnnouncementToCertify)
+  , NotCertifiable (..)
+  , WhyNotCertifiable (..)
   )
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
@@ -78,6 +80,11 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  -- | The Leios certificate that the forged block contains, if any. The
+  -- arguments are the point of the forged block's predecessor and the
+  -- announcement in the predecessor's header. 'forge' calls this function
+  -- only when 'leiosAnnouncementToCertify' gives that announcement.
+  (RealPoint blk -> LeiosAnnouncement -> m (Maybe LeiosCert)) ->
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
   -- block, the wall-clock onset of its slot, the Leios part of the ledger view
@@ -86,7 +93,7 @@ forge ::
   (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging getLeiosCert onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -104,7 +111,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, predChainDep, summary) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, certifiedBy, summary) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -129,16 +136,31 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
 
         tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
-        traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+        leiosCertified <-
+          case certifiableTip cfg currentSlot bcPrevPoint tickedChainDepState of
+            Left notCertifiable -> do
+              trace $ TraceForgeNotCertifiable currentSlot notCertifiable
+              pure Nothing
+            Right (announcingPoint, announcement) ->
+              fmap (\cert -> (cert, (announcingPoint, announcement)))
+                <$> lift (getLeiosCert announcingPoint announcement)
+        let leiosCert = fst <$> leiosCertified
 
-        selectedTxs <-
-          getTransactionsToForge
-            cfg
-            mempool
-            currentSlot
-            tickedLedgerState
-            forker
-            Nothing -- NOTE: no Peras cert to include for now
+        selectedTxs <- case leiosCert of
+          -- A certifying block carries no transactions of its own, and it
+          -- announces no endorser block: the mempool's transactions were
+          -- validated without the certified ones. So 'forge' does not select
+          -- any, which saves the mempool revalidation of 'getSnapshotFor'.
+          Just _ -> pure noTransactionsToForge
+          Nothing -> do
+            traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+            getTransactionsToForge
+              cfg
+              mempool
+              currentSlot
+              tickedLedgerState
+              forker
+              Nothing -- NOTE: no Peras cert to include for now
         let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
@@ -149,6 +171,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
                 , Block.fbTxs = rankingBlockTxs selectedTxs
                 , Block.fbEbTxs = endorserBlockTxs selectedTxs
                 , Block.fbIsLeader = proof
+                , Block.fbLeiosCert = leiosCert
                 }
         pure
           ( fbArgs
@@ -156,7 +179,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-          , headerStateChainDep (headerState unticked)
+          , snd <$> leiosCertified
           , hardForkSummary (configLedger cfg) (ledgerState unticked)
           )
 
@@ -179,6 +202,14 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
       (forgingMempoolSize selectedTxs)
       (rankingBlockMeasure selectedTxs)
 
+  whenJust certifiedBy $ \(announcingPoint, announcement) ->
+    trace $
+      TraceForgedCertifyingBlock
+        currentSlot
+        (blockHash (Block.rankingBlock forgeRes))
+        announcingPoint
+        (announcementEbHash announcement)
+
   whenJust (Block.endorserBlock forgeRes) $ \eb ->
     trace $
       TraceForgedEndorserBlock
@@ -195,12 +226,30 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     (fbTxs fbArgs)
     (pointSlot forgingOnTopOf)
     leiosView
-    ( certifiedLeiosAnnouncement
-        (configBlock cfg)
-        (getHeader (Block.rankingBlock forgeRes))
-        predChainDep
-    )
+    (maybeToStrictMaybe $ snd <$> certifiedBy)
     (Block.rankingBlock forgeRes)
+
+-- | The announcement that a block in this slot on top of this point may
+-- certify, with the point of the block that announced it, or why it may
+-- certify none.
+--
+-- It asks 'leiosAnnouncementToCertify', so that the forger applies the same
+-- rule as header validation, on the same ticked state.
+certifiableTip ::
+  RunNode blk =>
+  TopLevelConfig blk ->
+  SlotNo ->
+  Point blk ->
+  Ticked (ChainDepState (BlockProtocol blk)) ->
+  Either NotCertifiable (RealPoint blk, LeiosAnnouncement)
+certifiableTip cfg currentSlot prevPoint tickedChainDepState = do
+  announcement <-
+    leiosAnnouncementToCertify (configConsensus cfg) currentSlot tickedChainDepState
+  case prevPoint of
+    BlockPoint announcingSlot announcingHash ->
+      Right (RealPoint announcingSlot announcingHash, announcement)
+    -- The chain-dependent state at genesis holds no announcement.
+    GenesisPoint -> Left $ NoCertifiableAnnouncement NothingAnnounced
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -528,6 +577,18 @@ data TransactionsToForge blk = TransactionsToForge
   , endorserBlockMeasure :: MempoolMeasure blk
   , forgingMempoolSize :: MempoolSize
   }
+
+-- | The selection of a block that takes no transactions from the mempool. Its
+-- 'forgingMempoolSize' is zero, because 'forge' reads no mempool snapshot.
+noTransactionsToForge :: TxLimits blk => TransactionsToForge blk
+noTransactionsToForge =
+  TransactionsToForge
+    { rankingBlockTxs = []
+    , rankingBlockMeasure = Measure.zero
+    , endorserBlockTxs = []
+    , endorserBlockMeasure = Measure.zero
+    , forgingMempoolSize = mempty
+    }
 
 -- | Get a snapshot of the mempool that is consistent with the given ticked
 -- ledger state. Select the transactions for the ranking block and for the
