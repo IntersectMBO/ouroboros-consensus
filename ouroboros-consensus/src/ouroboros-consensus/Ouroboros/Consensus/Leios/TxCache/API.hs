@@ -61,7 +61,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   )
 
 -- | A monadic tx-cache handle: the pure index operations, each performing its
--- state update in @m@.
+-- state update in @m@. Retention is bounded by body-bearing points; see
+-- @docs/fetch-policy/leiosfetch-improved.md#cache-retention@.
 data LeiosTxCache m a v b = LeiosTxCache
   { evictOlderThan :: SlotNo -> m (Set EndorserBlockHash, Set TxHash)
   -- ^ Evict every retained point whose slot is strictly older than the
@@ -70,12 +71,13 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- complementing the count-driven eviction that 'insertBody' performs. Also
   -- records the boundary, after which 'insertBody' retains no point that old.
   --
-  -- ORDERING CONTRACT — MUST HOLD: prune this in-memory cache to a slot @X@
-  -- /strictly before/ the LeiosDb is pruned to that same @X@ — never after, never
-  -- concurrently. This cache is only an index of the LeiosDb, so evicting from the
-  -- index first is what guarantees it can never report a hit for a tx the LeiosDb
-  -- has already dropped. Reverse the order and you arm the hit-prune hazard: a
-  -- false hit ⇒ a skipped fetch ⇒ a silently-incomplete EB closure.
+  -- ORDERING CONTRACT: prune this metadata before forwarding database
+  -- promotion to the same boundary, releasing the cache lock before storage IO.
+  -- Promotion changes authoritative read routing; subsequent collection can
+  -- remove volatile bytes. The monotonic fence rejects later publication from
+  -- older points. Pruning early can lose a reuse opportunity, but deletes no
+  -- database bytes. Already-captured locations remain hints: the writer checks
+  -- their source and confirms only actual target possession.
   , insertBody ::
       forall w.
       LeiosPoint ->
@@ -91,16 +93,19 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- than the latest 'evictOlderThan' boundary.
   --
   -- Retaining a point past 'maxLeiosPointCount' evicts the oldest (least slot,
-  -- then least EB hash), cascading through the body and tx refcounts.
+  -- then least EB hash), cascading through the body and tx refcounts. A body
+  -- shared by several retained points contributes only one TX reference per
+  -- distinct hash it lists. No prior announcement is required. This retention
+  -- is not confirmation that the target body write landed.
   --
   -- Either way, fold a caller-supplied accumulator over /every/ referenced tx:
   -- starting from the nil @w@ and extending it with the snoc @w -> offset ->
   -- 'TxHash' -> 'BytesSize' -> 'Maybe' 'TxLocation' -> w@, where @offset@ is the
-  -- tx's position in the body and the location is 'Just' iff some held EB
-  -- durably holds the tx's bytes ('setTxLocations'), i.e. it can serve a
-  -- cross-EB fill. When the body is inserted, the entry is already in hand for
-  -- the refcount bump, so this location read rides that pass rather than
-  -- costing a second one.
+  -- tx's position in the body. A 'Just' location was published from confirmed
+  -- bytes ('setTxLocations'); it proposes a cross-EB fill but does not pin its
+  -- source against later retirement. The writer checks availability when it
+  -- consumes the descriptor. When the body is inserted, this location read
+  -- shares the refcount pass rather than requiring a second traversal.
   , lookupBody :: EndorserBlockHash -> m (Maybe b)
   -- ^ The EB's body if we hold it. A hit means only that the body was taken in
   -- for some point of the EB: it says nothing about what the LeiosDb holds at
@@ -118,11 +123,13 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Also holds the lock
   , setTxLocations :: LeiosPoint -> [(TxOffset, TxHash)] -> m ()
   -- ^ Advertise where these txs' DURABLE bytes live -- the given point's rows
-  -- at the given offsets -- for cross-point fill. Call this on write confirmation
-  -- only: a location must never name bytes that could still be lost. A tx the
-  -- cache no longer tracks is skipped, never resurrected. Latest location wins:
-  -- a tx held by several points points at the most recently advertised one
-  -- (evicted last).
+  -- at the given offsets -- for cross-point fill. Call this from positive write
+  -- confirmation, never merely from queue admission. Confirmation proves past
+  -- presence, not a pin against subsequent retirement. A tx the
+  -- cache no longer tracks is skipped, never resurrected. Publication from a
+  -- point below the pruning frontier is rejected under the same cache lock,
+  -- even when a newer body still tracks that TX. Among eligible points, the
+  -- most recently advertised location wins.
   --
   -- MAY be called repeatedly for one point: its closure arrives over many
   -- 'MsgLeiosBlockTxs', and each batch confirms a slice. The point claims a

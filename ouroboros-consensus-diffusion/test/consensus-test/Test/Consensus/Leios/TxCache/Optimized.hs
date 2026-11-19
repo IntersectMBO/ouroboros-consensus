@@ -74,6 +74,11 @@ tests =
         testProperty "hash-table handle == pure handle" prop_equiv
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "hash-table handle == pure handle, with evictOlderThan" prop_equivEvict
+    , testGroup "point lifetime boundaries"
+        [ testCase name (testPointLifetime makeCache)
+        | (name, makeCache) <-
+            [("reference", newPureLeiosTxCache 8), ("optimized", newHashTableLeiosTxCache 8 salt0 salt1)]
+        ]
     , testCase
         "a thread killed while inserting a body leaves no tx behind once the body's point is evicted"
         $ killedInsertLeaks >>= (@?= 0)
@@ -271,3 +276,30 @@ killedInsertLeaks = do
   txhOfInt :: Int -> TxHash
   txhOfInt n =
     UnsafeHash $ SBS.pack ([fromIntegral (n `shiftR` (8 * i)) | i <- [0 .. 3]] ++ replicate 28 0)
+
+-- Duplicate insertion and shared bodies must not inflate TX refcounts. The
+-- 129th point evicts one of the shared body's points; final eviction must
+-- remove exactly the TXs whose last referring body is gone.
+testPointLifetime :: IO H -> IO ()
+testPointLifetime makeCache = do
+  cache <- makeCache
+  let old = MkLeiosPoint 1 (ebhOf 1)
+      shared = MkLeiosPoint 128 (ebhOf 1)
+      lastPoint = MkLeiosPoint 129 (ebhOf 129)
+      insert point refs = void $ insertBody cache point (TestBody refs) () (\() _ _ _ _ -> ())
+      look tx = withLookupTx cache ($ tx)
+  insert old [txhOf 1, txhOf 2]
+  insert old [txhOf 1, txhOf 2]
+  void $ withLockedInsertUnappliedTx cache $ \nil step -> foldM (\acc t -> step acc (txhOf t) 1 ()) nil [1, 2]
+  insert shared [txhOf 1, txhOf 2]
+  mapM_ (\n -> insert (MkLeiosPoint (fromIntegral n) (ebhOf n)) []) [2 .. 127]
+  insert lastPoint [txhOf 1, txhOf 3]
+  lookupBody cache (ebhOf 1) >>= (@?= Just (TestBody [txhOf 1, txhOf 2]))
+  look (txhOf 2) >>= (@?= Just (Left ()))
+  _ <- evictOlderThan cache 129
+  lookupBody cache (ebhOf 1) >>= (@?= Nothing)
+  look (txhOf 1) >>= (@?= Just (Left ()))
+  look (txhOf 2) >>= (@?= Nothing)
+  _ <- evictOlderThan cache 130
+  lookupBody cache (ebhOf 129) >>= (@?= Nothing)
+  look (txhOf 1) >>= (@?= Nothing)

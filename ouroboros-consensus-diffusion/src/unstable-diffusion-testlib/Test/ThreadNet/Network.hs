@@ -95,6 +95,8 @@ import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config (defaultLeiosFetchStaticEnv)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( defaultLeiosAnnouncementAgeLimits
   )
@@ -121,6 +123,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -561,37 +564,39 @@ runThreadNetwork
                 blockForging'
                 nodeInfo
                 (crucialTxs' ++ tniCrucialTxs)
-            atomically $ writeTVar vertexStatusVar $ VUp kernel app
+            again <- withLeiosFetchWorkers (getLeiosFetchKernel kernel) $ do
+              atomically $ writeTVar vertexStatusVar $ VUp kernel app
 
-            -- wait until this node instance should stop
-            again <- case Map.minViewWithKey rs of
-              -- end of test
-              Nothing -> do
-                OracularClock.waitUntilDone clock
-                pure Nothing
-              -- onset of schedule restart slot
-              Just ((s', nr'), rs') -> do
-                -- wait until the node should stop
-                tooLate <- OracularClock.blockUntilSlot clock s'
-                when tooLate $ do
-                  error $
-                    "unsatisfiable nodeRestarts: "
-                      ++ show (coreNodeId, s')
+              -- wait until this node instance should stop
+              again <- case Map.minViewWithKey rs of
+                -- end of test
+                Nothing -> do
+                  OracularClock.waitUntilDone clock
+                  pure Nothing
+                -- onset of schedule restart slot
+                Just ((s', nr'), rs') -> do
+                  -- wait until the node should stop
+                  tooLate <- OracularClock.blockUntilSlot clock s'
+                  when tooLate $ do
+                    error $
+                      "unsatisfiable nodeRestarts: "
+                        ++ show (coreNodeId, s')
 
-                -- this synchronization prevents a race with the
-                -- instrumentation thread: we it want to record the current
-                -- block number at the start of the slot, before this vertex
-                -- restarts the node
-                atomically $ do
-                  nextSlot <- readTVar nextInstrSlotVar
-                  check $ nextSlot > s'
+                  -- this synchronization prevents a race with the
+                  -- instrumentation thread: we it want to record the current
+                  -- block number at the start of the slot, before this vertex
+                  -- restarts the node
+                  atomically $ do
+                    nextSlot <- readTVar nextInstrSlotVar
+                    check $ nextSlot > s'
 
-                pure $ Just (s', pInfo', blockForging', nr', rs')
+                  pure $ Just (s', pInfo', blockForging', nr', rs')
 
-            -- stop threads that depend on/stimulate the kernel
-            atomically $ writeTVar vertexStatusVar VFalling
-            forM_ edgeStatusVars $ \edgeStatusVar -> atomically $ do
-              readTVar edgeStatusVar >>= check . (== EDown)
+              -- stop threads that depend on/stimulate the kernel
+              atomically $ writeTVar vertexStatusVar VFalling
+              forM_ edgeStatusVars $ \edgeStatusVar -> atomically $ do
+                readTVar edgeStatusVar >>= check . (== EDown)
+              pure again
 
             -- assuming nothing else is changing it, read the final chain
             let chainDB = getChainDB kernel
@@ -877,7 +882,16 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      leiosDB <- newLeiosDBInMemory
+      let rng = case seed of
+            Seed s -> mkStdGen s
+          (kaRng, rng') = splitGen rng
+          (gsmRng, rng'') = splitGen rng'
+          (psRng, rng''') = splitGen rng''
+          (lfRng, rng'''') = splitGen rng'''
+          (txRng, chainSyncRng) = splitGen rng''''
+      rawLeiosDB <- newLeiosDBInMemory
+      leiosTxCache <- newNodeLeiosTxCache lfRng
+      let leiosDB = withCacheRetirement leiosTxCache rawLeiosDB
       leiosAcquisitions <- newLeiosAcquisitions
       let chainDbArgs =
             mkArgs
@@ -1058,12 +1072,6 @@ runThreadNetwork
             , hfbtMaxClockRewind = secondsToNominalDiffTime 0
             }
 
-      let rng = case seed of
-            Seed s -> mkStdGen s
-          (kaRng, rng') = splitGen rng
-          (gsmRng, rng'') = splitGen rng'
-          (psRng, rng''') = splitGen rng''
-          (lfRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1075,6 +1083,7 @@ runThreadNetwork
               , systemTime
               , chainDB
               , leiosDB
+              , leiosTxCache
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck
@@ -1087,8 +1096,12 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = txRng
               , leiosAcquisitions
-              , leiosFetchRng = lfRng
+              , -- Split off a generator the node uses anyway, so that the others'
+                -- streams stay as they were.
+                leiosFetchRng = lfRng
+              , leiosFetchConfig = defaultLeiosFetchStaticEnv
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =

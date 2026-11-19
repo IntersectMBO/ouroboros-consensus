@@ -31,7 +31,6 @@ import Control.Monad.Class.MonadThrow (onException)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
-import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import Numeric.Natural (Natural)
@@ -41,7 +40,12 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , endorserBlockReferences
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (LocalFills, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( BodyWriteReceipt
+  , LocalFills
+  , Promise (..)
+  , TxWriteReceipt
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -67,15 +71,15 @@ data WriteJob
       !LocalFills
       -- | the txs the writer holds, with their bytes
       !(Map TxOffset ByteString)
-      -- | where the worker puts the offsets the point holds
-      !(ResolveWriteJob (Set TxOffset))
+      -- | where the worker confirms body presence and held offsets
+      !(ResolveWriteJob BodyWriteReceipt)
   | WriteTxs
       -- | the EB the txs belong to
       !LeiosPoint
       -- | txs with their bytes, by offset into the EB's body
       !(Map TxOffset ByteString)
-      -- | where the worker reports that the write is done
-      !(ResolveWriteJob ())
+      -- | where the worker confirms held txs and reports wrong sizes
+      !(ResolveWriteJob TxWriteReceipt)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(ResolveWriteJob ())

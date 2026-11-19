@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -49,7 +48,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
-import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -60,7 +58,6 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
-import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Void (Void)
 import qualified Network.Mux as Mux
@@ -101,8 +98,12 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
+  ( LeiosFetchClientContext (lfcRuntime)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
-  ( LeiosFetchPeer
+  ( LeiosFetchKernel (..)
+  , LeiosFetchPeer (..)
   , LeiosPeerLifetimeId
   , enqueueLeiosAnnouncement
   , recordLeiosCertOffer
@@ -110,9 +111,11 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   , recordLeiosOffer
   , withLeiosFetchPeer
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchServerPeer
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Timing as FT
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch
@@ -150,6 +153,7 @@ import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
   , leiosFetchClient
   , leiosFetchMiniProtocol
   , leiosFetchServer
+  , runLeiosFetchClient
   )
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
   ( leiosNotifyClient
@@ -178,7 +182,6 @@ import Ouroboros.Network.BlockFetch.Client
   , blockFetchClient
   )
 import Ouroboros.Network.Channel
-import Ouroboros.Network.DeltaQ
 import Ouroboros.Network.Driver
 import Ouroboros.Network.Driver.Limits
 import Ouroboros.Network.KeepAlive
@@ -333,7 +336,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      TVar.Unchecked.StrictTVar m (Map (ConnectionId addr) PeerGSV) ->
+      KeepAliveClientContext (ConnectionId addr) m ->
       KeepAliveInterval ->
       KeepAliveClient m ()
   , hKeepAliveServer ::
@@ -364,8 +367,7 @@ data Handlers m addr blk = Handlers
   , hLeiosFetchClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
-      LeiosPeerLifetimeId (ConnectionId addr) ->
-      LeiosFetchPeer m blk ->
+      R.Client m (LeiosPeerLifetimeId (ConnectionId addr)) ->
       LeiosFetchClientPeerPipelined LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
@@ -438,11 +440,11 @@ mkHandlers
                   -- it would one from a LeiosNotify peer.
                   mbValid <-
                     validHeaderAnnouncement systemTime getTopLevelConfig hdr hdrSlotTime leiosView
-                  for_ mbValid $ \valid ->
-                    atomically $
-                      onValidAnnouncement getLeiosAnnounceState valid >>= \case
-                        NewAnnouncement NotEquivocationProof ->
-                          enqueueLeiosAnnouncement getLeiosFetchKernel valid
+                  for_ mbValid $ \valid -> do
+                    atomically $ do
+                      whetherNew <- onValidAnnouncement getLeiosAnnounceState valid
+                      case whetherNew of
+                        NewAnnouncement NotEquivocationProof -> enqueueLeiosAnnouncement getLeiosFetchKernel valid
                         NewAnnouncement EquivocationProof -> pure ()
                         NotNewAnnouncement -> pure ()
                   for_ mbLeiosPeer $ \peerVars ->
@@ -535,7 +537,7 @@ mkHandlers
             (perasVoteDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
             (makePerasVotePoolReaderFromChainDB $ getChainDB)
             version
-      , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
+      , hKeepAliveClient = \_version -> keepAliveClientWithRtt (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
@@ -581,6 +583,9 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN bLF = Codec
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
   , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
   , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) e m bLF
+  -- ^ The body retains its serialized inner payload. A received
+  -- 'EndorserBlock' keeps the bytes it arrived in. Its driver joins the chunks a
+  -- message arrives in, so 'mkApps' requires a 'Monoid' of @bLF@.
   }
 
 -- | Protocol codecs for the node-to-node protocols
@@ -974,10 +979,11 @@ byteLimits =
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
 mkApps ::
-  forall m addrNTN addrNTC blk e bCS bBF bTX bPCD bPVD bKA bPS bLN bLF.
+  forall m addrNTN addrNTC blk e bCS bBF bTX bPCD bPVD bKA bPS bLN.
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
+  , Hashable addrNTN
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
@@ -997,8 +1003,8 @@ mkApps ::
   NodeKernel m addrNTN addrNTC blk ->
   StdGen ->
   Tracers m addrNTN blk e ->
-  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bPVD bKA bPS bLN bLF) ->
-  ByteLimits bCS bBF bTX bPCD bPVD bKA bPS bLN bLF ->
+  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bPVD bKA bPS bLN ByteString) ->
+  ByteLimits bCS bBF bTX bPCD bPVD bKA bPS bLN ByteString ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
   (forall header. PeerTrustable -> ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
@@ -1006,7 +1012,7 @@ mkApps ::
   CsClient.CSJConfig ->
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
-  Apps m addrNTN bCS bBF bTX bPCD bPVD bKA bPS bLN bLF NodeToNodeInitiatorResult ()
+  Apps m addrNTN bCS bBF bTX bPCD bPVD bKA bPS bLN ByteString NodeToNodeInitiatorResult ()
 mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
@@ -1209,6 +1215,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           (getPeerTxRegistry kernel)
           (getTxCountersVar kernel)
           them
+          (getIsLocalRoot kernel (remoteAddress them))
           $ \api ->
             runServer (newTxSubmissionServer api)
 
@@ -1331,7 +1338,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 (KeepAliveInterval 10)
 
       ((), trailing) <-
-        bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
+        bracketKeepAliveClientWithRtt (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
@@ -1439,8 +1446,8 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
   aLeiosFetchClient ::
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
-    Channel m bLF ->
-    m (NodeToNodeInitiatorResult, Maybe bLF)
+    Channel m ByteString ->
+    m (NodeToNodeInitiatorResult, Maybe ByteString)
   aLeiosFetchClient
     version
     ExpandedInitiatorContext
@@ -1452,20 +1459,38 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "LeiosFetchClient"
       ((), trailing) <-
         withLeiosFetchPeer (getLeiosFetchKernel kernel) them isBigLedgerPeer $ \lifetimeId peerVars ->
-          runPipelinedPeerWithLimits
-            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-            (cLeiosFetchCodec (mkCodecs version))
-            blLeiosFetch
-            timeLimitsLeiosFetch
-            channel
-            (hLeiosFetchClient version controlMessageSTM lifetimeId peerVars)
+          do
+            -- Capture the original reader once; reconnection must not supply a
+            -- newer connection's sample to an older request invocation.
+            originalRtt <- atomically (lookupKeepAliveRtt (getKeepAliveRegistry kernel) them)
+            let sample = case originalRtt of
+                  Nothing -> pure Nothing
+                  Just reader ->
+                    fmap (\rtt -> FT.RttObservation (rttDuration rtt) (rttCompletedAt rtt)) <$> readKeepAliveRtt reader
+            client <-
+              atomically
+                ( R.openClient
+                    (lfcRuntime (lfkContext (getLeiosFetchKernel kernel)))
+                    lifetimeId
+                    (isBigLedgerPeer == IsBigLedgerPeer)
+                    (lfpRequestsToSend peerVars)
+                    sample
+                )
+            runLeiosFetchClient
+              (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+              (cLeiosFetchCodec (mkCodecs version))
+              blLeiosFetch
+              (lfkContext (getLeiosFetchKernel kernel))
+              client
+              (hLeiosFetchClient version controlMessageSTM client)
+              channel
       return (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
-    Channel m bLF ->
-    m ((), Maybe bLF)
+    Channel m ByteString ->
+    m ((), Maybe ByteString)
   aLeiosFetchServer
     version
     ResponderContext{rcConnectionId = them}

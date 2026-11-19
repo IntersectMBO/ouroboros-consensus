@@ -399,23 +399,26 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   case runExcept (applyTx cfg wti isSlotNo tx st) of
     Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
-      ( Right (vtx, projectLedgerTables st')
-      , \dur ->
-          is
-            { isTxs =
-                isTxs
-                  :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
-                    nextTicketNo
-                    (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
-            , isTxKeys = isTxKeys <> getTransactionKeySets tx
-            , isTxValues = ltliftA2 unionValues isTxValues origValues
-            , isTxIds = Set.insert (txId tx) isTxIds
-            , isLeiosTxs = strictMaybe isLeiosTxs (\h -> Map.insert h vtx isLeiosTxs) leiosHash
-            , isLedgerState = prependMempoolDiffs isLedgerState st'
-            , isLastTicketNo = nextTicketNo
-            }
-      )
+      -- Validation may rectify the phase-2 validity flag. Index the exact
+      -- validated bytes that forging and local reuse will project.
+      let leiosHash = maybeToStrictMaybe (hashLeiosTx . MkLeiosTx <$> txLeiosBytes (txForgetValidated vtx))
+       in ( Right (vtx, projectLedgerTables st')
+          , \dur ->
+              is
+                { isTxs =
+                    isTxs
+                      :> TxTicket
+                        (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
+                        nextTicketNo
+                        (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
+                , isTxKeys = isTxKeys <> getTransactionKeySets tx
+                , isTxValues = ltliftA2 unionValues isTxValues origValues
+                , isTxIds = Set.insert (txId tx) isTxIds
+                , isLeiosTxs = strictMaybe isLeiosTxs (\h -> Map.insert h vtx isLeiosTxs) leiosHash
+                , isLedgerState = prependMempoolDiffs isLedgerState st'
+                , isLastTicketNo = nextTicketNo
+                }
+          )
  where
   IS
     { isTxs
@@ -427,8 +430,6 @@ validateNewTransaction cfg wti tx txsz origValues st is =
     , isLastTicketNo
     , isSlotNo
     } = is
-
-  leiosHash = maybeToStrictMaybe (hashLeiosTx . MkLeiosTx <$> txLeiosBytes tx)
 
   nextTicketNo = succ isLastTicketNo
 

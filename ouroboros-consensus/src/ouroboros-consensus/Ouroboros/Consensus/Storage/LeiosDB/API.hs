@@ -20,6 +20,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , LocalFills
+  , BodyWriteReceipt (..)
+  , TxWriteReceipt (..)
   , TxOffset
   ) where
 
@@ -128,7 +130,7 @@ data LeiosDbWriter m = LeiosDbWriter
       EndorserBlock ->
       LocalFills ->
       Map TxOffset ByteString ->
-      m (Promise m (Set TxOffset))
+      m (Promise m BodyWriteReceipt)
   -- ^ Persist an EB body at this point, recording the point. Every point holds
   -- its own body and txs, even when another point names the same EB.
   --
@@ -145,15 +147,16 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ASSUMPTION: each given tx's bytes hash to the tx hash the body lists at its
   -- offset. The implementations do not check this.
   --
-  -- Returns the offsets at which the point holds its txs once the write is
-  -- done: those filled or given, or written since an earlier delivery of the
-  -- same body.
+  -- Confirms the body's presence and held offsets in the authoritative
+  -- partition after commit. A present body with no held txs is distinct from
+  -- a retired target omitted from immutable. Legitimate existing immutable
+  -- copies can confirm presence without another volatile write.
   --
   -- PREREQ: the EB's body and closure sizes are within the protocol limits.
   -- The LeiosDB allocates the closure at the size the body declares.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> Map TxOffset ByteString -> m (Promise m ())
+      LeiosPoint -> Map TxOffset ByteString -> m (Promise m TxWriteReceipt)
   -- ^ Persist the bytes of txs, by offset into the EB body, for the EB at this
   -- point, and only there. Whether that completes the EB is for the caller to
   -- know: the LeiosDB does not track it.
@@ -167,8 +170,34 @@ data LeiosDbWriter m = LeiosDbWriter
   -- body, or its size is not the one the body declares.
   --
   -- A transaction written again overwrites itself, with the same bytes.
+  --
+  -- Confirms only submitted offsets that are actually held at their declared
+  -- size in the authoritative partition after commit. Wrong-size diagnostics
+  -- are separate: their absence does not prove a dropped write succeeded.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
+
+-- | Presence proved after the body write commits, ordered with promotion and
+-- truncation. A receipt is evidence at that boundary, not a pin until its
+-- consumer runs. Later retirement can remove its target.
+data BodyWriteReceipt
+  = -- | The authoritative partition has no body at the target point.
+    BodyUnavailable
+  | -- | The body is present, with these tx offsets already held there.
+    BodyPresent !(Set TxOffset)
+  deriving stock (Eq, Show)
+
+-- | Positive target possession and independent invalid-size diagnostics.
+-- Both refer only to the submitted offsets. Missing bodies or retired targets
+-- confirm nothing; an empty wrong-size set alone never establishes possession.
+data TxWriteReceipt = TxWriteReceipt
+  { txWriteConfirmed :: !(Set TxOffset)
+  , txWriteWrongSize :: !(Set TxOffset)
+  , txWriteBodyPresent :: !Bool
+  -- ^ The authoritative target body exists. Its absence retires this work,
+  -- rather than retrying missing offsets forever against a collected point.
+  }
+  deriving stock (Eq, Show)
 
 -- | The result of a submitted write.
 --

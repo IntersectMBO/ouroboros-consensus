@@ -1,12 +1,15 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | The node's LeiosFetch client and server, and what the node-to-node wiring
 -- needs to run them.
 module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
-  ( leiosFetchClient
+  ( runLeiosFetchClient
+  , leiosFetchClient
   , leiosFetchMiniProtocol
   , leiosFetchServer
   , catchAndRethrow
@@ -14,17 +17,24 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
+import Control.DeepSeq (NFData)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
+import Network.Mux.Timeout (withTimeoutSerial)
+import Network.TypedProtocol.Codec (Annotator (..), AnyMessage (..), Codec, hoistAnnotation)
+import Network.TypedProtocol.Driver (runPipelinedPeerWithDriver)
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised (..)
+  , maxEndorserBlockBytesSize
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeerPipelined
@@ -32,25 +42,38 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   , toLeiosFetchClientPeerPipelined
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
-  ( awaitTerminate
+  ( LeiosFetchClientContext
+  , emitContextObservations
+  , awaitTerminate
   , nextLeiosFetchJob
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel (..)
-  , LeiosFetchPeer (..)
   , LeiosPeerLifetimeId
   )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.RequestState as L
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Runtime as R
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( ExnLeiosInvalidRequest (..)
   , LeiosFetchRequestHandler (..)
   , LeiosFetchServerPeer
   , leiosFetchServerPeer
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
+  ( FetchPhase (..)
+  , FetchRoutine (..)
+  , TraceLeiosFetchServerEvent (..)
+  )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace.Policy as A
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
-  ( Message (..)
+  ( LeiosFetch (..)
+  , Message (..)
+  , SingLeiosFetch
   , TxBitmaps
   , bitmapToOffsets
+  , leiosBlockMessageOverhead
+  , maxLeiosTxsResponseBytesSize
+  , timeLimitsLeiosFetch
   )
 import Ouroboros.Consensus.Network.LeiosFetch
   ( leiosFetchMiniProtocolNum
@@ -63,8 +86,21 @@ import Ouroboros.Consensus.Util.IOLike
   , IOLike
   , MonadCatch (..)
   , MonadThrow (..)
+  , atomically
+  , getMonotonicTime
+  , onException
+  , readTVar
   )
+import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ControlMessage (ControlMessageSTM)
+import Ouroboros.Network.Driver.Limits (ProtocolSizeLimits, TraceSendRecv)
+import Ouroboros.Network.Driver.Progress
+  ( MessageReceipt (receiptObservedAt)
+  , ProgressLimits (..)
+  , ReceiveScope (..)
+  , progressDriverWithLimits
+  , progressTrailingBytes
+  )
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolLimits (..)
@@ -79,15 +115,122 @@ leiosFetchClient ::
   (IOLike m, Ord peer) =>
   LeiosFetchKernel m peer blk ->
   ControlMessageSTM m ->
-  LeiosPeerLifetimeId peer ->
-  LeiosFetchPeer m blk ->
+  R.Client m (LeiosPeerLifetimeId peer) ->
   LeiosFetchClientPeerPipelined LeiosPoint (Serialised EndorserBlock) LeiosTx m ()
-leiosFetchClient kernel controlMessageSTM lifetimeId peerVars =
+leiosFetchClient kernel controlMessageSTM client =
   toLeiosFetchClientPeerPipelined $
     leiosFetchClientPeerPipelined
       leiosFetchPipelineDepth
       (awaitTerminate controlMessageSTM)
-      (nextLeiosFetchJob (lfkContext kernel) lifetimeId (lfpRequestsToSend peerVars))
+      (nextLeiosFetchJob (lfkContext kernel) client)
+
+-- | The ordinary legacy-codec client with connection-bound FIFO observations.
+-- Complete-message original arrival times survive decoder and handler delays;
+-- no incremental payload salvage or cancellation is added to the protocol.
+runLeiosFetchClient ::
+  forall m peer failure.
+  (IOLike m, MonadTimer m, Ord peer, NFData failure, Show failure) =>
+  Tracer m (TraceSendRecv (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)) ->
+  Codec (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) failure m BL.ByteString ->
+  ProtocolSizeLimits (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx) BL.ByteString ->
+  LeiosFetchClientContext m peer ->
+  R.Client m peer ->
+  LeiosFetchClientPeerPipelined LeiosPoint (Serialised EndorserBlock) LeiosTx m () ->
+  Channel m BL.ByteString ->
+  m ((), Maybe BL.ByteString)
+runLeiosFetchClient tracer codec sizes ctx client peer channel = do
+  result <- action `onException` close True
+  close False
+  pure result
+ where
+  rt = R.clientRuntime client
+  source = R.clientPeer client
+  close failed = do
+    events <- atomically $ do
+      before <- readTVar (R.runtimeFacts rt)
+      let !captured = A.forceObservations $ case Map.lookup source (R.sessions before) of
+            Just session
+              | R.invocation session == R.clientInvocation client ->
+                  [ A.Routine
+                      (L.AttemptKey source (R.clientInvocation client) 0)
+                      (FetchInvocationClosed (A.usageSummary rt source before) failed)
+                  ]
+            _ -> []
+      R.closeClient client
+      pure captured
+    emitContextObservations ctx events
+  action = withTimeoutSerial $ \timeoutFn -> do
+    let scope ::
+          forall (st :: LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx).
+          SingLeiosFetch st -> m (ReceiveScope m ())
+        scope _ = do
+          (key, attempt) <- atomically (R.receiverAttempt client)
+          let bound = case R.attemptWork attempt of
+                L.Body{} -> maxEndorserBlockBytesSize + leiosBlockMessageOverhead
+                L.Job{} -> maxLeiosTxsResponseBytesSize
+              req = R.attemptRequest attempt
+          pure
+            ReceiveScope
+              { receiveLimits = ProgressLimits bound 0 0
+              , -- Retained input is local work too. Defer peer expiry until the
+                -- decoder either establishes the terminal receipt or needs more
+                -- channel input. This changes no absolute deadline or allowance.
+                receiveStarted = atomically (R.publishInput client True)
+              , receiveInputStarting = atomically (R.publishInput client True)
+              , receiveInput = \_ -> pure ()
+              , receiveAwaitInput = atomically (R.publishInput client False)
+              , receiveProgress = \_ -> throwIO R.MissingAttempt
+              , receiveComplete = \receipt _ -> do
+                  handlingAt <- getMonotonicTime
+                  events <- atomically $ do
+                    let arrivedAt = receiptObservedAt receipt
+                    R.completeWire client key arrivedAt
+                    received <- A.transition rt key req FetchReplyReceived arrivedAt
+                    handling <- A.transition rt key req FetchHandlerStarted handlingAt
+                    pure [received, handling]
+                  emitContextObservations ctx events
+              , receiveAbort = \_ -> atomically (R.publishInput client False)
+              }
+        observe (AnyMessage msg) at = case msg of
+          MsgLeiosBlockRequest{} -> sent at
+          MsgLeiosBlockTxsRequest{} -> sent at
+          _ -> pure ()
+        sent at = do
+          events <- atomically $ do
+            before <- readTVar (R.runtimeFacts rt)
+            R.observeSend client at
+            following <- readTVar (R.runtimeFacts rt)
+            event <- case Map.lookup source (R.sessions before) of
+              Just session
+                | key Seq.:<| _ <- R.sendQueue session
+                , Just attempt <- Map.lookup key (R.attempts before) ->
+                    Just <$> A.transition rt key (R.attemptRequest attempt) FetchSendReturned at
+              _ -> pure Nothing
+            -- Resolve the compact summaries while both snapshots are owned by
+            -- this transaction. Lazy head lookups could otherwise retain the
+            -- before/following runtime maps in a delayed trace argument.
+            pure $!
+              A.forceObservations
+                ( [value | Just value <- [event]]
+                    ++ A.headChanges (A.headSummary source before) (A.headSummary source following)
+                )
+          emitContextObservations ctx events
+        -- This policy consumes complete replies through the ordinary codec.
+        -- Ignore the general driver's element emitter; the annotator conversion
+        -- ignores its extra input bytes and does not add per-TX prefix salvage.
+        driver =
+          progressDriverWithLimits
+            tracer
+            timeoutFn
+            (const (hoistAnnotation (Annotator . const) codec))
+            sizes
+            timeLimitsLeiosFetch
+            (fromIntegral maxLeiosFetchIngressBytes)
+            scope
+            observe
+            channel
+    ((), trailing) <- runPipelinedPeerWithDriver driver peer
+    pure ((), progressTrailingBytes trailing)
 
 -- | The node's LeiosFetch server, which serves endorser blocks and their
 -- transactions from the LeiosDB, through the connection's own reader.
@@ -123,7 +266,7 @@ serveEb tracer reader point = do
     -- The bytes as they arrived, sent without decoding them.
     Just eb -> do
       traceWith tracer $
-        TraceLeiosFetchServerBlockServed point (fromIntegral (BSL.length (unSerialised eb)))
+        TraceLeiosFetchServerBlockServed point (fromIntegral (BL.length (unSerialised eb)))
       pure eb
 
 serveTxs ::

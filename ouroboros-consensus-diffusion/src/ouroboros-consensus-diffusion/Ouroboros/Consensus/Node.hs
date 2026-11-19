@@ -58,6 +58,7 @@ module Ouroboros.Consensus.Node
 
     -- * Internal helpers
   , mkNodeKernelArgs
+  , splitNodeKernelRngs
   , nodeKernelArgsEnforceInvariants
   , openChainDB
   ) where
@@ -123,6 +124,11 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Config
+  ( LeiosFetchStaticEnv
+  , defaultLeiosFetchStaticEnv
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -157,6 +163,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withLeiosDBSQLite)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -402,6 +409,8 @@ data StdRunNodeArgs m blk
   -- ^ Determine whether to use the system default mempool capacity or explicitly set
   -- capacity of the mempool.
   , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , srnLeiosFetchConfig :: Maybe LeiosFetchStaticEnv
+  -- ^ Ordinary fetch tuning; Nothing uses consensus defaults.
   , srnLeiosAnnouncementAgeLimits :: Maybe LeiosAnnouncementAgeLimits
   -- ^ Overrides 'defaultLeiosAnnouncementAgeLimits', how old an announcement
   -- the node relays or accepts. A network whose immutable tip is only minutes
@@ -558,6 +567,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           -- Where the node emits what it acquires, to the ChainDB among
           -- others.
+          let (_, _, leiosFetchRoot, _) = splitNodeKernelRngs keepAliveRng
+          leiosTxCache <- newNodeLeiosTxCache leiosFetchRoot
+          let cacheGuardedLeiosDB = withCacheRetirement leiosTxCache leiosDB
           leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
@@ -568,7 +580,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkVolatileHasFS
               snapshotDelayRng
               llrnLdbFlavorArgs
-              leiosDB
+              cacheGuardedLeiosDB
               leiosAcquisitions
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
@@ -623,7 +635,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxClockSkew
                   historicityCheck
                   chainDB
-                  leiosDB
+                  cacheGuardedLeiosDB
+                  leiosTxCache
                   leiosAcquisitions
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
@@ -635,71 +648,74 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
-            rnNodeKernelHook registry nodeKernel
-            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
-            churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
-            let consensusDiffusionArgs =
-                  Cardano.Diffusion.CardanoConsensusArguments
-                    { Cardano.Diffusion.churnModeVar
-                    , Cardano.Diffusion.churnMetrics
-                    , Cardano.Diffusion.ledgerPeersAPI =
-                        LedgerPeersConsensusInterface
-                          { lpGetLatestSlot = getImmTipSlot nodeKernel
-                          , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
-                          , lpExtraAPI =
-                              Cardano.LedgerPeersConsensusInterface
-                                { Cardano.readFetchMode = getFetchMode nodeKernel
-                                , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
-                                , Cardano.updateOutboundConnectionsState =
-                                    let varOcs = getOutboundConnectionsState nodeKernel
-                                     in \newOcs -> do
-                                          oldOcs <- readTVar varOcs
-                                          when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
-                                    case targetBlock of
-                                      GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
-                                      (BlockPoint targetSlot (RawBlockHash targetHash)) ->
-                                        case fromShortRawHash (Proxy @blk) targetHash of
-                                          -- TODO: eventually we want to return
-                                          -- a proper error value here, see
-                                          -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
-                                          Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
-                                          Just targetHeaderHash -> do
-                                            let targetPoint = RealPoint targetSlot targetHeaderHash
-                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                              Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
-                                              Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
-                                              Right (RealPoint actualSlot actualHash) ->
-                                                k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
-                                }
-                          }
-                    , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
-                    }
+            withLeiosFetchWorkers (getLeiosFetchKernel nodeKernel) $ do
+              rnNodeKernelHook registry nodeKernel
+              churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
+              churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
+              let consensusDiffusionArgs =
+                    Cardano.Diffusion.CardanoConsensusArguments
+                      { Cardano.Diffusion.churnModeVar
+                      , Cardano.Diffusion.churnMetrics
+                      , Cardano.Diffusion.ledgerPeersAPI =
+                          LedgerPeersConsensusInterface
+                            { lpGetLatestSlot = getImmTipSlot nodeKernel
+                            , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
+                            , lpExtraAPI =
+                                Cardano.LedgerPeersConsensusInterface
+                                  { Cardano.readFetchMode = getFetchMode nodeKernel
+                                  , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                  , Cardano.updateOutboundConnectionsState =
+                                      let varOcs = getOutboundConnectionsState nodeKernel
+                                       in \newOcs -> do
+                                            oldOcs <- readTVar varOcs
+                                            when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
+                                  , Cardano.getImmutableBlockPoint = \targetBlock k -> do
+                                      case targetBlock of
+                                        GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
+                                        (BlockPoint targetSlot (RawBlockHash targetHash)) ->
+                                          case fromShortRawHash (Proxy @blk) targetHash of
+                                            -- TODO: eventually we want to return
+                                            -- a proper error value here, see
+                                            -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
+                                            Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
+                                            Just targetHeaderHash -> do
+                                              let targetPoint = RealPoint targetSlot targetHeaderHash
+                                              ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                                Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
+                                                Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
+                                                Right (RealPoint actualSlot actualHash) ->
+                                                  k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                  }
+                            }
+                      , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                      , Cardano.Diffusion.freshBytes = throwSTM unsupportedEgressScheduling
+                      , Cardano.Diffusion.freshMaxBytes = throwSTM unsupportedEgressScheduling
+                      }
 
-            stdGen <- StrictSTM.newTVarIO peerSelectionRng
-            let ntnApps =
-                  mkNodeToNodeApps
-                    ntnAppsRng
-                    rnTraceNTN
-                    llrnChainSyncIdleTimeout
-                    llrnGenesisConfig
-                    rnTxSubmissionLogicVersion
-                    nodeKernelArgs
-                    nodeKernel
-                    churnMetrics
-                    encAddrNtN
-                    decAddrNtN
-                ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
-                apps =
-                  mkDiffusionApplications
-                    stdGen
-                    consensusDiffusionArgs
-                    (miniProtocolParameters nodeKernelArgs)
-                    ntnApps
-                    ntcApps
-                    nodeKernel
+              stdGen <- StrictSTM.newTVarIO peerSelectionRng
+              let ntnApps =
+                    mkNodeToNodeApps
+                      ntnAppsRng
+                      rnTraceNTN
+                      llrnChainSyncIdleTimeout
+                      llrnGenesisConfig
+                      rnTxSubmissionLogicVersion
+                      nodeKernelArgs
+                      nodeKernel
+                      churnMetrics
+                      encAddrNtN
+                      decAddrNtN
+                  ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
+                  apps =
+                    mkDiffusionApplications
+                      stdGen
+                      consensusDiffusionArgs
+                      (miniProtocolParameters nodeKernelArgs)
+                      ntnApps
+                      ntcApps
+                      nodeKernel
 
-            llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
+              llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
  where
   (gsmAntiThunderingHerd, rng') = splitGen llrnRng
   (peerSelectionRng, rng'') = splitGen rng'
@@ -1013,6 +1029,17 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leio
             defArgs
    in (,args) <$> ChainDB.openDB args
 
+-- | Derive the KeepAlive, peer-sharing, LeiosFetch and TX-submission roots,
+-- in that order, without changing their existing streams. Both early cache
+-- allocation and kernel assembly use this projection: the cache needs the
+-- LeiosFetch root before ChainDB opens, when the kernel cannot yet be built.
+splitNodeKernelRngs :: StdGen -> (StdGen, StdGen, StdGen, StdGen)
+splitNodeKernelRngs rng = (kaRng, psRng, lfRng, txRng)
+ where
+  (kaRng, rest) = splitGen rng
+  (psRng, remaining) = splitGen rest
+  (lfRng, txRng) = splitGen remaining
+
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
   (RunNode blk, IOLike m) =>
@@ -1029,6 +1056,7 @@ mkNodeKernelArgs ::
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   LeiosDbHandle m ->
+  NodeLeiosTxCache m ->
   LeiosAcquisitions m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
@@ -1054,6 +1082,7 @@ mkNodeKernelArgs
   chainSyncHistoricityCheck
   chainDB
   leiosDB
+  leiosTxCache
   leiosAcquisitions
   maxCaughtUpAge
   gsmDurationUntilTooOld
@@ -1065,8 +1094,7 @@ mkNodeKernelArgs
   mempoolTimeoutConfig
   txSubmissionInitDelay =
     do
-      let (kaRng, rng') = splitGen rng
-          (psRng, lfRng) = splitGen rng'
+      let (kaRng, psRng, lfRng, txRng) = splitNodeKernelRngs rng
       return
         NodeKernelArgs
           { tracers
@@ -1077,6 +1105,7 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , leiosDB
+          , leiosTxCache
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
@@ -1097,8 +1126,10 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , leiosAcquisitions
           , leiosFetchRng = lfRng
+          , leiosFetchConfig = defaultLeiosFetchStaticEnv
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar
           , genesisArgs
@@ -1182,7 +1213,16 @@ stdRunDataDiffusion ::
   Cardano.Diffusion.CardanoApplications IO a ->
   IO ()
 stdRunDataDiffusion = \nodeArgs consensusArgs tracers config apps ->
-  void $ Cardano.Diffusion.run nodeArgs consensusArgs tracers config apps
+  case Diffusion.dcEgressScheduling config of
+    Nothing -> void $ Cardano.Diffusion.run nodeArgs consensusArgs tracers config apps
+    Just _ -> throwIO unsupportedEgressScheduling
+
+-- | Optional egress scheduling needs chain-byte accounting which this consensus
+-- integration does not provide. Reject it before diffusion instead of supplying
+-- invented counters; custom runners encounter the same error through the hooks.
+unsupportedEgressScheduling :: IOError
+unsupportedEgressScheduling =
+  userError "Consensus chain-byte accounting for egress scheduling is not installed"
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
@@ -1287,6 +1327,7 @@ stdLowLevelRunNodeArgsIO
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
         . modifyLeiosAnnouncementAgeLimits
+        . maybe id (\config nka -> nka{leiosFetchConfig = config}) srnLeiosFetchConfig
      where
       modifyBlockFetchConfiguration =
         maybe

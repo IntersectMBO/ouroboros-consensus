@@ -168,31 +168,34 @@ newHashTableLeiosTxCache nshift k0 k1 = do
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \point offTxs ->
-          MVar.modifyMVarMasked stateVar $ \st -> do
-            -- A point's closure arrives over one or more batches, each a separate
-            -- call; all must land in the single entry the point holds. Claim a new
-            -- entry only the first time a point is seen (while it still occupies
-            -- the ring); claiming one per batch would wrap the ring every
-            -- 'maxLeiosPointCount' /batches/ rather than points, overwriting
-            -- entries still referenced by recent points.
-            let (ringIdx, locNext') = case ringIndexOf point st of
-                  Just i -> (i, hsLocNext st)
-                  Nothing ->
-                    (UnsafeEbRingIndex (hsLocNext st `mod` maxLeiosPointCount), hsLocNext st + 1)
-            F.for_ offTxs $ \(off, txh) -> do
-              let key = toKey txh
-              mv <- HT.lookup ht key
-              -- NOTE: Latest location wins: the newest source point outlives
-              -- older ones in both the ring and the db
-              F.for_ mv $ \w ->
-                HT.insert ht key (encodeLoc ringIdx off .|. (w .&. 0xFFFFFFFF))
-            pure
-              ( st
-                  { hsLocRing = Map.insert ringIdx point (hsLocRing st)
-                  , hsLocNext = locNext'
-                  }
-              , ()
-              )
+          MVar.modifyMVarMasked stateVar $ \st ->
+            if pointSlotNo point < hsPrunedSlot st
+              then pure (st, ())
+              else do
+                -- A point's closure arrives over one or more batches, each a separate
+                -- call; all must land in the single entry the point holds. Claim a new
+                -- entry only the first time a point is seen (while it still occupies
+                -- the ring); claiming one per batch would wrap the ring every
+                -- 'maxLeiosPointCount' /batches/ rather than points, overwriting
+                -- entries still referenced by recent points.
+                let (ringIdx, locNext') = case ringIndexOf point st of
+                      Just s -> (s, hsLocNext st)
+                      Nothing ->
+                        (UnsafeEbRingIndex (hsLocNext st `mod` maxLeiosPointCount), hsLocNext st + 1)
+                F.for_ offTxs $ \(off, txh) -> do
+                  let key = toKey txh
+                  mv <- HT.lookup ht key
+                  -- NOTE: Latest location wins: the newest source point outlives
+                  -- older ones in both the ring and the db
+                  F.for_ mv $ \w ->
+                    HT.insert ht key (encodeLoc ringIdx off .|. (w .&. 0xFFFFFFFF))
+                pure
+                  ( st
+                      { hsLocRing = Map.insert ringIdx point (hsLocRing st)
+                      , hsLocNext = locNext'
+                      }
+                  , ()
+                  )
       }
 
 {-------------------------------------------------------------------------------
@@ -306,10 +309,10 @@ evictOldest ht st = do
         Nothing -> Map.delete slotMin (hsPoints st)
         Just ebhs' -> Map.insert slotMin ebhs' (hsPoints st)
   (bodies', evEbs, evTxs) <- decBody ht ebhEvicted (hsBodies st)
-  -- Mirror 'Ouroboros.Consensus.Leios.TxCache.Reference.evictOldest': a body
-  -- eviction prunes the rows of its points, so free their ring entries. Txs held
-  -- only by those points then resolve to no location (and are fetched) rather
-  -- than to a pruned/stale source.
+  -- Mirror 'Ouroboros.Consensus.Leios.TxCache.Reference.evictOldest': losing
+  -- the last retained point of a body clears its reuse hints, without deleting
+  -- DB bytes. The writer can still validate previously captured descriptors.
+  -- Retained locations do not pin sources against DB collection.
   let hsLocRing'
         | Set.member ebhEvicted evEbs = Map.filter ((/= ebhEvicted) . pointEbHash) (hsLocRing st)
         | otherwise = hsLocRing st
