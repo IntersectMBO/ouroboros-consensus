@@ -444,19 +444,6 @@ data TraceForgeEvent blk
       EndorserBlock
       -- | The total mempool measure of the transactions selected for it.
       (MempoolMeasure blk)
-  | -- | We forged an endorser block, but could not compute the wall-clock onset
-    -- of the current slot, so the node does not take it in: it neither relays
-    -- its announcement nor writes it, and so never offers it. The ranking block
-    -- is still added to the ChainDB.
-    --
-    -- This should not happen: the forge already forecast the ledger view for the
-    -- current slot from the same ledger state, and an era's hard fork summary
-    -- reaches at least as far as its ledger view forecasts whenever its safe
-    -- zone is no shorter than that forecast's range, as for the Shelley eras.
-    --
-    -- We record the current slot number and the hash of the ranking block that
-    -- announces the endorser block.
-    TraceNoSlotOnset SlotNo (HeaderHash blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,

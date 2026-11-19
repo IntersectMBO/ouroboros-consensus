@@ -22,11 +22,8 @@ import qualified Data.Measure as Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
@@ -73,12 +70,11 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
-  -- | 'forge' calls this function after 'forgeBlock' and before
-  -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
-  -- block, the wall-clock onset of its slot, the Leios part of the ledger view
-  -- at its slot, and the endorser block that it announces. 'forge' does not
-  -- call it if it cannot compute that onset ('TraceNoSlotOnset').
-  (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+  -- | 'forge' calls this function once 'addBlockToChainDB' adopted the forged
+  -- ranking block, so it never delays that block. The arguments are the header
+  -- of the forged ranking block, the Leios part of the ledger view at its slot,
+  -- and the endorser block that it announces.
+  (Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
 forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
@@ -99,7 +95,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, summary) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -151,19 +147,10 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-          , hardForkSummary (configLedger cfg) (ledgerState unticked)
           )
 
   -- Actually produce the block
   forgeRes <- lift $ Block.forgeBlock blockForging fbArgs
-
-  whenJust (Block.endorserBlock forgeRes) $ \eb ->
-    case HardFork.runQuery (HardFork.slotToWallclock currentSlot) summary of
-      -- Does not happen for the Shelley eras: see 'TraceNoSlotOnset'.
-      Left _pastHorizon ->
-        trace $ TraceNoSlotOnset currentSlot (blockHash (Block.rankingBlock forgeRes))
-      Right (slotOnset, _slotLength) ->
-        lift $ onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)) slotOnset leiosView eb
 
   trace $
     TraceForgedBlock
@@ -190,6 +177,11 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     (pointSlot forgingOnTopOf)
     leiosView
     (Block.rankingBlock forgeRes)
+
+  lift $
+    whenJust
+      (Block.endorserBlock forgeRes)
+      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)) leiosView)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext

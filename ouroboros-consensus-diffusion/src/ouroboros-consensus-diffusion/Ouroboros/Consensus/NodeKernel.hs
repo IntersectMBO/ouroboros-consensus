@@ -503,42 +503,21 @@ initNodeKernel
     -- from a peer go through, with no peer. As for a header ChainSync validated,
     -- the announcement needs no further check: the forge built the header.
     --
-    -- Most of that work is done by this worker, so that neither LeiosFetch nor
-    -- the LeiosDB can delay the forge adding the ranking block, and so that
-    -- cancelling the forge, as when the forging credentials change, cannot
-    -- interrupt it: the worker stops only with the node. A point the worker has
-    -- marked 'ReceivingFromForge' is fetched from no peer until the worker
-    -- settles it, and the honest chain can need that point: another ranking
-    -- block in the same slot can announce the same endorser block. The forge
-    -- only accepts the announcement and queues the endorser block for the
-    -- worker, in one transaction, as 'onValidAnnouncement' asks.
-    --
-    -- An endorser block still queued when the node stops is never fully
-    -- written, though its ranking block may already be in the ChainDB. That
-    -- ranking block remains valid without it, and no block will ever certify it:
-    -- its announcement still diffuses, but the node offers an endorser block and
-    -- its txs only once they are written, so no honest peer will ever offer
-    -- either, and so no honest peer can vote on it. A slow (buggy, overwhelmed or
-    -- unlucky) LeiosDB widens this window: the worker takes in one endorser
-    -- block at a time, waiting for room in the LeiosDB's write queue, where it
-    -- can lose every race for a freed slot to the node's other writes, and then
-    -- for the write to land.
-    --
-    -- The queue is unbounded, but receives at most one endorser block per
-    -- ranking block the node forges, so it stays stochastically small, unless
-    -- the LeiosDB has slowed to a completely unacceptable bottleneck.
-    forgedEbs <- newTQueueIO
-    void $
-      forkLinkedThread registry "NodeKernel.forgedEndorserBlocks" $
-        forever $ do
-          (anc, forged) <- atomically $ readTQueue forgedEbs
-          onForgedLeiosEb leiosFetchKernel anc forged
-    let onForgedEb hdr onset leiosView forged = do
-          mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
+    -- The forge does this once it adopted the ranking block, so neither
+    -- LeiosFetch nor the LeiosDB can delay that block. Cancelling the forge
+    -- meanwhile, as when the forging credentials change, or the node stopping,
+    -- leaves the endorser block unacquired, so never offered nor certified, but
+    -- its ranking block remains valid without it.
+    let onForgedEb hdr leiosView forged = do
+          -- Our own announcement is fresh. Taking now as its slot's onset only
+          -- puts off when the node stops relaying it, by however long after
+          -- that onset the forge ran.
+          now <- systemTimeCurrent systemTime
+          mbValid <- validHeaderAnnouncement systemTime cfg hdr now leiosView
           -- A forged header announces the endorser block forged with it.
-          for_ mbValid $ \valid -> atomically $ do
-            void $ onValidAnnouncement leiosAnnounceState valid
-            writeTQueue forgedEbs (announcingHeader valid, forged)
+          for_ mbValid $ \valid -> do
+            void $ atomically $ onValidAnnouncement leiosAnnounceState valid
+            onForgedLeiosEb leiosFetchKernel (announcingHeader valid) forged
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st onForgedEb (LazySTM.takeTMVar blockForgingVar)
@@ -585,7 +564,7 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
-      (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+      (Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
       STM m [MkBlockForging m blk] ->
       m Void
     blockForgingController st onForgedEb getBlockForging = go []
@@ -728,7 +707,7 @@ forkBlockForging ::
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
   -- | What 'forge' does with each endorser block it produces
-  (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+  (Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   MkBlockForging m blk ->
   m (Thread m Void)
 forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
