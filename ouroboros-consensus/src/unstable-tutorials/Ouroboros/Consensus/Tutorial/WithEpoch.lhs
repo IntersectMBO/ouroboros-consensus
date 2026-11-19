@@ -635,6 +635,7 @@ As in the simple tutorial, `PrtclD` does not use Leios:
 > instance LeiosProtocol PrtclD where
 >   getLeiosAnnouncement = defaultGetLeiosAnnouncement
 >   getContainsLeiosCert = defaultGetContainsLeiosCert
+>   getCertifiableLeiosAnnouncement = defaultGetCertifiableLeiosAnnouncement
 >   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 >   getLeiosLedgerView = defaultGetLeiosLedgerView
 
