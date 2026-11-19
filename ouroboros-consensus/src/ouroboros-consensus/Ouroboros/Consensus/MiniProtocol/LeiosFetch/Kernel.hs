@@ -525,7 +525,7 @@ onForgedLeiosEb ::
 onForgedLeiosEb kernel anc = acquireForgedEb (lfkContext kernel) (ancElectionId anc)
 
 -- | Each time something might give a peer something new to do, decide what to
--- request from every peer, at most twice a second.
+-- request from every peer, at most every 20 ms.
 leiosFetchDecisionLoop ::
   forall m peer blk.
   (IOLike m, Ord peer, LedgerSupportsProtocol blk, HasHardForkHistory blk) =>
@@ -608,7 +608,7 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext
 
   loopInterval :: DiffTime
-  loopInterval = 0.5
+  loopInterval = 0.02
 
 -- | Move each election's focus onto the endorser block a verified certificate
 -- certifies, as ChainSel verifies such certificates.
