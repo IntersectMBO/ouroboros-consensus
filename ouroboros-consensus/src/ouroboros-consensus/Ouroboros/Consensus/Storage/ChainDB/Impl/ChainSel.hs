@@ -134,7 +134,7 @@ initialChainSelection ::
   ) =>
   ImmutableDB m blk ->
   VolatileDB m blk ->
-  LedgerDB.LedgerDB' m blk ->
+  LedgerDB.LedgerDB m blk ->
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
@@ -1001,7 +1001,7 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  SuccessForkerAction m ExtLedgerState blk
+  SuccessForkerAction m blk
 switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \validated forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
@@ -1135,7 +1135,7 @@ getKnownHeaderThroughCache volatileDB hash =
 
 -- | Environment used by 'chainSelection' and related functions.
 data ChainSelEnv m blk = ChainSelEnv
-  { lgrDB :: LedgerDB.LedgerDB' m blk
+  { lgrDB :: LedgerDB.LedgerDB m blk
   , validationTracer :: Tracer m (TraceValidationEvent blk)
   , pipeliningTracer :: Tracer m (TracePipeliningEvent blk)
   , bcfg :: BlockConfig blk
@@ -1244,7 +1244,7 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m blk) ->
   -- | The (valid) chain diff that was selected, with the headers its
   -- validation produced, or 'Nothing' if there is no valid chain diff
   -- preferred over the current chain.
@@ -1424,7 +1424,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  SuccessForkerAction m ExtLedgerState blk ->
+  SuccessForkerAction m blk ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork
