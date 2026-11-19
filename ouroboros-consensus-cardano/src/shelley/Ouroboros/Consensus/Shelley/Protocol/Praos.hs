@@ -263,7 +263,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
         sz
         protVer
         (\pb -> extendHeaderBodyWithLeios era pb containsCert mbAnn)
-        (LeiosCodec.mkHeader era)
+        LeiosCodec.Header
 
 -- | The Leios header body is the Praos one plus the Leios fields.
 --
