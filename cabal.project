@@ -43,12 +43,12 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- Points to cardano-ledger master after https://github.com/IntersectMBO/cardano-ledger/pull/6268
+-- Points to https://github.com/IntersectMBO/cardano-ledger/pull/6287
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  --sha256: sha256-I1aZbyZgf6f4yFp5xM3DwxEvh3AbQWmh5tcij/nqOJQ=
-  tag: cc2b0654c90f2b729a7b29a5dc0a6ea00ad2ebcd
+  --sha256: sha256-la+UUv593K2tlSJI08gRurW3Dspn1YNMLhb7jrpUTYM=
+  tag: 2277938dae9ef80f0f9d83df3908ffe6a532f24a
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
