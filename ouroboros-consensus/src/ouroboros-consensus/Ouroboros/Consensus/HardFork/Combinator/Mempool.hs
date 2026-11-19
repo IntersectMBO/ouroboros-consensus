@@ -23,6 +23,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
+import Cardano.Ledger.Binary (DecoderError)
 import Control.Arrow ((+++))
 import Control.Monad.Except
 import Data.ByteString.Short (ShortByteString)
@@ -31,6 +32,7 @@ import Data.Functor.Identity
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
+import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import Data.SOP.Strict
@@ -49,6 +51,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Types (SerialisedEndorserBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 import Ouroboros.Network.Tx (HasRawTxId (..))
@@ -605,6 +608,88 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
       I blk ->
       K [GenTx (HardForkBlock xs)] blk
     aux index = K . map (injectNS' (Proxy @GenTx) index) . extractAsMempoolTxs . unI
+
+{-------------------------------------------------------------------------------
+  Endorser blocks
+-------------------------------------------------------------------------------}
+
+instance
+  ( CanHardFork xs
+  , HasCanonicalTxIn xs
+  , HasHardForkTxOut xs
+  ) =>
+  BlockSupportsLeios (HardForkBlock xs)
+  where
+  blockLeiosCert =
+    hcollapse
+      . hcmap proxySingle (K . blockLeiosCert . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+  ledgerAnnouncedLeiosPoint =
+    hcollapse
+      . hcmap proxySingle (K . ledgerAnnouncedLeiosPoint . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
+
+  applyEndorserBlock ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m (Either DecoderError (LedgerState (HardForkBlock xs) DiffMK))
+  applyEndorserBlock cfg readTables serialised (HardForkLedgerState st) =
+    unComp . fmap HardForkLedgerState . State.sequenceHardForkState $
+      hcizipWith proxySingle applyIn cfgs st
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    applyIn ::
+      SingleEraBlock x =>
+      Index xs x ->
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      ((m :.: Either DecoderError) :.: Flip LedgerState DiffMK) x
+    applyIn idx (WrapLedgerConfig cfg') (Flip st') =
+      Comp . Comp . fmap (fmap Flip) $
+        applyEndorserBlock
+          cfg'
+          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          serialised
+          st'
+
+  validateLeiosClosure ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    LookupValidatedTxs m ->
+    RecordValidatedTx m ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m LeiosClosureValidation
+  validateLeiosClosure cfg readTables wasValidated recordValidated closure (HardForkLedgerState st) =
+    hcollapse $ hcizipWith proxySingle validateIn cfgs (State.tip st)
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    validateIn ::
+      SingleEraBlock x =>
+      Index xs x ->
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      K (m LeiosClosureValidation) x
+    validateIn idx (WrapLedgerConfig cfg') (Flip st') =
+      K $
+        validateLeiosClosure
+          cfg'
+          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          wasValidated
+          recordValidated
+          closure
+          st'
 
 {-------------------------------------------------------------------------------
   Auxiliary

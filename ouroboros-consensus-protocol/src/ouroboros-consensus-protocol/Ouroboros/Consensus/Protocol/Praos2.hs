@@ -20,9 +20,11 @@ module Ouroboros.Consensus.Protocol.Praos2
   , LeiosCrypto
   , PerasOnly (..)
   , Praos2
+  , Praos2CanBeLeader (..)
   , ConsensusConfig (..)
   ) where
 
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
@@ -32,7 +34,9 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
+import Data.Foldable (toList)
 import Data.Kind (Type)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Proxy (Proxy (Proxy))
 import qualified Data.Strict.Either as Strict
 import GHC.Generics (Generic)
@@ -75,6 +79,16 @@ data Praos2 c
 type instance ShelleyProtocolHeader (Praos2 c) = LeiosCodec.Header c
 
 instance PolyPraosCrypto (Praos2 StandardCrypto) StandardCrypto
+
+-- | Praos's credentials to lead, and the BLS key to vote in Leios.
+data Praos2CanBeLeader c = Praos2CanBeLeader
+  { praos2CanBeLeaderPraos :: !(PraosCanBeLeader c)
+  , praos2CanBeLeaderBLSKey :: !(StrictMaybe LeiosSigningKey)
+  -- ^ None if the node does not vote.
+  }
+  deriving Generic
+
+instance NoThunks (PraosCanBeLeader c) => NoThunks (Praos2CanBeLeader c)
 
 class (Crypto c, PolyPraosCrypto (Praos2 c) c) => LeiosCrypto c
 
@@ -159,6 +173,7 @@ instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
   getLeiosAnnouncement _proxy = getLeiosAnnouncementPolyPraos
   getContainsLeiosCert _proxy = getContainsLeiosCertPolyPraos
   getCertifiableLeiosAnnouncement _proxy = getCertifiableLeiosAnnouncementPolyPraos
+  leiosBLSKeys _proxy = toList . praos2CanBeLeaderBLSKey
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
   leiosAnnouncementToCertify (LeiosConfig (PraosConfig _prms ei)) slot st =
@@ -172,7 +187,7 @@ instance LeiosCrypto c => PerasProtocol (Praos2 c) where
 instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
   type ChainDepState (Praos2 c) = PolyPraosState (Praos2 c)
   type IsLeader (Praos2 c) = PraosIsLeader c
-  type CanBeLeader (Praos2 c) = PraosCanBeLeader c
+  type CanBeLeader (Praos2 c) = Praos2CanBeLeader c
   type TiebreakerView (Praos2 c) = PraosTiebreakerView c
   type LedgerView (Praos2 c) = Views.PolyPraosLedgerView (Praos2 c)
   type ValidationErr (Praos2 c) = PolyPraosValidationErr (Praos2 c) c
@@ -180,7 +195,7 @@ instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
 
   protocolSecurityParam = praosSecurityParam . praosParams . leiosPraosConfig
 
-  checkIsLeader = checkIsLeaderPolyPraos . praosParams . leiosPraosConfig
+  checkIsLeader cfg = checkIsLeaderPolyPraos (praosParams (leiosPraosConfig cfg)) . praos2CanBeLeaderPraos
 
   tickChainDepState = tickChainDepStatePolyPraos . praosEpochInfo . leiosPraosConfig
 
