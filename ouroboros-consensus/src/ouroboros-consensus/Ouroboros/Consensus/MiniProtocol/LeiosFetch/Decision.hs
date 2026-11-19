@@ -534,10 +534,10 @@ trackCertifiedEb point outstanding
 -- NOTE One election, one certified endorser block --- which holds only while
 -- enough of the committee's weight is honest, since two valid certificates for
 -- one election means the committee equivocated. Should that ever happen, this
--- is last-claim-wins: the focus lands on whichever certificate we validated
--- most recently, so the node can be left fetching the endorser block of one
+-- is first-claim-wins: the focus stays on whichever certificate LeiosFetch
+-- learns of first, so the node can be left fetching the endorser block of one
 -- fork while the chain it would select needs the other, and it stays stuck
--- there until something moves the focus again. The recourse is to restart the
+-- there. The recourse is to restart the
 -- node and hope the certificates arrive in the other order, since this state is
 -- in memory only and the order they come back in is the network's to decide. We
 -- deliberately do not spend complexity on that case here, since it requires
