@@ -164,8 +164,8 @@ data AnalysisStartFrom m blk startFrom where
   FromPoint ::
     Point blk -> AnalysisStartFrom m blk StartFromPoint
   FromLedgerState ::
-    LedgerDB.LedgerDB' m blk ->
-    LedgerDB.TestInternals' m blk ->
+    LedgerDB.LedgerDB m blk ->
+    LedgerDB.TestInternals m blk ->
     AnalysisStartFrom m blk StartFromLedgerState
 
 startFromPoint ::
@@ -668,8 +668,8 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
   FromLedgerState initLedger initial = startFrom
 
   process ::
-    LedgerDB.LedgerDB' IO blk ->
-    LedgerDB.TestInternals' IO blk ->
+    LedgerDB.LedgerDB IO blk ->
+    LedgerDB.TestInternals IO blk ->
     IO.Handle ->
     F.OutputFormat ->
     () ->
