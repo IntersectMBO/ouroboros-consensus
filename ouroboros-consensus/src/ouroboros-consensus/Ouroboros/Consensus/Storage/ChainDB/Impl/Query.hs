@@ -4,7 +4,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
@@ -47,7 +46,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (WithOrigin (..))
+import Cardano.Ledger.BaseTypes (NonZero (..), WithOrigin (..))
 import Control.Monad (void)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
@@ -85,10 +84,7 @@ import Ouroboros.Consensus.Peras.Voting.View
   , perasChainAtCandidateBlock
   , runPerasQry
   )
-import Ouroboros.Consensus.Peras.Weight
-  ( PerasWeightSnapshot
-  , takeVolatileSuffix
-  )
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
@@ -140,7 +136,6 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 getCurrentChain ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
   , HasHeader (Header blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
@@ -169,19 +164,16 @@ getCurrentChainWithTime cdb@CDB{..} =
 getCurrentChainLike ::
   forall m blk h.
   ( IOLike m
-  , StandardHash blk
   , HasHeader h
-  , HeaderHash blk ~ HeaderHash h
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment h) ->
   STM m (AnchoredFragment h)
-getCurrentChainLike cdb@CDB{..} getCurChain = do
-  weights <- forgetFingerprint <$> getPerasWeightSnapshot cdb
-  takeVolatileSuffix weights k <$> getCurChain
+getCurrentChainLike CDB{..} getCurChain = do
+  AF.anchorNewest (unNonZero k) <$> getCurChain
  where
-  k = configSecurityParam cdbTopLevelConfig
+  (SecurityParam k) = configSecurityParam cdbTopLevelConfig
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
