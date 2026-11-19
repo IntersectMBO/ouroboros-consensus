@@ -27,6 +27,13 @@ tests =
     , testCase "pruning forgets the claims older than the slot" $
         map (`isLeiosValidClaim` pruneLeiosValidClaims (SlotNo 2) claims) [rbA, rbB, rbC]
           @?= [False, False, True]
+    , testCase "a claim older than the slot pruned to is not recorded" $
+        isLeiosValidClaim
+          rbA
+          ( insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) announcement $
+              pruneLeiosValidClaims (SlotNo 2) emptyLeiosValidClaims
+          )
+          @?= False
     ]
  where
   claims =
