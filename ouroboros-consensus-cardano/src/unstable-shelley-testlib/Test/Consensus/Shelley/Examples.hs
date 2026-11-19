@@ -480,7 +480,7 @@ fromShelleyLedgerExamplesPraos2 =
 -- body has none and 'blockMatchesHeader' requires the two to agree.
 translateLeiosHeader :: SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
 translateLeiosHeader (SL.BHeader bhBody bhSig) =
-  Leios.mkHeader (Proxy @DijkstraEra) hBody (coerce bhSig)
+  Leios.Header hBody (coerce bhSig)
  where
   pb = praosHeaderBodyFromTPraos bhBody
   SL.ProtVer major minor = Praos.hbProtVer pb
