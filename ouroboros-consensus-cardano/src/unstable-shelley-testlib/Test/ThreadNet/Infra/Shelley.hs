@@ -32,14 +32,17 @@ module Test.ThreadNet.Infra.Shelley
   , mkSetDecentralizationParamTxs
   , mkVerKey
   , networkId
+  , signTx
   , tpraosSlotLength
   ) where
 
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (..)
+  ( DSIGNAggregatable (..)
+  , DSIGNAlgorithm (..)
   , SignKeyDSIGN
   , seedSizeDSIGN
   )
+import Cardano.Crypto.DSIGN.BLS12381.Internal (minSigPoPDST)
 import Cardano.Crypto.KES
   ( KESAlgorithm (..)
   , UnsoundPureKESAlgorithm (..)
@@ -68,6 +71,7 @@ import Cardano.Ledger.Hashes
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.State (BlsKey (..))
 import qualified Cardano.Ledger.Val as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
 import Cardano.Protocol.TPraos.OCert
@@ -124,6 +128,7 @@ import Quiet (Quiet (..))
 import System.FS.API (SomeHasFS)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
+  , mkWitnessVKey
   , mkWitnessesVKey
   )
 import qualified Test.Cardano.Ledger.Shelley.Generator.Core as Gen
@@ -465,10 +470,16 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
               , SL.sppOwners = Set.singleton poolOwnerHash
               , SL.sppRelays = Seq.empty
               , SL.sppMetadata = SL.SNothing
-              , SL.sppBlsKey = SL.SNothing
+              , -- Each core node votes in Leios with its BLS key.
+                SL.sppBlsKey =
+                  SL.SJust $
+                    BlsKey
+                      { blsPubKey = deriveVerKeyDSIGN cnBLS
+                      , blsPossessionProof = createPossessionProofDSIGN minSigPoPDST cnBLS
+                      }
               }
           )
-        | CoreNode{cnDelegateKey, cnStakingKey, cnVRF} <- coreNodes
+        | CoreNode{cnDelegateKey, cnStakingKey, cnVRF, cnBLS} <- coreNodes
         , -- The pool and owner hashes are derived from the same key, but
         -- use different hashing schemes
         let poolHash = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
@@ -614,6 +625,17 @@ mkKeyHashVrf = hashVerKeyVRF @c . deriveVerKeyVRF
 
 networkId :: SL.Network
 networkId = SL.Testnet
+
+-- | Witness a transaction with the given key, replacing any other witnesses.
+signTx ::
+  SL.EraTx era =>
+  SignKeyDSIGN LK.DSIGN ->
+  SL.Tx SL.TopTx era ->
+  SL.Tx SL.TopTx era
+signTx sk tx =
+  tx
+    & SL.witsTxL . SL.addrTxWitsL
+      .~ Set.fromList [TL.mkWitnessVKey (hashAnnotated (tx ^. SL.bodyTxL)) (mkKeyPair sk)]
 
 {-------------------------------------------------------------------------------
   Temporary Workaround
