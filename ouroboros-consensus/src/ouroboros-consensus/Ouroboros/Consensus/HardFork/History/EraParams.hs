@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.HardFork.History.EraParams
   ( -- * API
     EraParams (..)
+  , EraParamsPerasStatus (..)
   , SafeZone (..)
   , PerasEnabled
   , pattern PerasEnabled
@@ -142,9 +143,27 @@ data EraParams = EraParams
   , eraSlotLength :: !SlotLength
   , eraSafeZone :: !SafeZone
   , eraGenesisWin :: !GenesisWindow
-  , eraPerasRoundLength :: !(PerasEnabled PerasRoundLength)
-  -- ^ Optional, as not every era will be Peras-enabled
+  , eraPerasStatus :: !EraParamsPerasStatus
   }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | Encodes the status of various Peras parameters depending on the era
+--
+-- * If we are in an era before Shelley, then Peras is disabled, and we
+--   don't have access to PerasBlockMaxSlots either, as it is defined
+--   relative to the security parameter k and the active slot coefficient f.
+-- * If we are in a Shelley era, we can always define PerasBlockMaxSlots.
+-- * If we are in a Shelley era, before can either be enabled or disabled.
+--   If it is enabled, we also have access to the round length.
+--
+-- In particular, it is important that we have access to PerasBlockMaxSlots
+-- *before* Peras is first enabled, in order for Genesis to properly handle
+-- the transition between Peras-disabled and Peras-enabled eras.
+data EraParamsPerasStatus
+  = BeforeShelley
+  | DuringShelleyNoPerasEnabled PerasBlockMaxSlots
+  | DuringShelleyPerasEnabled PerasBlockMaxSlots PerasRoundLength
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
@@ -157,6 +176,8 @@ data EraParams = EraParams
 -- * the upper bound to 'NoLowerBound'
 -- * the Peras Round Length is set to @2*k@ slots if peras is enabled
 --   (because it must be a divisor of the epoch size)
+-- * perasBlockMaxSlots is set to 20*k. We assume we always are during Shelley,
+--   and that the active slot coefficient is 1/20
 --
 -- This is primarily useful for tests.
 defaultEraParams ::
@@ -170,11 +191,15 @@ defaultEraParams (SecurityParam k) slotLength perasEnabled =
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
-    , eraPerasRoundLength =
-        fmap
-          (\_ -> PerasRoundLength (unNonZero k * 2))
-          perasEnabled
+    , eraPerasStatus = case perasEnabled of
+        NoPerasEnabled -> DuringShelleyNoPerasEnabled perasBlockMaxSlots
+        PerasEnabled () ->
+          DuringShelleyPerasEnabled
+            perasBlockMaxSlots
+            (PerasRoundLength (unNonZero k * 2))
     }
+ where
+  perasBlockMaxSlots = PerasBlockMaxSlots (unNonZero k * 20)
 
 -- | Zone in which it is guaranteed that no hard fork can take place
 data SafeZone
@@ -253,17 +278,22 @@ decodeSafeBeforeEpoch = do
 instance Serialise EraParams where
   encode EraParams{..} =
     mconcat $
-      [ encodeListLen $ case eraPerasRoundLength of
-          NoPerasEnabled -> 4
-          PerasEnabled{} -> 5
+      [ encodeListLen $ case eraPerasStatus of
+          BeforeShelley -> 4
+          DuringShelleyNoPerasEnabled _ -> 5
+          DuringShelleyPerasEnabled _ _ -> 6
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
       ]
-        <> case eraPerasRoundLength of
-          NoPerasEnabled -> []
-          PerasEnabled rl -> [encode (unPerasRoundLength rl)]
+        <> case eraPerasStatus of
+          BeforeShelley -> []
+          DuringShelleyNoPerasEnabled bms -> [encode (unPerasBlockMaxSlots bms)]
+          DuringShelleyPerasEnabled bms rl ->
+            [ encode (unPerasBlockMaxSlots bms)
+            , encode (unPerasRoundLength rl)
+            ]
 
   decode = do
     len <- decodeListLen
@@ -271,9 +301,13 @@ instance Serialise EraParams where
     eraSlotLength <- decode
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
-    eraPerasRoundLength <-
+    eraPerasStatus <-
       case len of
-        4 -> pure NoPerasEnabled
-        5 -> PerasEnabled . PerasRoundLength <$> decode
+        4 -> pure BeforeShelley
+        5 -> DuringShelleyNoPerasEnabled . PerasBlockMaxSlots <$> decode
+        6 -> do
+          bms <- PerasBlockMaxSlots <$> decode
+          rl <- PerasRoundLength <$> decode
+          pure $ DuringShelleyPerasEnabled bms rl
         _ -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
     return EraParams{..}

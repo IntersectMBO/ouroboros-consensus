@@ -151,8 +151,9 @@ mkUpperBound EraParams{..} lo hiEpoch =
   inEraSlots = inEraEpochs * unEpochSize eraEpochSize
 
   inEraPerasRounds :: PerasEnabled Word64
-  inEraPerasRounds = div <$> PerasEnabled inEraSlots <*> (unPerasRoundLength <$> eraPerasRoundLength)
-
+  inEraPerasRounds = case eraPerasStatus of
+    DuringShelleyPerasEnabled _ (PerasRoundLength rl) -> PerasEnabled $ inEraSlots `div` rl
+    _ -> NoPerasEnabled -- We are before Shelley era, or Peras is disabled
   inEraTime :: NominalDiffTime
   inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
 
@@ -254,8 +255,12 @@ newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
 
 -- | 'Summary' for a ledger that never forks
 neverForksSummary ::
-  EpochSize -> SlotLength -> GenesisWindow -> PerasEnabled PerasRoundLength -> Summary '[x]
-neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
+  EpochSize ->
+  SlotLength ->
+  GenesisWindow ->
+  EraParamsPerasStatus ->
+  Summary '[x]
+neverForksSummary epochSize slotLen genesisWindow perasStatus =
   Summary $
     NonEmptyOne $
       EraSummary
@@ -267,7 +272,7 @@ neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
               , eraSlotLength = slotLen
               , eraSafeZone = UnsafeIndefiniteSafeZone
               , eraGenesisWin = genesisWindow
-              , eraPerasRoundLength = perasRoundLength
+              , eraPerasStatus = perasStatus
               }
         }
 
@@ -298,24 +303,26 @@ summaryPerasBounds (Summary summary) =
   go acc (EraSummary{eraStart, eraEnd, eraParams} : rest) =
     case acc of
       NoPerasEnabled ->
-        case eraPerasRoundLength eraParams of
-          NoPerasEnabled ->
-            go NoPerasEnabled rest
-          PerasEnabled _ ->
+        case eraPerasStatus eraParams of
+          DuringShelleyPerasEnabled _ _ ->
             let
               lo = boundNextPerasRound eraStart
               mbHi = boundNextPerasRound <$> eraEndToBound eraEnd
              in
               go (PerasEnabled (lo, mbHi)) rest
+          _ ->
+            -- We are before Shelley era, or Peras is disabled
+            go NoPerasEnabled rest
       PerasEnabled (lo, _mbHi) ->
-        case eraPerasRoundLength eraParams of
-          NoPerasEnabled ->
-            go acc rest
-          PerasEnabled _ ->
+        case eraPerasStatus eraParams of
+          DuringShelleyPerasEnabled _ _ ->
             let
               mbHi' = boundNextPerasRound <$> eraEndToBound eraEnd
              in
               go (PerasEnabled (lo, mbHi')) rest
+          _ ->
+            -- We are before Shelley era, or Peras is disabled
+            go acc rest
 
 -- | Analogue of 'Data.List.init' for 'Summary' (i.e., split off the final era)
 --
@@ -544,9 +551,8 @@ invariantSummary = \(Summary summary) ->
               , " (INV-2b)"
               ]
 
-        case eraPerasRoundLength curParams of
-          NoPerasEnabled -> pure ()
-          PerasEnabled perasRoundLength ->
+        case eraPerasStatus curParams of
+          DuringShelleyPerasEnabled _ perasRoundLength ->
             unless
               ( (unEpochSize $ eraEpochSize curParams)
                   `mod` (unPerasRoundLength perasRoundLength)
@@ -558,7 +564,7 @@ invariantSummary = \(Summary summary) ->
                 , show curSummary
                 , " (Peras round length does not divide epoch size)"
                 ]
-
+          _ -> pure () -- We are before Shelley era, or Peras is disabled
         go curEnd next
    where
     curStart :: Bound

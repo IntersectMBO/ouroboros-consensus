@@ -338,7 +338,7 @@ byronEraParams genesis =
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone (2 * k)
     , eraGenesisWin = GenesisWindow (2 * k)
-    , eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasStatus = HardFork.BeforeShelley
     }
  where
   k = unNonZero $ maxRollbacks $ genesisSecurityParam genesis
@@ -351,7 +351,7 @@ byronEraParamsNeverHardForks genesis =
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow (2 * Gen.unBlockCount (Gen.configK genesis))
-    , eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasStatus = HardFork.BeforeShelley
     }
 
 instance HasHardForkHistory ByronBlock where

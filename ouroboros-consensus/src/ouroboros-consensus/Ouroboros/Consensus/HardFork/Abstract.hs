@@ -67,6 +67,10 @@ neverForksHardForkSummary ::
   LedgerState blk mk ->
   HardFork.Summary '[blk]
 neverForksHardForkSummary getParams cfg _st =
-  HardFork.neverForksSummary eraEpochSize eraSlotLength eraGenesisWin eraPerasRoundLength
+  HardFork.neverForksSummary
+    eraEpochSize
+    eraSlotLength
+    eraGenesisWin
+    eraPerasStatus
  where
   HardFork.EraParams{..} = getParams cfg

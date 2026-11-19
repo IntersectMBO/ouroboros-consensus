@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PolyKinds #-}
@@ -321,9 +322,12 @@ instance Arbitrary EraParams where
       <*> (GenesisWindow <$> arbitrary)
       <*> mPerasRoundLength
    where
-    mPerasRoundLength :: Gen (PerasEnabled PerasRoundLength)
-    mPerasRoundLength = do
-      (\x -> if x == 0 then NoPerasEnabled else PerasEnabled . PerasRoundLength $ x) <$> arbitrary
+    mPerasRoundLength :: Gen EraParamsPerasStatus
+    mPerasRoundLength =
+      arbitrary >>= \case
+        Nothing -> pure BeforeShelley
+        Just Nothing -> DuringShelleyNoPerasEnabled <$> arbitrary
+        Just (Just ()) -> DuringShelleyPerasEnabled <$> arbitrary <*> arbitrary
 
 instance Arbitrary SafeZone where
   arbitrary =
@@ -331,6 +335,9 @@ instance Arbitrary SafeZone where
       [ StandardSafeZone <$> arbitrary
       , return UnsafeIndefiniteSafeZone
       ]
+
+deriving instance Arbitrary PerasBlockMaxSlots
+deriving instance Arbitrary PerasRoundLength
 
 {-------------------------------------------------------------------------------
   Telescope & HardForkState

@@ -39,6 +39,9 @@ module Ouroboros.Consensus.Peras.Params
   , dijkstraPerasRoundLength
   , dijkstraPerasMaxCertSize
 
+    -- * Fixed values
+  , mkPerasBlockMaxSlots
+
     -- * 'PerasEnabled' wrapper
   , PerasEnabled
   , pattern PerasEnabled
@@ -51,6 +54,7 @@ module Ouroboros.Consensus.Peras.Params
   , Committee.TargetCommitteeSize (..)
 
     -- * For testing and debugging purposes only
+  , defaultPerasBlockMaxSlots
   , defaultPerasParams
   )
 where
@@ -221,7 +225,6 @@ data PerasParams blk = PerasParams
   { perasIgnoranceRounds :: !PerasIgnoranceRounds
   , perasCooldownRounds :: !PerasCooldownRounds
   , perasBlockMinSlots :: !PerasBlockMinSlots
-  , perasBlockMaxSlots :: !PerasBlockMaxSlots
   , perasCertMaxRounds :: !PerasCertMaxRounds
   , perasCertArrivalThreshold :: !PerasCertArrivalThreshold
   , perasWeight :: !PerasWeight
@@ -234,10 +237,9 @@ data PerasParams blk = PerasParams
 
 instance Typeable blk => FromCBOR (PerasParams blk) where
   fromCBOR = do
-    decodeListLenOf 11
+    decodeListLenOf 10
     PerasParams
       <$> fromCBOR
-      <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
@@ -250,11 +252,10 @@ instance Typeable blk => FromCBOR (PerasParams blk) where
 
 instance Typeable blk => ToCBOR (PerasParams blk) where
   toCBOR params =
-    encodeListLen 11
+    encodeListLen 10
       <> toCBOR (perasIgnoranceRounds params)
       <> toCBOR (perasCooldownRounds params)
       <> toCBOR (perasBlockMinSlots params)
-      <> toCBOR (perasBlockMaxSlots params)
       <> toCBOR (perasCertMaxRounds params)
       <> toCBOR (perasCertArrivalThreshold params)
       <> toCBOR (perasWeight params)
@@ -290,9 +291,6 @@ mkPerasParams securityParam activeSlotCoeff plv =
     , perasBlockMinSlots =
         PerasBlockMinSlots
           blockMinSlots
-    , perasBlockMaxSlots =
-        PerasBlockMaxSlots
-          blockMaxSlots
     , perasCertMaxRounds =
         PerasCertMaxRounds
           certMaxRounds
@@ -350,9 +348,6 @@ mkPerasParams securityParam activeSlotCoeff plv =
   blockMinSlots :: Word64
   blockMinSlots = fromIntegral @Word32 @Word64 (unSlotInterval (plvMinCandidateBlockAge plv))
 
-  blockMaxSlots :: Word64
-  blockMaxSlots = ceiling tCQ
-
   certMaxRounds :: Word64
   certMaxRounds = ceiling ((tHeal + tCQ) / roundLength)
 
@@ -401,6 +396,30 @@ dijkstraPerasRoundLength = PerasRoundLength 90
 -- size if we have around 800 non-persistent seats in the voting committee.
 dijkstraPerasMaxCertSize :: PerasCertSize
 dijkstraPerasMaxCertSize = PerasCertSize 40_000
+
+-- * Fixed values
+
+-- | There is no reason for a user to want to give `perasBlockMaxSlots` a value that
+-- would be different from k/f.
+-- It only exists for correctness reasons, as an implementation detail. In practice,
+-- blocks should be produced often enough that a node should never have to cast a vote
+-- for a block that is older than k/f.
+-- Thus the correct value of `perasBlockMaxSlots` can be determined as soon as we have
+-- a value for k and f. In particular, it's not dependent from a ledger state.
+mkPerasBlockMaxSlots :: SecurityParam -> ActiveSlotCoeff -> PerasBlockMaxSlots
+mkPerasBlockMaxSlots securityParam activeSlotCoeff =
+  PerasBlockMaxSlots $ ceiling $ toRational k / unboundRational f
+ where
+  k = unNonZero (maxRollbacks securityParam)
+  f = activeSlotVal activeSlotCoeff
+
+-- | Default perasBlockMaxSlots
+--
+-- NOTE: this is only useful for testing and debugging purposes. In production,
+-- it is derived from the security parameter and active slot coefficient from
+-- the ledger config.
+defaultPerasBlockMaxSlots :: PerasBlockMaxSlots
+defaultPerasBlockMaxSlots = PerasBlockMaxSlots $ 2160 * 20
 
 -- * 'PerasEnabled' wrapper
 
