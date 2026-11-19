@@ -166,7 +166,7 @@ instance {-# OVERLAPPING #-} Show TestBlock where
 
 data TestArguments m = TestArguments
   { argFlavorArgs :: !(LedgerDbBackendArgs m TestBlock)
-  , argLedgerDbCfg :: !(LedgerDbCfg ExtLedgerState TestBlock)
+  , argLedgerDbCfg :: !(LedgerDbCfg TestBlock)
   }
 
 noFilePath :: IO (FilePath, IO ())
@@ -528,9 +528,9 @@ blockNotFound =
 openLedgerDB ::
   LedgerDbBackendArgs IO TestBlock ->
   ChainDB IO ->
-  LedgerDbCfg ExtLedgerState TestBlock ->
+  LedgerDbCfg TestBlock ->
   SomeHasFS IO ->
-  IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
+  IO (LedgerDB IO TestBlock, TestInternals IO TestBlock, IO NumOpenHandles)
 openLedgerDB flavArgs env cfg fs = do
   (stream, volBlocks) <- dbStreamAPI env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
@@ -595,8 +595,8 @@ openLedgerDB flavArgs env cfg fs = do
 -- | The environment for the monad in which we will run the test
 data Environment
   = Environment
-      (LedgerDB' IO TestBlock)
-      (TestInternals' IO TestBlock)
+      (LedgerDB IO TestBlock)
+      (TestInternals IO TestBlock)
       (ChainDB IO)
       (SecurityParam -> LSM.Salt -> TestArguments IO)
       (SomeHasFS IO)
