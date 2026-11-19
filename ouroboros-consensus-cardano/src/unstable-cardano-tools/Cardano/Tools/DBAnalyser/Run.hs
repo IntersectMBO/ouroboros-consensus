@@ -90,8 +90,8 @@ openLedgerDB ::
   -- snapshots happen to exist on disk.
   Point blk ->
   IO
-    ( LedgerDB.LedgerDB' IO blk
-    , LedgerDB.TestInternals' IO blk
+    ( LedgerDB.LedgerDB IO blk
+    , LedgerDB.TestInternals IO blk
     )
 openLedgerDB args immutableDB resolveEndorserBlock replayGoal =
   runWithTempRegistry $

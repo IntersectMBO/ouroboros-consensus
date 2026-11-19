@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( -- * Forker API
     ExceededRollback (..)
   , Forker (..)
-  , Forker'
   , ForkerKey (..)
   , GetForkerError (..)
   , RangeQuery (..)
@@ -104,8 +103,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
 -- TODO @js split l in l blk
-type Forker :: (Type -> Type) -> StateKind -> Type -> Type
-data Forker m l blk = Forker
+type Forker :: (Type -> Type) -> Type -> Type
+data Forker m blk = Forker
   { forkerClose :: !(m ())
   -- ^ Close the current forker (idempotent).
   --
@@ -136,7 +135,7 @@ data Forker m l blk = Forker
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
+  , forkerGetLedgerState :: !(STM m (ExtLedgerState blk EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
@@ -147,7 +146,7 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk DiffMK -> m ())
+    forkerPush :: !(ExtLedgerState blk DiffMK -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
   -- current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -158,20 +157,20 @@ data Forker m l blk = Forker
   -- resources from the LedgerDB.
   }
   deriving Generic
-  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
+  deriving NoThunks via OnlyCheckWhnf (Forker m blk)
 
 -- | An identifier for a 'Forker'. See 'ldbForkers'.
 newtype ForkerKey = ForkerKey Word16
   deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NoThunks, Num)
 
-type instance HeaderHash (Forker m l blk) = HeaderHash (l blk)
-
-type Forker' m blk = Forker m ExtLedgerState blk
+type instance HeaderHash (Forker m blk) = HeaderHash blk
 
 instance
-  (GetTip (l blk), MonadSTM m) =>
-  GetTipSTM m (Forker m l blk)
+  ( IsLedger LedgerState blk
+  , MonadSTM m
+  ) =>
+  GetTipSTM m (Forker m blk)
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
@@ -216,9 +215,9 @@ data ExceededRollback = ExceededRollback
   deriving (Show, Eq)
 
 forkerCurrentPoint ::
-  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
+  (IsLedger LedgerState blk, Functor (STM m)) =>
   Proxy blk ->
-  Forker m l blk ->
+  Forker m blk ->
   STM m (Point blk)
 forkerCurrentPoint _ forker =
   castPoint
@@ -258,6 +257,10 @@ ledgerStateReadOnlyForker frk =
 -- - Forging loop.
 --
 -- - Mempool.
+--
+-- Forker needs to be able to commit a chain to the LedgerDB, hence it is
+-- monomorphized to ExtLedgerState. A ReadOnlyForker, however, can exist at
+-- LedgerState.
 type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
@@ -282,7 +285,7 @@ type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
 type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 
-readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
+readOnlyForker :: Forker m blk -> ReadOnlyForker m ExtLedgerState blk
 readOnlyForker forker =
   ReadOnlyForker
     { roforkerClose = forkerClose forker
@@ -296,21 +299,21 @@ readOnlyForker forker =
   Validation
 -------------------------------------------------------------------------------}
 
-data ValidateArgs m l blk = ValidateArgs
+data ValidateArgs m blk = ValidateArgs
   { resolve :: !(ResolveBlock m blk)
   -- ^ How to retrieve blocks from headers
   , resolveEndorserBlock :: !(ResolveEndorserBlock m)
   -- ^ How to retrieve the endorser blocks that blocks certify
-  , validateConfig :: !(LedgerCfg l blk)
+  , validateConfig :: !(LedgerCfg ExtLedgerState blk)
   -- ^ The config
   , addPrevApplied :: !([RealPoint blk] -> STM m ())
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
   , withForkerAtFromTip ::
-      !(forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r))
+      !(forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , onSuccess :: !(SuccessForkerAction m l blk)
+  , onSuccess :: !(SuccessForkerAction m blk)
   -- ^ Continuation to run when the validation was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -323,18 +326,17 @@ data ValidateArgs m l blk = ValidateArgs
   }
 
 validate ::
-  forall m l blk.
+  forall m blk.
   ( IOLike m
   , HasCallStack
-  , ApplyBlock l blk
-  , l ~ ExtLedgerState
+  , ApplyBlock ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , BlockSupportsLeios blk
   ) =>
   ComputeLedgerEvents ->
-  ValidateArgs m l blk ->
-  m (ValidateResult l blk)
+  ValidateArgs m blk ->
+  m (ValidateResult ExtLedgerState blk)
 validate evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
@@ -369,8 +371,8 @@ validate evs args = do
   rewrap ::
     Either
       GetForkerError
-      (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk))) ->
-    ValidateResult l blk
+      (Either (AnnLedgerError ExtLedgerState blk) (AnchoredFragment (HeaderWithTime blk))) ->
+    ValidateResult ExtLedgerState blk
   rewrap (Right (Left e)) = ValidateLedgerError e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
   rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
@@ -378,7 +380,7 @@ validate evs args = do
 
   mkAps ::
     Set (RealPoint blk) ->
-    NonEmpty (Header blk, Ap m l blk)
+    NonEmpty (Header blk, Ap m ExtLedgerState blk)
   mkAps prev =
     NE.map
       ( \hdr ->
@@ -394,7 +396,7 @@ validate evs args = do
 
   -- \| Based on the 'ValidateResult', return the hashes corresponding to
   -- valid blocks.
-  validBlockPoints :: ValidateResult l blk -> [RealPoint blk] -> [RealPoint blk]
+  validBlockPoints :: ValidateResult ExtLedgerState blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
     ValidateSuccessful _ -> id
@@ -403,29 +405,28 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  ( ApplyBlock l blk
+  ( ApplyBlock ExtLedgerState blk
   , MonadSTM m
   , MonadThrow m
-  , l ~ ExtLedgerState
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , BlockSupportsLeios blk
   ) =>
-  (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
+  (forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
+  LedgerCfg ExtLedgerState blk ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
   -- | New blocks to apply, with their headers
-  NonEmpty (Header blk, Ap m l blk) ->
+  NonEmpty (Header blk, Ap m ExtLedgerState blk) ->
   ResolveBlock m blk ->
   ResolveEndorserBlock m ->
-  SuccessForkerAction m l blk ->
+  SuccessForkerAction m blk ->
   m
     ( Either
         GetForkerError
-        (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
+        (Either (AnnLedgerError ExtLedgerState blk) (AnchoredFragment (HeaderWithTime blk)))
     )
 switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve doResolveEb onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
@@ -472,15 +473,15 @@ toRealPoint (ApplyRef rp) = rp
 
 -- | Apply blocks to the given forker
 applyBlock ::
-  forall m l blk.
-  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadSTM m, MonadThrow m) =>
+  forall m blk.
+  (ApplyBlock ExtLedgerState blk, BlockSupportsLeios blk, MonadSTM m, MonadThrow m) =>
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  Ap m l blk ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  Ap m ExtLedgerState blk ->
+  Forker m blk ->
   ResolveBlock m blk ->
   ResolveEndorserBlock m ->
-  m (Either (AnnLedgerError l blk) (l blk DiffMK))
+  m (Either (AnnLedgerError ExtLedgerState blk) (ExtLedgerState blk DiffMK))
 applyBlock evs cfg ap fo doResolveBlock doResolveEb = case ap of
   ReapplyVal b ->
     withValues b (return . Right . tickThenReapply evs cfg b)
@@ -501,8 +502,10 @@ applyBlock evs cfg ap fo doResolveBlock doResolveEb = case ap of
  where
   withValues ::
     blk ->
-    (l blk ValuesMK -> m (Either (AnnLedgerError l blk) (l blk DiffMK))) ->
-    m (Either (AnnLedgerError l blk) (l blk DiffMK))
+    ( ExtLedgerState blk ValuesMK ->
+      m (Either (AnnLedgerError ExtLedgerState blk) (ExtLedgerState blk DiffMK))
+    ) ->
+    m (Either (AnnLedgerError ExtLedgerState blk) (ExtLedgerState blk DiffMK))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     (vs, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (forkerReadTables fo) blk l
@@ -514,17 +517,17 @@ applyBlock evs cfg ap fo doResolveBlock doResolveEb = case ap of
 -- certifies, which applies on the state its predecessor left, and whose
 -- differences come first.
 applyCertifiedEndorserBlock ::
-  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadThrow m) =>
-  LedgerCfg l blk ->
+  (ApplyBlock ExtLedgerState blk, BlockSupportsLeios blk, MonadThrow m) =>
+  LedgerCfg ExtLedgerState blk ->
   ResolveEndorserBlock m ->
   ReadLedgerTables m blk ->
   blk ->
-  l blk EmptyMK ->
+  ExtLedgerState blk EmptyMK ->
   m
     ( -- The resulting ledger state with values loaded for blk.
-      l blk ValuesMK
+      ExtLedgerState blk ValuesMK
     , -- Prepends the diffs of the endorser block once we have applied the blk.
-      l blk DiffMK -> l blk DiffMK
+      ExtLedgerState blk DiffMK -> ExtLedgerState blk DiffMK
     )
 applyCertifiedEndorserBlock cfg doResolveEb readTables blk st =
   case ledgerAnnouncedLeiosPoint (ledgerState st) <* blockLeiosCert blk of
@@ -545,14 +548,14 @@ applyCertifiedEndorserBlock cfg doResolveEb readTables blk st =
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker, and return it.
 applyThenPush ::
-  (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadSTM m, MonadThrow m) =>
+  (ApplyBlock ExtLedgerState blk, BlockSupportsLeios blk, MonadSTM m, MonadThrow m) =>
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  Ap m l blk ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  Ap m ExtLedgerState blk ->
+  Forker m blk ->
   ResolveBlock m blk ->
   ResolveEndorserBlock m ->
-  m (Either (AnnLedgerError l blk) (l blk DiffMK))
+  m (Either (AnnLedgerError ExtLedgerState blk) (ExtLedgerState blk DiffMK))
 applyThenPush evs cfg ap fo doResolve doResolveEb = do
   eLerr <- applyBlock evs cfg ap fo doResolve doResolveEb
   case eLerr of
@@ -562,22 +565,21 @@ applyThenPush evs cfg ap fo doResolve doResolveEb = do
 -- | Apply and push a sequence of blocks (oldest first), and return their
 -- headers, anchored where the forker started.
 applyThenPushMany ::
-  ( ApplyBlock l blk
+  ( ApplyBlock ExtLedgerState blk
   , MonadSTM m
   , MonadThrow m
   , BlockSupportsLeios blk
-  , l ~ ExtLedgerState
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   ) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  [(Header blk, Ap m l blk)] ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  [(Header blk, Ap m ExtLedgerState blk)] ->
+  Forker m blk ->
   ResolveBlock m blk ->
   ResolveEndorserBlock m ->
-  m (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
+  m (Either (AnnLedgerError ExtLedgerState blk) (AnchoredFragment (HeaderWithTime blk)))
 applyThenPushMany trace evs cfg aps fo doResolveBlock doResolveEb = do
   start <- atomically $ forkerGetLedgerState fo
   pushAndTrace (AF.Empty (anchorOf start)) (chainDepOf start) aps
@@ -664,8 +666,8 @@ data ExnUndecodableEndorserBlock = ExnUndecodableEndorserBlock LeiosPoint Decode
 --
 -- Its argument holds the headers of the blocks that validation pushed onto the
 -- forker, anchored where the forker started.
-newtype SuccessForkerAction m l blk = MkSuccessForkerAction
-  { applySuccessForkerAction :: AnchoredFragment (HeaderWithTime blk) -> Forker m l blk -> m ()
+newtype SuccessForkerAction m blk = MkSuccessForkerAction
+  { applySuccessForkerAction :: AnchoredFragment (HeaderWithTime blk) -> Forker m blk -> m ()
   }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
