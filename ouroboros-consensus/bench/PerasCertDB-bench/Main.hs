@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | This module contains benchmarks for Peras chain weight calculation as
 --   implemented in the 'Ouroboros.Consensus.Peras.Weight' module.
@@ -13,16 +12,13 @@
 --   with weight 'boostWeight'. All parameters are set in 'benchmarkParams'.
 module Main (main) where
 
-import Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded)
 import Data.List (iterate')
 import Data.Word (Word64)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
-import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
-  , takeVolatileSuffix
   , weightBoostOfFragment
   )
 import Ouroboros.Network.AnchoredFragment qualified as AF
@@ -70,10 +66,7 @@ benchmarkParams =
 main :: IO ()
 main =
   Test.Tasty.Bench.defaultMain $
-    concat
-      [ map benchWeightBoostOfFragment inputs
-      , map benchTakeVolatileSuffix inputs
-      ]
+    map benchWeightBoostOfFragment inputs
  where
   -- NOTE: we do not use the 'env' combinator to set up the test data since
   --       it requires 'NFData' for 'AF.AnchoredFragment'. While the necessary
@@ -91,14 +84,6 @@ benchWeightBoostOfFragment ::
 benchWeightBoostOfFragment (i, (weightSnapshot, fragment)) =
   bench ("weightBoostOfFragment of length " <> show i) $
     whnf (weightBoostOfFragment weightSnapshot) fragment
-
-benchTakeVolatileSuffix ::
-  (Natural, (PerasWeightSnapshot TestBlock, AF.AnchoredFragment TestBlock)) -> Benchmark
-benchTakeVolatileSuffix (i, (weightSnapshot, fragment)) =
-  bench ("takeVolatileSuffix of length " <> show i) $
-    whnf (takeVolatileSuffix weightSnapshot k) fragment
- where
-  k = SecurityParam $ knownNonZeroBounded @2160
 
 -- | An infinite list of chain fragments
 fragments :: [AF.AnchoredFragment TestBlock]

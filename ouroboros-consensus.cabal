@@ -1150,7 +1150,6 @@ benchmark PerasCertDB-bench
   other-modules:
   build-depends:
     base,
-    cardano-ledger-core,
     ouroboros-consensus,
     ouroboros-network:api,
     tasty-bench,
