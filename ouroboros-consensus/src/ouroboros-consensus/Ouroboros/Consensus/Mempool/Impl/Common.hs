@@ -53,7 +53,10 @@ import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybe)
 import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -68,6 +71,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosTx (..), TxHash, hashLeiosTx)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -93,6 +97,9 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
   , validatedTxDiffs :: !(LedgerTables blk DiffMK)
+  , validatedTxLeiosHash :: !(StrictMaybe TxHash)
+  -- ^ The hash by which an endorser block references the transaction, if one
+  -- can ('txLeiosBytes')
   }
   deriving Generic
 
@@ -120,6 +127,11 @@ data InternalState blk = IS
   --
   -- This allows one to more quickly lookup transactions by ID from a
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
+  --
+  -- This should always be in-sync with the transactions in 'isTxs'.
+  , isLeiosTxs :: !(Map TxHash (Validated (GenTx blk)))
+  -- ^ The transactions in 'isTxs' that an endorser block can reference, by the
+  -- hash it references them by ('validatedTxLeiosHash').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
   , isTxKeys :: !(LedgerTables blk KeysMK)
@@ -216,6 +228,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
+    , isLeiosTxs = Map.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
@@ -392,12 +405,13 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             { isTxs =
                 isTxs
                   :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
+                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
                     nextTicketNo
                     (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
+            , isLeiosTxs = strictMaybe isLeiosTxs (\h -> Map.insert h vtx isLeiosTxs) leiosHash
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -406,12 +420,15 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   IS
     { isTxs
     , isTxIds
+    , isLeiosTxs
     , isTxKeys
     , isTxValues
     , isLedgerState
     , isLastTicketNo
     , isSlotNo
     } = is
+
+  leiosHash = maybeToStrictMaybe (hashLeiosTx . MkLeiosTx <$> txLeiosBytes tx)
 
   nextTicketNo = succ isLastTicketNo
 
@@ -505,6 +522,7 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
       cand
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
+        , isLeiosTxs = isLeiosTxs cand <> Map.fromList [(h, tx) | (tx, _, (_, _, SJust h)) <- validDelta]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , isTxValues =
             ltliftA2 unionValues (isTxValues cand) (ltliftA2 restrictValuesMK deltaValues survivorKeys)
@@ -516,8 +534,8 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
  where
-  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
-  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  wrap = \(TxTicket (ValidatedTxWithDiffs tx df h) tk tz) -> (tx, df, (tk, tz, h))
+  unwrap = \(tx, df, (tk, tz, h)) -> TxTicket (ValidatedTxWithDiffs tx df h) tk tz
   fst3 (x, _, _) = x
   snd3 (_, x, _) = x
 

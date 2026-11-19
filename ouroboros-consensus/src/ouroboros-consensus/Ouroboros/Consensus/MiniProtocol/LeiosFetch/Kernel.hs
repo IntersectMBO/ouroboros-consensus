@@ -536,7 +536,7 @@ onNewLeiosAnnouncement registry kernel valid = do
 -- endorser block, which takes another node forging with this node's keys; that
 -- costs nothing here, since nothing is ever fetched for a point the forge
 -- provides. Then 'acquireForgedEb' writes and acquires it, which waits for room
--- in the LeiosDB's write queue and then for the writes to land.
+-- in the LeiosDB's write queue and then for the write to land.
 --
 -- The header must announce this endorser block.
 onForgedLeiosEb ::
