@@ -38,12 +38,17 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
+import Ouroboros.Consensus.Leios.TxCache
+  ( defaultLeiosTxCacheShift
+  , newPureLeiosTxCache
+  )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
   , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , ProtVerParity (..)
   , Serialised (..)
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
@@ -210,6 +215,7 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   outstanding <-
     uncheckedNewMVar $
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
@@ -225,6 +231,7 @@ newContextGated point gate = do
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
         , lfcOutstanding = outstanding
         , lfcReady = ready
+        , lfcTxCache = txCache
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
@@ -396,7 +403,7 @@ test_forgedAfterBody = do
     (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-  acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
+  acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
   awaitNotes notes 2 >>= (@?= [AcquiredBody point, AcquiredClosure point])
   -- Long enough for any further emission to have landed.
   threadDelay 100000
@@ -411,7 +418,7 @@ test_forgedAgain = do
   (ctx, notes) <- newContext
   let forgeAndSettle = do
         modifyMVar_ (lfcOutstanding ctx) (pure . markReceivingFromForge point)
-        acquireForgedEb ctx point (forgeLeiosEb (fmap leiosTxBytes fixtureTxs))
+        acquireForgedEb ctx point (forgeLeiosEb EvenProtVer (fmap leiosTxBytes fixtureTxs))
         Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
           >>= maybe (assertFailure "timed out waiting for the forge's writes to settle") pure
   forgeAndSettle

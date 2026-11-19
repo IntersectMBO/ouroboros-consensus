@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , pruneNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newPureLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
@@ -463,6 +464,7 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
+    leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
       newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
@@ -470,6 +472,7 @@ initNodeKernel
           { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
           , lfcOutstanding = outstanding
           , lfcReady = ready
+          , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
@@ -494,10 +497,10 @@ initNodeKernel
     -- requires.
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
-        leiosFetchAnnouncementFocuser leiosFetchKernel
+        leiosFetchAnnouncementFocuser registry leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
-        leiosFetchCertificateFocuser chainDB leiosFetchKernel
+        leiosFetchCertificateFocuser registry chainDB leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
