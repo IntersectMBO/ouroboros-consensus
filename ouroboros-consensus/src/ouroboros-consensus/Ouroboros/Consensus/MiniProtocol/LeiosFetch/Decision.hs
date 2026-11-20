@@ -116,8 +116,8 @@ data LeiosBlockRequest = MkLeiosBlockRequest
 -- redundant response for a job that has since completed still validates. On
 -- the wire only the offset bitmap goes to the peer; it is derived from the
 -- union of the jobs' offsets (see
--- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.offsetsToBitmap'), not
--- stored.
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.txsBitmapFromTxIndices'),
+-- not stored.
 data LeiosBlockTxsRequest
   = MkLeiosBlockTxsRequest
       !LeiosPoint
