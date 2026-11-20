@@ -1542,7 +1542,6 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.Relay
     Test.Consensus.Leios.TestBlock
-    Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.NodeKernel
