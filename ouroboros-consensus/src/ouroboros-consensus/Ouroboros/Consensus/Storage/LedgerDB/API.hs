@@ -781,19 +781,19 @@ data LedgerDbPrune
 -------------------------------------------------------------------------------}
 
 -- | A backend that supports streaming the ledger tables
-class StreamingBackend m backend l blk where
-  data YieldArgs m backend l blk
+class StreamingBackend m backend blk where
+  data YieldArgs m backend blk
 
-  data SinkArgs m backend l blk
+  data SinkArgs m backend blk
 
-  yield :: Proxy backend -> YieldArgs m backend l blk -> Yield m l blk
-  releaseYieldArgs :: YieldArgs m backend l blk -> m ()
+  yield :: Proxy backend -> YieldArgs m backend blk -> Yield m blk
+  releaseYieldArgs :: YieldArgs m backend blk -> m ()
 
-  sink :: Proxy backend -> SinkArgs m backend l blk -> Sink m l blk
-  releaseSinkArgs :: SinkArgs m backend l blk -> m ()
+  sink :: Proxy backend -> SinkArgs m backend blk -> Sink m blk
+  releaseSinkArgs :: SinkArgs m backend blk -> m ()
 
-type Yield m l blk =
-  l blk EmptyMK ->
+type Yield m blk =
+  ExtLedgerState blk EmptyMK ->
   ( ( Stream
         (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
@@ -803,8 +803,8 @@ type Yield m l blk =
   ) ->
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
-type Sink m l blk =
-  l blk EmptyMK ->
+type Sink m blk =
+  ExtLedgerState blk EmptyMK ->
   Stream
     (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)

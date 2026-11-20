@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Cardano.Ledger
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -32,14 +33,14 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
 import System.FS.API
 
-type L = LedgerState (CardanoBlock StandardCrypto)
+type L = ExtLedgerState (CardanoBlock StandardCrypto)
 
 mkInMemYieldArgs ::
   SomeHasFS IO ->
   DiskSnapshot ->
   L EmptyMK ->
-  YieldArgs IO V2.Mem LedgerState (CardanoBlock StandardCrypto)
-mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
+  YieldArgs IO V2.Mem (CardanoBlock StandardCrypto)
+mkInMemYieldArgs fs ds (ExtLedgerState (HardForkLedgerState (HardForkState idx)) _ _) =
   let
     np ::
       NP
@@ -85,8 +86,8 @@ mkInMemSinkArgs ::
   SomeHasFS IO ->
   DiskSnapshot ->
   L EmptyMK ->
-  SinkArgs IO V2.Mem LedgerState (CardanoBlock StandardCrypto)
-mkInMemSinkArgs fs ds (HardForkLedgerState (HardForkState idx)) = do
+  SinkArgs IO V2.Mem (CardanoBlock StandardCrypto)
+mkInMemSinkArgs fs ds (ExtLedgerState (HardForkLedgerState (HardForkState idx)) _ _) = do
   let
     np =
       (Fn $ const $ K $ encOne (Proxy @ByronEra))
