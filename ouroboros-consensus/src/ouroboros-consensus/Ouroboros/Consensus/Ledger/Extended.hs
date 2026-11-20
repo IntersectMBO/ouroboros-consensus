@@ -46,7 +46,6 @@ import Control.Monad.Trans.Except (except)
 import Data.Functor ((<&>))
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
-import Data.SOP.Constraint (All, Top)
 import qualified Data.Text as Text
 import Data.Typeable
 import GHC.Generics (Generic)
@@ -69,7 +68,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , pattern NoPerasEnabled
   )
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndices))
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
@@ -220,7 +218,6 @@ instance
   ( LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
-  , All Top (HardForkIndices blk)
   ) =>
   IsLedger ExtLedgerState blk
   where
@@ -376,7 +373,6 @@ instance
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
-  , All Top (HardForkIndices blk)
   ) =>
   ApplyBlock ExtLedgerState blk
   where
