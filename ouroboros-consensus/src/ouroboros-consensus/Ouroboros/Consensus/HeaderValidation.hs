@@ -614,7 +614,8 @@ data HeaderWithTime blk = HeaderWithTime
   --
   -- A valid header claims a certificate only if its predecessor announced
   -- something certifiable, in an era with Leios, so this is 'SJust' exactly
-  -- when a valid header claims one.
+  -- when a valid header claims one. On the ChainDB's selection, whose blocks
+  -- are valid, it is 'SNothing'.
   --
   -- The header commits only to its predecessor's hash, so this is knowledge
   -- of the chain the header arrived on rather than of the header. It is
