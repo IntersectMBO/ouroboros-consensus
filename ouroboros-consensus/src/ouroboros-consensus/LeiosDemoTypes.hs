@@ -34,7 +34,7 @@ import Cardano.Binary
   , toStrictByteString
   )
 import qualified Cardano.Binary as CBOR
-import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
+import Cardano.Binary.FixedSizeCodec (FixedSizeCodec (rawDecodeFixedSized), decodeFixedSized)
 import Cardano.Crypto.DSIGN
   ( signDSIGN
   , verifyDSIGN
@@ -55,6 +55,8 @@ import Cardano.Crypto.Leios
   , aggregateLeiosCert
   , getLeiosSeatId
   , leiosCommitteeSize
+  , leiosSignatureSize
+  , leiosSignatureToBytes
   , resolveLeiosSeat
   , verifyLeiosCert
   )
@@ -442,7 +444,11 @@ instance Semigroup PeerOffer where
 instance Monoid PeerOffer where
   mempty = MkPeerOffer SNothing SNothing mempty
 
-data LeiosNotifyException = LeiosNotifyUnexpectedMsgCancel
+data LeiosNotifyException
+  = LeiosNotifyUnexpectedMsgCancel
+  | -- | The peer sent a vote whose signature is not a point; see
+    -- 'MalformedSignature'.
+    LeiosNotifyMalformedVote !LeiosVote
   deriving (Eq, Show)
 
 instance Exception LeiosNotifyException
@@ -1332,10 +1338,36 @@ data LeiosVote = MkLeiosVote
   --   that announced an endorser block.
   , voterId :: LeiosSeatId
   -- ^ Identity within a 'LeiosCommittee' who signed this vote.
-  , voteSignature :: LeiosSignature
-  -- ^ The cryptographic signature of the vote.
+  , voteSignature :: LeiosSignatureBytes
+  -- ^ The cryptographic signature of the vote, as it travels.
   }
   deriving (Generic, Eq, Show)
+
+-- | A signature as its compressed wire bytes, of the right length and marked
+-- compressed, but not yet unpacked into a curve point.
+--
+-- Unpacking costs a field square root and a subgroup check, a good part of a
+-- verification, so it is left to 'validateLeiosVote': a vote dropped before
+-- validation, as one for a point outside the vote window is, never pays it.
+-- Sending copies the bytes rather than compressing the point again.
+newtype LeiosSignatureBytes = MkLeiosSignatureBytes {leiosSignatureBytes :: ByteString}
+  deriving (Eq, Show)
+
+-- | The bytes of a signature, for a vote this node signs.
+leiosSignatureBytesOf :: LeiosSignature -> LeiosSignatureBytes
+leiosSignatureBytesOf = MkLeiosSignatureBytes . leiosSignatureToBytes
+
+-- | The checks short of unpacking the point: the length of a compressed
+-- signature, and the compression flag (the top bit of the first byte).
+mkLeiosSignatureBytes :: ByteString -> Maybe LeiosSignatureBytes
+mkLeiosSignatureBytes bytes
+  | fromIntegral (BS.length bytes) /= leiosSignatureSize = Nothing
+  | not (Bits.testBit (BS.head bytes) 7) = Nothing
+  | otherwise = Just (MkLeiosSignatureBytes bytes)
+
+-- | Unpack the point, with its group membership check.
+unpackLeiosSignature :: LeiosSignatureBytes -> Maybe LeiosSignature
+unpackLeiosSignature = rawDecodeFixedSized . leiosSignatureBytes
 
 instance Ord LeiosVote where
   compare v1 v2 =
@@ -1351,15 +1383,20 @@ encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 3
     <> encodeRbHash announcingRbHash
     <> CBOR.encodeWord16 voterId.leiosSeatIndex
-    <> encodeFixedSized voteSignature
+    <> CBOR.encodeBytes voteSignature.leiosSignatureBytes
 
 -- | Dedoe a 'LeiosVote' from CBOR.
+--
+-- The signature is checked for length and the compression flag only; see
+-- 'LeiosSignatureBytes'.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 3
   pointRbHash <- decodeRbHash
   voterId <- LeiosSeatId <$> CBOR.decodeWord16
-  voteSignature <- decodeFixedSized
+  voteSignature <-
+    maybe (fail "LeiosVote: not a compressed signature") pure . mkLeiosSignatureBytes
+      =<< CBOR.decodeBytes
   pure
     MkLeiosVote
       { announcingRbHash = pointRbHash
@@ -1380,26 +1417,37 @@ signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN () announcingRbHash sk
+    , voteSignature = leiosSignatureBytesOf $ signDSIGN () announcingRbHash sk
     }
 
--- | Validate a 'LeiosVote' against a selected 'Commitee'.
-validateLeiosVote :: LeiosCommittee -> LeiosVote -> Either VoteInvalid Weight
+-- | Validate a 'LeiosVote' against a selected 'Commitee', returning the
+-- weight of its seat and its unpacked signature.
+--
+-- The signature is unpacked first, so bytes that are not a point are always
+-- reported as such, whatever the seat.
+validateLeiosVote ::
+  LeiosCommittee -> LeiosVote -> Either VoteInvalid (Weight, LeiosSignature)
 validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
-  case resolveLeiosSeat committee voterId of
-    Nothing -> Left SignerNotInCommittee
-    Just seat ->
-      case seat.seatVKey of
-        SNothing -> Left SignerHasNoKey
-        SJust vk ->
-          case verifyDSIGN () vk announcingRbHash voteSignature of
-            Left _ -> Left InvalidSignature
-            Right () -> Right seat.seatWeight
+  case unpackLeiosSignature voteSignature of
+    Nothing -> Left MalformedSignature
+    Just signature ->
+      case resolveLeiosSeat committee voterId of
+        Nothing -> Left SignerNotInCommittee
+        Just seat ->
+          case seat.seatVKey of
+            SNothing -> Left SignerHasNoKey
+            SJust vk ->
+              case verifyDSIGN () vk announcingRbHash signature of
+                Left _ -> Left InvalidSignature
+                Right () -> Right (seat.seatWeight, signature)
 
 data VoteInvalid
   = InvalidSignature
   | SignerNotInCommittee
   | SignerHasNoKey
+  | -- | The signature bytes are not a point of the signature group. Only a
+    -- peer sending garbage produces this, so it is disconnected for it.
+    MalformedSignature
   deriving (Eq, Show)
 
 -- | Why a CertRB was rejected during ledger validation of its Leios

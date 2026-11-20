@@ -71,6 +71,13 @@ data AddVoteResult
     Added !VoteTally (Maybe LeiosCert)
   deriving (Eq, Show)
 
+-- | Whether a peer that sent a vote with this result is to be disconnected:
+-- only for a signature that is not a point, which no honest peer sends. A vote
+-- that is merely invalid, unknown to the committee or outside the window is
+-- dropped and the peer kept.
+disconnectsPeer :: AddVoteResult -> Bool
+disconnectsPeer = (== VoteInvalid MalformedSignature)
+
 -- | What one accepted vote did to its point's tally.
 --
 -- A record rather than three positional 'Weight's: transposing any two of them
@@ -187,7 +194,7 @@ newLeiosVoteState getCommittee getVotable = do
                 Just (committee, threshold) ->
                   case validateLeiosVote committee vote of
                     Left reason -> pure $ VoteInvalid reason
-                    Right weight -> atomically $ do
+                    Right (weight, signature) -> atomically $ do
                       states0 <- readTVar pointStates
                       if seenIn vote states0
                         then pure AlreadyKnown
@@ -215,7 +222,7 @@ newLeiosVoteState getCommittee getVotable = do
                                 Map.insertLookupWithKey
                                   (\_ new _old -> new)
                                   vote.voterId
-                                  (weight, vote.voteSignature)
+                                  (weight, signature)
                                   pst.psVoters
                               totalW = pst.psTotal + weight - maybe 0 fst mOld
                               pst' =
