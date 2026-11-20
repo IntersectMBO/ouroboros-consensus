@@ -32,7 +32,6 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Monoid (Endo (..))
-import Data.SOP (All, Top)
 import GHC.Generics (Generic, Generically (..))
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
@@ -42,7 +41,6 @@ import Ouroboros.Consensus.Block
   , Header
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -180,8 +178,7 @@ render (TestTrie here children) =
 
 -- | Compile a 'TestSuite' into a list of tasty 'TestTree'.
 toTestTree ::
-  ( All Top (HardForkIndices blk)
-  , Condense (StateView blk)
+  ( Condense (StateView blk)
   , CondenseList (NodeState blk)
   , ShowProxy blk
   , ShowProxy (Header blk)

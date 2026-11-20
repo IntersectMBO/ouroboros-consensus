@@ -19,10 +19,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer ((>$<))
-import Data.SOP (All, Top)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -50,7 +48,6 @@ import System.FS.API
 openDB ::
   forall m blk st.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
