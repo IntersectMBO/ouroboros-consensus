@@ -25,13 +25,14 @@ import Control.Monad.Except (runExcept, runExceptT)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import Data.Bifunctor (first)
-import Data.Bits ((.|.))
-import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
+import Data.Foldable (toList)
 import Data.Functor ((<&>))
+import qualified Data.IntSet as IntSet
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
@@ -81,6 +82,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
+  , maxTxsPerEndorserBlock
   , mkEndorserBlock
   , serialiseEndorserBlock
   , toRankingBlockHash
@@ -1283,7 +1285,7 @@ fetchingBack toFetch settle = Effect $ do
     FetchBackClosure point ->
       requestingBody point $ \eb ->
         let refs = endorserBlockReferences eb
-         in Yield ReflClientAgency (MsgLeiosBlockTxsRequest point (bitmapsNaming [0 .. length refs - 1])) $
+         in Yield ReflClientAgency (MsgLeiosBlockTxsRequest point (txsBitmapNaming [0 .. length refs - 1])) $
               Await ReflServerAgency $ \case
                 MsgLeiosBlockTxs txs ->
                   settling offer $
@@ -1380,8 +1382,11 @@ serveEb ::
   LeiosFetchRequestHandler LeiosPoint (Serialised EndorserBlock) LeiosTx m
 serveEb eb txs = MkLeiosFetchRequestHandler $ \case
   MsgLeiosBlockRequest _point -> pure (MsgLeiosBlock (serialiseEndorserBlock eb))
-  MsgLeiosBlockTxsRequest _point bitmaps ->
-    pure $ MsgLeiosBlockTxs $ V.fromList $ mapMaybe (txs V.!?) (bitmapToOffsets bitmaps)
+  MsgLeiosBlockTxsRequest _point txsBitmap ->
+    pure $
+      MsgLeiosBlockTxs $
+        V.fromList $
+          mapMaybe (txs V.!?) (toList (NEIntSet.toAscList (txsBitmapToTxIndices txsBitmap)))
 
 {-------------------------------------------------------------------------------
   Listeners whose immutable tip or clock differs from the node's
@@ -1658,27 +1663,28 @@ requestingClient requests repliesVar = case requests of
       Await ReflServerAgency $ \case
         MsgLeiosBlock eb -> keep (ReplyBlock eb) rest
   RequestTxs point offsets : rest ->
-    Yield ReflClientAgency (MsgLeiosBlockTxsRequest point (bitmapsNaming offsets)) $
+    Yield ReflClientAgency (MsgLeiosBlockTxsRequest point (txsBitmapNaming offsets)) $
       Await ReflServerAgency $ \case
         MsgLeiosBlockTxs txs -> keep (ReplyTxs (V.toList txs)) rest
  where
   keep reply rest =
     Effect $ requestingClient rest repliesVar <$ atomically (modifyTVar repliesVar (reply :))
 
--- | The bitmaps that name these offsets.
-bitmapsNaming :: [Int] -> TxBitmaps
-bitmapsNaming offsets =
-  Map.toList $
-    Map.fromListWith
-      (.|.)
-      [(fromIntegral (offset `div` 64), Bits.bit (63 - offset `mod` 64)) | offset <- offsets]
+-- | The bitmap that names these offsets.
+txsBitmapNaming :: [Int] -> TxsBitmap
+txsBitmapNaming offsets =
+  case NEIntSet.nonEmptySet (IntSet.fromList offsets) of
+    Nothing -> error "txsBitmapNaming: no offsets"
+    Just set -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock set) of
+      Left err -> error $ "txsBitmapNaming: " <> err
+      Right txsBitmap -> txsBitmap
 
 {-------------------------------------------------------------------------------
   What the node's LeiosDB holds
 -------------------------------------------------------------------------------}
 
--- | An endorser block of 70 transactions, so that a request for them takes two
--- bitmaps.
+-- | An endorser block of 70 transactions, so that the bitmap of a request for
+-- them takes two chunks.
 heldEb :: EndorserBlock
 heldEb =
   mkEndorserBlock $

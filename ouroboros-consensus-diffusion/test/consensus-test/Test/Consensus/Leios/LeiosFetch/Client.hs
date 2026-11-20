@@ -134,6 +134,6 @@ server delayFor = Await ReflClientAgency $ \case
   MsgLeiosBlockRequest (N i) -> Effect $ do
     threadDelay (delayFor i)
     pure $ Yield ReflServerAgency (MsgLeiosBlock (N i)) (server delayFor)
-  MsgLeiosBlockTxsRequest _point _bitmaps ->
+  MsgLeiosBlockTxsRequest _point _txsBitmap ->
     Yield ReflServerAgency (MsgLeiosBlockTxs V.empty) (server delayFor)
   MsgDone -> Done ReflNobodyAgency ()

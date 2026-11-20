@@ -28,6 +28,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Cardano.Ledger.Binary (DecoderError, Version)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
+import Control.Monad.Except (runExcept)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -36,6 +37,7 @@ import Data.Foldable (fold, for_, toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Monoid (Sum (..))
@@ -82,6 +84,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , hashSerialisedEndorserBlock
   , leiosEbByteSizes
+  , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -111,7 +114,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , fetchArrivalGood
   , fetchArrivalInvalid
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), offsetsToBitmap)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), txsBitmapFromTxIndices)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFills
@@ -246,10 +249,17 @@ nextLeiosFetchJob ctx peer reqsVar =
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point and bitmap: the union of the
       -- covered jobs' offsets.
-      let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
-       in MkSomeLeiosFetchJob
-            (MsgLeiosBlockTxsRequest p bitmaps)
-            (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
+      let mayOffsets = NEIntSet.nonEmptySet (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
+       in case mayOffsets of
+            Nothing ->
+              error "LeiosBlockTxsRequest invariant violated: transaction offsets to request must be non-empty"
+            Just offsets -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock offsets) of
+              Left err ->
+                error $ "LeiosBlockTxsRequest invariant violated: " <> err
+              Right txsBitmap ->
+                MkSomeLeiosFetchJob
+                  (MsgLeiosBlockTxsRequest p txsBitmap)
+                  (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
 
 -- | Take in an endorser block that arrived in reply to this request.
 --

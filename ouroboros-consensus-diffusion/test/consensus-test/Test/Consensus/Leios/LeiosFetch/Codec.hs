@@ -17,6 +17,7 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
+import Control.Monad.Except (runExcept)
 import Data.Bits (shiftL, shiftR, (.|.))
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
@@ -24,6 +25,7 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import Data.Containers.ListUtils (nubOrd)
 import Data.Functor ((<&>))
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (inits, sort, tails)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy (..))
@@ -105,6 +107,12 @@ tests =
             decodeMsgLeiosBlockTxsViaLeiosFetchCodec
               (definite [txsKey, indefinite (twoTxs <> [encodeLeiosTx txA])])
               >>= (@?= Nothing)
+        , testCase "rejects a definite empty tx list" $
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (definite [txsKey, definite []])
+              >>= (@?= Nothing)
+        , testCase "rejects an indefinite empty tx list" $
+            decodeMsgLeiosBlockTxsViaLeiosFetchCodec (definite [txsKey, indefinite []])
+              >>= (@?= Nothing)
         , testCase "rejects an indefinite message with an extra field" $
             decodeMsgLeiosBlockTxsViaLeiosFetchCodec (indefinite [txsKey, definite twoTxs, CBOR.encodeWord 0])
               >>= (@?= Nothing)
@@ -114,17 +122,17 @@ tests =
         , testCase "an endorser block CBOR-in-CBOR" $
             decodeMsgLeiosBlockViaLeiosFetchCodec (definite [CBOR.encodeWord 2, cborInCbor (snd oneRefEb)])
               >>= (@?= Just (serialised (snd oneRefEb)))
-        , testCase "a definite bitmaps map" $
+        , testCase "a definite chunk map" $
             decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
-              (definite [txsRequestKey, somePoint, definiteMap [bitmap0]])
-              >>= (@?= Just (fst onePoint, [(0, 1)]))
-        , testCase "an indefinite bitmaps map" $
+              (definite [txsRequestKey, somePoint, definiteMap [chunk0]])
+              >>= (@?= Just (fst onePoint, oneTxsBitmap))
+        , testCase "an indefinite chunk map" $
             decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
-              (definite [txsRequestKey, somePoint, indefiniteMap [bitmap0]])
-              >>= (@?= Just (fst onePoint, [(0, 1)]))
-        , testCase "rejects indefinite bitmaps past the bound" $
+              (definite [txsRequestKey, somePoint, indefiniteMap [chunk0]])
+              >>= (@?= Just (fst onePoint, oneTxsBitmap))
+        , testCase "rejects a chunk index past the bound" $
             decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
-              (definite [txsRequestKey, somePoint, indefiniteMap [bitmap0, bitmap1]])
+              (definite [txsRequestKey, somePoint, indefiniteMap [chunk0, chunkPastBound]])
               >>= (@?= Nothing)
         ]
     , testGroup
@@ -433,13 +441,18 @@ decodeViaLeiosFetchCodec stok enc = do
       ByteString
   codec =
     codecLeiosFetch
-      2
+      codecMaxTxs
       encodeLeiosPoint
       decodeLeiosPoint
       encodeSerialisedEndorserBlock
       decodeSerialisedEndorserBlock
       encodeLeiosTx
       decodeLeiosTx
+
+-- | The codec's @maxTxs@: also the txs bitmap's total width, so a chunk
+-- index above 0 is past the bound.
+codecMaxTxs :: Int
+codecMaxTxs = 2
 
 decodeMsgLeiosBlockTxsViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe [LeiosTx])
 decodeMsgLeiosBlockTxsViaLeiosFetchCodec enc =
@@ -451,13 +464,12 @@ decodeMsgLeiosBlockViaLeiosFetchCodec enc =
   decodeViaLeiosFetchCodec SingBlock enc
     <&> fmap (\case SomeMessage (MsgLeiosBlock eb) -> eb)
 
--- | Decode a 'MsgLeiosBlockTxsRequest'. The codec's bound of two txs admits one
--- bitmap entry.
+-- | Decode a 'MsgLeiosBlockTxsRequest'.
 decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec ::
-  CBOR.Encoding -> IO (Maybe (LeiosPoint, TxBitmaps))
+  CBOR.Encoding -> IO (Maybe (LeiosPoint, TxsBitmap))
 decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec enc =
   decodeViaLeiosFetchCodec SingIdle enc <&> \case
-    Just (SomeMessage (MsgLeiosBlockTxsRequest p bitmaps)) -> Just (p, bitmaps)
+    Just (SomeMessage (MsgLeiosBlockTxsRequest p txsBitmap)) -> Just (p, txsBitmap)
     _ -> Nothing
 
 decodeMsgLeiosBlockRequestViaLeiosFetchCodec :: CBOR.Encoding -> IO (Maybe LeiosPoint)
@@ -473,10 +485,22 @@ txsRequestKey = CBOR.encodeWord 3
 somePoint :: CBOR.Encoding
 somePoint = encodeLeiosPoint (fst onePoint)
 
--- | Bitmap entries naming the last tx of the first and of the second run of 64.
-bitmap0, bitmap1 :: CBOR.Encoding
-bitmap0 = CBOR.encodeWord16 0 <> CBOR.encodeWord64 1
-bitmap1 = CBOR.encodeWord16 1 <> CBOR.encodeWord64 1
+-- | A chunk entry naming the bitmap's second tx. With 'codecMaxTxs' of 2, the
+-- bitmap's only chunk is 1 byte wide, its one valid padding-free bit pattern
+-- for offset 1 being 0x40.
+chunk0 :: CBOR.Encoding
+chunk0 = CBOR.encodeWord16 0 <> CBOR.encodeBytes (BS.pack [0x40])
+
+-- | A chunk entry just past the bitmap's last chunk index: with 'codecMaxTxs'
+-- of 2, chunk index 0 is the only valid one, so index 1 is past the bound.
+chunkPastBound :: CBOR.Encoding
+chunkPastBound =
+  CBOR.encodeWord16 1 <> CBOR.encodeBytes (BS.pack [0x40])
+
+-- | What 'chunk0' decodes to: the bitmap naming offset 1.
+oneTxsBitmap :: TxsBitmap
+oneTxsBitmap =
+  either error id $ runExcept $ txsBitmapFromTxIndices codecMaxTxs (NEIntSet.singleton 1)
 
 txsKey :: CBOR.Encoding
 txsKey = CBOR.encodeWord 4
