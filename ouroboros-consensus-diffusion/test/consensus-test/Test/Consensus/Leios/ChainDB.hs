@@ -66,8 +66,9 @@ tests =
         runSimOrThrow
           (whyInvalid (\node -> addBlocks node [announcingA, minorityCertifyingA]) minorityCertifyingA)
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
-    , testCase "ChainSel does not verify a certificate again for a claim it established" $
-        runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
+    , testCase "ChainSel rejects a minority certificate even for a claim another block made" $
+        runSimOrThrow (whyInvalid addSibling minoritySibling)
+          @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "a restart forgets a certifying block off the selection, until it arrives again" $
         runSimOrThrow (heldAcrossRestart BodyOfA) @?= (True, False, True)
     , testCase "a restart keeps a certifying block on the selection" $
@@ -324,7 +325,7 @@ minoritySibling :: LeiosTestBlock
 minoritySibling =
   setLeiosCert (certOf (rbHashOf announcingA) [0]) (forkLeiosBlock certifyingA)
 
--- | Add 'certifyingA', which establishes its claim, and then 'minoritySibling'.
+-- | Add 'certifyingA', and then 'minoritySibling', which makes the same claim.
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling node = do
   addBlocks node [announcingA, certifyingA]

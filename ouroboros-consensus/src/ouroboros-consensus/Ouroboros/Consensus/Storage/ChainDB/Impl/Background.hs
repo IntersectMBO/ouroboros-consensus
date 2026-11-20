@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( insertAcquiredEb
   , isAcquiredEb
   , pruneAcquiredEbs
-  , pruneLeiosValidClaims
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -379,9 +378,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
   scheduleGC' :: WithOrigin SlotNo -> m ()
   scheduleGC' Origin = return ()
   scheduleGC' (NotOrigin slotNo) = do
-    atomically $ do
-      modifyTVar cdbAcquiredEbs (pruneAcquiredEbs slotNo)
-      modifyTVar cdbLeiosValidClaims (pruneLeiosValidClaims slotNo)
+    atomically $ modifyTVar cdbAcquiredEbs (pruneAcquiredEbs slotNo)
     scheduleGC
       (contramap TraceGCEvent cdbTracer)
       slotNo

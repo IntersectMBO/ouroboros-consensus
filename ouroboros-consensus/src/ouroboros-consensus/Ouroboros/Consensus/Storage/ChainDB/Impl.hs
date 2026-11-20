@@ -85,7 +85,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( certifiesPromotedEb
-  , emptyLeiosValidClaims
   , mkAcquiredEbs
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -259,7 +258,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
-    varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
     newLeiosValidClaims <- atomically newBroadcastTChan
     chainWithTime <-
       ChainSel.initialChainSelection
@@ -326,8 +324,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
-            , cdbLeiosValidClaims = varLeiosValidClaims
-            , cdbOnNewLeiosValidClaim = curry (writeTChan newLeiosValidClaims)
+            , cdbEmitLeiosValidClaim = curry (writeTChan newLeiosValidClaims)
             , cdbDelaySnapshots = Args.cdbsDelaySnapshots cdbSpecificArgs
             }
 

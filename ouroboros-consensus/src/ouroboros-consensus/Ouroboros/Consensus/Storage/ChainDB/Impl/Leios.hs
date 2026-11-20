@@ -7,8 +7,8 @@
 
 -- | What the ChainDB knows about Leios endorser blocks: which closures it has
 -- acquired, and so which blocks certifying an endorser block ChainSel may
--- select; which claims some valid certificate has established; and whether
--- the ImmutableDB's blocks have the endorser blocks they certify.
+-- select; and whether the ImmutableDB's blocks have the endorser blocks they
+-- certify.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( -- * The Leios facts of a block
     leiosBlockInfo
@@ -25,13 +25,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
 
-    -- * Valid claims
-  , LeiosValidClaims
-  , emptyLeiosValidClaims
-  , insertLeiosValidClaim
-  , isLeiosValidClaim
-  , pruneLeiosValidClaims
-
     -- * Checking the ImmutableDB
   , certifiesPromotedEb
   ) where
@@ -44,7 +37,6 @@ import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosProtocol (..)
@@ -174,50 +166,6 @@ ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
   Set.filter (not . isParked) . succsOf
  where
   isParked = maybe False (isParkedCertRB acquired lookupBlockInfo) . lookupBlockInfo
-
-{-------------------------------------------------------------------------------
-  Valid claims
--------------------------------------------------------------------------------}
-
--- | The blocks known to announce an endorser block that some valid certificate
--- certifies, each with its slot.
---
--- A block containing a certificate claims that the endorser block its
--- predecessor announced is certified. A block making an already established
--- claim need not have its certificate verified immediately upon arrival.
-data LeiosValidClaims = LeiosValidClaims
-  { lvcClaims :: !(Set LeiosClaim)
-  , lvcPrunedSlot :: !SlotNo
-  -- ^ The slot this has most recently been pruned to, so that a claim established
-  -- after the pruning cannot undo it.
-  }
-  deriving stock Generic
-  deriving anyclass NoThunks
-
-emptyLeiosValidClaims :: LeiosValidClaims
-emptyLeiosValidClaims = LeiosValidClaims Set.empty (SlotNo 0)
-
--- | Record that some valid certificate established the claim, or 'Nothing' if
--- it is already established or its announcing block is older than what has
--- been pruned.
-insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Maybe LeiosValidClaims
-insertLeiosValidClaim claim@(LeiosClaim slot _rbHash) (LeiosValidClaims established prunedSlot)
-  | slot < prunedSlot = Nothing
-  | Set.member claim established = Nothing
-  | otherwise = Just $ LeiosValidClaims (Set.insert claim established) prunedSlot
-
-isLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Bool
-isLeiosValidClaim claim = Set.member claim . lvcClaims
-
--- | Forget every claim whose announcing block is older than the slot: once the
--- immutable tip has passed it, no block that ChainSel has yet to select can
--- make the claim.
-pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
-pruneLeiosValidClaims slot (LeiosValidClaims established prunedSlot) =
-  LeiosValidClaims
-    -- 'LeiosClaim' orders by slot first.
-    (Set.dropWhileAntitone ((< slot) . leiosClaimSlot) established)
-    (max slot prunedSlot)
 
 {-------------------------------------------------------------------------------
   Checking the ImmutableDB

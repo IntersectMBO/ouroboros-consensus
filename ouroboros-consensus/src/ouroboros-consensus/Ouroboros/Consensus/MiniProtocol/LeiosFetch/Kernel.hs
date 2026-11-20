@@ -617,8 +617,8 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- the offer arrived still moves the focus.
 leiosFetchCertificateFocuser ::
   IOLike m =>
-  -- | The claim of the next new Leios certification validated, with the
-  -- announcement it certifies, blocking until there is one
+  -- | The claim of the next Leios certificate verified, with the announcement
+  -- it certifies, blocking until there is one
   STM m (LeiosClaim, LeiosAnnouncement) ->
   LeiosFetchKernel m peer blk ->
   m Void

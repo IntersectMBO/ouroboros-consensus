@@ -96,8 +96,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( AcquiredEbs
   , ignoreParkedCertRB
   , ignoreParkedCertRBSuc
-  , insertLeiosValidClaim
-  , isLeiosValidClaim
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -1504,11 +1502,9 @@ addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
 -- | Check the Leios certificate of an arriving block, if it contains one,
 -- against the Leios part of the ledger view at the block's slot.
 --
--- If the certificate is valid, then record the claim it establishes; see
--- 'LeiosValidClaims'. If that claim is new, then pass it, with the announcement
--- it certifies, to 'cdbOnNewLeiosValidClaim'. If the certificate is invalid,
--- then so is the block. A block making an already established claim need not
--- have its certificate verified /now/.
+-- If the certificate is valid, then emit its claim, with the announcement it
+-- certifies; see 'cdbEmitLeiosValidClaim'. If it is invalid, then so is the
+-- block.
 checkLeiosCert ::
   forall m blk.
   (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
@@ -1518,23 +1514,14 @@ checkLeiosCert ::
   StrictMaybe CertRbInfo ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbLeiosValidClaims, cdbOnNewLeiosValidClaim} certRb b =
+checkLeiosCert CDB{cdbEmitLeiosValidClaim} certRb b =
   case (blockLeiosCert b, certRb, blockPrevHash b) of
     (Nothing, _, _) -> pure $ Right ()
     (Just cert, SJust (MkCertRbInfo predecessorSlot ann leiosView), BlockHash h) -> do
       let claim = LeiosClaim predecessorSlot (toRankingBlockHash (Proxy @blk) h)
-      claims <- readTVarIO cdbLeiosValidClaims
-      if
-        | isLeiosValidClaim claim claims -> pure $ Right ()
-        | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
-            Left rejection -> pure $ Left rejection
-            Right () -> do
-              atomically $ do
-                inserted <- insertLeiosValidClaim claim <$> readTVar cdbLeiosValidClaims
-                whenJust inserted $ \claims' -> do
-                  writeTVar cdbLeiosValidClaims claims'
-                  cdbOnNewLeiosValidClaim claim ann
-              pure $ Right ()
+      case runExcept (verifyLeiosClaim leiosView cert claim) of
+        Left rejection -> pure $ Left rejection
+        Right () -> Right () <$ atomically (cdbEmitLeiosValidClaim claim ann)
     (Just _, _, _) -> pure $ Left LeiosCertWithoutAnnouncement
 
 {-------------------------------------------------------------------------------

@@ -1547,7 +1547,6 @@ test-suite consensus-diffusion-test
     Test.Consensus.Leios.TestBlock
     Test.Consensus.Leios.TxCache
     Test.Consensus.Leios.TxCache.Reference
-    Test.Consensus.Leios.ValidClaims
     Test.Consensus.Leios.VoteState
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.NodeKernel

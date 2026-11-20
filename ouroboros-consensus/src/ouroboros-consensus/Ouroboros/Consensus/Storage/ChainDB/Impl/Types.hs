@@ -122,7 +122,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredEbs, LeiosValidClaims)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios (AcquiredEbs)
 import Ouroboros.Consensus.Storage.ImmutableDB
   ( ImmutableDB
   , ImmutableDbSerialiseConstraints
@@ -408,10 +408,7 @@ data ChainDbEnv m blk = CDB
   -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
   -- can park the blocks certifying the others. Seeded from the LeiosDB at
   -- open, then grown from its notifications.
-  , cdbLeiosValidClaims :: !(StrictTVar m LeiosValidClaims)
-  -- ^ The claims that the Leios certificates of arriving blocks established;
-  -- see 'LeiosValidClaims'.
-  , cdbOnNewLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
+  , cdbEmitLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
   -- ^ Emits to the subscribers of
   -- 'Ouroboros.Consensus.Storage.ChainDB.API.subscribeLeiosValidClaims'.
   }

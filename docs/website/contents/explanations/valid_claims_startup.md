@@ -89,11 +89,11 @@ On the other hand, `fsync` would tolerable as part of startup, but nothing else 
 
 This design was rejected for the following reason.
 
-We could properly persist each verified Leios cert — in the LeiosDb, say — and load `LeiosValidClaims` from it at startup, so that the verdict survives the restart and no CertRB need be forgotten.
+We could properly persist each verified Leios cert — in the LeiosDb, say — and load the verified claims from it at startup, so that the verdict survives the restart and no CertRB need be forgotten.
 However, that cannot replace the forgotten state, because correctness would require the persisted claim to be durable before the block is: `chainSelAddBlock` would have to verify the cert _and persist it_ before `putBlock`, putting a synchronous SQLite commit on the block-add path, once per new claim — contending with exactly the EB and closure traffic that is already requiring some redesign of the LeiosDb, since it's bottlenecking some devnets.
 
 Notes:
-- Switching to this design would also require some bespoke migration logic for a node that upgrades to it, since its first subsequent restart couldn't populate `LeiosValidClaims` from the _new_ persistent store.
+- Switching to this design would also require some bespoke migration logic for a node that upgrades to it, since its first subsequent restart couldn't populate the verified claims from the _new_ persistent store.
   That migration logic would be comparable to the startup scan that initialized the forgotten state.
 - Demoting this design to an optimization layered on top of the forgotten state would free its writes to be lazy and best-effort, but then it merely avoids only the CertRB re-fetches that arise from forgetting them.
 
