@@ -100,6 +100,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), offsetsTo
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
+  , awaitAll
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -393,8 +394,9 @@ settleBody ctx peer point eb bodyWritten = do
     TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
 
 -- | Acquire an endorser block the node's own forge produced in this election,
--- as one that arrived with no peer: write it and then all its txs, wait for
--- both writes to land, and then hold it ('settleForgedEb').
+-- as one that arrived with no peer: write it and all its txs, and once both
+-- writes land, hold it with no job left ('holdForgedEb') and emit the
+-- acquisitions not yet emitted at its point.
 --
 -- Its bytes are not checked: the forge built the body from these very txs.
 --
@@ -409,27 +411,7 @@ acquireForgedEb ::
 acquireForgedEb ctx elId forged = do
   bodyWritten <- writeEbBody lfcWriter point eb mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
-  settleForgedEb ctx elId eb $
-    Promise $
-      await bodyWritten >> void (await txsWritten)
- where
-  MkLeiosFetchClientContext{lfcWriter} = ctx
-  eb = forgedEbBody forged
-  point = MkLeiosPoint (electionSlot elId) (endorserBlockHash eb)
-
--- | Hold the forge's endorser block in this election with no job left, now
--- that its writes have landed, and emit the acquisitions not yet emitted at its
--- point ('holdForgedEb').
-settleForgedEb ::
-  IOLike m =>
-  LeiosFetchClientContext m peer ->
-  ElectionId ->
-  EndorserBlock ->
-  -- | done once the writes land
-  Promise m () ->
-  m ()
-settleForgedEb ctx elId eb written = do
-  await written
+  awaitAll [void bodyWritten, txsWritten]
   (onset, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
     let (outstanding', acquired) = holdForgedEb elId ebHash (encodeEndorserBlockSize eb) outstanding
     atomically $ mapM_ lfcNotify acquired
@@ -443,7 +425,8 @@ settleForgedEb ctx elId eb written = do
       AcquiredEb{} -> TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
       AcquiredEbTxs{} -> TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
  where
-  MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify, lfcSystemTime, lfcTracer} = ctx
+  MkLeiosFetchClientContext{lfcWriter, lfcOutstanding, lfcReady, lfcNotify, lfcSystemTime, lfcTracer} = ctx
+  eb = forgedEbBody forged
   ebHash = endorserBlockHash eb
   point = MkLeiosPoint (electionSlot elId) ebHash
 
