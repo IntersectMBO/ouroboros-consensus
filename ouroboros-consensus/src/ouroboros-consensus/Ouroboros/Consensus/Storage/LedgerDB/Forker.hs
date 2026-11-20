@@ -60,13 +60,14 @@ import Control.Monad.Except
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config (configBlock, configLedger)
+import Ouroboros.Consensus.Config (configLedger)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import Ouroboros.Consensus.HeaderValidation
@@ -74,14 +75,10 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , HeaderWithTime (..)
   , annTipHash
-  , certRbInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
-  , leiosLedgerViewAtTip
-  )
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -525,27 +522,24 @@ applyThenPushMany ::
   m (Either (AnnLedgerError l blk) (AnchoredFragment (HeaderWithTime blk)))
 applyThenPushMany trace evs cfg aps fo doResolveBlock = do
   start <- atomically $ forkerGetLedgerState fo
-  pushAndTrace (AF.Empty (anchorOf start)) (chainDepOf start) aps
+  pushAndTrace (AF.Empty (anchorOf start)) aps
  where
   lcfg = configLedger (getExtLedgerCfg cfg)
-
-  chainDepOf st = headerStateChainDep (headerState st)
 
   anchorOf st = case headerStateTip (headerState st) of
     Origin -> AF.AnchorGenesis
     NotOrigin annTip ->
       AF.Anchor (annTipSlotNo annTip) (annTipHash annTip) (annTipBlockNo annTip)
 
-  pushAndTrace acc _predChainDep [] = pure $ Right acc
-  pushAndTrace acc predChainDep ((hdr, ap) : aps') = do
+  pushAndTrace acc [] = pure $ Right acc
+  pushAndTrace acc ((hdr, ap) : aps') = do
     trace $ Pushing . toRealPoint $ ap
     res <- applyThenPush evs cfg ap fo doResolveBlock
     case res of
       Left err -> pure (Left err)
       Right st -> do
         -- The state the block produced can translate the block's slot, which
-        -- is that state's tip slot, and gives the ledger view at that slot,
-        -- since the view is a property of the slot.
+        -- is that state's tip slot.
         let !hwt =
               HeaderWithTime
                 { hwtHeader = hdr
@@ -554,15 +548,10 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
                       Qry.runQueryPure
                         (Qry.slotToWallclock (blockSlot hdr))
                         (hardForkSummary lcfg (ledgerState st))
-                , hwtCertRbInfo =
-                    certRbInfo
-                      (configBlock (getExtLedgerCfg cfg))
-                      hdr
-                      (AF.headSlot acc)
-                      (leiosLedgerViewAtTip lcfg (ledgerState st))
-                      predChainDep
+                , -- The block is valid, so its certificate needs no checking.
+                  hwtCertRbInfo = SNothing
                 }
-        pushAndTrace (acc AF.:> hwt) (chainDepOf st) aps'
+        pushAndTrace (acc AF.:> hwt) aps'
 
 {-------------------------------------------------------------------------------
   Finding blocks
