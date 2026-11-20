@@ -33,6 +33,7 @@ import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
+import qualified Test.Consensus.Util.SparseBitmap (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
 import Test.Tasty
 import Test.Util.TestEnv
@@ -84,6 +85,7 @@ tests =
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
     , Test.Consensus.Util.Pred.tests
+    , Test.Consensus.Util.SparseBitmap.tests
     , testGroup
         "HardFork"
         [ testGroup

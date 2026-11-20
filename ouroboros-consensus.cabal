@@ -401,6 +401,7 @@ library
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.Pred
     Ouroboros.Consensus.Util.RedundantConstraints
+    Ouroboros.Consensus.Util.SparseBitmap
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
@@ -856,6 +857,7 @@ test-suite consensus-test
     Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
+    Test.Consensus.Util.SparseBitmap
     Test.Consensus.Util.Versioned
 
   build-depends:
@@ -1410,6 +1412,7 @@ library diffusion
     measures,
     mtl,
     network-mux ^>=1.0,
+    nonempty-containers,
     ouroboros-consensus:{ouroboros-consensus, protocol},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
     random ^>=1.3,
@@ -2112,6 +2115,7 @@ test-suite cardano-test
     measures,
     microlens,
     mtl,
+    nonempty-containers,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-simple,
