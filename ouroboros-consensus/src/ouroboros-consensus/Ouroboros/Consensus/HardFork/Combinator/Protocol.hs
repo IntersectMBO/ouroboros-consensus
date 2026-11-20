@@ -459,6 +459,15 @@ instance CanHardFork xs => LeiosProtocol (HardForkProtocol xs) where
       WrapValidateView blk ->
       K Bool blk
     getOne (WrapValidateView v) = K $ getContainsLeiosCert (Proxy @(BlockProtocol blk)) v
+  getCertifiableLeiosAnnouncement _proxy st =
+    hcollapse $ hcmap proxySingle getOne $ State.tip st
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlock blk =>
+      WrapChainDepState blk ->
+      K (Maybe LeiosAnnouncement) blk
+    getOne (WrapChainDepState s) = K $ getCertifiableLeiosAnnouncement (Proxy @(BlockProtocol blk)) s
   validateLeiosAnnouncement = validateAnnouncement
   getLeiosLedgerView _proxy view =
     hcollapse $

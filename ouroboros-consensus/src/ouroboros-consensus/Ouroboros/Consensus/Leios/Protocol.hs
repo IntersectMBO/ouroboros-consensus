@@ -4,8 +4,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- | What a consensus protocol says about the Leios announcement a header may
 -- carry.
@@ -15,13 +13,14 @@ module Ouroboros.Consensus.Leios.Protocol
   , encodeLeiosAnnouncement
   , LeiosLedgerView (..)
   , leiosEbByteSizeBounds
+  , CertRbInfo (..)
   , LeiosProtocol (..)
   , OCINStaleness (..)
+  , defaultGetCertifiableLeiosAnnouncement
   , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   , defaultGetLeiosAnnouncement
-  , trivialLeiosLedgerView
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -32,12 +31,10 @@ import Cardano.Ledger.State (LeiosCommittee)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad.Except (Except)
-import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe)
-import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (BlockProtocol, SlotNo)
+import Ouroboros.Consensus.Block.Abstract (SlotNo)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
@@ -56,10 +53,12 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size
   --
-  -- TODO Nothing reads it yet. A certifying ranking block's ChainSync
-  -- @MsgRollForward@ will be interpreted as an offer of the endorser block it
-  -- certifies, of this size, and Leios voting will confirm that the size is
-  -- accurate.
+  -- LeiosFetch takes a certifying ranking block's ChainSync @MsgRollForward@
+  -- as an offer of the endorser block it certifies, at this size.
+  --
+  -- TODO Leios voting will confirm that the size is accurate. Until then, if
+  -- it is not, a peer that serves the endorser block at its true size loses its
+  -- connection, though the node keeps the bytes.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -97,6 +96,19 @@ data LeiosLedgerView = MkLeiosLedgerView
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
+-- | What checking the Leios certificate in a block takes, beyond the block
+-- itself: the slot of the block's predecessor, the announcement the
+-- certificate certifies, which that predecessor made, and the Leios part of
+-- the ledger view at the block's slot, which seats the committee that signed
+-- the certificate.
+data CertRbInfo = MkCertRbInfo
+  { crbPredecessorSlot :: !SlotNo
+  , crbCertifiedAnnouncement :: !LeiosAnnouncement
+  , crbLeiosLedgerView :: !LeiosLedgerView
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
 leiosEbByteSizeBounds :: LeiosLedgerView -> LeiosEbByteSizes SizeLimit
 leiosEbByteSizeBounds llv =
   MkLeiosEbByteSizes (llvMaxEbBodySize llv) (fromIntegral (llvMaxEbTxsSize llv))
@@ -116,6 +128,14 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- | Whether the block whose header has this view contains a Leios
   -- certificate, which certifies the endorser block its predecessor announced.
   getContainsLeiosCert :: proxy p -> ValidateView p -> Bool
+
+  -- | The announcement that a block extending a chain with this state may
+  -- certify, if any.
+  --
+  -- If a valid header claims that its block contains a Leios certificate, then
+  -- that certificate certifies exactly this announcement. Ticking the state can still rule it out, at an epoch
+  -- boundary for example.
+  getCertifiableLeiosAnnouncement :: proxy p -> ChainDepState p -> Maybe LeiosAnnouncement
 
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to
@@ -146,6 +166,11 @@ defaultGetLeiosAnnouncement _proxy _view = Nothing
 defaultGetContainsLeiosCert :: proxy p -> ValidateView p -> Bool
 defaultGetContainsLeiosCert _proxy _view = False
 
+-- | 'getCertifiableLeiosAnnouncement' for a protocol whose headers never carry
+-- an announcement.
+defaultGetCertifiableLeiosAnnouncement :: proxy p -> ChainDepState p -> Maybe LeiosAnnouncement
+defaultGetCertifiableLeiosAnnouncement _proxy _st = Nothing
+
 -- | 'validateLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement, which is therefore never called.
 defaultValidateLeiosAnnouncement ::
@@ -159,16 +184,3 @@ defaultValidateLeiosAnnouncement _cfg _view _slot _st = pure FreshOCIN
 -- | 'getLeiosLedgerView' for a protocol that has no Leios.
 defaultGetLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
 defaultGetLeiosLedgerView _proxy _view = Nothing
-
--- | The Leios part of the ledger view of a block whose ledger view is trivial,
--- and so the same at every slot
---
--- A trivial ledger view does not rule out Leios: the protocol may fix its Leios
--- parameters, which 'getLeiosLedgerView' would give.
-trivialLeiosLedgerView ::
-  forall blk proxy.
-  (LeiosProtocol (BlockProtocol blk), LedgerView (BlockProtocol blk) ~ ()) =>
-  proxy blk ->
-  StrictMaybe LeiosLedgerView
-trivialLeiosLedgerView _proxy =
-  maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) ()

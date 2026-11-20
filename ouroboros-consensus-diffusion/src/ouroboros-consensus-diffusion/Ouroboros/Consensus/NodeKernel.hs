@@ -71,13 +71,15 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , newAnnounceState
   , onValidAnnouncement
   )
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , leiosOfferRelay
   , newNotifyLog
   , pruneNotifyLog
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
+import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
@@ -101,6 +103,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
   ( LeiosFetchKernel
   , LeiosPeerLifetimeId (..)
   , leiosFetchAnnouncementFocuser
+  , leiosFetchCertificateFocuser
   , leiosFetchDecisionLoop
   , newLeiosFetchKernel
   , onForgedLeiosEb
@@ -188,7 +191,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
-import System.Random (StdGen)
+import System.Random (StdGen, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -272,8 +275,13 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
+  , nextNewLeiosValidClaims :: STM m (NonEmpty (LeiosClaim, LeiosAnnouncement))
+  -- ^ The claims of the new Leios certifications validated since this last
+  -- returned, each with the announcement it certifies, blocking until there is
+  -- one; see 'Ouroboros.Consensus.Leios.NewValidClaims.NewLeiosValidClaims'.
+  -- The node kernel is its only consumer.
   , leiosFetchRng :: StdGen
-  -- ^ Seeds the LeiosFetch decision loop's PRNG.
+  -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
   -- ^ How old an announcement the node relays or accepts.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
@@ -319,6 +327,7 @@ initNodeKernel
     , chainDB
     , leiosDB
     , leiosAcquisitions
+    , nextNewLeiosValidClaims
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
     , initChainDB
@@ -462,13 +471,20 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosDeadlinePruner" $
         leiosDeadlinePruner systemTime leiosNotifyLog leiosVoteState
 
+    -- The LeiosTxCache's keys are chosen by peers, so its hash table is salted
+    -- with a secret of this node's.
+    let (leiosFetchPrng, saltRng) = splitGen leiosFetchRng
+        (salt0, saltRng') = uniform saltRng
+        (salt1, _) = uniform saltRng'
+    leiosTxCache <- newHashTableLeiosTxCache defaultLeiosTxCacheShift salt0 salt1
     leiosWriter <- allocateWriter registry leiosDB
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchRng $ \outstanding ready ->
+      newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
         MkLeiosFetchClientContext
           { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
           , lfcOutstanding = outstanding
           , lfcReady = ready
+          , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
           , lfcNotify = emitLeiosAcquisition leiosAcquisitions
           , lfcSystemTime = systemTime
@@ -493,7 +509,10 @@ initNodeKernel
     -- requires.
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
-        leiosFetchAnnouncementFocuser leiosFetchKernel
+        leiosFetchAnnouncementFocuser registry leiosFetchKernel
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
+        leiosFetchCertificateFocuser registry (atomically nextNewLeiosValidClaims) leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog
