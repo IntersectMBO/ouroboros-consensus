@@ -97,7 +97,6 @@ import Ouroboros.Consensus.HeaderValidation (certRbInfo)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -325,11 +324,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   let seeds = configSeeds cfg
   hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
   leiosAcquisitions <- newLeiosAcquisitions
-  newLeiosValidClaims <- mkNewLeiosValidClaims
   validClaimsSinceStart <- newTVarIO Map.empty
-  let onNewLeiosValidClaim claim ann = do
-        modifyTVar validClaimsSinceStart (Map.insert claim ann)
-        recordNewLeiosValidClaim newLeiosValidClaims claim ann
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -347,7 +342,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             (fst (mkInMemoryArgs ()))
             leiosDB
             leiosAcquisitions
-            onNewLeiosValidClaim
             ChainDB.defaultArgs
             ( (if nodeConfigLastShutDownWasClean cfg then id else ChainDB.ensureValidateAll)
                 . updateChainDbArgs
@@ -356,6 +350,12 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
       )
       ChainDB.closeDB
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
+        nextValidClaim <- ChainDB.subscribeLeiosValidClaims chainDB
+        -- Those emitted since this last ran, without blocking.
+        let readValidClaims =
+              ( nextValidClaim >>= \(claim, ann) -> modifyTVar validClaimsSinceStart (Map.insert claim ann) >> readValidClaims
+              )
+                `orElse` readTVar validClaimsSinceStart
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
         kernelArgs <-
@@ -377,7 +377,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               chainDB
               leiosDB
               leiosAcquisitions
-              (consumeNewLeiosValidClaims newLeiosValidClaims)
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
@@ -435,7 +434,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   apps
             , nodeSeeds = seeds
             , nodeLeiosAcquisitions = leiosAcquisitions
-            , nodeNewLeiosValidClaims = readTVar validClaimsSinceStart
+            , nodeNewLeiosValidClaims = readValidClaims
             , nodeConnectedPeers = connectedPeers
             }
 

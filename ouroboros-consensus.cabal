@@ -205,7 +205,6 @@ library
     Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
-    Ouroboros.Consensus.Leios.NewValidClaims
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.TxCache
