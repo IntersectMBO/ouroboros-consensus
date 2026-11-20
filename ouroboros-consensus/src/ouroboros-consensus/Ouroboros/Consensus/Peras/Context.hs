@@ -68,9 +68,8 @@ import Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as ByteString
 import Data.Data (Proxy (..))
 import Data.Kind (Type)
-import Data.SOP (HCollapse (..), K (..))
-import Data.SOP.Constraint (All, Top)
-import Data.SOP.Index (himap, injectNS)
+import Data.SOP (K (..))
+import Data.SOP.Strict (NS (..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
@@ -589,7 +588,6 @@ class
   -- | Inject an era-indexed 'EpochToPerasRoundInfo' into an opaque
   -- 'MaybeEraIndexedEpochToPerasRoundInfo' of this block.
   toMaybeEraIndexedEpochToPerasRoundInfo ::
-    All Top (HardForkIndices blk) =>
     proxy blk ->
     EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
     MaybeEraIndexedEpochToPerasRoundInfo blk
@@ -684,9 +682,7 @@ mkBoundedPerasEpochContextWith
 --      and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState'
 --      and 'Ticked HeaderState'.
 initPerasEpochContextResolver ::
-  ( All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
-  ) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   LedgerState blk EmptyMK ->
   HeaderState blk ->
@@ -729,9 +725,7 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
 --      need to carry exactly the same information. We tried, and it didn't
 --      improve readability.
 tickPerasEpochContextResolver ::
-  ( All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
-  ) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   -- | The fields needed from the previous 'ExtLedgerState' (before ticking)
   (PerasEpochContextResolver blk, LedgerState blk EmptyMK, HeaderState blk) ->
@@ -792,8 +786,7 @@ tickPerasEpochContextResolver
 -- ticking ('tickPerasEpochContextResolver').
 embedBoundedEpochContext ::
   forall blk ledgerState chainDepState.
-  ( All Top (HardForkIndices blk)
-  , LedgerStateSupportsPeras ledgerState
+  ( LedgerStateSupportsPeras ledgerState
   , ChainDepStateSupportsPeras chainDepState
   , StateSupportsPerasEpochContext blk
   ) =>
@@ -830,20 +823,19 @@ embedBoundedEpochContext
     -- Swap the positions of the 'EraIndexed' and 'PerasEnabled' wrappers, so we
     -- can directly pattern-match on the 'PerasEnabled' information.
     collapseEraIndexed ::
-      All Top xs =>
       EraIndexed xs (PerasEnabled a) ->
       PerasEnabled (EraIndexed xs a)
-    collapseEraIndexed (EraIndexed ns) =
-      hcollapse $
-        himap
-          ( \idx (K pea) ->
-              case pea of
-                PerasEnabled a ->
-                  K (PerasEnabled (EraIndexed (injectNS idx (K a))))
-                NoPerasEnabled ->
-                  K NoPerasEnabled
-          )
-          ns
+    collapseEraIndexed (EraIndexed ns) = case go ns of
+      PerasEnabled ns' -> PerasEnabled (EraIndexed ns')
+      NoPerasEnabled -> NoPerasEnabled
+     where
+      go :: NS (K (PerasEnabled a)) xs' -> PerasEnabled (NS (K a) xs')
+      go (Z (K pea)) = case pea of
+        PerasEnabled a -> PerasEnabled (Z (K a))
+        NoPerasEnabled -> NoPerasEnabled
+      go (S r) = case go r of
+        PerasEnabled r' -> PerasEnabled (S r')
+        NoPerasEnabled -> NoPerasEnabled
 
 -- * Time resolution
 

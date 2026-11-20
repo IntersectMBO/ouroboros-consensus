@@ -42,7 +42,6 @@ import Data.Bifunctor (bimap)
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
-import Data.SOP (All, Top)
 import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
@@ -51,7 +50,6 @@ import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast (forecastFor)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation
   ( HasAnnTip (..)
   , HeaderState (..)
@@ -93,7 +91,6 @@ import qualified System.IO as IO
 runAnalysis ::
   forall blk.
   ( HasAnalysis blk
-  , All Top (HardForkIndices blk)
   , LedgerSupportsMempool.HasTxId (LedgerSupportsMempool.GenTx blk)
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
@@ -430,8 +427,7 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 
 storeLedgerStateAt ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , HasAnalysis blk
@@ -515,8 +511,7 @@ countBlocks (AnalysisEnv{db, registry, startFrom, limit, tracer}) = do
 
 checkNoThunksEvery ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , HasAnalysis blk
+  ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -575,8 +570,7 @@ checkNoThunksEvery
 
 traceLedgerProcessing ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , HasAnalysis blk
+  ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -635,8 +629,7 @@ traceLedgerProcessing
 
 benchmarkLedgerOps ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , HasAnalysis blk
+  ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   ) =>
@@ -814,7 +807,6 @@ withFile Nothing = \f -> f IO.stdout
 getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
