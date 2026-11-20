@@ -163,7 +163,9 @@ runForge ::
 runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
-  leiosVoteState <- newLeiosVoteState committee
+  -- Every point is votable: the only votes here are our own, each cast on the
+  -- block just adopted, and no peer can send any.
+  leiosVoteState <- newLeiosVoteState committee (pure (const True))
   reportCommittee
   endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
   putStrLn $
