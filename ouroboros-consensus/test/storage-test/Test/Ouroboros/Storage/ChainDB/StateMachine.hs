@@ -109,7 +109,6 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
-import Generics.SOP (All, Top)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
@@ -388,8 +387,7 @@ type AllComponents blk =
   )
 
 type TestConstraints blk =
-  ( All Top (HardForkIndices blk)
-  , ConsensusProtocol (BlockProtocol blk)
+  ( ConsensusProtocol (BlockProtocol blk)
   , LedgerView (BlockProtocol blk) ~ ()
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk

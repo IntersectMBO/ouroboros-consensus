@@ -17,13 +17,11 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
-import Data.SOP (All, Top)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
@@ -138,8 +136,7 @@ data NodeLifecycle blk m = NodeLifecycle
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -194,7 +191,6 @@ mkChainDb resources = do
 -- intervals, the ChainDB and its persisted state.
 restoreNode ::
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
@@ -226,7 +222,6 @@ restoreNode resources LiveIntervalResult{lirPeerResults, lirActive} = do
 lifecycleStart ::
   forall m blk.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk

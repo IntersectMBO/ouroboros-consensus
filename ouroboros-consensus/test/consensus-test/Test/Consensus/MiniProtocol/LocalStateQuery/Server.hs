@@ -236,7 +236,7 @@ initLedgerDB ::
   IOLike m =>
   SecurityParam ->
   Chain TestBlock ->
-  m (LedgerDB' m TestBlock)
+  m (LedgerDB m TestBlock)
 initLedgerDB s c = do
   fs <- newTMVarIO MockFS.empty
   let args =

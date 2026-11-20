@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Node.Run
   , RunNode
   ) where
 
-import Data.SOP (All, Top)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
@@ -96,8 +95,7 @@ class
   SerialiseNodeToClientConstraints blk
 
 class
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , LedgerSupportsMempool blk
