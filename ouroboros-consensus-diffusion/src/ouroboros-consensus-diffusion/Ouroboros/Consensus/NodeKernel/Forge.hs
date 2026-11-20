@@ -72,8 +72,9 @@ forge ::
   BlockForging m blk ->
   -- | 'forge' calls this function after 'forgeBlock' and before
   -- 'addBlockToChainDB'. The arguments are the header of the forged ranking
-  -- block and the endorser block that it announces.
-  (Header blk -> ForgedEndorserBlock -> m ()) ->
+  -- block, the Leios part of the ledger view at its slot, and the endorser
+  -- block that it announces.
+  (Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
 forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
@@ -154,7 +155,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   lift $
     whenJust
       (Block.endorserBlock forgeRes)
-      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)))
+      (onForgedLeiosEb (getHeader (Block.rankingBlock forgeRes)) leiosView)
 
   trace $
     TraceForgedBlock

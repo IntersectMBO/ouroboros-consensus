@@ -1,6 +1,6 @@
 -- | Where the node emits each endorser block and closure it acquires.
 --
--- The node emits them once the LeiosDB holds them; see
+-- LeiosFetch emits them once the LeiosDB holds them; see
 -- 'LeiosAcquisition' for at which points. The ChainDB subscribes, so
 -- that ChainSel can select a block certifying an endorser block once the node
 -- holds that endorser block's closure.
@@ -23,9 +23,9 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 
--- | Something the node acquired at a 'LeiosPoint'.
+-- | Something LeiosFetch acquired at a 'LeiosPoint'.
 --
--- The node emits each at most once per point: 'AcquiredEb' once the LeiosDB
+-- LeiosFetch emits each at most once per point: 'AcquiredEb' once the LeiosDB
 -- holds the point's body, and 'AcquiredEbTxs' once it holds its closure. It
 -- emits neither for a point whose closure the LeiosDB already held when the
 -- node started. So a subscriber that subscribes before it scans the LeiosDB at

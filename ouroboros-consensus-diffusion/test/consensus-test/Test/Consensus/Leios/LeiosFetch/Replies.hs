@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
+  , ForgedEndorserBlock
   , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
@@ -47,6 +48,7 @@ import Ouroboros.Consensus.Leios.Types
   , encodeEndorserBlockSize
   , endorserBlockFromTxBytes
   , endorserBlockHash
+  , forgeLeiosEb
   , hashLeiosTx
   , hashSerialisedEndorserBlock
   , idLeiosEbByteSizesLimit
@@ -57,6 +59,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( ExnLeiosFetchInvalidReply (..)
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
+  , acquireForgedEb
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -146,6 +149,15 @@ tests =
         test_overlappingTxsReplies
     , testCase "the client counts transactions for a point pruned meanwhile as evicted" $
         test_txsForPrunedPoint
+    , testCase
+        "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
+        test_forgedAfterBody
+    , testCase
+        "the client emits nothing more for an endorser block the node forged again at a point whose closure it already acquired"
+        test_forgedAgain
+    , testCase
+        "the client counts transactions a peer sends after the node's own forge acquired them as redundant, and acquires nothing more"
+        test_txsAfterForged
     ]
 
 -- | What a notification says, comparably.
@@ -154,12 +166,13 @@ data Acquired = AcquiredBody LeiosPoint | AcquiredClosure LeiosPoint
 
 -- | An endorser block of two transactions, announced in slot 5.
 fixture :: (LeiosPoint, EndorserBlock, [LeiosTx])
-fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, txs)
+fixture = (MkLeiosPoint (SlotNo 5) (endorserBlockHash eb), eb, toList fixtureTxs)
  where
-  tx0 = MkLeiosTx (BS8.pack "tx zero")
-  tx1 = MkLeiosTx (BS8.pack "tx one")
-  txs = [tx0, tx1]
-  eb = endorserBlockFromTxBytes (leiosTxBytes tx0 :| [leiosTxBytes tx1])
+  eb = endorserBlockFromTxBytes (fmap leiosTxBytes fixtureTxs)
+
+-- | The 'fixture''s transactions.
+fixtureTxs :: NonEmpty LeiosTx
+fixtureTxs = MkLeiosTx (BS8.pack "tx zero") :| [MkLeiosTx (BS8.pack "tx one")]
 
 peer :: Int
 peer = 0
@@ -364,6 +377,35 @@ test_prunedWhileWriting = do
   readTVarIO notes >>= (@?= [])
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
+
+-- | A peer replies with the 'fixture''s body, and then the node's own forge
+-- produces the same endorser block at the same point, while the closure is
+-- still to fetch.
+test_forgedAfterBody :: Assertion
+test_forgedAfterBody = do
+  let (point, eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  acquireForgedEb ctx (fixtureElection point) fixtureForged
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | The node's own forge produces the 'fixture''s endorser block, and once its
+-- writes have settled, another of the node's forges produces the same endorser
+-- block at the same point.
+test_forgedAgain :: Assertion
+test_forgedAgain = do
+  let (point, _eb, _txs) = fixture
+  (ctx, notes) <- newContext
+  acquireForgedEb ctx (fixtureElection point) fixtureForged
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  acquireForgedEb ctx (fixtureElection point) fixtureForged
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+  readMVar (lfcOutstanding ctx) >>= assertNoJobLeft point
 
 assertNoBody :: LeiosPoint -> LeiosOutstanding peer -> Assertion
 assertNoBody point outstanding = case Map.lookup point (ebState outstanding) of
@@ -613,3 +655,31 @@ blockArrivals
     [TraceLeiosFetchClientEvent Int] -> [(Int, LeiosPoint, FetchArrivalBytes)]
 blockArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientBlockArrived p pt bytes <- events]
 txsArrivals events = [(p, pt, bytes) | TraceLeiosFetchClientTxsArrived p pt bytes <- events]
+
+-- | A peer sends the 'fixture''s body, the node asks it for the closure, and
+-- the node's own forge acquires the same endorser block at that point before
+-- the peer's txs arrive.
+test_txsAfterForged :: Assertion
+test_txsAfterForged = do
+  let (point, eb, txs) = fixture
+      closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
+  (ctx, notes, traces) <- withTraces newContext
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  awaitNotes notes 1 >>= (@?= [AcquiredBody point])
+  req <- closureRequest ctx point
+  acquireForgedEb ctx (fixtureElection point) fixtureForged
+  processLeiosBlockTxs ctx peer req (V.fromList txs)
+  awaitArrivals txsArrivals traces 1 >>= (@?= [(peer, point, fetchArrivalExtra closure)])
+  reverse <$> readTVarIO notes >>= (@?= [AcquiredBody point, AcquiredClosure point])
+
+-- | The 'fixture''s endorser block, as the node's own forge produces it.
+fixtureForged :: ForgedEndorserBlock
+fixtureForged = forgeLeiosEb (fmap leiosTxBytes fixtureTxs)
+
+-- | The election announcing the endorser block at this point.
+fixtureElection :: LeiosPoint -> ElectionId
+fixtureElection point = ElectionId (pointSlotNo point) electee
