@@ -27,7 +27,8 @@ import Ouroboros.Consensus.Block
   , castPoint
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError (..))
-import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..), LeiosClaim (..))
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
@@ -97,18 +98,21 @@ tests =
     ]
 
 -- | The node adds 'announcingA' and 'certifyingA', whose certificate ChainSel
--- verifies. Which endorser blocks the ChainDB then says are certified, by the
--- slot of their election, and whether LeiosFetch is fetching A.
+-- verifies. For each new valid claim the ChainDB then passes on, its slot and
+-- the endorser block its announcement names; and whether LeiosFetch is
+-- fetching A.
 certifiedIsFetched :: IOSim s ([(SlotNo, EndorserBlockHash)], Bool)
 certifiedIsFetched = withNode $ \node -> do
   -- Let the slots of the chain's blocks pass, so none is from the future.
   threadDelay 20
   addBlocks node [announcingA, certifyingA]
   threadDelay 1
-  certified <- atomically $ forgetFingerprint <$> ChainDB.getLeiosCertifiedEbs (nodeChainDB node)
+  validClaims <- atomically $ nodeNewLeiosValidClaims node
   outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nodeKernel node))))
   pure
-    ( [(electionSlot elId, ebHash) | (elId, ebHash) <- Map.toList certified]
+    ( [ (leiosClaimSlot claim, announcementEbHash ann)
+      | (claim, ann) <- Map.toList validClaims
+      ]
     , isFocusedPoint pointA outstanding
     )
 

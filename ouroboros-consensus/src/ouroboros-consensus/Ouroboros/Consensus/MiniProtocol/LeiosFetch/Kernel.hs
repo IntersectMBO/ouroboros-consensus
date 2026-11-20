@@ -24,9 +24,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (..), strictMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.NonEmpty as NESeq
@@ -46,6 +47,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
@@ -104,7 +106,6 @@ import Ouroboros.Consensus.Util.IOLike
   , newTQueueIO
   , readTQueue
   , readTVar
-  , retry
   , takeMVar
   , threadDelay
   , tryPutMVar
@@ -114,7 +115,6 @@ import Ouroboros.Consensus.Util.IOLike
   , writeTQueue
   , writeTVar
   )
-import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type (IsBigLedgerPeer)
 import System.Random (StdGen)
 
@@ -442,33 +442,28 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- or none, because the announcing block has been on its selection since before
 -- it started, comes to fetch the certified one. Each iteration focuses the
 -- elections certified since the one before, so a certificate verified after
--- the offer arrived still moves the focus. A pruning alone does not wake it.
+-- the offer arrived still moves the focus.
 leiosFetchCertificateFocuser ::
   IOLike m =>
-  ChainDB m blk ->
+  -- | The claims of the new Leios certifications validated since this last
+  -- returned, each with the announcement it certifies, blocking until there is
+  -- one
+  m (NonEmpty (LeiosClaim, LeiosAnnouncement)) ->
   LeiosFetchKernel m peer blk ->
   m Void
-leiosFetchCertificateFocuser chainDB kernel = go SNothing
+leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
+  validClaims <- consumeValidClaims
+  modifyMVar_ lfcOutstanding $ \outstanding ->
+    pure $ foldl' focus outstanding validClaims
+  void $ tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
 
-  go !seen = do
-    certified <- atomically $ do
-      certified <- ChainDB.getLeiosCertifiedEbs chainDB
-      case seen of
-        SJust prev | getFingerprint prev == getFingerprint certified -> retry
-        _ -> pure certified
-    -- The keys suffice: an election has at most one certified endorser block
-    -- unless the committee equivocates; see 'focusElection'.
-    let arrived =
-          forgetFingerprint certified
-            `Map.difference` strictMaybe Map.empty forgetFingerprint seen
-    modifyMVar_ lfcOutstanding $ \outstanding ->
-      pure $ Map.foldlWithKey' focus outstanding arrived
-    void $ tryPutMVar lfcReady ()
-    go (SJust certified)
-
-  focus outstanding elId ebHash = focusCertifiedEb elId ebHash outstanding
+  focus outstanding (claim, ann) =
+    focusCertifiedEb
+      (ElectionId (leiosClaimSlot claim) (announcementElectee ann))
+      (announcementEbHash ann)
+      outstanding
 
 -- | Prune the node's LeiosFetch state and the peers' offers to the immutable
 -- tip's slot.

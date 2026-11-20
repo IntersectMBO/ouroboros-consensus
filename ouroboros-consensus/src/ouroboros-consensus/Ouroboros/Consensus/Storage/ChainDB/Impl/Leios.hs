@@ -30,7 +30,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   , emptyLeiosValidClaims
   , insertLeiosValidClaim
   , isLeiosValidClaim
-  , leiosCertifiedEbs
   , pruneLeiosValidClaims
 
     -- * Checking the ImmutableDB
@@ -39,8 +38,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
 
 import Control.Monad (guard)
 import qualified Data.List as List
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -52,18 +49,13 @@ import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosProtocol (..)
   )
-import Ouroboros.Consensus.Leios.Types
-  ( ElectionId (..)
-  , EndorserBlockHash
-  , LeiosPoint (..)
-  )
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (Parent (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Storage.VolatileDB
   ( BlockInfo (..)
   , LeiosBlockInfo (..)
   )
-import Ouroboros.Consensus.Util.STM (Fingerprint (..), WithFingerprint (..))
 
 {-------------------------------------------------------------------------------
   The Leios facts of a block
@@ -191,18 +183,10 @@ ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
 -- certifies, each with its slot.
 --
 -- A block containing a certificate claims that the endorser block its
--- predecessor announced is certified. The claims that valid certificates have
--- established are how LeiosFetch learns which endorser blocks are certified,
--- for its Recovery Path. A block making an already established claim need not
--- have its certificate verified immediately upon arrival.
+-- predecessor announced is certified. A block making an already established
+-- claim need not have its certificate verified immediately upon arrival.
 data LeiosValidClaims = LeiosValidClaims
   { lvcClaims :: !(Set LeiosClaim)
-  , lvcCertified :: !(WithFingerprint (Map ElectionId EndorserBlockHash))
-  -- ^ The endorser block that a verified certificate certifies, for each
-  -- election
-  --
-  -- The 'Fingerprint' changes every time an election is added, but not when
-  -- elections are pruned.
   , lvcPrunedSlot :: !SlotNo
   -- ^ The slot this has most recently been pruned to, so that a claim established
   -- after the pruning cannot undo it.
@@ -211,34 +195,16 @@ data LeiosValidClaims = LeiosValidClaims
   deriving anyclass NoThunks
 
 emptyLeiosValidClaims :: LeiosValidClaims
-emptyLeiosValidClaims =
-  LeiosValidClaims Set.empty (WithFingerprint Map.empty (Fingerprint 0)) (SlotNo 0)
+emptyLeiosValidClaims = LeiosValidClaims Set.empty (SlotNo 0)
 
--- | Record that some valid certificate established the claim, and that the
--- claim's announcing block made this announcement, unless that block is older
--- than what has been pruned.
-insertLeiosValidClaim ::
-  LeiosClaim -> LeiosAnnouncement -> LeiosValidClaims -> LeiosValidClaims
-insertLeiosValidClaim claim@(LeiosClaim slot _rbHash) ann claims@(LeiosValidClaims established certified prunedSlot)
-  | slot < prunedSlot = claims
-  | Set.member claim established = claims
-  | otherwise =
-      LeiosValidClaims
-        (Set.insert claim established)
-        ( WithFingerprint
-            ( Map.insert
-                (ElectionId slot (announcementElectee ann))
-                (announcementEbHash ann)
-                (forgetFingerprint certified)
-            )
-            (succ (getFingerprint certified))
-        )
-        prunedSlot
-
--- | The endorser block each election has had certified, as far as the
--- established claims tell.
-leiosCertifiedEbs :: LeiosValidClaims -> WithFingerprint (Map ElectionId EndorserBlockHash)
-leiosCertifiedEbs = lvcCertified
+-- | Record that some valid certificate established the claim, or 'Nothing' if
+-- it is already established or its announcing block is older than what has
+-- been pruned.
+insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Maybe LeiosValidClaims
+insertLeiosValidClaim claim@(LeiosClaim slot _rbHash) (LeiosValidClaims established prunedSlot)
+  | slot < prunedSlot = Nothing
+  | Set.member claim established = Nothing
+  | otherwise = Just $ LeiosValidClaims (Set.insert claim established) prunedSlot
 
 isLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Bool
 isLeiosValidClaim claim = Set.member claim . lvcClaims
@@ -247,11 +213,10 @@ isLeiosValidClaim claim = Set.member claim . lvcClaims
 -- immutable tip has passed it, no block that ChainSel has yet to select can
 -- make the claim.
 pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
-pruneLeiosValidClaims slot (LeiosValidClaims established certified prunedSlot) =
+pruneLeiosValidClaims slot (LeiosValidClaims established prunedSlot) =
   LeiosValidClaims
-    -- 'LeiosClaim' and 'ElectionId' both order by slot first.
+    -- 'LeiosClaim' orders by slot first.
     (Set.dropWhileAntitone ((< slot) . leiosClaimSlot) established)
-    (Map.dropWhileAntitone ((< slot) . electionSlot) <$> certified)
     (max slot prunedSlot)
 
 {-------------------------------------------------------------------------------

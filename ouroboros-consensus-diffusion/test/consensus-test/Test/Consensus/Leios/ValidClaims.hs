@@ -2,15 +2,15 @@
 module Test.Consensus.Leios.ValidClaims (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Ledger.Keys (KeyHash (..))
 import qualified Data.ByteString.Short as SBS
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Word (Word8)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
 import Ouroboros.Consensus.Leios.Types (RankingBlockHash (..))
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
-  ( emptyLeiosValidClaims
+  ( LeiosValidClaims
+  , emptyLeiosValidClaims
   , insertLeiosValidClaim
   , isLeiosValidClaim
   , pruneLeiosValidClaims
@@ -29,18 +29,19 @@ tests =
         map (`isLeiosValidClaim` pruneLeiosValidClaims (SlotNo 2) claims) [claimA, claimB, claimC]
           @?= [False, False, True]
     , testCase "a claim older than the slot pruned to is not recorded" $
-        isLeiosValidClaim
-          claimA
-          ( insertLeiosValidClaim claimA announcement $
-              pruneLeiosValidClaims (SlotNo 2) emptyLeiosValidClaims
-          )
-          @?= False
+        assertBool "recorded" $
+          isNothing $
+            insertLeiosValidClaim claimA (pruneLeiosValidClaims (SlotNo 2) emptyLeiosValidClaims)
+    , testCase "an established claim is not recorded again" $
+        assertBool "recorded again" $
+          isNothing $
+            insertLeiosValidClaim claimB claims
     ]
  where
-  claims =
-    insertLeiosValidClaim claimC announcement $
-      insertLeiosValidClaim claimB announcement $
-        insertLeiosValidClaim claimA announcement emptyLeiosValidClaims
+  claims = insert claimC $ insert claimB $ insert claimA emptyLeiosValidClaims
+
+insert :: LeiosClaim -> LeiosValidClaims -> LeiosValidClaims
+insert claim claims = fromMaybe claims (insertLeiosValidClaim claim claims)
 
 claimA, claimB, claimC, claimD :: LeiosClaim
 claimA = LeiosClaim (SlotNo 0) (rbHash 1)
@@ -50,12 +51,3 @@ claimD = LeiosClaim (SlotNo 3) (rbHash 4)
 
 rbHash :: Word8 -> RankingBlockHash
 rbHash = MkRankingBlockHash . UnsafeHash . SBS.replicate 32
-
--- | What each of 'claims' announces; these tests do not depend on it.
-announcement :: LeiosAnnouncement
-announcement =
-  MkLeiosAnnouncement
-    { announcementElectee = KeyHash (UnsafeHash (SBS.replicate 28 0))
-    , announcementEbHash = UnsafeHash (SBS.replicate 32 0)
-    , announcementEbSize = 0
-    }

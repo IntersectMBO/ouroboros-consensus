@@ -71,13 +71,14 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , newAnnounceState
   , onValidAnnouncement
   )
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , leiosOfferRelay
   , newNotifyLog
   , pruneNotifyLog
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock)
 import Ouroboros.Consensus.Leios.VoteState (VoteState, newVoteState, pruneVotes)
 import Ouroboros.Consensus.Mempool
@@ -273,6 +274,11 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , leiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where the node's LeiosFetch emits what it acquires.
+  , nextNewLeiosValidClaims :: STM m (NonEmpty (LeiosClaim, LeiosAnnouncement))
+  -- ^ The claims of the new Leios certifications validated since this last
+  -- returned, each with the announcement it certifies, blocking until there is
+  -- one; see 'Ouroboros.Consensus.Leios.NewValidClaims.NewLeiosValidClaims'.
+  -- The node kernel is its only consumer.
   , leiosFetchRng :: StdGen
   -- ^ Seeds the LeiosFetch decision loop's PRNG.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
@@ -320,6 +326,7 @@ initNodeKernel
     , chainDB
     , leiosDB
     , leiosAcquisitions
+    , nextNewLeiosValidClaims
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
     , initChainDB
@@ -497,7 +504,7 @@ initNodeKernel
         leiosFetchAnnouncementFocuser leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
-        leiosFetchCertificateFocuser chainDB leiosFetchKernel
+        leiosFetchCertificateFocuser (atomically nextNewLeiosValidClaims) leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog

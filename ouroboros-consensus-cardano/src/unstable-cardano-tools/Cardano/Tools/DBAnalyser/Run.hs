@@ -32,6 +32,7 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMem
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.NewValidClaims (ignoreNewLeiosValidClaim)
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
@@ -210,6 +211,8 @@ analyse dbaConfig args =
             leiosDb
             -- It fetches nothing, so it acquires nothing.
             noLeiosAcquisitions
+            -- Nor does it fetch the endorser blocks certified announcements name.
+            ignoreNewLeiosValidClaim
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
         -- go forward so we don't need to account for rollbacks.

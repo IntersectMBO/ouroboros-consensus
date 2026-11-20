@@ -1505,10 +1505,11 @@ addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
 -- | Check the Leios certificate of an arriving block, if it contains one,
 -- against the Leios part of the ledger view at the block's slot.
 --
--- If the certificate is valid, then record the claim it establishes, with the
--- announcement it certifies; see 'LeiosValidClaims'. If it is invalid, then so
--- is the block. A block making an already established claim need not have its
--- certificate verified /now/.
+-- If the certificate is valid, then record the claim it establishes; see
+-- 'LeiosValidClaims'. If that claim is new, then pass it, with the announcement
+-- it certifies, to 'cdbOnNewLeiosValidClaim'. If the certificate is invalid,
+-- then so is the block. A block making an already established
+-- claim need not have its certificate verified /now/.
 checkLeiosCert ::
   (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
   ChainDbEnv m blk ->
@@ -1519,7 +1520,7 @@ checkLeiosCert ::
   StrictMaybe LeiosAnnouncement ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView certifiedAnnouncement b =
+checkLeiosCert CDB{cdbLeiosValidClaims, cdbOnNewLeiosValidClaim} predecessorSlot leiosView certifiedAnnouncement b =
   case blockLeiosCert b of
     Nothing -> pure $ Right ()
     Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
@@ -1537,11 +1538,14 @@ checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView certifiedAnnou
                   -- containing a certificate has an announcement for it to certify.
                   -- The certificate itself is valid, so this does not reject the
                   -- block; parking and header validation still guard its selection.
-                  -- Recording nothing lets a later block making this claim record
-                  -- its election.
+                  -- Recording nothing lets a later block making this claim pass
+                  -- on its endorser block.
                   SNothing -> pure ()
-                  SJust ann ->
-                    atomically $ modifyTVar cdbLeiosValidClaims (insertLeiosValidClaim claim ann)
+                  SJust ann -> atomically $ do
+                    inserted <- insertLeiosValidClaim claim <$> readTVar cdbLeiosValidClaims
+                    whenJust inserted $ \claims' -> do
+                      writeTVar cdbLeiosValidClaims claims'
+                      cdbOnNewLeiosValidClaim claim ann
                 pure $ Right ()
 
 {-------------------------------------------------------------------------------

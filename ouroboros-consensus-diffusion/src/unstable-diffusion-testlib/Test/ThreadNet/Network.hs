@@ -90,6 +90,9 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -754,6 +757,7 @@ runThreadNetwork
       NodeDBs (StrictTMVar m MockFS) ->
       LeiosDbHandle m ->
       LeiosAcquisitions m ->
+      (LeiosClaim -> LeiosAnnouncement -> STM m ()) ->
       CoreNodeId ->
       ChainDbArgs Identity m blk
     mkArgs
@@ -768,6 +772,7 @@ runThreadNetwork
       nodeDBs
       leiosDB
       leiosAcquisitions
+      onNewLeiosValidClaim
       _coreNodeId =
         let args =
               fromMinimalChainDbArgs
@@ -800,6 +805,7 @@ runThreadNetwork
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
                     , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions leiosAcquisitions
+                    , cdbsOnNewLeiosValidClaim = onNewLeiosValidClaim
                     , cdbsTracer = instrumentationTracer <> nullDebugTracer
                     }
               }
@@ -879,6 +885,7 @@ runThreadNetwork
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
       leiosDB <- newLeiosDBInMemory
       leiosAcquisitions <- newLeiosAcquisitions
+      newLeiosValidClaims <- mkNewLeiosValidClaims
       let chainDbArgs =
             mkArgs
               registry
@@ -892,6 +899,7 @@ runThreadNetwork
               nodeInfoDBs
               leiosDB
               leiosAcquisitions
+              (recordNewLeiosValidClaim newLeiosValidClaims)
               coreNodeId
       chainDB <-
         snd
@@ -1088,6 +1096,7 @@ runThreadNetwork
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , leiosAcquisitions
+              , nextNewLeiosValidClaims = consumeNewLeiosValidClaims newLeiosValidClaims
               , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters

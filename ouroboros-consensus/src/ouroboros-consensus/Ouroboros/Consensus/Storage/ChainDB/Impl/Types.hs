@@ -101,6 +101,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
@@ -407,6 +408,9 @@ data ChainDbEnv m blk = CDB
   , cdbLeiosValidClaims :: !(StrictTVar m LeiosValidClaims)
   -- ^ The claims that the Leios certificates of arriving blocks established;
   -- see 'LeiosValidClaims'.
+  , cdbOnNewLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
+  -- ^ See
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Args.cdbsOnNewLeiosValidClaim'.
   }
   deriving Generic
 

@@ -158,7 +158,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
-import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
@@ -682,12 +681,12 @@ forgottenChain = announcingFetched : take 3 (iterate successorLeiosBlock certify
 -- a holder announces 'fetchedEb', offers it, and serves it, and the node adds
 -- 'forgottenChain'.
 --
--- Before the restart: how many endorser blocks the ChainDB says are certified,
--- and whether it holds 'certifyingFetched'. After it: whether the ChainDB
--- forgot 'certifyingFetched', how many endorser blocks it then said are
--- certified, the tip of the node's selection, once that is the last block of
--- 'forgottenChain' or ten seconds have passed, and the notifications the node
--- relays to the rival, by 'relayHorizon' after that.
+-- Before the restart: how many new valid claims the ChainDB has passed on, and
+-- whether it holds 'certifyingFetched'. After it: whether the ChainDB forgot
+-- 'certifyingFetched', how many new valid claims it had then passed on, the
+-- tip of the node's selection, once that is the last block of 'forgottenChain'
+-- or ten seconds have passed, and the notifications the node relays to the
+-- rival, by 'relayHorizon' after that.
 nodeReselectsForgotten ::
   IOSim s ((Int, Bool), (Bool, Int, Point LeiosTestBlock, [Relayed]))
 nodeReselectsForgotten = do
@@ -730,7 +729,7 @@ nodeReselectsForgotten = do
   pure (beforeRestart, afterRestart)
  where
   certifiedCount node =
-    Map.size . forgetFingerprint <$> atomically (ChainDB.getLeiosCertifiedEbs (nodeChainDB node))
+    Map.size <$> atomically (nodeNewLeiosValidClaims node)
   holds node blk = atomically $ ($ blockPoint blk) <$> ChainDB.getIsFetched (nodeChainDB node)
 
 -- | The holder announces 'fetchedEb', and the node relays the announcement,

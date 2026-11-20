@@ -325,6 +325,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLeiosDb = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
+            , cdbOnNewLeiosValidClaim = Args.cdbsOnNewLeiosValidClaim cdbSpecificArgs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -360,7 +361,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
-            , getLeiosCertifiedEbs = getEnvSTM h Query.getLeiosCertifiedEbs
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
             , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter
