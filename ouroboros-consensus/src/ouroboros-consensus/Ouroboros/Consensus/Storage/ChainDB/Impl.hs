@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (dupTChan, newBroadcastTChan, readTChan, writeTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -259,6 +260,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
     varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
+    newLeiosValidClaims <- atomically newBroadcastTChan
     chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
@@ -325,7 +327,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLeiosDb = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
-            , cdbOnNewLeiosValidClaim = Args.cdbsOnNewLeiosValidClaim cdbSpecificArgs
+            , cdbOnNewLeiosValidClaim = curry (writeTChan newLeiosValidClaims)
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -360,6 +362,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , openReadOnlyForkerAtPoint = getEnv1 h Query.openReadOnlyForkerAtPoint
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
+            , subscribeLeiosValidClaims = readTChan <$> atomically (dupTChan newLeiosValidClaims)
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen

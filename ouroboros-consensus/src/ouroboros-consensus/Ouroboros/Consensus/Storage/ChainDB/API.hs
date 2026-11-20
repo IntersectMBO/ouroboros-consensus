@@ -105,7 +105,8 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Leios.Protocol (CertRbInfo)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.Protocol (CertRbInfo, LeiosAnnouncement)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision
   , PerasCertInclusionView
@@ -461,6 +462,17 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , subscribeLeiosValidClaims :: m (STM m (LeiosClaim, LeiosAnnouncement))
+  -- ^ The claim of each new Leios certification ChainSel validates from now
+  -- on, with the announcement it certifies, blocking until there is one
+  --
+  -- Its channel is unbounded: each subscriber holds every claim emitted since
+  -- it subscribed that it has yet to read. That needs no bound, because the
+  -- work is too cheap to matter: ChainSel emits a claim only when it is new to
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Leios.LeiosValidClaims', so at
+  -- the rate of elections, and only after verifying its certificate, which
+  -- costs far more than a subscriber's reading it. Without subscribers, the
+  -- channel keeps nothing.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
