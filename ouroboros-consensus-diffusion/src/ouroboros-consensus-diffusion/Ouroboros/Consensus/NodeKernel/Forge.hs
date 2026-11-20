@@ -100,7 +100,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, predChainDep) <-
+  (fbArgs, selectedTxs, forgingOnTopOf, leiosView, predState) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -155,7 +155,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
           , ledgerTipPoint (ledgerState unticked)
           , maybeToStrictMaybe $
               getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-          , headerStateChainDep (headerState unticked)
+          , headerState unticked
           )
 
   -- Actually produce the block
@@ -188,13 +188,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     mempool
     currentSlot
     (fbTxs fbArgs)
-    ( certRbInfo
-        (configBlock cfg)
-        (getHeader (Block.rankingBlock forgeRes))
-        (pointSlot forgingOnTopOf)
-        leiosView
-        predChainDep
-    )
+    (certRbInfo leiosView predState)
     (Block.rankingBlock forgeRes)
 
 -- | Context required to forge a block
