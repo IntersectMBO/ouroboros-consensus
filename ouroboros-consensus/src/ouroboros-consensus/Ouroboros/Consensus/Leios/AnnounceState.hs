@@ -86,10 +86,11 @@ data WhetherEquivocationProof = EquivocationProof | NotEquivocationProof
 -- one of an election already pruned, while it was validated, is not new.
 --
 -- Once this accepts an announcement, no copy of it is new again, from any
--- peer. So a caller that acts on a new announcement must commit to doing so
--- within this same transaction: if it acted afterwards, and its thread died in
--- between, as when its peer disconnects, the announcement would stay accepted
--- but never be acted on, and nothing would act on it later.
+-- peer. So a caller that acts on a new announcement received from a peer
+-- rather than from the forge must commit to doing so within this same
+-- transaction: if it acted afterwards, and its thread died in between, as when
+-- its peer disconnects, the announcement would stay accepted but never be
+-- acted on, and nothing would act on it later.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->

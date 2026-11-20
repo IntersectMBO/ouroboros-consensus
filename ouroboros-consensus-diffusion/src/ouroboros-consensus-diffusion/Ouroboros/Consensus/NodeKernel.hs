@@ -508,7 +508,9 @@ initNodeKernel
     -- cancelling the forge, as when the forging credentials change, cannot
     -- interrupt it: the worker stops only with the node. The forge only accepts
     -- the announcement and queues the endorser block for the worker, in one
-    -- transaction, as 'onValidAnnouncement' asks.
+    -- transaction. That is merely nice to have: a cancelled forge then never
+    -- leaves the node relaying an announcement whose endorser block it does not
+    -- take in, which only makes Leios throughput a bit more reliable.
     --
     -- An endorser block still queued when the node stops is never fully
     -- written, though its ranking block may already be in the ChainDB. That
