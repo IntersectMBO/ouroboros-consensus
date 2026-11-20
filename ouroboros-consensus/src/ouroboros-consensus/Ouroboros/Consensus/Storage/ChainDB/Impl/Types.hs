@@ -409,8 +409,8 @@ data ChainDbEnv m blk = CDB
   -- ^ The claims that the Leios certificates of arriving blocks established;
   -- see 'LeiosValidClaims'.
   , cdbOnNewLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
-  -- ^ See
-  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Args.cdbsOnNewLeiosValidClaim'.
+  -- ^ Emits to the subscribers of
+  -- 'Ouroboros.Consensus.Storage.ChainDB.API.subscribeLeiosValidClaims'.
   }
   deriving Generic
 
