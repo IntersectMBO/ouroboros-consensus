@@ -17,6 +17,8 @@ import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import Data.Foldable (toList)
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
@@ -49,8 +51,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( Message (..)
-  , TxBitmaps
-  , bitmapToOffsets
+  , TxsBitmap
+  , txsBitmapToTxIndices
   )
 import Ouroboros.Consensus.Network.LeiosFetch
   ( leiosFetchMiniProtocolNum
@@ -103,11 +105,11 @@ leiosFetchServer tracer reader =
         catchAndRethrow tracer TraceLeiosFetchServerInvalidRequest $
           catchAndRethrow tracer (TraceLeiosFetchServerBlockDbFailure point) $
             serveEb tracer reader point
-    MsgLeiosBlockTxsRequest point bitmaps ->
+    MsgLeiosBlockTxsRequest point txsBitmap ->
       fmap MsgLeiosBlockTxs $
         catchAndRethrow tracer TraceLeiosFetchServerInvalidRequest $
-          catchAndRethrow tracer (TraceLeiosFetchServerTxsDbFailure point bitmaps) $
-            serveTxs tracer reader point bitmaps
+          catchAndRethrow tracer (TraceLeiosFetchServerTxsDbFailure point txsBitmap) $
+            serveTxs tracer reader point txsBitmap
 
 serveEb ::
   MonadThrow m =>
@@ -131,9 +133,9 @@ serveTxs ::
   Tracer m TraceLeiosFetchServerEvent ->
   LeiosDbReader m ->
   LeiosPoint ->
-  TxBitmaps ->
+  TxsBitmap ->
   m (V.Vector LeiosTx)
-serveTxs tracer reader point bitmaps = do
+serveTxs tracer reader point txsBitmap = do
   -- TODO Disconnect a client that requests what the node never offered it.
   traceWith tracer $ TraceLeiosFetchServerTxsRequested point (length offsets)
   -- The bytes of each requested offset the node holds.
@@ -147,7 +149,8 @@ serveTxs tracer reader point bitmaps = do
       pure $ V.fromListN n txs
     else throwIO $ ExnLeiosUnknownTxsRequested point (filter (`Map.notMember` held) offsets)
  where
-  offsets = bitmapToOffsets bitmaps
+  -- Ascending, which is the order the reply must be in.
+  offsets = toList (NEIntSet.toAscList (txsBitmapToTxIndices txsBitmap))
 
 -- | Trace an exception of the event's type that the action throws, then
 -- rethrow it.

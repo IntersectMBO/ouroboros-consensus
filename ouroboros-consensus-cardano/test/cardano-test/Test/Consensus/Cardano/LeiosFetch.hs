@@ -8,9 +8,11 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (bodyTxL, certsTxBodyL)
 import Cardano.Ledger.Dijkstra.TxBody (subTransactionsTxBodyL)
 import Codec.CBOR.Read (DeserialiseFailure)
+import Control.Monad.Except (runExcept)
 import Data.ByteString.Lazy (ByteString, toStrict)
 import qualified Data.ByteString.Short as SBS
-import qualified Data.Set as Set
+import qualified Data.IntSet.NonEmpty as NEIntSet
+import qualified Data.List.NonEmpty as NEList
 import qualified Data.Text as T
 import qualified Data.Vector.Strict as V
 import Lens.Micro ((&), (.~))
@@ -74,17 +76,24 @@ prop_nodeCodecMatchesCDDL =
       [ pure $ AnyMessage MsgDone
       , AnyMessage . MsgLeiosBlockRequest <$> genPoint
       , AnyMessage . MsgLeiosBlock <$> genEb
-      , fmap AnyMessage $ MsgLeiosBlockTxsRequest <$> genPoint <*> genBitmaps
-      , AnyMessage . MsgLeiosBlockTxs . V.fromList <$> listOf (pure tx)
+      , fmap AnyMessage $ MsgLeiosBlockTxsRequest <$> genPoint <*> genTxsBitmap
+      , -- non-empty: a request always names at least one tx, so a conforming
+        -- reply carries at least one
+        AnyMessage . MsgLeiosBlockTxs . V.fromList <$> listOf1 (pure tx)
       ]
 
   genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> genHash
 
-  -- strictly ascending indices, each with a non-zero bitmap, as the decoder
+  -- a non-empty set of tx offsets within the bitmap's width, as the bitmap
   -- requires
-  genBitmaps = do
-    indices <- Set.toAscList . Set.fromList <$> arbitrary
-    traverse (\i -> (,) i . getPositive <$> arbitrary) indices
+  genTxsBitmap = do
+    let genOffset = chooseInt (0, txsBitmapWidth - 1)
+    offset <- genOffset
+    offsets <- listOf genOffset
+    either error pure $
+      runExcept $
+        txsBitmapFromTxIndices $
+          NEIntSet.fromList (offset NEList.:| offsets)
 
   genEb = serialiseEndorserBlock . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 

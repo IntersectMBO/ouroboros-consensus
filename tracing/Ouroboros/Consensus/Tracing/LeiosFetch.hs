@@ -19,6 +19,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchServerEvent (..)
   )
+import qualified Ouroboros.Consensus.Util.SparseBitmap as SparseBitmap
 
 instance
   (LogFormatting peer, Show peer) =>
@@ -118,11 +119,11 @@ instance LogFormatting TraceLeiosFetchServerEvent where
         mconcat ["kind" .= String "UnknownTxs", pointFields point, "offsets" .= offsets]
     TraceLeiosFetchServerBlockDbFailure point err ->
       mconcat ["kind" .= String "BlockDbFailure", pointFields point, "exception" .= err]
-    TraceLeiosFetchServerTxsDbFailure point bitmaps err ->
+    TraceLeiosFetchServerTxsDbFailure point txsBitmap err ->
       mconcat
         [ "kind" .= String "TxsDbFailure"
         , pointFields point
-        , "bitmaps" .= bitmaps
+        , "bitmaps" .= SparseBitmap.pretty txsBitmap
         , "exception" .= err
         ]
     TraceLeiosFetchServerOpenReaderDbFailure err ->
@@ -157,7 +158,7 @@ instance LogFormatting TraceLeiosFetchServerEvent where
         <> pretty point
         <> " from the LeiosDB failed: "
         <> Text.pack (displayException err)
-    TraceLeiosFetchServerTxsDbFailure point _bitmaps err ->
+    TraceLeiosFetchServerTxsDbFailure point _txsBitmap err ->
       "Disconnecting a client, since reading its requested transactions of endorser block "
         <> pretty point
         <> " from the LeiosDB failed: "
