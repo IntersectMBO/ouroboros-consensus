@@ -544,7 +544,7 @@ initNodeKernel
     -- 'leiosPeersVars') is created in 'initInternalState' and
     -- destructured from the IS-level vars above.
 
-    -- The Leios fetch logic: 0.5s loop that takes 'getLeiosReady', reads
+    -- The Leios fetch logic: 20 ms loop that takes 'getLeiosReady', reads
     -- the peers' offerings, runs 'leiosFetchLogicIteration' to decide what
     -- to fetch next from each peer, and pushes the resulting requests onto
     -- each peer's outgoing queue. Wakers (LeiosNotify clients receiving
@@ -640,7 +640,7 @@ initNodeKernel
             atomically $
               StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> NESeq.toSeq reqs)
           iterationEnd <- getMonotonicTime
-          let loopInterval = 0.5 :: SI.DiffTime
+          let loopInterval = 0.02 :: SI.DiffTime
               duration = iterationEnd `diffTime` iterationStart
           -- Structured, Loki-queryable telemetry for the decision loop: the
           -- iteration's duration (the worst-case-latency signal the LeiosTxCache
