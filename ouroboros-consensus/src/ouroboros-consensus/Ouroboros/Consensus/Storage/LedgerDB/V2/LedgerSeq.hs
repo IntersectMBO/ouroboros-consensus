@@ -91,10 +91,10 @@ import Prelude hiding (read)
 -- When applying diffs to a table, we will first duplicate the handle, then
 -- apply the diffs in the copy. It is expected that duplicating the handle
 -- takes constant time.
-data LedgerTablesHandle m l blk = LedgerTablesHandle
+data LedgerTablesHandle m blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(l blk EmptyMK -> l blk DiffMK -> m (LedgerTablesHandle m l blk))
+  , duplicateWithDiffs :: !(ExtLedgerState blk EmptyMK -> ExtLedgerState blk DiffMK -> m (LedgerTablesHandle m blk))
   -- ^ Create a new handle by duplicating this one and push some diffs to it.
   --
   -- The first argument has to be the ledger state before applying
@@ -106,15 +106,15 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- This is expected to be used when applying new blocks onto a forker, which
   -- happens only in chain selection (see 'forkerPush') and initial chain
   -- selection (see 'reapplyBlock').
-  , duplicate :: !(m (LedgerTablesHandle m l blk))
+  , duplicate :: !(m (LedgerTablesHandle m blk))
   -- ^ Create an duplicate of a handle. This will be used when opening read-only
   -- forkers and also to open the first handle for a forker used in chain
   -- selection.
-  , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , read :: !(ExtLedgerState blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
   , readRange ::
-      !(l blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(ExtLedgerState blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -129,11 +129,11 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l blk EmptyMK -> m (LedgerTables blk ValuesMK))
+  , readAll :: !(ExtLedgerState blk EmptyMK -> m (LedgerTables blk ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
-  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (Maybe CRC))
+  , takeHandleSnapshot :: !(ExtLedgerState blk EmptyMK -> String -> m (Maybe CRC))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
@@ -141,7 +141,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   , tablesSize :: !Int
   -- ^ Consult the size of the ledger tables in the database.
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l blk)
+  deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m blk)
 
 {-------------------------------------------------------------------------------
   StateRef, represents a full ledger state, i.e. with a handle for its tables
@@ -164,21 +164,21 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
 -- Therefore it sounds reasonable to hold a @LedgerState blk EmptyMK@ with no
 -- values, and a @LedgerTables blk ValuesMK@ next to it, that will live its
 -- entire lifetime as @LedgerTables@ of the @HardForkBlock@.
-data StateRef m l blk = StateRef
-  { state :: !(l blk EmptyMK)
-  , tables :: !(LedgerTablesHandle m l blk)
+data StateRef m blk = StateRef
+  { state :: !(ExtLedgerState blk EmptyMK)
+  , tables :: !(LedgerTablesHandle m blk)
   }
   deriving Generic
 
-deriving instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (StateRef m l blk)
+deriving instance (IOLike m, NoThunks (PerasVotingCommittee blk), LedgerSupportsProtocol blk) => NoThunks (StateRef m blk)
 
-instance Eq (l blk EmptyMK) => Eq (StateRef m l blk) where
+instance (Eq (PerasVotingCommittee blk), LedgerSupportsProtocol blk) => Eq (StateRef m blk) where
   (==) = (==) `on` state
 
-instance Show (l blk EmptyMK) => Show (StateRef m l blk) where
+instance (Show (PerasVotingCommittee blk), LedgerSupportsProtocol blk) => Show (StateRef m blk) where
   show = show . state
 
-instance GetTip (l blk) => Anchorable (WithOrigin SlotNo) (StateRef m l blk) (StateRef m l blk) where
+instance IsLedger LedgerState blk => Anchorable (WithOrigin SlotNo) (StateRef m blk) (StateRef m blk) where
   asAnchor = id
   getAnchorMeasure _ = getTipSlot . state
 
@@ -188,7 +188,7 @@ instance GetTip (l blk) => Anchorable (WithOrigin SlotNo) (StateRef m l blk) (St
 
 newtype LedgerSeq m blk = LedgerSeq
   { getLedgerSeq ::
-      AnchoredSeq (WithOrigin SlotNo) (StateRef m ExtLedgerState blk) (StateRef m ExtLedgerState blk)
+      AnchoredSeq (WithOrigin SlotNo) (StateRef m blk) (StateRef m blk)
   }
   deriving Generic
 
@@ -213,7 +213,7 @@ empty ::
   (IsLedger LedgerState blk, IOLike m) =>
   ExtLedgerState blk EmptyMK ->
   init ->
-  (init -> m (LedgerTablesHandle m ExtLedgerState blk)) ->
+  (init -> m (LedgerTablesHandle m blk)) ->
   m (LedgerSeq m blk)
 empty st tbs new = LedgerSeq . AS.Empty . StateRef st <$> new tbs
 
@@ -224,7 +224,7 @@ empty' ::
   , HasLedgerTables LedgerState blk
   ) =>
   ExtLedgerState blk ValuesMK ->
-  (ExtLedgerState blk ValuesMK -> m (LedgerTablesHandle m ExtLedgerState blk)) ->
+  (ExtLedgerState blk ValuesMK -> m (LedgerTablesHandle m blk)) ->
   m (LedgerSeq m blk)
 empty' st = empty (forgetLedgerTables st) st
 
@@ -272,7 +272,7 @@ reapplyBlock ::
   ResolveEndorserBlock m ->
   blk ->
   LedgerSeq m blk ->
-  m (StateRef m ExtLedgerState blk)
+  m (StateRef m blk)
 reapplyBlock evs cfg doResolveEb b db = do
   let StateRef st tbs = currentHandle db
   (vals, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (read tbs st) b st
@@ -336,7 +336,7 @@ prune howToPrune (LedgerSeq ldb) = case howToPrune of
 -- True
 extend ::
   IsLedger LedgerState blk =>
-  StateRef m ExtLedgerState blk ->
+  StateRef m blk ->
   LedgerSeq m blk ->
   LedgerSeq m blk
 extend newState =
@@ -393,7 +393,7 @@ rollbackN n ldb
 current :: IsLedger LedgerState blk => LedgerSeq m blk -> ExtLedgerState blk EmptyMK
 current = state . currentHandle
 
-currentHandle :: IsLedger LedgerState blk => LedgerSeq m blk -> StateRef m ExtLedgerState blk
+currentHandle :: IsLedger LedgerState blk => LedgerSeq m blk -> StateRef m blk
 currentHandle = headAnchor . getLedgerSeq
 
 -- | The ledger state at the anchor of the Volatile chain (i.e. the immutable
@@ -405,7 +405,7 @@ currentHandle = headAnchor . getLedgerSeq
 anchor :: LedgerSeq m blk -> ExtLedgerState blk EmptyMK
 anchor = state . anchorHandle
 
-anchorHandle :: LedgerSeq m blk -> StateRef m ExtLedgerState blk
+anchorHandle :: LedgerSeq m blk -> StateRef m blk
 anchorHandle = AS.anchor . getLedgerSeq
 
 -- | All snapshots currently stored by the ledger DB (new to old)
