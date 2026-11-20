@@ -463,15 +463,14 @@ data ChainDB m blk = ChainDB
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
   , subscribeLeiosValidClaims :: m (STM m (LeiosClaim, LeiosAnnouncement))
-  -- ^ The claim of each new Leios certification ChainSel validates from now
-  -- on, with the announcement it certifies, blocking until there is one
+  -- ^ The claim of each Leios certificate ChainSel verifies from now on, with
+  -- the announcement it certifies, blocking until there is one
   --
   -- Its channel is unbounded: each subscriber holds every claim emitted since
   -- it subscribed that it has yet to read. That needs no bound, because the
-  -- work is too cheap to matter: ChainSel emits a claim only when it is new to
-  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Leios.LeiosValidClaims', so at
-  -- the rate of elections, and only after verifying its certificate, which
-  -- costs far more than a subscriber's reading it. Without subscribers, the
+  -- work is too cheap to matter: ChainSel emits a claim at most once per block
+  -- it adds, and only after verifying the block's certificate, which costs far
+  -- more than a subscriber's reading the claim. Without subscribers, the
   -- channel keeps nothing.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
