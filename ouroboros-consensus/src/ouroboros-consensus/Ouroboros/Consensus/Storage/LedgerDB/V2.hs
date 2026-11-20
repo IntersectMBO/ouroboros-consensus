@@ -66,7 +66,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
-type SnapshotManagerV2 m blk = SnapshotManager m blk (StateRef m ExtLedgerState blk)
+type SnapshotManagerV2 m blk = SnapshotManager m blk (StateRef m blk)
 
 newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk}
   deriving (Show, Exception)
@@ -176,7 +176,7 @@ implMkLedgerDb ::
   , StateSupportsPerasEpochContext blk
   ) =>
   LedgerDBHandle m blk ->
-  SnapshotManager m blk (StateRef m ExtLedgerState blk) ->
+  SnapshotManager m blk (StateRef m blk) ->
   SnapshotRequestQueue m ->
   (LedgerDB m blk, TestInternals m blk)
 implMkLedgerDb h snapManager snapshotQueue =
@@ -206,7 +206,7 @@ mkInternals ::
   ) =>
   LedgerDB m blk ->
   LedgerDBHandle m blk ->
-  SnapshotManager m blk (StateRef m ExtLedgerState blk) ->
+  SnapshotManager m blk (StateRef m blk) ->
   TestInternals m blk
 mkInternals ldb h snapManager =
   TestInternals
@@ -376,7 +376,7 @@ implTryTakeSnapshot ::
   ( IOLike m
   , IsLedger LedgerState blk
   ) =>
-  SnapshotManager m blk (StateRef m ExtLedgerState blk) ->
+  SnapshotManager m blk (StateRef m blk) ->
   SnapshotRequestQueue m ->
   LedgerDBEnv m blk ->
   m ()
@@ -428,7 +428,7 @@ implTryTakeSnapshot snapManager queue env = do
       -- ours; release the handles we duplicated for it.
       Monad.unless enqueued $ closeHandles nonEmptyHandles
  where
-  write :: Time -> NonEmpty (SlotNo, StateRef m ExtLedgerState blk) -> m ()
+  write :: Time -> NonEmpty (SlotNo, StateRef m blk) -> m ()
   write now nonEmptyHandles = do
     for_ nonEmptyHandles $ \(_, h) -> do
       Monad.void $ takeSnapshot snapManager Nothing h
@@ -441,10 +441,10 @@ implTryTakeSnapshot snapManager queue env = do
     traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
       SnapshotRequestCompleted
 
-  closeHandles :: NonEmpty (SlotNo, StateRef m ExtLedgerState blk) -> m ()
+  closeHandles :: NonEmpty (SlotNo, StateRef m blk) -> m ()
   closeHandles hs = for_ hs $ \(_, h) -> Monad.void $ close . tables $ h
 
-  duplicateStateRef :: StateRef m ExtLedgerState blk -> m (StateRef m ExtLedgerState blk)
+  duplicateStateRef :: StateRef m blk -> m (StateRef m blk)
   duplicateStateRef StateRef{state, tables} = do
     h <- duplicate tables
     pure $ StateRef state h
@@ -613,8 +613,8 @@ getVolatileLedgerSeq env = do
 openStateRef ::
   (IOLike m, Traversable t, IsLedger LedgerState blk) =>
   LedgerDBEnv m blk ->
-  (LedgerSeq m blk -> t (StateRef m ExtLedgerState blk)) ->
-  m (t (StateRef m ExtLedgerState blk))
+  (LedgerSeq m blk -> t (StateRef m blk)) ->
+  m (t (StateRef m blk))
 openStateRef ldbEnv project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
@@ -627,8 +627,8 @@ openStateRef ldbEnv project =
 withStateRef ::
   (IOLike m, Traversable t, IsLedger LedgerState blk) =>
   LedgerDBEnv m blk ->
-  (LedgerSeq m blk -> t (StateRef m ExtLedgerState blk)) ->
-  (t (StateRef m ExtLedgerState blk) -> m a) ->
+  (LedgerSeq m blk -> t (StateRef m blk)) ->
+  (t (StateRef m blk) -> m a) ->
   m a
 withStateRef ldbEnv project f =
   bracket
@@ -642,7 +642,7 @@ openStateRefAtTarget ::
   ) =>
   LedgerDBEnv m blk ->
   Either Word64 (Target (Point blk)) ->
-  m (Either GetForkerError (StateRef m ExtLedgerState blk))
+  m (Either GetForkerError (StateRef m blk))
 openStateRefAtTarget ldbEnv target =
   openStateRef ldbEnv $ \l -> case target of
     Right VolatileTip -> pure $ currentHandle l
@@ -712,7 +712,7 @@ newForker ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBEnv m blk ->
-  StateRef m ExtLedgerState blk ->
+  StateRef m blk ->
   m (Forker m blk)
 newForker ldbEnv st = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
