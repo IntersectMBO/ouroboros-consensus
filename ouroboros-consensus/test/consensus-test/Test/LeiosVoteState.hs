@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
@@ -20,15 +21,17 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import qualified Data.ByteString.Char8 as BS8
 import Data.Function (on)
 import Data.List (nub, nubBy)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Ratio ((%))
+import qualified Data.Set as Set
 import LeiosDemoTypes
   ( LeiosSeatId (..)
   , LeiosSigningKey
   , LeiosVote (..)
-  , RbHash
+  , RbHash (..)
   , VoteInvalid (..)
   , Weight
   , getLeiosSeatId
@@ -42,19 +45,28 @@ import LeiosVoteState
   , VoteTally (..)
   , addVote
   , getNextVote
+  , leiosVoteWindow
   , newLeiosVoteState
   , queryCert
   , subscribeVotes
+  , withinVoteWindow
   )
 import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeiosSigningKey)
 import Test.QuickCheck
   ( Gen
   , Property
+  , choose
   , counterexample
   , elements
   , forAll
+  , forAllShrink
   , listOf1
   , property
+  , shrink
+  , shrinkIntegral
+  , shrinkList
+  , shrinkNothing
+  , shuffle
   , sublistOf
   , suchThat
   , vectorOf
@@ -65,6 +77,7 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.LeiosHash (genRbHash)
+import Text.Printf (printf)
 
 tests :: TestTree
 tests =
@@ -83,7 +96,126 @@ tests =
     , testProperty
         "the oldest point is forgotten once the window is full"
         prop_pointWindowEvictsOldest
+    , testProperty
+        "a replayed vote is taken once, and only for a votable point"
+        prop_replayTakesEachVoteOnce
+    , testProperty "the vote window is the newest blocks" prop_voteWindowIsNewestBlocks
     ]
+
+-- | Votes arriving in any order and any number of times, as a fixed set of them
+-- did when every node kept relaying votes for long-gone points.
+data Replay = Replay
+  { rpPoints :: !Int
+  -- ^ Distinct points, one vote each; the vote for point @i@ is vote @i@.
+  , rpVotable :: ![Int]
+  -- ^ The points the vote state is told it may take votes for.
+  , rpBad :: ![Int]
+  -- ^ The votes that carry a signature the committee rejects.
+  , rpArrivals :: ![Int]
+  -- ^ The order the votes arrive in, repeats included.
+  }
+  deriving Show
+
+-- | Up to twice 'maxAnnouncementCount' points, so that arrivals cycle through
+-- more points than the state keeps, at most 'leiosVoteWindow' of them votable,
+-- and one to three rounds of every vote in a fresh order.
+genReplay :: Gen Replay
+genReplay = do
+  n <- choose (1, 2 * maxAnnouncementCount + leiosVoteWindow)
+  votable <- take leiosVoteWindow <$> (shuffle =<< sublistOf [0 .. n - 1])
+  bad <- sublistOf [0 .. n - 1]
+  rounds <- choose (1, 3)
+  arrivals <- concat <$> vectorOf rounds (shuffle [0 .. n - 1])
+  pure $ Replay n votable bad arrivals
+
+-- | Fewer points (dropping every mention of the removed ones), fewer votable or
+-- bad points, or fewer arrivals; each step makes the replay strictly smaller.
+shrinkReplay :: Replay -> [Replay]
+shrinkReplay (Replay n votable bad arrivals) =
+  [ Replay n' (filter (< n') votable) (filter (< n') bad) (filter (< n') arrivals)
+  | n' <- shrinkIntegral n
+  , n' >= 1
+  ]
+    ++ [Replay n votable' bad arrivals | votable' <- shrinkList shrinkNothing votable]
+    ++ [Replay n votable bad' arrivals | bad' <- shrinkList shrinkNothing bad]
+    ++ [Replay n votable bad arrivals' | arrivals' <- shrinkList shrinkNothing arrivals]
+
+-- | What 'addVote' did with one arrival, without the tally it reports.
+data Outcome = OAdded | OKnown | ONotVotable | OInvalid VoteInvalid | ONoCommittee
+  deriving (Eq, Show)
+
+outcome :: AddVoteResult -> Outcome
+outcome = \case
+  Added{} -> OAdded
+  AlreadyKnown -> OKnown
+  NotVotable -> ONotVotable
+  VoteInvalid r -> OInvalid r
+  NoCommittee -> ONoCommittee
+
+-- | The exact outcome of every arrival: a vote for a point outside the window is
+-- dropped before validation, whatever its signature; inside it a bad vote is
+-- rejected each time, and a good one is taken on its first arrival and known
+-- after that.
+replayOracle :: Replay -> [Outcome]
+replayOracle (Replay _ votable bad arrivals) = go Set.empty arrivals
+ where
+  go _ [] = []
+  go taken (i : is)
+    | i `notElem` votable = ONotVotable : go taken is
+    | i `elem` bad = OInvalid InvalidSignature : go taken is
+    | i `Set.member` taken = OKnown : go taken is
+    | otherwise = OAdded : go (Set.insert i taken) is
+
+-- | Every vote is taken at most once and only for a votable point, and only
+-- the votes taken reach subscribers, however often and in whatever order a
+-- fixed set of votes keeps arriving.
+prop_replayTakesEachVoteOnce :: Property
+prop_replayTakesEachVoteOnce =
+  forAll genCommittee $ \testCommittee ->
+    forAll (genKeyNotIn testCommittee) $ \outsider ->
+      forAllShrink genReplay shrinkReplay $ \replay ->
+        let key = head testCommittee.allKeys
+            vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) testCommittee.committee
+            point i = MkRbHash (BS8.pack (printf "%032d" i))
+            vote i
+              | i `elem` replay.rpBad = signLeiosVote outsider vid (point i)
+              | otherwise = signLeiosVote key vid (point i)
+            votable = Set.fromList (point <$> replay.rpVotable)
+            expected = replayOracle replay
+         in runSimOrThrow $ do
+              st <-
+                newLeiosVoteState
+                  (pure (Just (testCommittee.committee, testQuorumThreshold)))
+                  (pure (`Set.member` votable))
+              sub <- subscribeVotes st
+              results <- mapM (fmap outcome . addVote st . vote) replay.rpArrivals
+              published <- drain sub
+              let taken = [vote i | (i, OAdded) <- zip replay.rpArrivals expected]
+              pure $
+                counterexample "outcomes differ from the oracle" (results === expected)
+                  .&&. counterexample "published votes differ from those taken" (published === taken)
+ where
+  drain sub =
+    timeout 0.1 (atomically (getNextVote sub)) >>= \case
+      Nothing -> pure []
+      Just v -> (v :) <$> drain sub
+
+-- | A point is votable exactly when it is among the newest 'leiosVoteWindow'
+-- blocks, whatever the chain's length and wherever the point sits on it.
+prop_voteWindowIsNewestBlocks :: Property
+prop_voteWindowIsNewestBlocks =
+  forAllShrink genChainQuery shrinkChainQuery $ \(len, q) ->
+    let point i = MkRbHash (BS8.pack (printf "%032d" i))
+        newestFirst = point <$> [0 .. len - 1]
+     in counterexample (show (len, q)) $
+          withinVoteWindow newestFirst (point q) === (q < len && q < leiosVoteWindow)
+ where
+  genChainQuery = do
+    len <- choose (0, 3 * leiosVoteWindow)
+    q <- choose (0, len + 2)
+    pure (len, q)
+  shrinkChainQuery (len, q) =
+    [(len', q') | (len', q') <- shrink (len, q), len' >= 0, q' >= 0, q' <= len' + 2]
 
 -- | Past 'maxAnnouncementCount' distinct points, the first one seen is dropped:
 -- its vote is accepted again rather than reported as already known, while a
@@ -99,7 +231,7 @@ prop_pointWindowEvictsOldest =
       length (nub rbHashes) == length rbHashes ==>
         property $
           runSimOrThrow $ do
-            st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+            st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
             let key = head testCommittee.allKeys
                 vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) testCommittee.committee
                 votes = [signLeiosVote key vid h | h <- rbHashes]
@@ -129,7 +261,7 @@ prop_subscriberReceivesVote :: Property
 prop_subscriberReceivesVote =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
       sub <- subscribeVotes st
       _ <- addVote st vote
       received <- atomically $ getNextVote sub
@@ -140,7 +272,7 @@ prop_subscriberReceivesAll :: Property
 prop_subscriberReceivesAll =
   forAll genCommittee $ \testCommittee ->
     forAll (listOf1 (genVoteFor testCommittee)) $ \votes -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
       sub <- subscribeVotes st
       forM_ votes (addVote st)
       received <- mapM (\_ -> atomically $ getNextVote sub) votes
@@ -152,7 +284,7 @@ prop_deduplicateVotes :: Property
 prop_deduplicateVotes =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
       sub <- subscribeVotes st
       r1 <- addVote st vote
       r2 <- addVote st vote
@@ -174,7 +306,7 @@ prop_deduplicateBeforeValidation =
     forAll (genVoteFor initialCommittee) $ \vote ->
       forAll genCommittee $ \otherCommittee -> property $ runSimOrThrow $ do
         committeeVar <- atomically $ newTVar (Just (initialCommittee.committee, testQuorumThreshold))
-        st <- newLeiosVoteState (readTVar committeeVar)
+        st <- newLeiosVoteState (readTVar committeeVar) allVotable
         r1 <- addVote st vote
         -- Swap to a fresh committee for which the vote does not validate
         -- (different voter keys, so the signature check fails).
@@ -189,7 +321,7 @@ prop_lateSubscriber :: Property
 prop_lateSubscriber =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
       _ <- addVote st vote
       sub <- subscribeVotes st
       mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -203,7 +335,7 @@ prop_invalidVoteRejected =
       forAll genLeiosSigningKey $ \someKey ->
         property $ runSimOrThrow $ do
           let badVote = signLeiosVote someKey vote.voterId vote.announcingRbHash
-          st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+          st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
           sub <- subscribeVotes st
           r <- addVote st badVote
           mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -217,7 +349,7 @@ prop_noCommitteeRejected :: Property
 prop_noCommitteeRejected =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure Nothing)
+      st <- newLeiosVoteState (pure Nothing) allVotable
       sub <- subscribeVotes st
       r <- addVote st vote
       mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -235,13 +367,17 @@ prop_signerNotInCommittee =
         -- VoterId must be outside of committe, otherwise this is just a bad signature
         let n = leiosCommitteeSize testCommittee.committee
         let vote = signLeiosVote key (LeiosSeatId $ fromIntegral n) announcement
-        st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+        st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
         sub <- subscribeVotes st
         r <- addVote st vote
         mVote <- timeout 0.1 $ atomically $ getNextVote sub
         pure $
           r === VoteInvalid SignerNotInCommittee
             .&&. counterexample "subscriber should not see invalid vote" (isNothing mVote === True)
+
+-- | Every point is votable: the window plays no part in these properties.
+allVotable :: Applicative f => f (RbHash -> Bool)
+allVotable = pure (const True)
 
 isAdded :: AddVoteResult -> Property
 isAdded Added{} = property True
@@ -277,7 +413,7 @@ prop_certificationFollowsThreshold =
                 )
  where
   certifyWith c threshold votes rbHash = do
-    st <- newLeiosVoteState (pure (Just (c, threshold)))
+    st <- newLeiosVoteState (pure (Just (c, threshold))) allVotable
     forM_ votes (addVote st)
     queryCert st rbHash
 
@@ -319,7 +455,7 @@ prop_tallyAccumulates =
     forAll genRbHash $ \rbHash ->
       forAll (genOneVotePerSeat testCommittee rbHash) $ \votes ->
         property $ runSimOrThrow $ do
-          st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+          st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold))) allVotable
           results <- mapM (addVote st) votes
           pure $ case traverse addedWeights results of
             Nothing ->

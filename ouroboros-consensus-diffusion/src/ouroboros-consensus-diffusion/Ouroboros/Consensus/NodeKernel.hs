@@ -82,7 +82,7 @@ import LeiosUtils.CallTrace
   , rootCallCtx
   )
 import qualified LeiosValidClaims
-import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
+import LeiosVoteState (LeiosVoteState (..), leiosVoteWindow, newLeiosVoteState, withinVoteWindow)
 import LeiosVoting (runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
@@ -986,9 +986,16 @@ initInternalState
     peerSharingRegistry <- newPeerSharingRegistry
 
     leiosVoteState <-
-      newLeiosVoteState $ do
-        leiosCommitteeOfTip (configLedger cfg) . ledgerState
-          <$> ChainDB.getCurrentLedger chainDB
+      newLeiosVoteState
+        ( leiosCommitteeOfTip (configLedger cfg) . ledgerState
+            <$> ChainDB.getCurrentLedger chainDB
+        )
+        ( withinVoteWindow
+            . map (Leios.MkRbHash . toRawHash (Proxy @blk) . headerHash)
+            . take leiosVoteWindow
+            . AF.toNewestFirst
+            <$> ChainDB.getCurrentChain chainDB
+        )
 
     return IS{..}
 
