@@ -506,12 +506,9 @@ initNodeKernel
     -- Most of that work is done by this worker, so that neither LeiosFetch nor
     -- the LeiosDB can delay the forge adding the ranking block, and so that
     -- cancelling the forge, as when the forging credentials change, cannot
-    -- interrupt it: the worker stops only with the node. A point the worker has
-    -- marked 'ReceivingFromForge' is fetched from no peer until the worker
-    -- settles it, and the honest chain can need that point: another ranking
-    -- block in the same slot can announce the same endorser block. The forge
-    -- only accepts the announcement and queues the endorser block for the
-    -- worker, in one transaction, as 'onValidAnnouncement' asks.
+    -- interrupt it: the worker stops only with the node. The forge only accepts
+    -- the announcement and queues the endorser block for the worker, in one
+    -- transaction, as 'onValidAnnouncement' asks.
     --
     -- An endorser block still queued when the node stops is never fully
     -- written, though its ranking block may already be in the ChainDB. That

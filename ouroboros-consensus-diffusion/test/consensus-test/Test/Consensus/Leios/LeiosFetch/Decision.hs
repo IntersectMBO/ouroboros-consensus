@@ -52,8 +52,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , fetchPriorityTiers
   , focusCertifiedEb
   , focusElectionIfUnfocused
+  , holdForgedEb
   , leiosFetchLogicIteration
-  , markReceivingFromForge
   , newLeiosJobPool
   , peerBudget
   , pruneOffers
@@ -272,8 +272,8 @@ test_closureOfferedMeanwhile = do
         (Map.insertWith (<>) p closureOffered bodyOffered)
     (_, reqs, _) = decide (acquireEbBody p jobPool (refundEbRequest peerA p 1024 outstanding1)) offers
 
--- | The forge marks a point 'ReceivingFromForge' while it writes the endorser block.
--- A peer offering its body and its closure is asked for neither, and its whole
+-- | Once the node's own forge's writes of the endorser block at a point land,
+-- a peer offering its body and its closure is asked for neither, and its whole
 -- offer is pruned.
 test_forgedNotFetched :: IO ()
 test_forgedNotFetched = do
@@ -289,7 +289,14 @@ test_forgedNotFetched = do
       (Just (minBound, priorityWindow))
       (Map.singleton peerA offers)
       Map.empty
-      (markReceivingFromForge p (scOutstanding (empty & withMissingBody p 1024)))
+      ( fst
+          ( holdForgedEb
+              (ElectionId (SlotNo 1) fixtureElectee)
+              (eb 'a')
+              1024
+              (scOutstanding (empty & withMissingBody p 1024))
+          )
+      )
 
 -- | An endorser block rejected as too big, then offered again at the same point,
 -- under bounds that admit it. The decision logic does not consult the bounds
@@ -747,7 +754,6 @@ violations sim =
 
   poolViolations (p, MkEbState _onset fetchState) = case fetchState of
     NoBody -> []
-    ReceivingFromForge{} -> []
     BodyAcquired pool ->
       [show p <> "'s job pool has an inexact reverse index" | not (Jobs.hasExactReverseIndex pool)]
         <> [ show p

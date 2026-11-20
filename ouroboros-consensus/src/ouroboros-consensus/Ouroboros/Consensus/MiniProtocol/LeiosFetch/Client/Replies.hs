@@ -29,7 +29,7 @@ import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Foldable (fold, toList)
+import Data.Foldable (fold, for_, toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -52,6 +52,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
+  , ElectionId (..)
   , EndorserBlock
   , EndorserBlockHash
   , ForgedEndorserBlock (..)
@@ -63,6 +64,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , deserialiseEndorserBlock
   , encodeEndorserBlockSize
+  , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , hashSerialisedEndorserBlock
@@ -70,8 +72,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( AlreadyEmitted (..)
-  , EbFetchState (..)
+  ( EbFetchState (..)
   , EbState (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -81,10 +82,10 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , acquireEbBody
   , completeTxRequest
   , ebStateOnset
+  , holdForgedEb
   , newLeiosJobPool
   , refundEbRequest
   , refundTxRequest
-  , settleReceivingFromForge
   )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
@@ -275,9 +276,6 @@ processLeiosBlock ctx peer req bytes = do
         -- Another reply's write settled first.
         Just (MkEbState _onset BodyAcquired{}) ->
           pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
-        -- Our own forge is writing it.
-        Just (MkEbState _onset ReceivingFromForge{}) ->
-          pure (cleaned, BodyDiscarded (fetchArrivalExtra ebBytesSize))
         Just (MkEbState _onset NoBody) -> pure (cleaned, BodyToWrite eb)
   void $ tryPutMVar lfcReady ()
   case disposition of
@@ -359,9 +357,6 @@ settleBody ctx peer point eb bodyWritten = do
     case Map.lookup point (ebState outstanding) of
       Nothing -> pure (outstanding, \_now -> [arrived fetchArrivalEvicted])
       Just (MkEbState _onset BodyAcquired{}) -> pure (outstanding, \_now -> [arrived fetchArrivalExtra])
-      -- Only the forge's writes settle it.
-      Just (MkEbState _onset ReceivingFromForge{}) ->
-        pure (outstanding, \_now -> [arrived fetchArrivalExtra])
       Just (MkEbState onset NoBody) -> do
         let
           jobPool =
@@ -397,9 +392,9 @@ settleBody ctx peer point eb bodyWritten = do
   arrived bucket =
     TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
 
--- | Acquire, at this point, an endorser block the node's own forge produced, as
--- one that arrived with no peer: write it and then all its txs, wait for both
--- writes to be durable, and then settle the point ('settleForgedEb').
+-- | Acquire an endorser block the node's own forge produced in this election,
+-- as one that arrived with no peer: write it and then all its txs, wait for
+-- both writes to land, and then hold it ('settleForgedEb').
 --
 -- Its bytes are not checked: the forge built the body from these very txs.
 --
@@ -408,52 +403,49 @@ settleBody ctx peer point eb bodyWritten = do
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
-  LeiosPoint ->
+  ElectionId ->
   ForgedEndorserBlock ->
   m ()
-acquireForgedEb ctx point forged = do
+acquireForgedEb ctx elId forged = do
   bodyWritten <- writeEbBody lfcWriter point eb mempty
   txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
-  settleForgedEb ctx point eb $
+  settleForgedEb ctx elId eb $
     Promise $
       await bodyWritten >> void (await txsWritten)
  where
   MkLeiosFetchClientContext{lfcWriter} = ctx
   eb = forgedEbBody forged
+  point = MkLeiosPoint (electionSlot elId) (endorserBlockHash eb)
 
--- | Record the forge's endorser block as acquired at this point, with no job
--- left, now that its writes are durable, and emit what of its acquisition the
--- node had not already emitted there ('settleReceivingFromForge').
+-- | Hold the forge's endorser block in this election with no job left, now
+-- that its writes have landed, and emit the acquisitions not yet emitted at its
+-- point ('holdForgedEb').
 settleForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
-  LeiosPoint ->
+  ElectionId ->
   EndorserBlock ->
-  -- | done once the writes are durable
+  -- | done once the writes land
   Promise m () ->
   m ()
-settleForgedEb ctx point eb written = do
+settleForgedEb ctx elId eb written = do
   await written
-  acquired <- modifyMVar lfcOutstanding $ \outstanding -> do
-    let (outstanding', toEmit) = settleReceivingFromForge point outstanding
-        onset = maybe SNothing ebStateOnset $ Map.lookup point (ebState outstanding)
-        (notifications, traces) = case toEmit of
-          Just EmittedNothing ->
-            ( [AcquiredEb point (encodeEndorserBlockSize eb), AcquiredEbTxs point]
-            , \age ->
-                [TraceLeiosFetchClientBlockAcquired point age, TraceLeiosFetchClientBlockTxsAcquired point age]
-            )
-          Just EmittedBody -> ([AcquiredEbTxs point], \age -> [TraceLeiosFetchClientBlockTxsAcquired point age])
-          Just EmittedBodyAndClosure -> ([], const [])
-          Nothing -> ([], const [])
-    atomically $ mapM_ lfcNotify notifications
-    pure (outstanding', \now -> traces (ageAt now onset))
+  (onset, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
+    let (outstanding', acquired) = holdForgedEb elId ebHash (encodeEndorserBlockSize eb) outstanding
+    atomically $ mapM_ lfcNotify acquired
+    pure
+      (outstanding', (maybe SNothing ebStateOnset (Map.lookup point (ebState outstanding)), acquired))
   void $ tryPutMVar lfcReady ()
   -- Read after emitting, so that the acquisitions' ages run until then.
   now <- systemTimeCurrent lfcSystemTime
-  mapM_ (traceWith lfcTracer) (acquired now)
+  for_ acquired $
+    traceWith lfcTracer . \case
+      AcquiredEb{} -> TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
+      AcquiredEbTxs{} -> TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady, lfcNotify, lfcSystemTime, lfcTracer} = ctx
+  ebHash = endorserBlockHash eb
+  point = MkLeiosPoint (electionSlot elId) ebHash
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
@@ -488,8 +480,6 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
         -- Pruned meanwhile, and perhaps referenced again since: txs are
         -- requested only once the body is held.
         Just (MkEbState _onset NoBody) -> (IntMap.empty, fetchArrivalEvicted)
-        -- Our own forge is writing them.
-        Just (MkEbState _onset ReceivingFromForge{}) -> (IntMap.empty, fetchArrivalExtra)
         Nothing -> (IntMap.empty, fetchArrivalEvicted)
       discarded = discardedAs $ jobsBytesSize (IntMap.difference (NEIntMap.toMap jobs) pendingJobs)
   toIngest <-
@@ -585,9 +575,6 @@ settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written discarded tx
       -- it first.
       (Just (MkEbState _ (BodyAcquired before)), _) ->
         pure (outstanding', \_now -> arrived (neededAsOf before))
-      -- Our own forge is writing the whole closure.
-      (Just (MkEbState _ ReceivingFromForge{}), _) ->
-        pure (outstanding', \_now -> arrived (fetchArrivalExtra (jobsBytesSize written) <> discarded))
       -- Pruned meanwhile, and perhaps referenced again since.
       _ -> pure (outstanding', \_now -> arrived (fetchArrivalEvicted (jobsBytesSize written) <> discarded))
   void $ tryPutMVar lfcReady ()
