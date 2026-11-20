@@ -73,7 +73,7 @@ import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Network.Mux as Mux
-import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), blockSlot, getHeader)
+import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), getHeader)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
@@ -87,12 +87,11 @@ import Ouroboros.Consensus.Config
   ( DiffusionPipeliningSupport (..)
   , SecurityParam (..)
   , TopLevelConfig
-  , configBlock
   , configLedger
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.HeaderValidation (certRbInfo)
+import Ouroboros.Consensus.HeaderValidation (HeaderState (..), certRbInfo, getAnnTip)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
@@ -240,27 +239,17 @@ addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin Blk -> [Blk] -> m ()
 addBlocksAfter node predecessor blks =
   sequence_ $
     zipWith
-      ( \prev blk ->
-          ChainDB.addBlock_
-            (nodeChainDB node)
-            noPunishment
-            (certRb prev blk)
-            blk
-      )
+      (ChainDB.addBlock_ (nodeChainDB node) noPunishment . certRb)
       (predecessor : map NotOrigin blks)
       blks
  where
-  cfg = nodeTopLevelConfig node
-  leiosView = SJust (ltlcLeios (configLedger cfg))
-  certRb prev blk = case prev of
+  leiosView = SJust (ltlcLeios (configLedger (nodeTopLevelConfig node)))
+  certRb prev = case prev of
     Origin -> SNothing
     NotOrigin p ->
       certRbInfo
-        (configBlock cfg)
-        (getHeader blk)
-        (NotOrigin (blockSlot p))
         leiosView
-        (latestAnnouncement (getHeader p))
+        (HeaderState (NotOrigin (getAnnTip (getHeader p))) (latestAnnouncement (getHeader p)))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =

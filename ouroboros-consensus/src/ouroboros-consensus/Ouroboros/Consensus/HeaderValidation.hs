@@ -609,13 +609,13 @@ data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
   , hwtCertRbInfo :: !(StrictMaybe CertRbInfo)
-  -- ^ What checking the Leios certificate in the header's block takes, if the
-  -- header claims that its block contains one; see 'certRbInfo'
+  -- ^ What checking a Leios certificate in the header's block takes, if
+  -- anything is certifiable there; see 'certRbInfo'
   --
   -- A valid header claims a certificate only if its predecessor announced
-  -- something certifiable, in an era with Leios, so this is 'SJust' exactly
-  -- when a valid header claims one. On the ChainDB's selection, whose blocks
-  -- are valid, it is 'SNothing'.
+  -- something certifiable, in an era with Leios, so this is 'SJust' whenever a
+  -- valid header claims one. On the ChainDB's selection, whose blocks are
+  -- valid, it is 'SNothing'.
   --
   -- The header commits only to its predecessor's hash, so this is knowledge
   -- of the chain the header arrived on rather than of the header. It is
@@ -636,34 +636,28 @@ deriving anyclass instance
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 
--- | What checking the Leios certificate in a header's block takes, if the header
--- claims that its block contains one, given the slot of the header's
--- predecessor, the Leios part of the ledger view at the header's slot, and the
--- chain-dependent state as of that predecessor
+-- | What checking a Leios certificate in a header's block takes, if anything is
+-- certifiable there, given the Leios part of the ledger view at the header's
+-- slot and the header state as of its predecessor
 --
--- WARNING: This does not validate the header. If the header claims a
--- certificate and the unticked state has a certifiable announcement, then this
--- returns that announcement, even if ticking the state to the header's slot
--- would rule it out, which makes the header invalid. Only apply it to a header
--- known to be valid.
+-- WARNING: This does not validate the header. If the unticked state has a
+-- certifiable announcement, then this returns that announcement, even if
+-- ticking the state to the header's slot would rule it out, which makes a
+-- header claiming a certificate invalid. Only apply it to a header known to be
+-- valid.
 certRbInfo ::
   forall blk.
   BlockSupportsProtocol blk =>
-  BlockConfig blk ->
-  Header blk ->
-  WithOrigin SlotNo ->
   StrictMaybe LeiosLedgerView ->
-  ChainDepState (BlockProtocol blk) ->
+  HeaderState blk ->
   StrictMaybe CertRbInfo
-certRbInfo bcfg hdr predecessorSlot leiosView predChainDep
-  | getContainsLeiosCert p (validateView bcfg hdr)
-  , NotOrigin slot <- predecessorSlot
-  , Just ann <- getCertifiableLeiosAnnouncement p predChainDep
+certRbInfo leiosView predState
+  | NotOrigin predTip <- headerStateTip predState
+  , Just ann <-
+      getCertifiableLeiosAnnouncement (Proxy @(BlockProtocol blk)) (headerStateChainDep predState)
   , SJust view <- leiosView =
-      SJust $ MkCertRbInfo slot ann view
+      SJust $ MkCertRbInfo (annTipSlotNo predTip) ann view
   | otherwise = SNothing
- where
-  p = Proxy @(BlockProtocol blk)
 
 instance
   ( Show (HeaderHash blk)
