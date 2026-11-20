@@ -766,7 +766,7 @@ initPerasEpochContextResolverFromUntickedState
           Left err ->
             PerasEpochContextResolverError (show err)
           Right eraIndexedEpochToPerasRoundInfo ->
-            createBoundedEpochContextResolverFromUntickedState
+            makeEpochContextResolverFromUntickedState
               newPerasEpochContextResolver
               eraIndexedEpochToPerasRoundInfo
               ledgerConfig
@@ -823,7 +823,7 @@ tickPerasEpochContextResolver
       Right (NextEpoch eraIndexedEpochToPerasRoundInfo) ->
         -- Exactly one epoch boundary was crossed: advance the two-epoch window
         -- incrementally (the current context becomes the previous one).
-        createBoundedEpochContextResolverFromTickedState
+        makeEpochContextResolverFromTickedState
           (advancePerasEpochContextResolver perasEpochContextResolver)
           eraIndexedEpochToPerasRoundInfo
           ledgerConfig
@@ -841,7 +841,7 @@ tickPerasEpochContextResolver
         -- handle this case in a way that doesn't break the more lenient
         -- test suites, where we might tick the ledger far ahead of its tip.
         -- See: https://github.com/tweag/cardano-peras/issues/260
-        createBoundedEpochContextResolverFromTickedState
+        makeEpochContextResolverFromTickedState
           newPerasEpochContextResolver
           eraIndexedEpochToPerasRoundInfo
           ledgerConfig
@@ -853,12 +853,15 @@ tickPerasEpochContextResolver
     timeResolutionContext =
       TimeResolutionContext ledgerConfig ledgerState
 
--- | Build a 'PerasEpochContextResolver' from unticked ledger and header states.
+-- | Build a 'BoundedPerasEpochContext' from unticked ledger and header states,
+-- and then uses the supplied embedding function
+-- `PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk`
+-- to turn it into a 'PerasEpochContextResolver'.
 --
 -- NOTE: the embedding function allows us to share the same logic depending on
 -- whether we are creating a fresh epoch context resolver or advancing an
 -- existing one.
-createBoundedEpochContextResolverFromUntickedState ::
+makeEpochContextResolverFromUntickedState ::
   forall blk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
@@ -870,7 +873,7 @@ createBoundedEpochContextResolverFromUntickedState ::
   LedgerState blk EmptyMK ->
   HeaderState blk ->
   PerasEpochContextResolver blk
-createBoundedEpochContextResolverFromUntickedState
+makeEpochContextResolverFromUntickedState
   embedF
   eraIndexedEpochToRoundInfo
   ledgerConfig
@@ -882,7 +885,7 @@ createBoundedEpochContextResolverFromUntickedState
           Left err ->
             PerasEpochContextResolverError err
           Right params ->
-            createBoundedEpochCOntextResolver
+            makeEpochContextResolver
               embedF
               eiEpochToPerasRoundInfo
               params
@@ -891,12 +894,15 @@ createBoundedEpochContextResolverFromUntickedState
       NoPerasEnabled ->
         embedF NoPerasEnabled
 
--- | Build a 'PerasEpochContextResolver' from ticked ledger and header states.
+-- | Build a 'BoundedPerasEpochContext' from ticked ledger and header states,
+-- and then uses the supplied embedding function
+-- `PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk`
+-- to turn it into a 'PerasEpochContextResolver'.
 --
 -- NOTE: the embedding function allows us to share the same logic depending on
 -- whether we are creating a fresh epoch context resolver or advancing an
 -- existing one.
-createBoundedEpochContextResolverFromTickedState ::
+makeEpochContextResolverFromTickedState ::
   forall blk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
@@ -908,7 +914,7 @@ createBoundedEpochContextResolverFromTickedState ::
   Ticked LedgerState blk EmptyMK ->
   Ticked (HeaderState blk) ->
   PerasEpochContextResolver blk
-createBoundedEpochContextResolverFromTickedState
+makeEpochContextResolverFromTickedState
   embedF
   eraIndexedEpochToRoundInfo
   ledgerConfig
@@ -920,7 +926,7 @@ createBoundedEpochContextResolverFromTickedState
           Left err ->
             PerasEpochContextResolverError err
           Right params ->
-            createBoundedEpochCOntextResolver
+            makeEpochContextResolver
               embedF
               eiEpochToPerasRoundInfo
               params
@@ -929,8 +935,11 @@ createBoundedEpochContextResolverFromTickedState
       NoPerasEnabled ->
         embedF NoPerasEnabled
 
--- | Create a 'PerasEpochContextResolver' from a given 'EraIndexed' epoch-to-round
-createBoundedEpochCOntextResolver ::
+-- | Build a 'BoundedPerasEpochContext' from a given 'EraIndexed' epoch-to-round
+-- info, and then uses the supplied function
+-- `PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk`
+-- to turn it into a 'PerasEpochContextResolver'.
+makeEpochContextResolver ::
   forall blk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
@@ -942,7 +951,7 @@ createBoundedEpochCOntextResolver ::
   PoolDistr ->
   Nonce ->
   PerasEpochContextResolver blk
-createBoundedEpochCOntextResolver
+makeEpochContextResolver
   embedF
   eraIndexedEpochToPerasRoundInfo
   params
