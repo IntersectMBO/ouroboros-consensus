@@ -16,6 +16,7 @@ import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
 import qualified Test.Consensus.Mempool.StateMachine (tests)
+import qualified Test.Consensus.Mempool.TryAddTx (tests)
 import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
@@ -69,6 +70,7 @@ tests =
         , Test.Consensus.Mempool.Capacity.tests
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
+        , Test.Consensus.Mempool.TryAddTx.tests
         ]
     , testGroup
         "Peras"
