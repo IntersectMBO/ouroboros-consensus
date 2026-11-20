@@ -68,6 +68,7 @@ const sidebars = {
       items: ['references/index',
               'references/glossary',
               'references/key_type_families_and_classes',
+              'references/decoder_types',
               'references/haddocks',
               'references/data_flow',
               'references/block_diagrams_of_data',
