@@ -25,6 +25,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , initializeLeiosOutstanding
   , newLeiosJobPool
   , acquireEbBody
+  , holdForgedEb
   , recordReferencedPoint
   , focusElectionIfUnfocused
   , focusCertifiedEb
@@ -74,6 +75,7 @@ import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , ElectionId (..)
@@ -236,11 +238,12 @@ instance Semigroup PeerOffer where
 data LeiosOutstanding peer = MkLeiosOutstanding
   { ebState :: !(Map LeiosPoint EbState)
   -- ^ Per-point state for every endorser block point this node is tracking.
-  -- Three things add an entry: the announcement that takes an election's
-  -- focus, a verified certificate ('trackCertifiedEb'), and the start-up
-  -- seeding ('initializeLeiosOutstanding') of the endorser blocks whose
-  -- closures the LeiosDb already holds (merely to avoid refetching them). An
-  -- offer never does, and is only ever acted on for a point already here.
+  -- Four things add an entry: the announcement that takes an election's
+  -- focus, the node's own forge ('holdForgedEb'), a verified certificate
+  -- ('trackCertifiedEb'), and the start-up seeding
+  -- ('initializeLeiosOutstanding') of the endorser blocks whose closures the
+  -- LeiosDb already holds (merely to avoid refetching them). An offer never
+  -- does, and is only ever acted on for a point already here.
   --
   -- Each point is fetched on its own, even when another point names the same
   -- endorser block, so the ledger's bounds an entry is held to never change:
@@ -375,6 +378,44 @@ acquireEbBody point jobPool =
       -- Already acquired -- e.g. a concurrent redundant delivery landed
       -- first; keep the existing pool rather than clobbering it.
       BodyAcquired{} -> Just st
+
+-- | The node's own forge produced the endorser block of this hash in this
+-- election, and its body and closure have been written, so hold it with no job
+-- left, and focus the election on it unless another endorser block took the
+-- focus first. Also returns the acquisitions not yet emitted at its point.
+--
+-- As for 'acquireEbBody', there is no intermediate state: until the writes
+-- land, a peer offering the same point (another leader of the slot built the
+-- same endorser block) may be fetched from redundantly.
+holdForgedEb ::
+  ElectionId ->
+  EndorserBlockHash ->
+  -- | the size of the body
+  BytesSize ->
+  LeiosOutstanding peer ->
+  (LeiosOutstanding peer, [LeiosAcquisition])
+holdForgedEb elId ebHash size outstanding
+  | electionSlot elId < outstandingPrunedSlot outstanding = (outstanding, [])
+  | otherwise =
+      ( focusElectionIfUnfocused elId ebHash $
+          alterEbState point (\_ -> Just $ MkEbState onset (BodyAcquired Jobs.emptyJobPool)) outstanding
+      , acquired
+      )
+ where
+  point = MkLeiosPoint (electionSlot elId) ebHash
+  -- A forged endorser block records no onset: its age on arrival says nothing
+  -- about diffusion.
+  (onset, acquired) = case Map.lookup point (ebState outstanding) of
+    Just (MkEbState onset' (BodyAcquired jobPool))
+      -- An empty pool means the body and closure were emitted, except for a
+      -- body too big for its bounds. Our forge produces no such endorser
+      -- block: it fits each one to its slot's bounds. For the closure, that
+      -- relies on a tx's measure bounding its bytes, as
+      -- prop_dijkstraEbTxSizeBounded checks for Dijkstra.
+      | Jobs.nullJobPool jobPool -> (onset', [])
+      | otherwise -> (onset', [AcquiredEbTxs point])
+    Just (MkEbState onset' NoBody) -> (onset', [AcquiredEb point size, AcquiredEbTxs point])
+    Nothing -> (SNothing, [AcquiredEb point size, AcquiredEbTxs point])
 
 -- | Record that this point is referenced --- announced, or named by a verified
 -- certificate --- along with its slot's wall-clock onset if known. A

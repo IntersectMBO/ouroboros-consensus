@@ -10,6 +10,7 @@ module Ouroboros.Consensus.BlockchainTime.API
   , knownSlotWatcher
   ) where
 
+import Cardano.Slotting.Time (RelativeTime)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
@@ -34,8 +35,8 @@ data BlockchainTime m = BlockchainTime
     via OnlyCheckWhnfNamed "BlockchainTime" (BlockchainTime m)
 
 data CurrentSlot
-  = -- | The current slot is known
-    CurrentSlot !SlotNo
+  = -- | The current slot is known, and so is its wall-clock onset
+    CurrentSlot !SlotNo !RelativeTime
   | -- | The current slot is not yet known
     --
     -- This only happens when the tip of the ledger is so far behind that we
@@ -58,20 +59,20 @@ knownSlotWatcher ::
   forall m.
   IOLike m =>
   BlockchainTime m ->
-  -- | Action to execute
-  (SlotNo -> m ()) ->
-  Watcher m SlotNo SlotNo
+  -- | Action to execute, given the current slot and its wall-clock onset
+  (SlotNo -> RelativeTime -> m ()) ->
+  Watcher m (SlotNo, RelativeTime) SlotNo
 knownSlotWatcher btime notify =
   Watcher
-    { wFingerprint = id
+    { wFingerprint = fst
     , wInitial = Nothing
-    , wNotify = notify
+    , wNotify = uncurry notify
     , wReader = getCurrentSlot'
     }
  where
-  getCurrentSlot' :: STM m SlotNo
+  getCurrentSlot' :: STM m (SlotNo, RelativeTime)
   getCurrentSlot' = do
     mSlot <- getCurrentSlot btime
     case mSlot of
       CurrentSlotUnknown -> retry
-      CurrentSlot s -> return s
+      CurrentSlot s onset -> return (s, onset)

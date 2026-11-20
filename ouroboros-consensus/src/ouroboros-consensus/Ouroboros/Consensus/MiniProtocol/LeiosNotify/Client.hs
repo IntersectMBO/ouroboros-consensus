@@ -70,7 +70,7 @@ awaitImmTipCanForecastNow ::
 awaitImmTipCanForecastNow cfg readImmutableLedger readCurrentSlot =
   readCurrentSlot >>= \case
     CurrentSlotUnknown -> retry
-    CurrentSlot slot -> do
+    CurrentSlot slot _onset -> do
       immLedger <- readImmutableLedger
       case runExcept $
         forecastFor

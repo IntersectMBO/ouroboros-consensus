@@ -10,7 +10,8 @@
 -- Taking in a reply is where the node acquires an endorser block or its
 -- transactions, so it is also where it emits each acquisition, once the write
 -- is durable: 'AcquiredEb' when the body is, and 'AcquiredEbTxs' when no job of
--- its closure remains.
+-- its closure remains. An endorser block the node forged is acquired here too,
+-- as one that arrived with no peer ('acquireForgedEb').
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , ExnLeiosFetchInvalidReply (..)
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , nextLeiosFetchJob
   , processLeiosBlock
   , processLeiosBlockTxs
+  , acquireForgedEb
   ) where
 
 import Cardano.Ledger.Binary (DecoderError)
@@ -27,7 +29,7 @@ import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Foldable (fold)
+import Data.Foldable (fold, for_, toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -50,8 +52,10 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
+  , ElectionId (..)
   , EndorserBlock
   , EndorserBlockHash
+  , ForgedEndorserBlock (..)
   , LeiosEbByteSizes (..)
   , LeiosPoint (..)
   , LeiosTx (..)
@@ -60,6 +64,7 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   , deserialiseEndorserBlock
   , encodeEndorserBlockSize
+  , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
   , hashSerialisedEndorserBlock
@@ -76,6 +81,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
   , LeiosOutstanding (..)
   , acquireEbBody
   , completeTxRequest
+  , ebStateOnset
+  , holdForgedEb
   , newLeiosJobPool
   , refundEbRequest
   , refundTxRequest
@@ -93,6 +100,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), offsetsTo
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
+  , awaitAll
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -384,6 +392,43 @@ settleBody ctx peer point eb bodyWritten = do
   refs = IntMap.fromList (zip [0 ..] (endorserBlockReferences eb))
   arrived bucket =
     TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
+
+-- | Acquire an endorser block the node's own forge produced in this election,
+-- as one that arrived with no peer: write it and all its txs, and once both
+-- writes land, hold it with no job left ('holdForgedEb') and emit the
+-- acquisitions not yet emitted at its point.
+--
+-- Its bytes are not checked: the forge built the body from these very txs.
+--
+-- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
+-- write as well as the body's.
+acquireForgedEb ::
+  IOLike m =>
+  LeiosFetchClientContext m peer ->
+  ElectionId ->
+  ForgedEndorserBlock ->
+  m ()
+acquireForgedEb ctx elId forged = do
+  bodyWritten <- writeEbBody lfcWriter point eb mempty
+  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  awaitAll [void bodyWritten, txsWritten]
+  (onset, acquired) <- modifyMVar lfcOutstanding $ \outstanding -> do
+    let (outstanding', acquired) = holdForgedEb elId ebHash (encodeEndorserBlockSize eb) outstanding
+    atomically $ mapM_ lfcNotify acquired
+    pure
+      (outstanding', (maybe SNothing ebStateOnset (Map.lookup point (ebState outstanding)), acquired))
+  void $ tryPutMVar lfcReady ()
+  -- Read after emitting, so that the acquisitions' ages run until then.
+  now <- systemTimeCurrent lfcSystemTime
+  for_ acquired $
+    traceWith lfcTracer . \case
+      AcquiredEb{} -> TraceLeiosFetchClientBlockAcquired point (ageAt now onset)
+      AcquiredEbTxs{} -> TraceLeiosFetchClientBlockTxsAcquired point (ageAt now onset)
+ where
+  MkLeiosFetchClientContext{lfcWriter, lfcOutstanding, lfcReady, lfcNotify, lfcSystemTime, lfcTracer} = ctx
+  eb = forgedEbBody forged
+  ebHash = endorserBlockHash eb
+  point = MkLeiosPoint (electionSlot elId) ebHash
 
 -- | Take in transactions that arrived in reply to this request.
 processLeiosBlockTxs ::
