@@ -21,13 +21,10 @@ import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.SOP (All)
-import Data.SOP.Constraint (Top)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block.SupportsPeras (PerasVotingCommittee)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderState)
 import Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerState)
 import Ouroboros.Consensus.Ledger.Tables (HasLedgerTables)
@@ -54,8 +51,7 @@ deriving instance NoThunks (PerasVotingCommittee blk) => NoThunks (PerasState bl
 deriving instance Generic (PerasState blk)
 
 initPerasState ::
-  ( All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
+  ( StateSupportsPerasEpochContext blk
   , HasLedgerTables LedgerState blk
   ) =>
   LedgerCfg LedgerState blk ->

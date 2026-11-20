@@ -28,7 +28,6 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (mapMaybe)
-import Data.SOP (All, Top)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -74,8 +73,7 @@ newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk
 
 mkInitDb ::
   forall m blk backend.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsLeios blk
@@ -176,7 +174,6 @@ implMkLedgerDb ::
   , -- for validation, which needs 'ApplyBlock ExtLedgerState'
     BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
-  , All Top (HardForkIndices blk)
   ) =>
   LedgerDBHandle m blk ->
   SnapshotManager m blk (StateRef m ExtLedgerState blk) ->
@@ -205,7 +202,6 @@ mkInternals ::
   , BlockSupportsLeios blk
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
-  , All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
   ) =>
   LedgerDB m blk ->
@@ -324,7 +320,6 @@ implValidate ::
   , HasCallStack
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , BlockSupportsLeios blk
   ) =>

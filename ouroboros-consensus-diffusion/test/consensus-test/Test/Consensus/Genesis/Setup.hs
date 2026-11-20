@@ -22,7 +22,6 @@ import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
-import Data.SOP (All, Top)
 import Ouroboros.Consensus.Block.Abstract
   ( ChainHash (..)
   , ConvertRawHash
@@ -35,7 +34,6 @@ import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
 import Ouroboros.Consensus.Block.SupportsLeios (BlockSupportsLeios)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -156,8 +154,7 @@ runSimStrictShutdownOrThrow action =
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
 -- property on the final 'StateView'.
 runGenesisTest ::
-  ( All Top (HardForkIndices blk)
-  , Condense (StateView blk)
+  ( Condense (StateView blk)
   , CondenseList (NodeState blk)
   , ShowProxy blk
   , ShowProxy (Header blk)
@@ -220,8 +217,7 @@ _runGenesisTest' schedulerConfig genesisTest makeProperty = idempotentIOProperty
 -- and checks whether the given property holds on the resulting 'StateView'.
 runConformanceTest ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , Condense (StateView blk)
+  ( Condense (StateView blk)
   , CondenseList (NodeState blk)
   , ShowProxy blk
   , ShowProxy (Header blk)
