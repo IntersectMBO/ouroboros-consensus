@@ -977,14 +977,7 @@ runThreadNetwork
                 -- because of a block rejection.
                 --
                 -- Only Byron has EBBs, and Byron has no Leios.
-                void $
-                  ChainDB.addBlock
-                    chainDB
-                    InvalidBlockPunishment.noPunishment
-                    (pointSlot p)
-                    SNothing
-                    SNothing
-                    ebb
+                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment SNothing ebb
                 pure forged
 
       -- This variable holds the number of the earliest slot in which the

@@ -65,7 +65,7 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
-  , certifiedLeiosAnnouncement
+  , certRbInfo
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -83,7 +83,7 @@ import Control.Monad.Except
 import Data.Coerce
 import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.Typeable (Typeable)
 import Data.Void (Void)
@@ -94,7 +94,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Leios.Protocol
-  ( LeiosAnnouncement
+  ( CertRbInfo (..)
   , LeiosLedgerView
   , LeiosProtocol (..)
   )
@@ -608,29 +608,18 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
-  , hwtPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ The slot of the header's predecessor on the chain it arrived on
+  , hwtCertRbInfo :: !(StrictMaybe CertRbInfo)
+  -- ^ What checking the Leios certificate in the header's block takes, if the
+  -- header claims that its block contains one; see 'certRbInfo'
+  --
+  -- A valid header claims a certificate only if its predecessor announced
+  -- something certifiable, in an era with Leios, so this is 'SJust' exactly
+  -- when a valid header claims one.
   --
   -- The header commits only to its predecessor's hash, so this is knowledge
-  -- of that chain rather than of the header. It is nonetheless unambiguous,
-  -- since every chain carrying this header carries the same predecessor.
-  , hwtLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
-  -- ^ 'SNothing' if and only if the header's era has no Leios
-  --
-  -- The ledger view is a property of the slot, so applying the header's block
-  -- in that slot does not change it: the state just before the block and the
-  -- state the block produced give the same view.
-  , hwtCertifiedAnnouncement :: !(StrictMaybe LeiosAnnouncement)
-  -- ^ What the header's predecessor announced, if the header claims that its
-  -- block contains a Leios certificate, which then certifies that; see
-  -- 'certifiedLeiosAnnouncement'
-  --
-  -- INVARIANT: 'SJust' exactly when the header claims that its block contains
-  -- a Leios certificate, which a valid header claims only if its predecessor
-  -- announced something certifiable.
-  --
-  -- Like 'hwtPredecessorSlot', this is knowledge of the chain the header
-  -- arrived on, and unambiguous for the same reason.
+  -- of the chain the header arrived on rather than of the header. It is
+  -- nonetheless unambiguous, since every chain carrying this header carries
+  -- the same predecessor.
   }
   deriving Generic
 
@@ -646,25 +635,31 @@ deriving anyclass instance
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 
--- | The announcement that the Leios certificate in a header's block certifies,
--- if the header claims that its block contains one, given the chain-dependent
--- state as of the header's predecessor
+-- | What checking the Leios certificate in a header's block takes, if the header
+-- claims that its block contains one, given the slot of the header's
+-- predecessor, the Leios part of the ledger view at the header's slot, and the
+-- chain-dependent state as of that predecessor
 --
 -- WARNING: This does not validate the header. If the header claims a
 -- certificate and the unticked state has a certifiable announcement, then this
 -- returns that announcement, even if ticking the state to the header's slot
 -- would rule it out, which makes the header invalid. Only apply it to a header
 -- known to be valid.
-certifiedLeiosAnnouncement ::
+certRbInfo ::
   forall blk.
   BlockSupportsProtocol blk =>
   BlockConfig blk ->
   Header blk ->
+  WithOrigin SlotNo ->
+  StrictMaybe LeiosLedgerView ->
   ChainDepState (BlockProtocol blk) ->
-  StrictMaybe LeiosAnnouncement
-certifiedLeiosAnnouncement bcfg hdr predChainDep
-  | getContainsLeiosCert p (validateView bcfg hdr) =
-      maybeToStrictMaybe $ getCertifiableLeiosAnnouncement p predChainDep
+  StrictMaybe CertRbInfo
+certRbInfo bcfg hdr predecessorSlot leiosView predChainDep
+  | getContainsLeiosCert p (validateView bcfg hdr)
+  , NotOrigin slot <- predecessorSlot
+  , Just ann <- getCertifiableLeiosAnnouncement p predChainDep
+  , SJust view <- leiosView =
+      SJust $ MkCertRbInfo slot ann view
   | otherwise = SNothing
  where
   p = Proxy @(BlockProtocol blk)

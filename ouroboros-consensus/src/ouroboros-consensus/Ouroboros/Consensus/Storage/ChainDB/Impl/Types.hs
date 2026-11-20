@@ -102,7 +102,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (CertRbInfo, LeiosAnnouncement)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -624,13 +624,9 @@ data BlockToAdd m blk = BlockToAdd
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
   , blockToAdd :: !blk
-  , blockPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ The slot of the block's predecessor, as validating its header revealed it
-  , blockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
-  -- ^ The Leios part of the ledger view at the block's slot, as validating its
-  -- header revealed it
-  , blockCertifiedAnnouncement :: !(StrictMaybe LeiosAnnouncement)
-  -- ^ The announcement the header claims its block certifies
+  , blockCertRbInfo :: !(StrictMaybe CertRbInfo)
+  -- ^ What checking the block's Leios certificate takes, if it contains one,
+  -- as validating its header revealed it
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
   , varBlockProcessed :: !(StrictTMVar m (AddBlockResult blk))
@@ -671,21 +667,17 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
-  StrictMaybe LeiosLedgerView ->
-  StrictMaybe LeiosAnnouncement ->
+  StrictMaybe CertRbInfo ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessorSlot leiosView certifiedAnnouncement blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish certRb blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
           , blockToAdd = blk
-          , blockPredecessorSlot = predecessorSlot
-          , blockLeiosLedgerView = leiosView
-          , blockCertifiedAnnouncement = certifiedAnnouncement
+          , blockCertRbInfo = certRb
           , varBlockWrittenToDisk
           , varBlockProcessed
           }

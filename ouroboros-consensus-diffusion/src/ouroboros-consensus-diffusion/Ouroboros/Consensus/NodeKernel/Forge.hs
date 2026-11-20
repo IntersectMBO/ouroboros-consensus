@@ -27,7 +27,7 @@ import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
-  , certifiedLeiosAnnouncement
+  , certRbInfo
   , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract
@@ -36,7 +36,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Leios.Protocol
-  ( LeiosAnnouncement
+  ( CertRbInfo
   , LeiosLedgerView
   , LeiosProtocol (getLeiosLedgerView)
   )
@@ -185,11 +185,11 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     mempool
     currentSlot
     (fbTxs fbArgs)
-    (pointSlot forgingOnTopOf)
-    leiosView
-    ( certifiedLeiosAnnouncement
+    ( certRbInfo
         (configBlock cfg)
         (getHeader (Block.rankingBlock forgeRes))
+        (pointSlot forgingOnTopOf)
+        leiosView
         predChainDep
     )
     (Block.rankingBlock forgeRes)
@@ -315,15 +315,11 @@ addBlockToChainDB ::
   Mempool m blk ->
   SlotNo ->
   [Validated (GenTx blk)] ->
-  -- | The slot of the block's predecessor
-  WithOrigin SlotNo ->
-  -- | The Leios part of the ledger view at the block's slot
-  StrictMaybe LeiosLedgerView ->
-  -- | The announcement the block's Leios certificate certifies
-  StrictMaybe LeiosAnnouncement ->
+  -- | What checking the block's Leios certificate takes, if it contains one
+  StrictMaybe CertRbInfo ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosView certifiedAnnouncement newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot txs certRb newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -335,7 +331,7 @@ addBlockToChainDB trace chainDB mempool currentSlot txs predecessorSlot leiosVie
   uninterruptibleMask_ $ do
     result <-
       lift $
-        ChainDB.addBlockAsync chainDB noPunish predecessorSlot leiosView certifiedAnnouncement newBlock
+        ChainDB.addBlockAsync chainDB noPunish certRb newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 

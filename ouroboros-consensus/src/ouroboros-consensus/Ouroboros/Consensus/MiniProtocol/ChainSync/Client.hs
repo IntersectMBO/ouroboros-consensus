@@ -1203,12 +1203,10 @@ withTime bcfg fragment (HeaderStateHistory history) =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
-      , hwtPredecessorSlot = predecessorSlot
-      , -- The state the header's block produced gives the view at the header's
-        -- slot; see 'hwtLeiosLedgerView'.
-        hwtLeiosLedgerView = hswtLeiosLedgerView hsWt
-      , hwtCertifiedAnnouncement =
-          certifiedLeiosAnnouncement bcfg hdr $
+      , hwtCertRbInfo =
+          -- The state the header's block produced gives the view at the
+          -- header's slot, since the view is a property of the slot.
+          certRbInfo bcfg hdr predecessorSlot (hswtLeiosLedgerView hsWt) $
             headerStateChainDep (hswtHeaderState predHsWt)
       }
 
@@ -1958,13 +1956,13 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
-        , hwtPredecessorSlot = AF.headSlot theirFrag
-        , hwtLeiosLedgerView =
-            maybeToStrictMaybe $
-              getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView
-        , hwtCertifiedAnnouncement =
-            certifiedLeiosAnnouncement (configBlock cfg) hdr $
-              headerStateChainDep (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory))
+        , hwtCertRbInfo =
+            certRbInfo
+              (configBlock cfg)
+              hdr
+              (AF.headSlot theirFrag)
+              (maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView)
+              (headerStateChainDep (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory)))
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same

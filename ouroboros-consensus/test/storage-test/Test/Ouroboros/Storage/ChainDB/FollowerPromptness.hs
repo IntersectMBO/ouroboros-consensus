@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | In the context of diffusion pipelining, it is important that tentative
@@ -25,6 +24,7 @@ import Control.Monad (forever)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, contramapM, mkTracer, traceWith)
+import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SNothing))
@@ -33,7 +33,6 @@ import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Leios.Protocol (trivialLeiosLedgerView)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -161,26 +160,11 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
           Chain.AddBlock hdrHash -> addTiming varFollowerInstrTimings hdrHash
           Chain.RollBack _ -> pure ()
 
-  -- Add all blocks to the ChainDB, each with its predecessor's slot: the
-  -- previous block of the same update, or else the tip the update extends.
-  let addBlocks tipSlot = \case
-        [] -> pure tipSlot
-        blk : blks -> do
-          ChainDB.addBlock_
-            chainDB
-            Punishment.noPunishment
-            tipSlot
-            (trivialLeiosLedgerView (Proxy @TestBlock))
-            SNothing
-            blk
-          addBlocks (NotOrigin (blockSlot blk)) blks
-      addUpdates tipSlot = \case
-        [] -> pure ()
-        AddBlock blk : upds ->
-          addBlocks tipSlot [blk] >>= \tipSlot' -> addUpdates tipSlot' upds
-        SwitchFork p blks : upds ->
-          addBlocks (pointSlot p) blks >>= \tipSlot' -> addUpdates tipSlot' upds
-  addUpdates Origin chainUpdates
+  -- Add all blocks to the ChainDB.
+  let addBlock = ChainDB.addBlock_ chainDB Punishment.noPunishment SNothing
+  for_ chainUpdates \case
+    AddBlock blk -> addBlock blk
+    SwitchFork _ blks -> for_ blks addBlock
 
   tentativeHeaderSetTimings <- readTVarIO varTentativeSetTimings
   tentativeHeaderUnsetTimings <- readTVarIO varTentativeUnsetTimings

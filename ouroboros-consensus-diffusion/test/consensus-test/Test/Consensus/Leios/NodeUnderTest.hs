@@ -92,7 +92,7 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.HeaderValidation (certifiedLeiosAnnouncement)
+import Ouroboros.Consensus.HeaderValidation (certRbInfo)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
@@ -245,9 +245,7 @@ addBlocksAfter node predecessor blks =
           ChainDB.addBlock_
             (nodeChainDB node)
             noPunishment
-            (blockSlot <$> prev)
-            leiosView
-            (certified prev blk)
+            (certRb prev blk)
             blk
       )
       (predecessor : map NotOrigin blks)
@@ -255,10 +253,15 @@ addBlocksAfter node predecessor blks =
  where
   cfg = nodeTopLevelConfig node
   leiosView = SJust (ltlcLeios (configLedger cfg))
-  certified prev blk = case prev of
+  certRb prev blk = case prev of
     Origin -> SNothing
     NotOrigin p ->
-      certifiedLeiosAnnouncement (configBlock cfg) (getHeader blk) (latestAnnouncement (getHeader p))
+      certRbInfo
+        (configBlock cfg)
+        (getHeader blk)
+        (NotOrigin (blockSlot p))
+        leiosView
+        (latestAnnouncement (getHeader p))
 
 -- | The node's node-to-node applications, at every mini-protocol's bytes.
 type NodeApps m =

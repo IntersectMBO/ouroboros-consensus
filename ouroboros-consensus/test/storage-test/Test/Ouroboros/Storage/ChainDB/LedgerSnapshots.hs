@@ -5,7 +5,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | Test that ledger snapshots are performed at /predictable/ points on the
@@ -32,7 +31,6 @@ import Data.Traversable (for)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Leios.Protocol (trivialLeiosLedgerView)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -150,16 +148,10 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
 
   (chainDB, _lgrHasFS) <- openChainDB registry (isSnapshottingTracer isSnapshottingTMVar)
 
-  addBlockCount <- for (tsBlocksToAdd testSetup) \(predecessorSlot, blk) -> do
+  addBlockCount <- for (tsBlocksToAdd testSetup) \blk -> do
     isNotSnapshotting <- atomically $ isEmptyTMVar isSnapshottingTMVar
 
-    ChainDB.addBlock_
-      chainDB
-      Punishment.noPunishment
-      predecessorSlot
-      (trivialLeiosLedgerView (Proxy @TestBlock))
-      SNothing
-      blk
+    ChainDB.addBlock_ chainDB Punishment.noPunishment SNothing blk
     threadDelay 1
     pure $ AddBlockCount (if isNotSnapshotting then 0 else 1) 1
 
@@ -268,21 +260,13 @@ instance Arbitrary TestSnapshotPolicyArgs where
     tenMinutes :: DiffTime
     tenMinutes = 10 * 60
 
--- | Add blocks to the ChainDB in this order, each with the slot of its
--- predecessor.
-tsBlocksToAdd :: TestSetup -> [(WithOrigin SlotNo, TestBlock)]
+-- | Add blocks to the ChainDB in this order.
+tsBlocksToAdd :: TestSetup -> [TestBlock]
 tsBlocksToAdd testSetup =
   permute tsPerm $
-    foldMap withPredecessorSlots (tsMainChain : tsForks)
+    foldMap AF.toOldestFirst (tsMainChain : tsForks)
  where
   TestSetup{tsMainChain, tsForks, tsPerm} = testSetup
-
-  withPredecessorSlots frag =
-    zip
-      (AF.anchorToSlotNo (AF.anchor frag) : map (NotOrigin . blockSlot) blks)
-      blks
-   where
-    blks = AF.toOldestFirst frag
 
 tsSnapshotPolicyArgs :: TestSetup -> SnapshotPolicyArgs
 tsSnapshotPolicyArgs TestSetup{tsTestSnapshotPolicyArgs} =
@@ -383,14 +367,8 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
 
   (chainDB, lgrHasFS) <- openChainDB registry (tracer <> isSnapshottingTracer isSnapshottingTMVar)
 
-  for_ (tsBlocksToAdd testSetup) \(predecessorSlot, blk) -> do
-    ChainDB.addBlock_
-      chainDB
-      Punishment.noPunishment
-      predecessorSlot
-      (trivialLeiosLedgerView (Proxy @TestBlock))
-      SNothing
-      blk
+  for_ (tsBlocksToAdd testSetup) \blk -> do
+    ChainDB.addBlock_ chainDB Punishment.noPunishment SNothing blk
     threadDelay 1
     atomically $ isEmptyTMVar isSnapshottingTMVar >>= guard
 

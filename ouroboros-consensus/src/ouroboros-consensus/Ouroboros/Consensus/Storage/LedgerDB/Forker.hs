@@ -74,7 +74,7 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , HeaderWithTime (..)
   , annTipHash
-  , certifiedLeiosAnnouncement
+  , certRbInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -544,8 +544,8 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
       Left err -> pure (Left err)
       Right st -> do
         -- The state the block produced can translate the block's slot, which
-        -- is that state's tip slot, and gives the ledger view at that slot; see
-        -- 'hwtLeiosLedgerView'.
+        -- is that state's tip slot, and gives the ledger view at that slot,
+        -- since the view is a property of the slot.
         let !hwt =
               HeaderWithTime
                 { hwtHeader = hdr
@@ -554,10 +554,13 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
                       Qry.runQueryPure
                         (Qry.slotToWallclock (blockSlot hdr))
                         (hardForkSummary lcfg (ledgerState st))
-                , hwtPredecessorSlot = AF.headSlot acc
-                , hwtLeiosLedgerView = leiosLedgerViewAtTip lcfg (ledgerState st)
-                , hwtCertifiedAnnouncement =
-                    certifiedLeiosAnnouncement (configBlock (getExtLedgerCfg cfg)) hdr predChainDep
+                , hwtCertRbInfo =
+                    certRbInfo
+                      (configBlock (getExtLedgerCfg cfg))
+                      hdr
+                      (AF.headSlot acc)
+                      (leiosLedgerViewAtTip lcfg (ledgerState st))
+                      predChainDep
                 }
         pushAndTrace (acc AF.:> hwt) (chainDepOf st) aps'
 

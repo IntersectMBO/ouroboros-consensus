@@ -65,11 +65,11 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Cert
-  ( LeiosCertRejection
+  ( LeiosCertRejection (..)
   , leiosClaim
   , verifyLeiosClaim
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (CertRbInfo (..))
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -314,9 +314,7 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
-  StrictMaybe LeiosLedgerView ->
-  StrictMaybe LeiosAnnouncement ->
+  StrictMaybe CertRbInfo ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -523,7 +521,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        lift (checkLeiosCert cdb blockPredecessorSlot blockLeiosLedgerView blockCertifiedAnnouncement b) >>= \case
+        lift (checkLeiosCert cdb blockCertRbInfo b) >>= \case
           Right () ->
             chainSelectionForBlock
               cdb
@@ -1508,45 +1506,43 @@ addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
 -- If the certificate is valid, then record the claim it establishes; see
 -- 'LeiosValidClaims'. If that claim is new, then pass it, with the announcement
 -- it certifies, to 'cdbOnNewLeiosValidClaim'. If the certificate is invalid,
--- then so is the block. A block making an already established
--- claim need not have its certificate verified /now/.
+-- then so is the block. A block making an already established claim need not
+-- have its certificate verified /now/.
 checkLeiosCert ::
   (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
   ChainDbEnv m blk ->
-  -- | The slot of the block's predecessor
-  WithOrigin SlotNo ->
-  StrictMaybe LeiosLedgerView ->
-  -- | The announcement the block's certificate certifies
-  StrictMaybe LeiosAnnouncement ->
+  -- | What checking the certificate takes, as validating the block's header
+  -- revealed it
+  StrictMaybe CertRbInfo ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbLeiosValidClaims, cdbOnNewLeiosValidClaim} predecessorSlot leiosView certifiedAnnouncement b =
+checkLeiosCert CDB{cdbLeiosValidClaims, cdbOnNewLeiosValidClaim} certRb b =
   case blockLeiosCert b of
     Nothing -> pure $ Right ()
-    Just cert -> case runExcept (leiosClaim (blockPrevHash b) predecessorSlot) of
-      Left rejection -> pure $ Left rejection
-      Right claim -> do
-        claims <- readTVarIO cdbLeiosValidClaims
-        if
-          | isLeiosValidClaim claim claims -> pure $ Right ()
-          | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
-              Left rejection -> pure $ Left rejection
-              Right () -> do
-                case certifiedAnnouncement of
-                  -- Unreachable, even from the tests, though the types allow it:
-                  -- 'leiosHeaderChecks' and 'blockMatchesHeader' ensure that a block
-                  -- containing a certificate has an announcement for it to certify.
-                  -- The certificate itself is valid, so this does not reject the
-                  -- block; parking and header validation still guard its selection.
-                  -- Recording nothing lets a later block making this claim pass
-                  -- on its endorser block.
-                  SNothing -> pure ()
-                  SJust ann -> atomically $ do
-                    inserted <- insertLeiosValidClaim claim <$> readTVar cdbLeiosValidClaims
-                    whenJust inserted $ \claims' -> do
-                      writeTVar cdbLeiosValidClaims claims'
-                      cdbOnNewLeiosValidClaim claim ann
-                pure $ Right ()
+    Just cert -> case certRb of
+      -- Unreachable, even from the tests, though the types allow it:
+      -- 'blockMatchesHeader' ensures that a block contains a certificate
+      -- exactly when its header claims one, and 'leiosHeaderChecks' that a
+      -- valid header claims one only in an era with Leios, after a
+      -- certifiable announcement. Without these, the certificate cannot be
+      -- checked, so the block counts as invalid, as in an era without Leios.
+      SNothing -> pure $ Left LeiosCertWithoutCommittee
+      SJust (MkCertRbInfo predecessorSlot ann leiosView) ->
+        case runExcept (leiosClaim (blockPrevHash b) (NotOrigin predecessorSlot)) of
+          Left rejection -> pure $ Left rejection
+          Right claim -> do
+            claims <- readTVarIO cdbLeiosValidClaims
+            if
+              | isLeiosValidClaim claim claims -> pure $ Right ()
+              | otherwise -> case runExcept (verifyLeiosClaim (SJust leiosView) cert claim) of
+                  Left rejection -> pure $ Left rejection
+                  Right () -> do
+                    atomically $ do
+                      inserted <- insertLeiosValidClaim claim <$> readTVar cdbLeiosValidClaims
+                      whenJust inserted $ \claims' -> do
+                        writeTVar cdbLeiosValidClaims claims'
+                        cdbOnNewLeiosValidClaim claim ann
+                    pure $ Right ()
 
 {-------------------------------------------------------------------------------
   Diffusion pipelining
