@@ -24,7 +24,6 @@ import Control.Monad (when)
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
-import Data.Bifunctor
 import Data.Char (toLower)
 import qualified Data.Text.Lazy as T
 import Ouroboros.Consensus.Block
@@ -142,7 +141,7 @@ instance StandardHash blk => Show (Error blk) where
 -------------------------------------------------------------------------------}
 
 data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
+  { inState :: ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK
   -- ^ Ledger state (without tables) that will be used to index the snapshot.
   , inStream :: IO (SomeBackend YieldArgs)
   -- ^ Yield arguments for producing a stream of TxOuts
@@ -165,8 +164,8 @@ data OutEnv backend = OutEnv
 
 data SomeBackend c where
   SomeBackend ::
-    StreamingBackend IO backend LedgerState (CardanoBlock StandardCrypto) =>
-    c IO backend LedgerState (CardanoBlock StandardCrypto) -> SomeBackend c
+    StreamingBackend IO backend (CardanoBlock StandardCrypto) =>
+    c IO backend (CardanoBlock StandardCrypto) -> SomeBackend c
 
 instance NoThunks (SomeBackend c) where
   wNoThunks _ (SomeBackend _) = pure Nothing
@@ -244,7 +243,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT
       (Error (CardanoBlock StandardCrypto))
       IO
-      (LedgerState (CardanoBlock StandardCrypto) EmptyMK, CRC)
+      (ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK, CRC)
   getState ds = do
     eState <- lift $ do
       when interactive $ putStr $ "Reading ledger state from " <> snapshotToDirName ds <> "..."
@@ -257,7 +256,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           err
       Right st -> lift $ do
         when interactive $ putColored Green True " Done"
-        pure . first ledgerState $ st
+        pure st
 
   -- Get the CRC of the input snapshot if the backend matches the expected one
   getMetadata ::
@@ -284,7 +283,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     writeSnapshotMetadata outSomeHasFS outSnap bknd
 
   checkSnapSlot ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK ->
     DiskSnapshot ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
   checkSnapSlot st ds =
@@ -327,7 +326,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
 
   -- Produce an OutEnv from the given arguments
   getOutEnv ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO (OutEnv backend)
   getOutEnv st = case to of
     Snapshot (StandaloneSnapshot _ Mem) _ -> do
@@ -353,7 +352,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           UTxOHDLSMSnapshot
 
   stream ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK ->
     IO (SomeBackend YieldArgs) ->
     IO (SomeBackend SinkArgs) ->
     ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
@@ -361,14 +360,14 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT $
       bracket
         ((,) <$> mYieldArgs <*> mSinkArgs)
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 (CardanoBlock StandardCrypto)))
              ) -> do
               releaseYieldArgs yArgs
               releaseSinkArgs sArgs
         )
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 (CardanoBlock StandardCrypto)))
              ) -> do
               runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
         )

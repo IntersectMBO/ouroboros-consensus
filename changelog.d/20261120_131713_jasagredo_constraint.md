@@ -8,17 +8,14 @@ For top level release notes, leave all the headers commented out.
 ### Breaking
 
 - Monomorphize types to `ExtLedgerState`:
-  - `Forker`
-  - `ForkerEnv`
-  - `LedgerDB`
-  - `LedgerDBEnv`
-  - `LedgerDBHandle`
-  - `LedgerDBState`
-  - `LedgerDbCfgF`
-  - `LedgerSeq`
-  - `SuccessForkerAction`
-  - `TestInternals`
+  - `Forker`, `ForkerEnv`, `SuccessForkerAction`
   - `ValidateArgs`
+  - `LedgerDB`, `LedgerDBEnv`, `LedgerDBHandle`, `LedgerDBState`. `LedgerDbCfgF`
+  - `LedgerSeq`
+  - `TestInternals`
+  - `StateRef`, `LedgerTablesHandle`
+  - `LSMConstraints`
+  - `StreamingBackend`, `YieldArgs`, `SinkArgs`, `Yield` and `Sink`
 - Deleted `LedgerDB'`, `TestInternals'`, `Forker'` and `LedgerSeq'`.
 - Remove `All Top (HardForkIndices blk)` from
   `Ouroboros.Consensus.Peras.Context.embedBoundedEpochContext` which cascades as
