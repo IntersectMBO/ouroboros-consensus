@@ -66,7 +66,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Cert
   ( LeiosCertRejection
-  , LeiosClaim (..)
   , leiosClaim
   , verifyLeiosClaim
   )
@@ -1528,7 +1527,7 @@ checkLeiosCert CDB{cdbLeiosValidClaims} predecessorSlot leiosView certifiedAnnou
       Right claim -> do
         claims <- readTVarIO cdbLeiosValidClaims
         if
-          | isLeiosValidClaim (leiosClaimRbHash claim) claims -> pure $ Right ()
+          | isLeiosValidClaim claim claims -> pure $ Right ()
           | otherwise -> case runExcept (verifyLeiosClaim leiosView cert claim) of
               Left rejection -> pure $ Left rejection
               Right () -> do

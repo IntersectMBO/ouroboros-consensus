@@ -4,6 +4,7 @@ module Test.Consensus.Leios.ValidClaims (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Keys (KeyHash (..))
 import qualified Data.ByteString.Short as SBS
+import Data.Word (Word8)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
@@ -22,30 +23,33 @@ tests =
   testGroup
     "Leios valid claims"
     [ testCase "a recorded claim is valid, and others are not" $
-        map (`isLeiosValidClaim` claims) [rbA, rbB, rbC, rbD]
+        map (`isLeiosValidClaim` claims) [claimA, claimB, claimC, claimD]
           @?= [True, True, True, False]
     , testCase "pruning forgets the claims older than the slot" $
-        map (`isLeiosValidClaim` pruneLeiosValidClaims (SlotNo 2) claims) [rbA, rbB, rbC]
+        map (`isLeiosValidClaim` pruneLeiosValidClaims (SlotNo 2) claims) [claimA, claimB, claimC]
           @?= [False, False, True]
     , testCase "a claim older than the slot pruned to is not recorded" $
         isLeiosValidClaim
-          rbA
-          ( insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) announcement $
+          claimA
+          ( insertLeiosValidClaim claimA announcement $
               pruneLeiosValidClaims (SlotNo 2) emptyLeiosValidClaims
           )
           @?= False
     ]
  where
   claims =
-    insertLeiosValidClaim (LeiosClaim (SlotNo 2) rbC) announcement $
-      insertLeiosValidClaim (LeiosClaim (SlotNo 1) rbB) announcement $
-        insertLeiosValidClaim (LeiosClaim (SlotNo 0) rbA) announcement emptyLeiosValidClaims
+    insertLeiosValidClaim claimC announcement $
+      insertLeiosValidClaim claimB announcement $
+        insertLeiosValidClaim claimA announcement emptyLeiosValidClaims
 
-rbA, rbB, rbC, rbD :: RankingBlockHash
-rbA = MkRankingBlockHash (UnsafeHash (SBS.replicate 32 1))
-rbB = MkRankingBlockHash (UnsafeHash (SBS.replicate 32 2))
-rbC = MkRankingBlockHash (UnsafeHash (SBS.replicate 32 3))
-rbD = MkRankingBlockHash (UnsafeHash (SBS.replicate 32 4))
+claimA, claimB, claimC, claimD :: LeiosClaim
+claimA = LeiosClaim (SlotNo 0) (rbHash 1)
+claimB = LeiosClaim (SlotNo 1) (rbHash 2)
+claimC = LeiosClaim (SlotNo 2) (rbHash 3)
+claimD = LeiosClaim (SlotNo 3) (rbHash 4)
+
+rbHash :: Word8 -> RankingBlockHash
+rbHash = MkRankingBlockHash . UnsafeHash . SBS.replicate 32
 
 -- | What each of 'claims' announces; these tests do not depend on it.
 announcement :: LeiosAnnouncement
