@@ -38,7 +38,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   )
 import Ouroboros.Consensus.Network.NodeToNode (Codecs (..))
 import qualified Ouroboros.Consensus.Network.NodeToNode as Consensus.N2N
-import Ouroboros.Consensus.Node (stdVersionDataNTN)
+import Ouroboros.Consensus.Node (defaultMiniProtocolParameters, stdVersionDataNTN)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
 import Ouroboros.Consensus.Storage.ChainDB.API (Follower (..))
@@ -167,7 +167,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     mkMiniProtocol miniProtocolStart miniProtocolNum limits proto =
       MiniProtocol
         { miniProtocolNum
-        , miniProtocolLimits = limits N2N.defaultMiniProtocolParameters
+        , miniProtocolLimits = limits version defaultMiniProtocolParameters
         , miniProtocolRun = ResponderProtocolOnly proto
         , miniProtocolStart
         }
