@@ -101,7 +101,8 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.Protocol (CertRbInfo, LeiosAnnouncement)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -407,6 +408,9 @@ data ChainDbEnv m blk = CDB
   , cdbLeiosValidClaims :: !(StrictTVar m LeiosValidClaims)
   -- ^ The claims that the Leios certificates of arriving blocks established;
   -- see 'LeiosValidClaims'.
+  , cdbOnNewLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
+  -- ^ See
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Args.cdbsOnNewLeiosValidClaim'.
   }
   deriving Generic
 
@@ -620,11 +624,9 @@ data BlockToAdd m blk = BlockToAdd
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
   , blockToAdd :: !blk
-  , blockPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ The slot of the block's predecessor, as validating its header revealed it
-  , blockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
-  -- ^ The Leios part of the ledger view at the block's slot, as validating its
-  -- header revealed it
+  , blockCertRbInfo :: !(StrictMaybe CertRbInfo)
+  -- ^ What checking the block's Leios certificate takes, if it contains one,
+  -- as validating its header revealed it
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
   , varBlockProcessed :: !(StrictTMVar m (AddBlockResult blk))
@@ -665,19 +667,17 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
-  StrictMaybe LeiosLedgerView ->
+  StrictMaybe CertRbInfo ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessorSlot leiosView blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish certRb blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
           , blockToAdd = blk
-          , blockPredecessorSlot = predecessorSlot
-          , blockLeiosLedgerView = leiosView
+          , blockCertRbInfo = certRb
           , varBlockWrittenToDisk
           , varBlockProcessed
           }

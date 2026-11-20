@@ -34,7 +34,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
+import Ouroboros.Consensus.Leios.Protocol (CertRbInfo)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
@@ -71,10 +71,8 @@ import Ouroboros.Network.SizeInBytes
 -- what ties the annotation to the very header the block was matched against.
 data MatchedBlock blk = MatchedBlock
   { matchedBlock :: !blk
-  , matchedBlockPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ The slot of the block's predecessor
-  , matchedBlockLeiosLedgerView :: !(StrictMaybe LeiosLedgerView)
-  -- ^ The Leios part of the ledger view at the block's slot
+  , matchedBlockCertRbInfo :: !(StrictMaybe CertRbInfo)
+  -- ^ What checking the block's Leios certificate takes, if it contains one
   }
 
 -- | Abstract over the ChainDB
@@ -85,8 +83,7 @@ data ChainDbView m blk = ChainDbView
   , getMaxSlotNo :: STM m MaxSlotNo
   , addBlockAsync ::
       InvalidBlockPunishment m ->
-      WithOrigin SlotNo ->
-      StrictMaybe LeiosLedgerView ->
+      StrictMaybe CertRbInfo ->
       blk ->
       m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
@@ -186,8 +183,7 @@ mkBlockFetchConsensusInterface
           Just
             MatchedBlock
               { matchedBlock = b
-              , matchedBlockPredecessorSlot = hwtPredecessorSlot hwt
-              , matchedBlockLeiosLedgerView = hwtLeiosLedgerView hwt
+              , matchedBlockCertRbInfo = hwtCertRbInfo hwt
               }
       | otherwise = Nothing
 
@@ -222,8 +218,7 @@ mkBlockFetchConsensusInterface
     mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt matched = void $ do
       let MatchedBlock
             { matchedBlock = blk
-            , matchedBlockPredecessorSlot
-            , matchedBlockLeiosLedgerView
+            , matchedBlockCertRbInfo
             } = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
@@ -260,8 +255,7 @@ mkBlockFetchConsensusInterface
       addBlockAsync
         chainDB
         punishment
-        matchedBlockPredecessorSlot
-        matchedBlockLeiosLedgerView
+        matchedBlockCertRbInfo
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo
