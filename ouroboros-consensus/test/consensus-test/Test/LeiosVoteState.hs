@@ -9,9 +9,13 @@
 
 module Test.LeiosVoteState (tests) where
 
+import Cardano.Binary.FixedSizeCodec (encodeFixedSized)
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (deriveVerKeyDSIGN)
+  ( DSIGNAlgorithm (deriveVerKeyDSIGN, signDSIGN)
   )
+import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Write (toStrictByteString)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( atomically
   , newTVar
@@ -21,22 +25,34 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import Data.Bits (testBit, (.&.), (.|.))
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import Data.Function (on)
 import Data.List (nub, nubBy)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Ratio ((%))
 import qualified Data.Set as Set
+import Data.Word (Word8)
 import LeiosDemoTypes
   ( LeiosSeatId (..)
+  , LeiosSignature
+  , LeiosSignatureBytes (..)
   , LeiosSigningKey
   , LeiosVote (..)
   , RbHash (..)
   , VoteInvalid (..)
   , Weight
+  , decodeLeiosVote
+  , encodeLeiosVote
+  , encodeRbHash
   , getLeiosSeatId
   , leiosCommitteeSize
+  , leiosSignatureSize
+  , mkLeiosSignatureBytes
   , signLeiosVote
+  , unpackLeiosSignature
   , validateLeiosVote
   )
 import LeiosTxCache.API (maxAnnouncementCount)
@@ -44,6 +60,7 @@ import LeiosVoteState
   ( AddVoteResult (..)
   , VoteTally (..)
   , addVote
+  , disconnectsPeer
   , getNextVote
   , leiosVoteWindow
   , newLeiosVoteState
@@ -55,12 +72,14 @@ import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeios
 import Test.QuickCheck
   ( Gen
   , Property
+  , arbitrary
   , choose
   , counterexample
   , elements
   , forAll
   , forAllShrink
   , listOf1
+  , oneof
   , property
   , shrink
   , shrinkIntegral
@@ -100,6 +119,10 @@ tests =
         "a replayed vote is taken once, and only for a votable point"
         prop_replayTakesEachVoteOnce
     , testProperty "the vote window is the newest blocks" prop_voteWindowIsNewestBlocks
+    , testProperty
+        "a vote's signature decodes as any compressed bytes"
+        prop_voteCodecTakesCompressedBytes
+    , testProperty "a signed vote's encoding is unchanged" prop_voteEncodingUnchanged
     ]
 
 -- | Votes arriving in any order and any number of times, as a fixed set of them
@@ -110,7 +133,9 @@ data Replay = Replay
   , rpVotable :: ![Int]
   -- ^ The points the vote state is told it may take votes for.
   , rpBad :: ![Int]
-  -- ^ The votes that carry a signature the committee rejects.
+  -- ^ The votes that carry a well-formed signature the committee rejects.
+  , rpGarbage :: ![Int]
+  -- ^ The votes whose signature bytes are not a point at all; none in 'rpBad'.
   , rpArrivals :: ![Int]
   -- ^ The order the votes arrive in, repeats included.
   }
@@ -124,21 +149,37 @@ genReplay = do
   n <- choose (1, 2 * maxAnnouncementCount + leiosVoteWindow)
   votable <- take leiosVoteWindow <$> (shuffle =<< sublistOf [0 .. n - 1])
   bad <- sublistOf [0 .. n - 1]
+  garbage <- sublistOf (filter (`notElem` bad) [0 .. n - 1])
   rounds <- choose (1, 3)
   arrivals <- concat <$> vectorOf rounds (shuffle [0 .. n - 1])
-  pure $ Replay n votable bad arrivals
+  pure $ Replay n votable bad garbage arrivals
 
--- | Fewer points (dropping every mention of the removed ones), fewer votable or
--- bad points, or fewer arrivals; each step makes the replay strictly smaller.
+-- | Fewer points (dropping every mention of the removed ones), fewer votable,
+-- bad or garbage points, or fewer arrivals; each step makes the replay strictly
+-- smaller.
 shrinkReplay :: Replay -> [Replay]
-shrinkReplay (Replay n votable bad arrivals) =
-  [ Replay n' (filter (< n') votable) (filter (< n') bad) (filter (< n') arrivals)
+shrinkReplay (Replay n votable bad garbage arrivals) =
+  [ Replay n' (below n' votable) (below n' bad) (below n' garbage) (below n' arrivals)
   | n' <- shrinkIntegral n
   , n' >= 1
   ]
-    ++ [Replay n votable' bad arrivals | votable' <- shrinkList shrinkNothing votable]
-    ++ [Replay n votable bad' arrivals | bad' <- shrinkList shrinkNothing bad]
-    ++ [Replay n votable bad arrivals' | arrivals' <- shrinkList shrinkNothing arrivals]
+    ++ [Replay n votable' bad garbage arrivals | votable' <- shrinkList shrinkNothing votable]
+    ++ [Replay n votable bad' garbage arrivals | bad' <- shrinkList shrinkNothing bad]
+    ++ [Replay n votable bad garbage' arrivals | garbage' <- shrinkList shrinkNothing garbage]
+    ++ [Replay n votable bad garbage arrivals' | arrivals' <- shrinkList shrinkNothing arrivals]
+ where
+  below n' = filter (< n')
+
+-- | Signature bytes that pass the decoder's checks, length and compression
+-- flag, but are not a point of the signature group.
+genMalformedSignature :: Gen LeiosSignatureBytes
+genMalformedSignature =
+  ( do
+      first <- (.|. 0x80) <$> arbitrary
+      rest <- vectorOf (fromIntegral leiosSignatureSize - 1) arbitrary
+      pure $ fromJust $ mkLeiosSignatureBytes (BS.pack (first : rest))
+  )
+    `suchThat` (isNothing . unpackLeiosSignature)
 
 -- | What 'addVote' did with one arrival, without the tally it reports.
 data Outcome = OAdded | OKnown | ONotVotable | OInvalid VoteInvalid | ONoCommittee
@@ -153,47 +194,61 @@ outcome = \case
   NoCommittee -> ONoCommittee
 
 -- | The exact outcome of every arrival: a vote for a point outside the window is
--- dropped before validation, whatever its signature; inside it a bad vote is
--- rejected each time, and a good one is taken on its first arrival and known
--- after that.
+-- dropped before validation, whatever its signature, garbage included; inside
+-- it a garbage or bad vote is rejected each time, and a good one is taken on its
+-- first arrival and known after that.
 replayOracle :: Replay -> [Outcome]
-replayOracle (Replay _ votable bad arrivals) = go Set.empty arrivals
+replayOracle (Replay _ votable bad garbage arrivals) = go Set.empty arrivals
  where
   go _ [] = []
   go taken (i : is)
     | i `notElem` votable = ONotVotable : go taken is
+    | i `elem` garbage = OInvalid MalformedSignature : go taken is
     | i `elem` bad = OInvalid InvalidSignature : go taken is
     | i `Set.member` taken = OKnown : go taken is
     | otherwise = OAdded : go (Set.insert i taken) is
 
--- | Every vote is taken at most once and only for a votable point, and only
--- the votes taken reach subscribers, however often and in whatever order a
--- fixed set of votes keeps arriving.
+-- | Every vote is taken at most once and only for a votable point, only the
+-- votes taken reach subscribers, and only a garbage signature on a votable
+-- point disconnects the peer, however often and in whatever order a fixed set
+-- of votes keeps arriving.
 prop_replayTakesEachVoteOnce :: Property
 prop_replayTakesEachVoteOnce =
   forAll genCommittee $ \testCommittee ->
     forAll (genKeyNotIn testCommittee) $ \outsider ->
-      forAllShrink genReplay shrinkReplay $ \replay ->
-        let key = head testCommittee.allKeys
-            vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) testCommittee.committee
-            point i = MkRbHash (BS8.pack (printf "%032d" i))
-            vote i
-              | i `elem` replay.rpBad = signLeiosVote outsider vid (point i)
-              | otherwise = signLeiosVote key vid (point i)
-            votable = Set.fromList (point <$> replay.rpVotable)
-            expected = replayOracle replay
-         in runSimOrThrow $ do
-              st <-
-                newLeiosVoteState
-                  (pure (Just (testCommittee.committee, testQuorumThreshold)))
-                  (pure (`Set.member` votable))
-              sub <- subscribeVotes st
-              results <- mapM (fmap outcome . addVote st . vote) replay.rpArrivals
-              published <- drain sub
-              let taken = [vote i | (i, OAdded) <- zip replay.rpArrivals expected]
-              pure $
-                counterexample "outcomes differ from the oracle" (results === expected)
-                  .&&. counterexample "published votes differ from those taken" (published === taken)
+      forAll genMalformedSignature $ \garbageSignature ->
+        forAllShrink genReplay shrinkReplay $ \replay ->
+          prop_replay testCommittee outsider garbageSignature replay
+
+prop_replay :: TestCommittee -> LeiosSigningKey -> LeiosSignatureBytes -> Replay -> Property
+prop_replay testCommittee outsider garbageSignature replay =
+  let key = head testCommittee.allKeys
+      vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) testCommittee.committee
+      point i = MkRbHash (BS8.pack (printf "%032d" i))
+      -- A seat no committee member holds: garbage is garbage whatever the seat.
+      noSeat = LeiosSeatId $ fromIntegral $ leiosCommitteeSize testCommittee.committee
+      vote i
+        | i `elem` replay.rpGarbage =
+            MkLeiosVote (point i) (if even i then vid else noSeat) garbageSignature
+        | i `elem` replay.rpBad = signLeiosVote outsider vid (point i)
+        | otherwise = signLeiosVote key vid (point i)
+      votable = Set.fromList (point <$> replay.rpVotable)
+      expected = replayOracle replay
+   in runSimOrThrow $ do
+        st <-
+          newLeiosVoteState
+            (pure (Just (testCommittee.committee, testQuorumThreshold)))
+            (pure (`Set.member` votable))
+        sub <- subscribeVotes st
+        results <- mapM (addVote st . vote) replay.rpArrivals
+        published <- drain sub
+        let taken = [vote i | (i, OAdded) <- zip replay.rpArrivals expected]
+        pure $
+          counterexample "outcomes differ from the oracle" (map outcome results === expected)
+            .&&. counterexample "published votes differ from those taken" (published === taken)
+            .&&. counterexample
+              "disconnects differ from the garbage on votable points"
+              (map disconnectsPeer results === map (== OInvalid MalformedSignature) expected)
  where
   drain sub =
     timeout 0.1 (atomically (getNextVote sub)) >>= \case
@@ -216,6 +271,59 @@ prop_voteWindowIsNewestBlocks =
     pure (len, q)
   shrinkChainQuery (len, q) =
     [(len', q') | (len', q') <- shrink (len, q), len' >= 0, q' >= 0, q' <= len' + 2]
+
+-- | A vote's signature field: a real signature, garbage that passes the
+-- decoder's checks, any bytes of any length, or the right length with the
+-- compression flag clear.
+genSignatureField :: Gen [Word8]
+genSignatureField =
+  oneof
+    [ BS.unpack . leiosSignatureBytes . voteSignature
+        <$> (signLeiosVote <$> genLeiosSigningKey <*> pure (LeiosSeatId 0) <*> genRbHash)
+    , BS.unpack . leiosSignatureBytes <$> genMalformedSignature
+    , choose (0, 2 * size) >>= \len -> vectorOf len arbitrary
+    , (:) <$> ((.&. 0x7f) <$> arbitrary) <*> vectorOf (size - 1) arbitrary
+    ]
+ where
+  size = fromIntegral leiosSignatureSize
+
+-- | The decoder takes exactly the signature fields of the right length marked
+-- compressed, whatever else their bytes hold, and a vote it takes encodes back
+-- to the bytes it came from.
+prop_voteCodecTakesCompressedBytes :: Property
+prop_voteCodecTakesCompressedBytes =
+  forAll genRbHash $ \rbHash ->
+    forAllShrink genSignatureField (shrinkList shrink) $ \field ->
+      let wire =
+            toStrictByteString $
+              CBOR.encodeListLen 3
+                <> encodeRbHash rbHash
+                <> CBOR.encodeWord16 7
+                <> CBOR.encodeBytes (BS.pack field)
+          compressed =
+            length field == fromIntegral leiosSignatureSize && testBit (head field) 7
+       in case deserialiseFromBytes decodeLeiosVote (BSL.fromStrict wire) of
+            Left _ -> counterexample "rejected a compressed signature" (not compressed)
+            Right (rest, vote) ->
+              counterexample "took a signature that is not compressed" compressed
+                .&&. counterexample "left bytes over" (BSL.null rest)
+                .&&. toStrictByteString (encodeLeiosVote vote) === wire
+
+-- | A signed vote goes on the wire exactly as it did when its signature was
+-- held as a point: the signature's compressed encoding.
+prop_voteEncodingUnchanged :: Property
+prop_voteEncodingUnchanged =
+  forAll genLeiosSigningKey $ \key ->
+    forAll genRbHash $ \rbHash ->
+      forAll (LeiosSeatId <$> arbitrary) $ \vid ->
+        let signature = signDSIGN () rbHash key :: LeiosSignature
+            asPoint =
+              CBOR.encodeListLen 3
+                <> encodeRbHash rbHash
+                <> CBOR.encodeWord16 vid.leiosSeatIndex
+                <> encodeFixedSized signature
+         in toStrictByteString (encodeLeiosVote (signLeiosVote key vid rbHash))
+              === toStrictByteString asPoint
 
 -- | Past 'maxAnnouncementCount' distinct points, the first one seen is dropped:
 -- its vote is accepted again rather than reported as already known, while a
@@ -428,7 +536,7 @@ votesForEverySeat c rbHash =
 
 -- | The weight a vote carries, as the committee accounts for it.
 voteWeight :: TestCommittee -> LeiosVote -> Weight
-voteWeight c vote = either (const 0) id $ validateLeiosVote c.committee vote
+voteWeight c vote = either (const 0) fst $ validateLeiosVote c.committee vote
 
 -- | Votes for one point, one per distinct committee seat.
 --

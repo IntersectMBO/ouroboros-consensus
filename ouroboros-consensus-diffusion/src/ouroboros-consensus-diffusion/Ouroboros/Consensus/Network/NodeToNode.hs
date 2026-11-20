@@ -130,6 +130,7 @@ import LeiosVoteState
   , LeiosVoteState (..)
   , LeiosVoteSubscription (..)
   , VoteTally (..)
+  , disconnectsPeer
   , subscribeVotes
   )
 import qualified Network.Mux as Mux
@@ -742,6 +743,12 @@ mkHandlers
                     -- size, so rendering each one cost more than the vote.
                     forM_ vs $ \vote -> do
                       result <- addVote vote
+                      -- A signature that is not a point is garbage no honest
+                      -- peer sends: disconnect, as a vote that fails to decode
+                      -- does.
+                      when (disconnectsPeer result) $
+                        throwIO $
+                          Leios.LeiosNotifyMalformedVote vote
                       -- Traced on 'Added' only, so one line per distinct vote
                       -- rather than per arrival: the same vote reaches us from
                       -- every peer that has it, and those duplicates return
