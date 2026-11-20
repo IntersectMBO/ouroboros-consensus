@@ -533,7 +533,7 @@ initNodeKernel
         forever $ do
           (anc, forged) <- atomically $ readTQueue forgedEbs
           onForgedLeiosEb leiosFetchKernel anc forged
-    let onForgedEb hdr onset leiosView forged = do
+    let onForgedEb onset hdr leiosView forged = do
           mbValid <- validHeaderAnnouncement systemTime cfg hdr onset leiosView
           -- A forged header announces the endorser block forged with it.
           for_ mbValid $ \valid -> atomically $ do
@@ -585,7 +585,7 @@ initNodeKernel
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
-      (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+      (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
       STM m [MkBlockForging m blk] ->
       m Void
     blockForgingController st onForgedEb getBlockForging = go []
@@ -727,8 +727,9 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
-  -- | What 'forge' does with each endorser block it produces
-  (Header blk -> RelativeTime -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+  -- | What 'forge' does with each endorser block it produces, given the
+  -- wall-clock onset of the slot it forged it in
+  (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
   MkBlockForging m blk ->
   m (Thread m Void)
 forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
@@ -738,7 +739,7 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
     blockForgingMLabel
     finalize
     ( \bf -> knownSlotWatcher btime $
-        \currentSlot ->
+        \currentSlot slotOnset ->
           withEarlyExit_ $
             forge
               (forgeTracer tracers)
@@ -747,7 +748,7 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
               chainDB
               mempool
               bf
-              onForgedEb
+              (onForgedEb slotOnset)
               currentSlot
     )
  where

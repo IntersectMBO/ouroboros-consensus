@@ -124,17 +124,17 @@ hardForkBlockchainTime args = do
     m CurrentSlot
   checkValidClockChange (prevSlot, prevTime) (newSlot, newTime) =
     case (prevSlot, newSlot) of
-      (CurrentSlotUnknown, CurrentSlot _) ->
+      (CurrentSlotUnknown, CurrentSlot{}) ->
         -- Unknown-to-known typically happens when syncing catches up far
         -- enough that we can now know what the current slot is.
         return newSlot
-      (CurrentSlot _, CurrentSlotUnknown) ->
+      (CurrentSlot{}, CurrentSlotUnknown) ->
         -- Known-to-unknown can happen when the ledger is no longer being
         -- updated and time marches on past the end of the safe zone.
         return newSlot
       (CurrentSlotUnknown, CurrentSlotUnknown) ->
         return newSlot
-      (CurrentSlot m, CurrentSlot n)
+      (CurrentSlot m _, CurrentSlot n _)
         -- Normally we expect @n == m + 1@, but if the system is under heavy
         -- load, we might miss a slot.
         | m < n ->
@@ -172,5 +172,5 @@ getCurrentSlot' tracer SystemTime{..} run getBackoffDelay = do
       traceWith tracer $ TraceCurrentSlotUnknown now ex
       BackoffDelay delay <- getBackoffDelay
       return (CurrentSlotUnknown, now, delay)
-    Right (slot, _inSlot, timeLeft) -> do
-      return (CurrentSlot slot, now, timeLeft)
+    Right (slot, inSlot, timeLeft) -> do
+      return (CurrentSlot slot (addRelTime (negate inSlot) now), now, timeLeft)

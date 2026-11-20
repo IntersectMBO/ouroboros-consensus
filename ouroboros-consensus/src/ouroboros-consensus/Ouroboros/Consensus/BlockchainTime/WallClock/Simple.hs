@@ -49,9 +49,13 @@ simpleBlockchainTime registry time slotLen maxClockRewind = do
   -- The API is now a simple STM one
   return
     BlockchainTime
-      { getCurrentSlot = CurrentSlot <$> readTVar slotVar
+      { getCurrentSlot = (\slot -> CurrentSlot slot (slotOnset slot)) <$> readTVar slotVar
       }
  where
+  -- When the slot began, as 'slotFromUTCTime' divides time into slots.
+  slotOnset :: SlotNo -> RelativeTime
+  slotOnset (SlotNo slot) = RelativeTime (fromIntegral slot * getSlotLength slotLen)
+
   -- In each iteration of the loop, we recompute how long to wait until
   -- the next slot. This minimizes clock skew.
   loop ::

@@ -1541,12 +1541,6 @@ instance
       , "measure" .= jsonTxMeasure ebMeasure
       ]
       <> jsonTxEbMeasure (mmTxEbMeasure ebMeasure)
-  forMachine _dtal (TraceNoSlotOnset slotNo rbHash) =
-    mconcat
-      [ "kind" .= String "TraceNoSlotOnset"
-      , "slot" .= toJSON (unSlotNo slotNo)
-      , "rankingBlock" .= String (renderHeaderHash (Proxy @blk) rbHash)
-      ]
   forMachine _dtal (TraceDidntAdoptBlock slotNo _) =
     mconcat
       [ "kind" .= String "TraceDidntAdoptBlock"
@@ -1668,12 +1662,6 @@ instance
       <> Crypto.hashToTextAsHex (endorserBlockHash eb)
       <> " on top of "
       <> renderHeaderHash (Proxy @blk) rbHash
-  forHuman (TraceNoSlotOnset slotNo rbHash) =
-    "Could not compute the onset of slot "
-      <> showT (unSlotNo slotNo)
-      <> ", so did not take in the endorser block that "
-      <> renderHeaderHash (Proxy @blk) rbHash
-      <> " announces"
   forHuman (TraceDidntAdoptBlock slotNo _) =
     "Didn't adopt forged block in slot " <> showT (unSlotNo slotNo)
   forHuman (TraceForgedInvalidBlock slotNo _ reason) =
@@ -1737,7 +1725,6 @@ instance
     , CounterM "Forge.forged" Nothing
     ]
   asMetrics TraceForgedEndorserBlock{} = []
-  asMetrics TraceNoSlotOnset{} = []
   asMetrics (TraceDidntAdoptBlock _slot _) =
     [CounterM "Forge.didnt-adopt" Nothing]
   asMetrics (TraceForgedInvalidBlock _slot _ _) =
@@ -1780,8 +1767,6 @@ instance MetaTrace (TraceForgeEvent blk) where
     Namespace [] ["ForgedBlock"]
   namespaceFor TraceForgedEndorserBlock{} =
     Namespace [] ["ForgedEndorserBlock"]
-  namespaceFor TraceNoSlotOnset{} =
-    Namespace [] ["NoSlotOnset"]
   namespaceFor TraceDidntAdoptBlock{} =
     Namespace [] ["DidntAdoptBlock"]
   namespaceFor TraceForgedInvalidBlock{} =
@@ -1807,7 +1792,6 @@ instance MetaTrace (TraceForgeEvent blk) where
   severityFor (Namespace _ ["ForgingMempoolSnapshot"]) _ = Just Debug
   severityFor (Namespace _ ["ForgedBlock"]) _ = Just Info
   severityFor (Namespace _ ["ForgedEndorserBlock"]) _ = Just Info
-  severityFor (Namespace _ ["NoSlotOnset"]) _ = Just Error
   severityFor (Namespace _ ["DidntAdoptBlock"]) _ = Just Error
   severityFor (Namespace _ ["ForgedInvalidBlock"]) _ = Just Error
   severityFor (Namespace _ ["AdoptedBlock"]) _ = Just Info
@@ -2018,17 +2002,6 @@ instance MetaTrace (TraceForgeEvent blk) where
         , "  CBOR framing, and size includes the framing. txReferencesSize is zero"
         , "  when the measure has no reference size."
         ]
-  documentFor (Namespace _ ["NoSlotOnset"]) =
-    Just $
-      mconcat
-        [ "We forged an endorser block, but could not compute the wall-clock"
-        , "  onset of the current slot, so the node does not take it in: it"
-        , "  neither relays its announcement nor writes it, and so never offers"
-        , "  it. The ranking block is still added to the ChainDB."
-        , "\n"
-        , "  We record the current slot number and the hash of the ranking block"
-        , "  that announces the endorser block."
-        ]
   documentFor (Namespace _ ["DidntAdoptBlock"]) =
     Just $
       mconcat
@@ -2073,7 +2046,6 @@ instance MetaTrace (TraceForgeEvent blk) where
     , Namespace [] ["ForgingMempoolSnapshot"]
     , Namespace [] ["ForgedBlock"]
     , Namespace [] ["ForgedEndorserBlock"]
-    , Namespace [] ["NoSlotOnset"]
     , Namespace [] ["DidntAdoptBlock"]
     , Namespace [] ["ForgedInvalidBlock"]
     , Namespace [] ["AdoptedBlock"]
