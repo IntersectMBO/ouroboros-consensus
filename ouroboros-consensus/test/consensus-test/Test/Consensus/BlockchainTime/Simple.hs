@@ -350,7 +350,7 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
       slotsVar <- uncheckedNewTVarM []
       withWatcher
         "testOverrideDelay"
-        ( knownSlotWatcher btime $ \slotNo -> do
+        ( knownSlotWatcher btime $ \slotNo _onset -> do
             atomically $ modifyTVar slotsVar (slotNo :)
         )
         $ do

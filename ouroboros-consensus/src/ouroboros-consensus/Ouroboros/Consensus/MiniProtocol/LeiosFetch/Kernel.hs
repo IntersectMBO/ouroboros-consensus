@@ -369,7 +369,7 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
       -- reaches that far.
       mbHorizon = case currentSlot of
         CurrentSlotUnknown -> Nothing
-        CurrentSlot slot -> do
+        CurrentSlot slot _onset -> do
           llv <- either (const Nothing) id (forecastLeiosView slot)
           (_onset, slotLength) <-
             either (const Nothing) Just $

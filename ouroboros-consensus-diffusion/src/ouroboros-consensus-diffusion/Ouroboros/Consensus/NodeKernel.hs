@@ -690,7 +690,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     allocateForging
     finalizeForging
     ( \(bf, leiosDbWriter) -> knownSlotWatcher btime $
-        \currentSlot ->
+        \currentSlot _slotOnset ->
           withEarlyExit_ $
             forge
               (forgeTracer tracers)

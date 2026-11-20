@@ -135,7 +135,7 @@ readFetchModeDefault
       case (usingBootstrapPeers, mCurSlot) of
         (True, _) -> return FetchModeBulkSync
         (False, CurrentSlotUnknown) -> return FetchModeBulkSync
-        (False, CurrentSlot curSlot) -> do
+        (False, CurrentSlot curSlot _onset) -> do
           curChainSlot <- AF.headSlot <$> getCurrentChain
           let slotsBehind = case curChainSlot of
                 -- There's nothing in the chain. If the current slot is 0, then
