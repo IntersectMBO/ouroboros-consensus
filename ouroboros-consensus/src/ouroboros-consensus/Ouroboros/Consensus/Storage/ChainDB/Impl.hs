@@ -51,13 +51,11 @@ import Data.Foldable (for_)
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.SOP (All, Top)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
@@ -120,7 +118,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
 withDB ::
   forall m blk a.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
@@ -138,7 +135,6 @@ withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
 openDB ::
   forall m blk.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
@@ -155,7 +151,6 @@ openDB args = fst <$> openDBInternal args True
 openDBInternal ::
   forall m blk.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk

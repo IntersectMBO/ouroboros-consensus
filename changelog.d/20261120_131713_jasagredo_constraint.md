@@ -20,6 +20,9 @@ For top level release notes, leave all the headers commented out.
   - `TestInternals`
   - `ValidateArgs`
 - Deleted `LedgerDB'`, `TestInternals'`, `Forker'` and `LedgerSeq'`.
+- Remove `All Top (HardForkIndices blk)` from
+  `Ouroboros.Consensus.Peras.Context.embedBoundedEpochContext` which cascades as
+  a now redundant constraint all over the codebase.
 
 <!--
 ### Non-Breaking

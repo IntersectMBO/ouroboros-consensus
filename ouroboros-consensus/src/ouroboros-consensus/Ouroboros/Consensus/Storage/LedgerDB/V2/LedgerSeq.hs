@@ -1,4 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -51,13 +50,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 
 import Cardano.Ledger.BaseTypes
 import Data.Function (on)
-import Data.SOP.Constraint
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
-import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -78,20 +75,6 @@ import Ouroboros.Network.AnchoredSeq hiding
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import System.FS.CRC (CRC)
 import Prelude hiding (read)
-
-type LedgerSeqConstraints m blk =
-  ( IOLike m
-  , GetBlockKeySets blk
-  , LedgerSupportsProtocol blk
-  , BlockSupportsPeras blk
-  , StateSupportsPerasEpochContext blk
-  , All Top (HardForkIndices blk)
-  , BlockSupportsLeios blk
-  , LedgerSupportsProtocol blk
-  , BlockSupportsPeras blk
-  , All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
-  )
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -260,7 +243,12 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  LedgerSeqConstraints m blk =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , BlockSupportsLeios blk
+  , LedgerSupportsProtocol blk
+  ) =>
   ResolveEndorserBlock m ->
   LedgerDbCfg blk ->
   blk ->
@@ -273,7 +261,12 @@ reapplyThenPush doResolveEb cfg ap db = do
   pure db'
 
 reapplyBlock ::
-  LedgerSeqConstraints m blk =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , BlockSupportsLeios blk
+  , LedgerSupportsProtocol blk
+  ) =>
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
   ResolveEndorserBlock m ->

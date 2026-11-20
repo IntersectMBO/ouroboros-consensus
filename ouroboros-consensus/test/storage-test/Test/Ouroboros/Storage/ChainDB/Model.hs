@@ -107,11 +107,9 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
 import GHC.Generics (Generic)
-import Generics.SOP (All, Top)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -468,8 +466,7 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
@@ -502,8 +499,7 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -524,8 +520,7 @@ addPerasCert cfg cert m
 
 addPerasVote ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -549,8 +544,7 @@ addPerasVote cfg vote m =
 
 chainSelection ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerTablesAreTrivial ExtLedgerState blk
+  ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -681,8 +675,7 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -696,8 +689,7 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , MonadSTM m
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
@@ -723,8 +715,7 @@ addBlockPromise cfg blk m = (result, m')
 -- point.
 updateLoE ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerTablesAreTrivial ExtLedgerState blk
+  ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -929,8 +920,7 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -995,8 +985,7 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -1273,8 +1262,7 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  ( All Top (HardForkIndices blk)
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
