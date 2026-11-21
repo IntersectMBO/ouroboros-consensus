@@ -86,6 +86,7 @@ data TxTicket sz tx = TxTicket
 -- splitting and indexing by the ticket number.
 newtype TxSeq sz tx
   = TxSeq (StrictFingerTree (TxSeqMeasure sz) (TxTicket sz tx))
+  deriving newtype (Semigroup, Monoid)
   deriving stock Show
   deriving newtype NoThunks
 

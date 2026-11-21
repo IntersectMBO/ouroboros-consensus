@@ -27,7 +27,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Validation
   , RevalidateTxsResult (..)
-  , computeSnapshot
   , revalidateTxsFor
   , revalidateTxsFor'
   , validateNewTransaction
@@ -39,7 +38,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Conversions
   , snapshotFromIS
-  , snapshotFromValidTxs
+  , snapshotFromTxSeq
 
     -- * Ticking a ledger state
   , tickLedgerState
@@ -529,35 +528,6 @@ data RevalidateTxsResult blk
   -- ^ The previously valid transactions that were now invalid
   }
 
--- | Compute snapshot is largely the same as revalidate the transactions
--- but we ignore the diffs.
-computeSnapshot ::
-  forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  LedgerConfig blk ->
-  SlotNo ->
-  -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
-  -- | The tables with all the inputs for the transactions
-  LedgerTables blk ValuesMK ->
-  [TxTicket (MempoolMeasure blk) (Validated (GenTx blk))] ->
-  MempoolSnapshot blk
-computeSnapshot cfg slot st values txTickets =
-  let inputTxs = map wrap txTickets
-      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
-   in snapshotFromValidTxs
-        ( map unwrap $
-            validatedTxs $
-              reapplyTxs @blk @Discard cfg slot inputTxs $
-                applyMempoolDiffs values inputKeys st
-        )
-        (castPoint $ getTip st)
-        slot
- where
-  fst3 (x, _, _) = x
-  wrap = (\(TxTicket tx tk tz) -> (tx, (), (tk, tz)))
-  unwrap = (\(tx, (), (tk, tz)) -> (TxTicket tx tk tz))
-
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
@@ -574,37 +544,9 @@ snapshotFromIS ::
   MempoolSnapshot blk
 snapshotFromIS is =
   snapshotFromTxSeq
-    validatedTx
     (isTxs is)
-    (isTxIds is)
     (isTip is)
     (isSlotNo is)
-
--- | Create a Mempool Snapshot from a list of validated transactions.
---
--- Unlike 'snapshotFromIS' this has to build the transaction sequence and the
--- set of transaction ids, so it is @O(n)@ in the number of transactions and
--- computes the txid of every one of them. Only use it when there is no internal
--- state to take those from, for example after revalidating transactions in
--- 'computeSnapshot'.
-snapshotFromValidTxs ::
-  forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  [TxTicket (MempoolMeasure blk) (Validated (GenTx blk))] ->
-  Point blk ->
-  SlotNo ->
-  MempoolSnapshot blk
-snapshotFromValidTxs validTxs =
-  let (txs, txIds) =
-        Foldable.foldl'
-          ( \(accTxs, accTxIds) tx ->
-              ( accTxs TxSeq.:> tx
-              , Set.insert (txId (txForgetValidated (txTicketTx tx))) accTxIds
-              )
-          )
-          (TxSeq.Empty, Set.empty)
-          validTxs
-   in snapshotFromTxSeq id txs txIds
 
 -- | Create a Mempool Snapshot from an already built transaction sequence and
 -- the ids of the transactions in it.
@@ -614,15 +556,13 @@ snapshotFromValidTxs validTxs =
 -- the diffs alongside) can pass their sequence as it is instead of rebuilding
 -- it; @prj@ projects the validated transaction out of an element.
 snapshotFromTxSeq ::
-  forall blk tx.
+  forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  (tx -> Validated (GenTx blk)) ->
-  TxSeq (MempoolMeasure blk) tx ->
-  Set (GenTxId blk) ->
+  TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   Point blk ->
   SlotNo ->
   MempoolSnapshot blk
-snapshotFromTxSeq prj txs txIds tipPoint slot =
+snapshotFromTxSeq txs tipPoint slot =
   MempoolSnapshot
     { snapshotTxs = implSnapshotGetTxs
     , snapshotTxsAfter = implSnapshotGetTxsAfter
@@ -643,7 +583,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter =
-    (\x -> [(prj a, b, mmTxMeasure c) | (a, b, c) <- x])
+    (\x -> [(validatedTx a, b, mmTxMeasure c) | (a, b, c) <- x])
       . TxSeq.toTuples
       . snd
       . TxSeq.splitAfterTicketNo txs
@@ -668,12 +608,15 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
         txs
         blockLimit
     (inEb, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
-    txSeqToList = map (prj . TxSeq.txTicketTx) . TxSeq.toList
+    txSeqToList = map (validatedTx . TxSeq.txTicketTx) . TxSeq.toList
 
   implSnapshotGetTx ::
     TicketNo ->
     Maybe (Validated (GenTx blk))
-  implSnapshotGetTx = fmap prj . (txs `TxSeq.lookupByTicketNo`)
+  implSnapshotGetTx = fmap validatedTx . (txs `TxSeq.lookupByTicketNo`)
+
+  txIds :: Set (GenTxId blk)
+  txIds = Set.fromList . map (txId . txForgetValidated . validatedTx . txTicketTx) . TxSeq.toList $ txs
 
   implSnapshotHasTx ::
     GenTxId blk ->

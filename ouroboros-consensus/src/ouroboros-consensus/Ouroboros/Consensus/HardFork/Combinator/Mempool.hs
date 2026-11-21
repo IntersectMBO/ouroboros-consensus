@@ -48,7 +48,7 @@ import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 import Ouroboros.Network.Tx (HasRawTxId (..))
@@ -115,7 +115,7 @@ type DecomposedReapplyTxsResult extra xs wtd =
       , extra
       )
     ]
-    :.: FlipTickedLedgerState EmptyMK
+    :.: FlipTickedLedgerState ValuesMK
 
 instance
   ( CanHardFork xs
@@ -204,7 +204,7 @@ instance
               , [ (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx $ x, z1, z2)
                 | (x, z1, z2) <- val
                 ]
-              , FlipTickedLedgerState $ forgetLedgerTables st'
+              , FlipTickedLedgerState st'
               )
        where
         foldApplyTxs ::
