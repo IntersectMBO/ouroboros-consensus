@@ -65,7 +65,7 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
-  , certRbInfo
+  , leiosClaim
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -93,11 +93,8 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Leios.Protocol
-  ( CertRbInfo (..)
-  , LeiosLedgerView
-  , LeiosProtocol (..)
-  )
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
@@ -608,9 +605,9 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
-  , hwtCertRbInfo :: !(StrictMaybe CertRbInfo)
-  -- ^ What checking a Leios certificate in the header's block takes, if
-  -- anything is certifiable there; see 'certRbInfo'
+  , hwtLeiosClaim :: !(StrictMaybe LeiosClaim)
+  -- ^ The claim a Leios certificate in the header's block makes, if anything
+  -- is certifiable there; see 'leiosClaim'
   --
   -- A valid header claims a certificate only if its predecessor announced
   -- something certifiable, in an era with Leios, so this is 'SJust' whenever a
@@ -636,7 +633,7 @@ deriving anyclass instance
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 
--- | What checking a Leios certificate in a header's block takes, if anything is
+-- | The claim a Leios certificate in a header's block makes, if anything is
 -- certifiable there, given the Leios part of the ledger view at the header's
 -- slot and the header state as of its predecessor
 --
@@ -645,18 +642,18 @@ type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 -- ticking the state to the header's slot would rule it out, which makes a
 -- header claiming a certificate invalid. Only apply it to a header known to be
 -- valid.
-certRbInfo ::
+leiosClaim ::
   forall blk.
   BlockSupportsProtocol blk =>
   StrictMaybe LeiosLedgerView ->
   HeaderState blk ->
-  StrictMaybe CertRbInfo
-certRbInfo leiosView predState
+  StrictMaybe LeiosClaim
+leiosClaim leiosView predState
   | NotOrigin predTip <- headerStateTip predState
   , Just ann <-
       getCertifiableLeiosAnnouncement (Proxy @(BlockProtocol blk)) (headerStateChainDep predState)
   , SJust view <- leiosView =
-      SJust $ MkCertRbInfo (annTipSlotNo predTip) ann view
+      SJust $ LeiosClaim (annTipSlotNo predTip) ann view
   | otherwise = SNothing
 
 instance

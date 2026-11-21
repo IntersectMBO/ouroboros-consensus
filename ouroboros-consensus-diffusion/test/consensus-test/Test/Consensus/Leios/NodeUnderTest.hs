@@ -67,8 +67,6 @@ import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (nullTracer)
 import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
@@ -92,12 +90,12 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.HeaderValidation (HeaderState (..), certRbInfo, getAnnTip)
+import Ouroboros.Consensus.HeaderValidation (HeaderState (..), getAnnTip, leiosClaim)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
-import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
-import Ouroboros.Consensus.Leios.Types (BytesSize)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim (..))
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), LeiosLedgerView (..))
+import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -229,7 +227,7 @@ data NodeUnderTest m = NodeUnderTest
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where a test emits the endorser blocks and closures the node
   -- acquires, as the node's LeiosFetch would.
-  , nodeNewLeiosValidClaims :: STM m (Map LeiosClaim LeiosAnnouncement)
+  , nodeNewLeiosValidClaims :: STM m (Set (SlotNo, EndorserBlockHash))
   -- ^ The claim of each new Leios certification the node's ChainDB has
   -- validated since the node started, with the announcement it certifies
   , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
@@ -248,15 +246,15 @@ addBlocksAfter :: IOLike m => NodeUnderTest m -> WithOrigin Blk -> [Blk] -> m ()
 addBlocksAfter node predecessor blks =
   sequence_ $
     zipWith
-      (ChainDB.addBlock_ (nodeChainDB node) noPunishment . certRb)
+      (ChainDB.addBlock_ (nodeChainDB node) noPunishment . claim)
       (predecessor : map NotOrigin blks)
       blks
  where
   leiosView = SJust (ltlcLeios (configLedger (nodeTopLevelConfig node)))
-  certRb prev = case prev of
+  claim prev = case prev of
     Origin -> SNothing
     NotOrigin p ->
-      certRbInfo
+      leiosClaim
         leiosView
         (HeaderState (NotOrigin (getAnnTip (getHeader p))) (latestAnnouncement (getHeader p)))
 
@@ -313,7 +311,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   let seeds = configSeeds cfg
   hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
   leiosAcquisitions <- newLeiosAcquisitions
-  validClaimsSinceStart <- newTVarIO Map.empty
+  validClaimsSinceStart <- newTVarIO Set.empty
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -342,7 +340,12 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
         nextValidClaim <- ChainDB.subscribeLeiosValidClaims chainDB
         -- Those emitted since this last ran, without blocking.
         let readValidClaims =
-              ( nextValidClaim >>= \(claim, ann) -> modifyTVar validClaimsSinceStart (Map.insert claim ann) >> readValidClaims
+              ( do
+                  claim <- nextValidClaim
+                  modifyTVar validClaimsSinceStart $
+                    Set.insert
+                      (leiosClaimSlot claim, announcementEbHash (leiosClaimAnnouncement claim))
+                  readValidClaims
               )
                 `orElse` readTVar validClaimsSinceStart
         btime <- mkBlockchainTime cfg kernelRegistry chainDB

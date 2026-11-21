@@ -27,19 +27,16 @@ import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
-  , certRbInfo
   , headerStateChainDep
+  , leiosClaim
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
-import Ouroboros.Consensus.Leios.Protocol
-  ( CertRbInfo
-  , LeiosLedgerView
-  , LeiosProtocol (getLeiosLedgerView)
-  )
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView, LeiosProtocol (getLeiosLedgerView))
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
@@ -188,7 +185,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onF
     mempool
     currentSlot
     (fbTxs fbArgs)
-    (certRbInfo leiosView predState)
+    (leiosClaim leiosView predState)
     (Block.rankingBlock forgeRes)
 
 -- | Context required to forge a block
@@ -312,11 +309,11 @@ addBlockToChainDB ::
   Mempool m blk ->
   SlotNo ->
   [Validated (GenTx blk)] ->
-  -- | What checking the block's Leios certificate takes, if it contains one
-  StrictMaybe CertRbInfo ->
+  -- | The claim a Leios certificate in the block makes
+  StrictMaybe LeiosClaim ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot txs certRb newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot txs claim newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -328,7 +325,7 @@ addBlockToChainDB trace chainDB mempool currentSlot txs certRb newBlock = do
   uninterruptibleMask_ $ do
     result <-
       lift $
-        ChainDB.addBlockAsync chainDB noPunish certRb newBlock
+        ChainDB.addBlockAsync chainDB noPunish claim newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 

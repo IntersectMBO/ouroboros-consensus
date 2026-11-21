@@ -16,6 +16,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
@@ -31,8 +32,7 @@ import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisition (..)
   , LeiosAcquisitions (..)
   )
-import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..), LeiosClaim (..))
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
@@ -118,9 +118,7 @@ certifiedIsFetched = withNode $ \node -> do
   validClaims <- atomically $ nodeNewLeiosValidClaims node
   outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nodeKernel node))))
   pure
-    ( [ (leiosClaimSlot claim, announcementEbHash ann)
-      | (claim, ann) <- Map.toList validClaims
-      ]
+    ( Set.toList validClaims
     , isFocusedPoint pointA outstanding
     )
 
