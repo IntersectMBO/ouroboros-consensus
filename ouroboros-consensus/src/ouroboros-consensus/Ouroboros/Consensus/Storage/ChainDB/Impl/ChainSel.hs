@@ -69,7 +69,6 @@ import Ouroboros.Consensus.Leios.Cert
   , LeiosClaim (..)
   , verifyLeiosClaim
   )
-import Ouroboros.Consensus.Leios.Protocol (CertRbInfo (..))
 import Ouroboros.Consensus.Leios.Types (toRankingBlockHash)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
@@ -313,7 +312,7 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
-  StrictMaybe CertRbInfo ->
+  StrictMaybe LeiosClaim ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -520,7 +519,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        lift (checkLeiosCert cdb blockCertRbInfo b) >>= \case
+        lift (checkLeiosCert cdb blockLeiosClaim b) >>= \case
           Right () ->
             chainSelectionForBlock
               cdb
@@ -1509,19 +1508,17 @@ checkLeiosCert ::
   forall m blk.
   (IOLike m, BlockSupportsLeios blk, GetPrevHash blk, ConvertRawHash blk) =>
   ChainDbEnv m blk ->
-  -- | What checking the certificate takes, as validating the block's header
-  -- revealed it
-  StrictMaybe CertRbInfo ->
+  -- | The certificate's claim, as validating the block's header revealed it
+  StrictMaybe LeiosClaim ->
   blk ->
   m (Either LeiosCertRejection ())
-checkLeiosCert CDB{cdbEmitLeiosValidClaim} certRb b =
-  case (blockLeiosCert b, certRb, blockPrevHash b) of
+checkLeiosCert CDB{cdbEmitLeiosValidClaim} mbClaim b =
+  case (blockLeiosCert b, mbClaim, blockPrevHash b) of
     (Nothing, _, _) -> pure $ Right ()
-    (Just cert, SJust (MkCertRbInfo predecessorSlot ann leiosView), BlockHash h) -> do
-      let claim = LeiosClaim predecessorSlot (toRankingBlockHash (Proxy @blk) h)
-      case runExcept (verifyLeiosClaim leiosView cert claim) of
+    (Just cert, SJust claim, BlockHash h) ->
+      case runExcept (verifyLeiosClaim cert claim (toRankingBlockHash (Proxy @blk) h)) of
         Left rejection -> pure $ Left rejection
-        Right () -> Right () <$ atomically (cdbEmitLeiosValidClaim claim ann)
+        Right () -> Right () <$ atomically (cdbEmitLeiosValidClaim claim)
     (Just _, _, _) -> pure $ Left LeiosCertWithoutAnnouncement
 
 {-------------------------------------------------------------------------------

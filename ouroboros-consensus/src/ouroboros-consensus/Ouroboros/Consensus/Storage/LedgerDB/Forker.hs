@@ -549,7 +549,7 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = do
                         (Qry.slotToWallclock (blockSlot hdr))
                         (hardForkSummary lcfg (ledgerState st))
                 , -- The block is valid, so its certificate needs no checking.
-                  hwtCertRbInfo = SNothing
+                  hwtLeiosClaim = SNothing
                 }
         pushAndTrace (acc AF.:> hwt) aps'
 
