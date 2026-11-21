@@ -24,7 +24,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -440,30 +439,25 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 --
 -- This is how a node that only saw some other announcement for the election,
 -- or none, because the announcing block has been on its selection since before
--- it started, comes to fetch the certified one. Each iteration focuses the
--- elections certified since the one before, so a certificate verified after
+-- it started, comes to fetch the certified one. A certificate verified after
 -- the offer arrived still moves the focus.
 leiosFetchCertificateFocuser ::
   IOLike m =>
-  -- | The claims of the new Leios certifications validated since this last
-  -- returned, each with the announcement it certifies, blocking until there is
+  -- | The claim of the next Leios certificate verified, blocking until there is
   -- one
-  m (NonEmpty (LeiosClaim, LeiosAnnouncement)) ->
+  STM m LeiosClaim ->
   LeiosFetchKernel m peer blk ->
   m Void
-leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
-  validClaims <- consumeValidClaims
-  modifyMVar_ lfcOutstanding $ \outstanding ->
-    pure $ foldl' focus outstanding validClaims
+leiosFetchCertificateFocuser nextValidClaim kernel = forever $ do
+  LeiosClaim{leiosClaimSlot, leiosClaimAnnouncement = ann} <- atomically nextValidClaim
+  modifyMVar_ lfcOutstanding $
+    pure
+      . focusCertifiedEb
+        (ElectionId leiosClaimSlot (announcementElectee ann))
+        (announcementEbHash ann)
   void $ tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
-
-  focus outstanding (claim, ann) =
-    focusCertifiedEb
-      (ElectionId (leiosClaimSlot claim) (announcementElectee ann))
-      (announcementEbHash ann)
-      outstanding
 
 -- | Prune the node's LeiosFetch state and the peers' offers to the immutable
 -- tip's slot.

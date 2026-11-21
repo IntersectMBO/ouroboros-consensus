@@ -102,7 +102,6 @@ import Data.Functor (void)
 import Data.Functor.Contravariant (Predicate (..))
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
-import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
@@ -118,9 +117,6 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
-import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -563,9 +559,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           -- Where the node emits what it acquires, to the ChainDB among
           -- others.
           leiosAcquisitions <- newLeiosAcquisitions
-          -- Where the ChainDB passes the claim of each new Leios certification
-          -- it validates, for the node kernel, its only consumer.
-          newLeiosValidClaims <- mkNewLeiosValidClaims
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -577,7 +570,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnLdbFlavorArgs
               leiosDB
               leiosAcquisitions
-              (recordNewLeiosValidClaim newLeiosValidClaims)
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -633,7 +625,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   chainDB
                   leiosDB
                   leiosAcquisitions
-                  (consumeNewLeiosValidClaims newLeiosValidClaims)
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
@@ -999,15 +990,12 @@ openChainDB ::
   LeiosDbHandle m ->
   -- | The node's Leios acquisitions
   LeiosAcquisitions m ->
-  -- | Where the ChainDB passes the claim of each new Leios certification it
-  -- validates
-  (LeiosClaim -> LeiosAnnouncement -> STM m ()) ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leiosAcquisitions onNewLeiosValidClaim defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leiosAcquisitions defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -1022,7 +1010,6 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leio
             flavorArgs
             leiosDB
             (subscribeLeiosAcquisitions leiosAcquisitions)
-            onNewLeiosValidClaim
             defArgs
    in (,args) <$> ChainDB.openDB args
 
@@ -1043,7 +1030,6 @@ mkNodeKernelArgs ::
   ChainDB m blk ->
   LeiosDbHandle m ->
   LeiosAcquisitions m ->
-  STM m (NonEmpty (LeiosClaim, LeiosAnnouncement)) ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
@@ -1069,7 +1055,6 @@ mkNodeKernelArgs
   chainDB
   leiosDB
   leiosAcquisitions
-  nextNewLeiosValidClaims
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
@@ -1113,7 +1098,6 @@ mkNodeKernelArgs
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
           , leiosAcquisitions
-          , nextNewLeiosValidClaims
           , leiosFetchRng = lfRng
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar

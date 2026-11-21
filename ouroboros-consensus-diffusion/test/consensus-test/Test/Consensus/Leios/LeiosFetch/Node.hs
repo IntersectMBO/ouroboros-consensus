@@ -37,6 +37,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Proxy (Proxy (..))
+import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, addUTCTime)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
@@ -729,7 +730,7 @@ nodeReselectsForgotten = do
   pure (beforeRestart, afterRestart)
  where
   certifiedCount node =
-    Map.size <$> atomically (nodeNewLeiosValidClaims node)
+    Set.size <$> atomically (nodeNewLeiosValidClaims node)
   holds node blk = atomically $ ($ blockPoint blk) <$> ChainDB.getIsFetched (nodeChainDB node)
 
 -- | The holder announces 'fetchedEb', and the node relays the announcement,

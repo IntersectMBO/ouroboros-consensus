@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (dupTChan, newBroadcastTChan, readTChan, writeTChan)
 import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -84,7 +85,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
   ( certifiesPromotedEb
-  , emptyLeiosValidClaims
   , mkAcquiredEbs
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
@@ -258,7 +258,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
-    varLeiosValidClaims <- newTVarIO emptyLeiosValidClaims
+    newLeiosValidClaims <- atomically newBroadcastTChan
     chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
@@ -324,8 +324,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
-            , cdbLeiosValidClaims = varLeiosValidClaims
-            , cdbOnNewLeiosValidClaim = Args.cdbsOnNewLeiosValidClaim cdbSpecificArgs
+            , cdbEmitLeiosValidClaim = writeTChan newLeiosValidClaims
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -333,9 +332,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = \punish certRb blk ->
+            { addBlockAsync = \punish claim blk ->
                 getEnv h $ \cdb ->
-                  ChainSel.addBlockAsync cdb punish certRb blk
+                  ChainSel.addBlockAsync cdb punish claim blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
@@ -360,6 +359,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , openReadOnlyForkerAtPoint = getEnv1 h Query.openReadOnlyForkerAtPoint
             , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
+            , subscribeLeiosValidClaims = readTChan <$> atomically (dupTChan newLeiosValidClaims)
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen

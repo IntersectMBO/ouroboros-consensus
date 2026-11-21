@@ -105,7 +105,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Leios.Protocol (CertRbInfo)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision
   , PerasCertInclusionView
@@ -181,14 +181,14 @@ import System.FS.API.Types (FsError)
 data ChainDB m blk = ChainDB
   { addBlockAsync ::
       InvalidBlockPunishment m ->
-      StrictMaybe CertRbInfo ->
+      StrictMaybe LeiosClaim ->
       blk ->
       m (AddBlockPromise m blk)
   -- ^ Add a block to the heap of blocks
   --
-  -- If the block contains a Leios certificate, then the caller also supplies
-  -- what checking it takes, as validating the block's header revealed it, so
-  -- that the certificate can be checked as soon as the block arrives.
+  -- The caller also supplies the claim a Leios certificate in the block makes,
+  -- as validating the block's header revealed it, so that the certificate can
+  -- be checked as soon as the block arrives.
   --
   -- We do /not/ assume that the block is valid (under the legder rules);
   -- it is the responsibility of the Chain DB itself to only select chains
@@ -461,6 +461,16 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , subscribeLeiosValidClaims :: m (STM m LeiosClaim)
+  -- ^ The claim of each Leios certificate ChainSel verifies from now on,
+  -- blocking until there is one
+  --
+  -- Its channel is unbounded: each subscriber holds every claim emitted since
+  -- it subscribed that it has yet to read. That needs no bound, because the
+  -- work is too cheap to matter: ChainSel emits a claim at most once per block
+  -- it adds, and only after verifying the block's certificate, which costs far
+  -- more than a subscriber's reading the claim. Without subscribers, the
+  -- channel keeps nothing.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
@@ -601,11 +611,11 @@ addBlockWaitWrittenToDisk ::
   IOLike m =>
   ChainDB m blk ->
   InvalidBlockPunishment m ->
-  StrictMaybe CertRbInfo ->
+  StrictMaybe LeiosClaim ->
   blk ->
   m Bool
-addBlockWaitWrittenToDisk chainDB punish certRb blk = do
-  promise <- addBlockAsync chainDB punish certRb blk
+addBlockWaitWrittenToDisk chainDB punish claim blk = do
+  promise <- addBlockAsync chainDB punish claim blk
   atomically $ blockWrittenToDisk promise
 
 -- | Add a block synchronously: wait until the block has been processed (see
@@ -619,11 +629,11 @@ addBlock ::
   IOLike m =>
   ChainDB m blk ->
   InvalidBlockPunishment m ->
-  StrictMaybe CertRbInfo ->
+  StrictMaybe LeiosClaim ->
   blk ->
   m (AddBlockResult blk)
-addBlock chainDB punish certRb blk = do
-  promise <- addBlockAsync chainDB punish certRb blk
+addBlock chainDB punish claim blk = do
+  promise <- addBlockAsync chainDB punish claim blk
   atomically $ blockProcessed promise
 
 -- | Add a block synchronously. Variant of 'addBlock' that doesn't return the
@@ -634,11 +644,11 @@ addBlock_ ::
   IOLike m =>
   ChainDB m blk ->
   InvalidBlockPunishment m ->
-  StrictMaybe CertRbInfo ->
+  StrictMaybe LeiosClaim ->
   blk ->
   m ()
-addBlock_ chainDB punish certRb =
-  void . addBlock chainDB punish certRb
+addBlock_ chainDB punish claim =
+  void . addBlock chainDB punish claim
 
 -- | Alias for naming consistency.
 -- The short name was chosen to avoid a larger diff from alignment changes.

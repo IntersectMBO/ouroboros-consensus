@@ -26,8 +26,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition)
-import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
   , LoE (LoEDisabled)
@@ -102,16 +100,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   , cdbsSubscribeLeiosAcquisitions :: HKD f (m (STM m LeiosAcquisition))
   -- ^ The next Leios acquisition; see
   -- 'Ouroboros.Consensus.NodeKernel.leiosAcquisitions'.
-  , cdbsOnNewLeiosValidClaim :: HKD f (LeiosClaim -> LeiosAnnouncement -> STM m ())
-  -- ^ Called with the claim of each new Leios certification ChainSel
-  -- validates, and the announcement it certifies, in the transaction that
-  -- establishes the claim.
-  --
-  -- It must be cheap and never block, since ChainSel runs it. As a callback
-  -- instead of a new ChainDB query, it leaves to whoever opens the ChainDB how
-  -- these are buffered, and for how many consumers: the ChainDB assumes nothing
-  -- about what consumes them, and only minimally restricts the communication
-  -- mechanism.
   }
 
 -- | Default arguments
@@ -149,7 +137,6 @@ defaultSpecificArgs =
     , cdbsSnapshotDelayRNG = noDefault
     , cdbsLeiosDb = noDefault
     , cdbsSubscribeLeiosAcquisitions = noDefault
-    , cdbsOnNewLeiosValidClaim = noDefault
     }
 
 -- | Default arguments
@@ -210,8 +197,6 @@ completeChainDbArgs ::
   LeiosDbHandle m ->
   -- | 'cdbsSubscribeLeiosAcquisitions'
   m (STM m LeiosAcquisition) ->
-  -- | 'cdbsOnNewLeiosValidClaim'
-  (LeiosClaim -> LeiosAnnouncement -> STM m ()) ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -227,7 +212,6 @@ completeChainDbArgs
   flavorArgs
   leiosDb
   subscribeLeiosAcquisitions
-  onNewLeiosValidClaim
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -271,7 +255,6 @@ completeChainDbArgs
             , cdbsSnapshotDelayRNG = snapshotDelayRNG
             , cdbsLeiosDb = leiosDb
             , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions
-            , cdbsOnNewLeiosValidClaim = onNewLeiosValidClaim
             }
       }
 
