@@ -324,7 +324,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
-            , cdbEmitLeiosValidClaim = curry (writeTChan newLeiosValidClaims)
+            , cdbEmitLeiosValidClaim = writeTChan newLeiosValidClaims
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -332,9 +332,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = \punish certRb blk ->
+            { addBlockAsync = \punish claim blk ->
                 getEnv h $ \cdb ->
-                  ChainSel.addBlockAsync cdb punish certRb blk
+                  ChainSel.addBlockAsync cdb punish claim blk
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime

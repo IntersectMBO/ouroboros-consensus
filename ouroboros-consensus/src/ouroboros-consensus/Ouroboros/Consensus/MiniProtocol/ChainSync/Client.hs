@@ -1158,9 +1158,8 @@ findIntersectionTop cfgEnv dynEnv intEnv =
       continueWithState kis $
         knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
 
--- | Augment the given fragment of headers with the times and what checking
--- their blocks' Leios certificates takes, as specified in the given state
--- history.
+-- | Augment the given fragment of headers with the times and Leios claims
+-- specified in the given state history.
 --
 -- PRECONDITION: the fragment must be a prefix of the state history.
 withTime ::
@@ -1200,10 +1199,10 @@ withTime fragment (HeaderStateHistory history) =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
-      , hwtCertRbInfo =
+      , hwtLeiosClaim =
           -- The state the header's block produced gives the view at the
           -- header's slot, since the view is a property of the slot.
-          certRbInfo (hswtLeiosLedgerView hsWt) (hswtHeaderState predHsWt)
+          leiosClaim (hswtLeiosLedgerView hsWt) (hswtHeaderState predHsWt)
       }
 
 {-------------------------------------------------------------------------------
@@ -1952,8 +1951,8 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
-        , hwtCertRbInfo =
-            certRbInfo
+        , hwtLeiosClaim =
+            leiosClaim
               (maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView)
               (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory))
         }

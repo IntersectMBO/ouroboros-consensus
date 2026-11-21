@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Leios.Protocol
   , encodeLeiosAnnouncement
   , LeiosLedgerView (..)
   , leiosEbByteSizeBounds
-  , CertRbInfo (..)
   , LeiosProtocol (..)
   , OCINStaleness (..)
   , defaultGetCertifiableLeiosAnnouncement
@@ -90,19 +89,6 @@ data LeiosLedgerView = MkLeiosLedgerView
   -- transactions
   , llvMaxEbTxsSize :: !BytesSize
   -- ^ the largest total size of the transactions an endorser block references
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
-
--- | What checking the Leios certificate in a block takes, beyond the block
--- itself: the slot of the block's predecessor, the announcement the
--- certificate certifies, which that predecessor made, and the Leios part of
--- the ledger view at the block's slot, which seats the committee that signed
--- the certificate.
-data CertRbInfo = MkCertRbInfo
-  { crbPredecessorSlot :: !SlotNo
-  , crbCertifiedAnnouncement :: !LeiosAnnouncement
-  , crbLeiosLedgerView :: !LeiosLedgerView
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

@@ -102,7 +102,6 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.Protocol (CertRbInfo, LeiosAnnouncement)
 import Ouroboros.Consensus.Leios.Types (EndorserBlockHash)
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -405,7 +404,7 @@ data ChainDbEnv m blk = CDB
   -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
   -- can park the blocks certifying the others. Seeded from the LeiosDB at
   -- open, then grown from its notifications.
-  , cdbEmitLeiosValidClaim :: !(LeiosClaim -> LeiosAnnouncement -> STM m ())
+  , cdbEmitLeiosValidClaim :: !(LeiosClaim -> STM m ())
   -- ^ Emits to the subscribers of
   -- 'Ouroboros.Consensus.Storage.ChainDB.API.subscribeLeiosValidClaims'.
   }
@@ -621,9 +620,9 @@ data BlockToAdd m blk = BlockToAdd
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
   , blockToAdd :: !blk
-  , blockCertRbInfo :: !(StrictMaybe CertRbInfo)
-  -- ^ What checking the block's Leios certificate takes, if it contains one,
-  -- as validating its header revealed it
+  , blockLeiosClaim :: !(StrictMaybe LeiosClaim)
+  -- ^ The claim a Leios certificate in the block makes, as validating its
+  -- header revealed it
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
   , varBlockProcessed :: !(StrictTMVar m (AddBlockResult blk))
@@ -664,17 +663,17 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
-  StrictMaybe CertRbInfo ->
+  StrictMaybe LeiosClaim ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish certRb blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish claim blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
           , blockToAdd = blk
-          , blockCertRbInfo = certRb
+          , blockLeiosClaim = claim
           , varBlockWrittenToDisk
           , varBlockProcessed
           }

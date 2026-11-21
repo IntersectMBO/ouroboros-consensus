@@ -34,7 +34,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Leios.Protocol (CertRbInfo)
+import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
@@ -71,8 +71,8 @@ import Ouroboros.Network.SizeInBytes
 -- what ties the annotation to the very header the block was matched against.
 data MatchedBlock blk = MatchedBlock
   { matchedBlock :: !blk
-  , matchedBlockCertRbInfo :: !(StrictMaybe CertRbInfo)
-  -- ^ What checking the block's Leios certificate takes, if it contains one
+  , matchedBlockLeiosClaim :: !(StrictMaybe LeiosClaim)
+  -- ^ The claim a Leios certificate in the block makes
   }
 
 -- | Abstract over the ChainDB
@@ -83,7 +83,7 @@ data ChainDbView m blk = ChainDbView
   , getMaxSlotNo :: STM m MaxSlotNo
   , addBlockAsync ::
       InvalidBlockPunishment m ->
-      StrictMaybe CertRbInfo ->
+      StrictMaybe LeiosClaim ->
       blk ->
       m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
@@ -183,7 +183,7 @@ mkBlockFetchConsensusInterface
           Just
             MatchedBlock
               { matchedBlock = b
-              , matchedBlockCertRbInfo = hwtCertRbInfo hwt
+              , matchedBlockLeiosClaim = hwtLeiosClaim hwt
               }
       | otherwise = Nothing
 
@@ -218,7 +218,7 @@ mkBlockFetchConsensusInterface
     mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt matched = void $ do
       let MatchedBlock
             { matchedBlock = blk
-            , matchedBlockCertRbInfo
+            , matchedBlockLeiosClaim
             } = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
@@ -255,7 +255,7 @@ mkBlockFetchConsensusInterface
       addBlockAsync
         chainDB
         punishment
-        matchedBlockCertRbInfo
+        matchedBlockLeiosClaim
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo

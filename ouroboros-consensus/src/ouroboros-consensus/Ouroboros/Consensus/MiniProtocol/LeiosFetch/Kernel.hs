@@ -443,17 +443,17 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- the offer arrived still moves the focus.
 leiosFetchCertificateFocuser ::
   IOLike m =>
-  -- | The claim of the next Leios certificate verified, with the announcement
-  -- it certifies, blocking until there is one
-  STM m (LeiosClaim, LeiosAnnouncement) ->
+  -- | The claim of the next Leios certificate verified, blocking until there is
+  -- one
+  STM m LeiosClaim ->
   LeiosFetchKernel m peer blk ->
   m Void
 leiosFetchCertificateFocuser nextValidClaim kernel = forever $ do
-  (claim, ann) <- atomically nextValidClaim
+  LeiosClaim{leiosClaimSlot, leiosClaimAnnouncement = ann} <- atomically nextValidClaim
   modifyMVar_ lfcOutstanding $
     pure
       . focusCertifiedEb
-        (ElectionId (leiosClaimSlot claim) (announcementElectee ann))
+        (ElectionId leiosClaimSlot (announcementElectee ann))
         (announcementEbHash ann)
   void $ tryPutMVar lfcReady ()
  where
