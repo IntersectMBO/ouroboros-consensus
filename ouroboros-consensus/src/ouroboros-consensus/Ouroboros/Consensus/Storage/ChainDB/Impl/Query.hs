@@ -66,7 +66,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
-import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Peras.Cert.Inclusion
@@ -421,7 +420,6 @@ getPerasVotingView ::
   , GetHeader blk
   , BlockSupportsPeras blk
   ) =>
-  LedgerConfig blk ->
   PerasRoundNo ->
   ChainDbEnv m blk ->
   STM
@@ -430,7 +428,7 @@ getPerasVotingView ::
         PerasVotingViewError
         (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
     )
-getPerasVotingView ledgerConfig roundNo env = do
+getPerasVotingView roundNo env = do
   resolver <-
     getPerasEpochContextResolver env
   case resolveRoundNo resolver roundNo of
@@ -444,7 +442,7 @@ getPerasVotingView ledgerConfig roundNo env = do
       currentChain <-
         getCurrentChain env
       summary <-
-        hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
+        hardForkSummary (configLedger (cdbTopLevelConfig env)) . ledgerState <$> getCurrentLedger env
       let params = pecParams epochContext
       let blockMinSlots = perasBlockMinSlots params
       case ( runPerasQry summary $
@@ -495,11 +493,11 @@ getPerasCertInclusionView roundNo env =
 
 getTimeResolutionContext ::
   MonadSTM m =>
-  LedgerConfig blk ->
   ChainDbEnv m blk ->
   STM m (TimeResolutionContext blk)
-getTimeResolutionContext ledgerConfig =
-  fmap (TimeResolutionContext ledgerConfig . ledgerState) . getCurrentLedger
+getTimeResolutionContext env =
+  TimeResolutionContext (configLedger (cdbTopLevelConfig env)) . ledgerState
+    <$> getCurrentLedger env
 
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
 --   and then return:
