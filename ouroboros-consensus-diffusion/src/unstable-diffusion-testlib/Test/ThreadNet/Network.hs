@@ -1690,6 +1690,8 @@ data NodeOutput blk = NodeOutput
   , nodeOutputFinalChain :: Chain blk
   , nodeOutputFinalLedger :: LedgerState blk EmptyMK
   , nodeOutputForges :: Map SlotNo blk
+  , nodeOutputForgeEvents :: [TraceForgeEvent blk]
+  -- ^ Every 'TraceForgeEvent', oldest first.
   , nodeOutputHeaderAdds :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputInvalids :: Map (RealPoint blk) [ExtValidationError blk]
   , nodeOutputNodeDBs :: NodeDBs MockFS
@@ -1747,6 +1749,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputForges =
                     Map.fromList $
                       [(s, b) | TraceForgedBlock s _ b _ _ <- nodeEventsForges]
+                , nodeOutputForgeEvents = nodeEventsForges
                 , nodeOutputHeaderAdds =
                     Map.fromListWith (flip (++)) $
                       [ (s, [(p, bno)])

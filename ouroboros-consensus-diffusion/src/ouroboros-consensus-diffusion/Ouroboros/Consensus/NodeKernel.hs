@@ -150,6 +150,7 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.NodeKernel.ForgeView (noForgeViews, prepareForgeViews)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
@@ -825,32 +826,45 @@ forkBlockForging ::
   MkBlockForging m blk ->
   m (Thread m Void)
 forkBlockForging IS{..} onForgedEb voteState votingKeys (MkBlockForging blockForgingM) =
-  forkLinkedWatcherAllocate
-    registry
-    label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
-        \currentSlot slotOnset ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              cfg
-              chainDB
-              mempool
-              bf
-              ( getLeiosCertToForge
-                  (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
-                  chainDB
-                  voteState
-              )
-              (onForgedEb slotOnset)
-              currentSlot
-    )
+  forkLinkedThread registry label $ do
+    (key, bf) <- allocate registry (const blockForgingMLabel) finalize
+    varView <- uncheckedNewTVarM noForgeViews
+    ( withWatcher labelView (preparing bf varView) $
+        forging bf varView
+      )
+      `finally` release key
  where
+  preparing bf =
+    prepareForgeViews cfg btime chainDB leiosDB mempool (canBeLeader bf) forgeViewLeadTime
+
+  forging bf varView = knownSlotWatcher btime $
+    \currentSlot slotOnset ->
+      withEarlyExit_ $
+        forge
+          (forgeTracer tracers)
+          (forgeStateInfoTracer tracers)
+          cfg
+          chainDB
+          mempool
+          bf
+          ( getLeiosCertToForge
+              (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
+              chainDB
+              voteState
+          )
+          (onForgedEb slotOnset)
+          (readTVar varView)
+          currentSlot
+
   label :: String
   label = "NodeKernel.blockForging"
+
+  labelView :: String
+  labelView = "NodeKernel.forgeView"
+
+  -- How long before a slot the node leads it starts preparing the forge view.
+  forgeViewLeadTime :: NominalDiffTime
+  forgeViewLeadTime = 1
 
   blockForgingMLabel = do
     bf <- blockForgingM
