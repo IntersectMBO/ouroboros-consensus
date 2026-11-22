@@ -1,18 +1,38 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | How the node's LeiosFetch client's and server's events are logged.
+-- | How the node's LeiosFetch client's and server's events, and the LeiosFetch
+-- messages it sends and receives, are logged.
+--
+-- The messages' fields follow the Leios prototype's, so that tools reading its
+-- logs, like the Leios visualizer, read these too.
 module Ouroboros.Consensus.Tracing.LeiosFetch () where
 
 import Cardano.Crypto.Hash (hashToStringAsHex)
 import Cardano.Logging
 import Control.Exception (displayException)
-import Data.Aeson (Value (String), (.=))
+import Data.Aeson (Object, Value (String), (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Bits as Bits
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as Text
+import Data.Word (Word16, Word64)
+import Network.TypedProtocol.Codec (AnyMessage (..))
+import Numeric (showHex)
 import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.Leios.Types (LeiosPoint (..), prettyLeiosPoint)
+import Ouroboros.Consensus.Leios.Types
+  ( EndorserBlock
+  , EndorserBlockHash
+  , LeiosPoint (..)
+  , LeiosTx (..)
+  , hashSerialisedEndorserBlock
+  , prettyLeiosPoint
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes (..)
@@ -21,6 +41,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , TraceLeiosFetchClientEvent (..)
   , TraceLeiosFetchServerEvent (..)
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (LeiosFetch, Message (..))
+import Ouroboros.Network.Block (Serialised (..))
 
 instance
   (LogFormatting peer, Show peer) =>
@@ -271,4 +293,59 @@ instance MetaTrace TraceLeiosFetchServerEvent where
     , Namespace [] ["BlockDbFailure"]
     , Namespace [] ["TxsDbFailure"]
     , Namespace [] ["OpenReaderDbFailure"]
+    ]
+
+instance LogFormatting (AnyMessage (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)) where
+  forMachine _dtal (AnyMessageAndAgency _stok msg) = case msg of
+    MsgLeiosBlockRequest (MkLeiosPoint slot ebHash) ->
+      mconcat ["kind" .= String "MsgLeiosBlockRequest", ebPoint slot ebHash]
+    MsgLeiosBlock eb@(Serialised bytes) ->
+      mconcat
+        [ "kind" .= String "MsgLeiosBlock"
+        , "ebHash" .= ebHashValue (hashSerialisedEndorserBlock eb)
+        , "ebBytesSize" .= BSL.length bytes
+        ]
+    MsgLeiosBlockTxsRequest (MkLeiosPoint slot ebHash) bitmaps ->
+      mconcat
+        [ "kind" .= String "MsgLeiosBlockTxsRequest"
+        , ebPoint slot ebHash
+        , "numTxs" .= sum (map (Bits.popCount . snd) bitmaps)
+        , "bitmaps" .= map bitmapString bitmaps
+        ]
+    MsgLeiosBlockTxs txs ->
+      mconcat
+        [ "kind" .= String "MsgLeiosBlockTxs"
+        , "numTxs" .= length txs
+        , "txsBytesSize" .= sum (fmap (BS.length . leiosTxBytes) txs)
+        ]
+    MsgDone -> "kind" .= String "MsgDone"
+   where
+    ebHashValue :: EndorserBlockHash -> Value
+    ebHashValue = String . Text.pack . hashToStringAsHex
+
+    ebPoint :: SlotNo -> EndorserBlockHash -> Object
+    ebPoint (SlotNo slot) ebHash = mconcat ["ebSlot" .= slot, "ebHash" .= ebHashValue ebHash]
+
+    bitmapString :: (Word16, Word64) -> String
+    bitmapString (idx, bits) =
+      show idx <> ":0x" <> replicate (Bits.countLeadingZeros bits `div` 4) '0' <> showHex bits ""
+
+instance MetaTrace (AnyMessage (LeiosFetch LeiosPoint (Serialised EndorserBlock) LeiosTx)) where
+  namespaceFor (AnyMessageAndAgency _stok msg) = case msg of
+    MsgLeiosBlockRequest{} -> Namespace [] ["BlockRequest"]
+    MsgLeiosBlock{} -> Namespace [] ["Block"]
+    MsgLeiosBlockTxsRequest{} -> Namespace [] ["BlockTxsRequest"]
+    MsgLeiosBlockTxs{} -> Namespace [] ["BlockTxs"]
+    MsgDone -> Namespace [] ["Done"]
+
+  severityFor _ _ = Just Debug
+
+  documentFor _ = Nothing
+
+  allNamespaces =
+    [ Namespace [] ["BlockRequest"]
+    , Namespace [] ["Block"]
+    , Namespace [] ["BlockTxsRequest"]
+    , Namespace [] ["BlockTxs"]
+    , Namespace [] ["Done"]
     ]
