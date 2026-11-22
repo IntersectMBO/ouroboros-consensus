@@ -1547,6 +1547,23 @@ instance
       , "slot" .= toJSON (unSlotNo slotNo)
       , "reason" .= String (showT notCertifiable)
       ]
+  forMachine _dtal (TraceForgeFromView slotNo size) =
+    mconcat
+      [ "kind" .= String "TraceForgeFromView"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "txs" .= toJSON (msNumTxs size)
+      ]
+  forMachine _dtal (TraceForgeViewPartial slotNo size) =
+    mconcat
+      [ "kind" .= String "TraceForgeViewPartial"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "txs" .= toJSON (msNumTxs size)
+      ]
+  forMachine _dtal (TraceForgeNoView slotNo) =
+    mconcat
+      [ "kind" .= String "TraceForgeNoView"
+      , "slot" .= toJSON (unSlotNo slotNo)
+      ]
   forMachine _dtal (TraceForgeNoLeiosCert announcingPoint) =
     mconcat
       [ "kind" .= String "TraceForgeNoLeiosCert"
@@ -1693,6 +1710,22 @@ instance
       <> showT (unSlotNo slotNo)
       <> " cannot certify an endorser block: "
       <> showT notCertifiable
+  forHuman (TraceForgeFromView slotNo size) =
+    "Forging in slot "
+      <> showT (unSlotNo slotNo)
+      <> " from its forge view of "
+      <> showT (msNumTxs size)
+      <> " transactions"
+  forHuman (TraceForgeViewPartial slotNo size) =
+    "The forge view for slot "
+      <> showT (unSlotNo slotNo)
+      <> " was not ready in time, forging from the "
+      <> showT (msNumTxs size)
+      <> " transactions it holds"
+  forHuman (TraceForgeNoView slotNo) =
+    "No forge view for slot "
+      <> showT (unSlotNo slotNo)
+      <> ", re-applying the mempool"
   forHuman (TraceForgeNoLeiosCert announcingPoint) =
     "No Leios certificate for the endorser block announced by "
       <> renderRealPointAsPhrase announcingPoint
@@ -1771,6 +1804,9 @@ instance
     ]
   asMetrics TraceForgedCertifyingBlock{} = []
   asMetrics TraceForgeNotCertifiable{} = []
+  asMetrics TraceForgeFromView{} = []
+  asMetrics TraceForgeViewPartial{} = []
+  asMetrics TraceForgeNoView{} = []
   asMetrics TraceForgeNoLeiosCert{} = []
   asMetrics TraceForgeLeiosClosureNotAcquired{} = []
   asMetrics TraceForgedEndorserBlock{} = []
@@ -1818,6 +1854,12 @@ instance MetaTrace (TraceForgeEvent blk) where
     Namespace [] ["ForgedCertifyingBlock"]
   namespaceFor TraceForgeNotCertifiable{} =
     Namespace [] ["ForgeNotCertifiable"]
+  namespaceFor TraceForgeFromView{} =
+    Namespace [] ["ForgeFromView"]
+  namespaceFor TraceForgeViewPartial{} =
+    Namespace [] ["ForgeViewPartial"]
+  namespaceFor TraceForgeNoView{} =
+    Namespace [] ["ForgeNoView"]
   namespaceFor TraceForgeNoLeiosCert{} =
     Namespace [] ["ForgeNoLeiosCert"]
   namespaceFor TraceForgeLeiosClosureNotAcquired{} =
@@ -1850,6 +1892,9 @@ instance MetaTrace (TraceForgeEvent blk) where
   severityFor (Namespace _ ["ForgedBlock"]) _ = Just Info
   severityFor (Namespace _ ["ForgedCertifyingBlock"]) _ = Just Info
   severityFor (Namespace _ ["ForgeNotCertifiable"]) _ = Just Debug
+  severityFor (Namespace _ ["ForgeFromView"]) _ = Just Info
+  severityFor (Namespace _ ["ForgeViewPartial"]) _ = Just Warning
+  severityFor (Namespace _ ["ForgeNoView"]) _ = Just Info
   severityFor (Namespace _ ["ForgeNoLeiosCert"]) _ = Just Info
   severityFor (Namespace _ ["ForgeLeiosClosureNotAcquired"]) _ = Just Info
   severityFor (Namespace _ ["ForgedEndorserBlock"]) _ = Just Info
@@ -2057,6 +2102,16 @@ instance MetaTrace (TraceForgeEvent blk) where
         , "  block that announces the certified endorser block, and the hash of"
         , "  that endorser block."
         ]
+  documentFor (Namespace _ ["ForgeFromView"]) =
+    Just "We forge from the forge view prepared for this slot."
+  documentFor (Namespace _ ["ForgeViewPartial"]) =
+    Just $
+      mconcat
+        [ "The forge view for this slot was not prepared in time, so we forge"
+        , "  from the part that is ready. A longer lead time avoids this."
+        ]
+  documentFor (Namespace _ ["ForgeNoView"]) =
+    Just "No forge view is prepared for this slot, so we re-apply the mempool."
   documentFor (Namespace _ ["ForgeNotCertifiable"]) =
     Just $
       mconcat
@@ -2135,6 +2190,9 @@ instance MetaTrace (TraceForgeEvent blk) where
     , Namespace [] ["ForgedBlock"]
     , Namespace [] ["ForgedCertifyingBlock"]
     , Namespace [] ["ForgeNotCertifiable"]
+    , Namespace [] ["ForgeFromView"]
+    , Namespace [] ["ForgeViewPartial"]
+    , Namespace [] ["ForgeNoView"]
     , Namespace [] ["ForgeNoLeiosCert"]
     , Namespace [] ["ForgeLeiosClosureNotAcquired"]
     , Namespace [] ["ForgedEndorserBlock"]

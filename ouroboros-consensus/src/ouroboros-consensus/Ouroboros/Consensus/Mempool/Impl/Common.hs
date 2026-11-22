@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
     -- * Validation
   , RevalidateTxsResult (..)
   , computeSnapshot
+  , partitionTxSeq
   , revalidateTxsFor
   , revalidateTxsFor'
   , validateNewTransaction
@@ -94,21 +95,6 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 -- as the transaction is considered, the differences will be the same. If we
 -- extend UTxO-HD to consider more differences, this might be violated and we
 -- will have to reconsider what we can cache and what we can't.
-data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
-  { validatedTx :: !(Validated (GenTx blk))
-  , validatedTxDiffs :: !(LedgerTables blk DiffMK)
-  , validatedTxLeiosHash :: !(StrictMaybe TxHash)
-  -- ^ The hash by which an endorser block references the transaction, if one
-  -- can ('txLeiosBytes')
-  }
-  deriving Generic
-
-deriving instance
-  ( NoThunks (Validated (GenTx blk))
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
-  ) =>
-  NoThunks (ValidatedTxWithDiffs blk)
 
 -- | Internal state in the mempool
 data InternalState blk = IS
@@ -678,14 +664,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
   implSnapshotPartitionWithInitialPayload mInitialPayloadMeasure blockLimit ebLimit =
     (txSeqToList inBlock, TxSeq.toSize inBlock, txSeqToList inEb, TxSeq.toSize inEb)
    where
-    initialPayloadMeasure = fromMaybe Measure.zero mInitialPayloadMeasure
-    (inBlock, afterBlock) =
-      TxSeq.splitAfterTxSizeWithInitSizeOn
-        mmTxMeasure
-        initialPayloadMeasure
-        txs
-        blockLimit
-    (inEb, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
+    (inBlock, inEb, _) = partitionTxSeq mInitialPayloadMeasure blockLimit ebLimit txs
     txSeqToList = map (prj . TxSeq.txTicketTx) . TxSeq.toList
 
   implSnapshotGetTx ::
@@ -705,6 +684,27 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
       { msNumTxs = fromIntegral $ length $ txs
       , msNumBytes = txMeasureByteSize $ mmTxMeasure $ TxSeq.toSize $ txs
       }
+
+-- | Partition a sequence of transactions for one forging opportunity: the
+-- longest prefix that fits a block after its initial payload, the longest
+-- prefix of the rest that fits an endorser block, and what is left.
+partitionTxSeq ::
+  TxLimits blk =>
+  Maybe (MempoolMeasure blk) ->
+  TxMeasure blk ->
+  TxEbMeasure blk ->
+  TxSeq (MempoolMeasure blk) tx ->
+  (TxSeq (MempoolMeasure blk) tx, TxSeq (MempoolMeasure blk) tx, TxSeq (MempoolMeasure blk) tx)
+partitionTxSeq mInitialPayloadMeasure blockLimit ebLimit txs =
+  (inBlock, inEb, rest)
+ where
+  (inBlock, afterBlock) =
+    TxSeq.splitAfterTxSizeWithInitSizeOn
+      mmTxMeasure
+      (fromMaybe Measure.zero mInitialPayloadMeasure)
+      txs
+      blockLimit
+  (inEb, rest) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations

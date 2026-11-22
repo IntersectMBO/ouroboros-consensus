@@ -427,6 +427,15 @@ data TraceForgeEvent blk
     -- We record the the point of the state we are starting from (ie the point
     -- from 'TraceLedgerState') and point the mempool had most last synced wrt.
     TraceForgingMempoolSnapshot SlotNo (Point blk) (ChainHash blk) SlotNo
+  | -- | We forge from the forge view prepared for this slot, which holds this
+    -- many transactions.
+    TraceForgeFromView SlotNo MempoolSize
+  | -- | The forge view for this slot was not prepared in time, so we forge from
+    -- the part that is ready, which holds this many transactions.
+    TraceForgeViewPartial SlotNo MempoolSize
+  | -- | No forge view is prepared for this slot on the block's predecessor, so
+    -- we re-apply the mempool.
+    TraceForgeNoView SlotNo
   | -- | We forged a block
     --
     -- We record the current slot number, the point of the predecessor, the block

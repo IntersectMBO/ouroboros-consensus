@@ -46,8 +46,18 @@ import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..))
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
+import Ouroboros.Consensus.Mempool.ForgeView
+  ( ForgeView
+  , forgeViewIsFull
+  , forgeViewLastTicket
+  , forgeViewPartition
+  , forgeViewPoint
+  , forgeViewSize
+  , forgeViewSlot
+  )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.NodeKernel.ForgeView (ForgeViews (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -88,9 +98,11 @@ forge ::
   -- block, the Leios part of the ledger view at its slot, and the endorser
   -- block that it announces.
   (Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
+  -- | The forge views prepared ahead of the slot.
+  STM m (ForgeViews blk) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging getLeiosCert onForgedLeiosEb currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging getLeiosCert onForgedLeiosEb getForgeViews currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -143,21 +155,49 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging get
                 <$> lift (getLeiosCert announcingPoint announcement)
         let leiosCert = fst <$> leiosCertified
 
+        -- A view prepared for this slot on the block's predecessor holds the
+        -- transactions applicable here, so nothing is re-applied.
+        let matchingView select = lift $ atomically $ do
+              views <- getForgeViews
+              case select views of
+                Just view
+                  | forgeViewSlot view == currentSlot
+                  , forgeViewPoint view == castPoint bcPrevPoint -> do
+                      pending <- getTxsAfter mempool (forgeViewLastTicket view)
+                      pure $ Just (view, not (forgeViewIsFull view) && not (null pending))
+                _ -> pure Nothing
+            traceView (view, partial) =
+              trace $
+                (if partial then TraceForgeViewPartial else TraceForgeFromView)
+                  currentSlot
+                  (forgeViewSize view)
+
         selectedTxs <- case leiosCert of
-          -- A certifying block carries no transactions of its own, and it
-          -- announces no endorser block: the mempool's transactions were
-          -- validated without the certified ones. So 'forge' does not select
-          -- any, which saves the mempool revalidation of 'getSnapshotFor'.
-          Just _ -> pure noTransactionsToForge
-          Nothing -> do
-            traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
-            getTransactionsToForge
-              cfg
-              mempool
-              currentSlot
-              tickedLedgerState
-              forker
-              Nothing -- NOTE: no Peras cert to include for now
+          -- A certifying block carries no transactions of its own, but it
+          -- announces an endorser block of transactions that apply after the
+          -- certified closure, as the certifying view holds them. Without that
+          -- view it announces none.
+          Just _ ->
+            matchingView certifyingView >>= \case
+              Nothing -> pure noTransactionsToForge
+              Just viewAndPartial@(view, _) -> do
+                traceView viewAndPartial
+                pure $ viewTransactionsToForge view
+          Nothing ->
+            matchingView tipView >>= \case
+              Just viewAndPartial@(view, _) -> do
+                traceView viewAndPartial
+                pure $ viewTransactionsToForge view
+              Nothing -> do
+                trace $ TraceForgeNoView currentSlot
+                traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+                getTransactionsToForge
+                  cfg
+                  mempool
+                  currentSlot
+                  tickedLedgerState
+                  forker
+                  Nothing -- NOTE: no Peras cert to include for now
         let fbArgs =
               Block.ForgeBlockArgs
                 { Block.fbConfig = cfg
@@ -640,3 +680,21 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
       , endorserBlockMeasure
       , forgingMempoolSize = snapshotMempoolSize mempoolSnapshot
       }
+
+-- | Select the transactions for the ranking block and for the endorser block
+-- from a forge view. NOTE: no Peras cert to include for now.
+viewTransactionsToForge ::
+  RunNode blk =>
+  ForgeView blk ->
+  TransactionsToForge blk
+viewTransactionsToForge view =
+  TransactionsToForge
+    { rankingBlockTxs
+    , rankingBlockMeasure
+    , endorserBlockTxs
+    , endorserBlockMeasure
+    , forgingMempoolSize = forgeViewSize view
+    }
+ where
+  (rankingBlockTxs, rankingBlockMeasure, endorserBlockTxs, endorserBlockMeasure) =
+    forgeViewPartition view

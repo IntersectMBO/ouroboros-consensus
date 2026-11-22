@@ -151,6 +151,7 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.NodeKernel.ForgeView (noForgeViews, prepareForgeViews)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
@@ -812,9 +813,16 @@ forkBlockProducer ::
 forkBlockProducer IS{..} onForgedEb votingEnv (MkBlockForging blockForgingM) =
   forkLinkedThread registry label $ do
     (key, bf) <- allocate registry (const blockForgingMLabel) finalize
-    withWatcher label (forging bf) (voting bf) `finally` release key
+    varView <- uncheckedNewTVarM noForgeViews
+    ( withWatcher labelView (preparing bf varView) $
+        withWatcher label (forging bf varView) (voting bf)
+      )
+      `finally` release key
  where
-  forging bf = knownSlotWatcher btime $
+  preparing bf =
+    prepareForgeViews cfg btime chainDB leiosDB mempool (canBeLeader bf) forgeViewLeadTime
+
+  forging bf varView = knownSlotWatcher btime $
     \currentSlot slotOnset ->
       withEarlyExit_ $
         forge
@@ -830,6 +838,7 @@ forkBlockProducer IS{..} onForgedEb votingEnv (MkBlockForging blockForgingM) =
               (votingVoteState votingEnv)
           )
           (onForgedEb slotOnset)
+          (readTVar varView)
           currentSlot
 
   voting bf =
@@ -840,6 +849,13 @@ forkBlockProducer IS{..} onForgedEb votingEnv (MkBlockForging blockForgingM) =
 
   label :: String
   label = "NodeKernel.blockForging"
+
+  labelView :: String
+  labelView = "NodeKernel.forgeView"
+
+  -- How long before a slot the node leads it starts preparing the forge view.
+  forgeViewLeadTime :: NominalDiffTime
+  forgeViewLeadTime = 1
 
   blockForgingMLabel = do
     bf <- blockForgingM

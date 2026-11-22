@@ -37,6 +37,7 @@ module Ouroboros.Consensus.Mempool.API
   , DiffTimeMeasure (..)
   , MempoolSnapshot (..)
   , MempoolMeasure (..)
+  , ValidatedTxWithDiffs (..)
 
     -- * Re-exports
   , SizeInBytes
@@ -48,6 +49,7 @@ import Cardano.Ledger.BaseTypes (ProtVer)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
@@ -57,7 +59,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Leios.Types (TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
-import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
+import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, TxTicket, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Protocol.TxSubmission2.Type (SizeInBytes)
 
@@ -201,6 +203,11 @@ data Mempool m blk = Mempool
   -- - The ledger state ticked to the given slot number (with the diffs from ticking)
   --
   -- - A function that reads values for keys at the unticked ledger state.
+  , getTxsAfter ::
+      TicketNo ->
+      STM m [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)]
+  -- ^ The transactions in the mempool after the given ticket, in order, with
+  -- what re-applying them needs.
   , getCapacity :: STM m (TxMeasure blk)
   -- ^ Get the mempool's capacity
   --
@@ -418,6 +425,23 @@ data ForgeLedgerState blk
     -- for 'applyChainTick' to prepare the ledger state; we will assume that
     -- they will end up in the slot after the slot at the tip of the ledger.
     ForgeInUnknownSlot (LedgerState blk EmptyMK)
+
+-- | A validated transaction in the mempool, with the diffs of applying it.
+data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
+  { validatedTx :: !(Validated (GenTx blk))
+  , validatedTxDiffs :: !(LedgerTables blk DiffMK)
+  , validatedTxLeiosHash :: !(StrictMaybe TxHash)
+  -- ^ The hash by which an endorser block references the transaction, if one
+  -- can ('txLeiosBytes')
+  }
+  deriving Generic
+
+deriving instance
+  ( NoThunks (Validated (GenTx blk))
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
+  ) =>
+  NoThunks (ValidatedTxWithDiffs blk)
 
 {-------------------------------------------------------------------------------
   Snapshot of the mempool

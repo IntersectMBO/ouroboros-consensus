@@ -220,6 +220,7 @@ library
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
+    Ouroboros.Consensus.Mempool.ForgeView
     Ouroboros.Consensus.Mempool.Impl.Common
     Ouroboros.Consensus.Mempool.Init
     Ouroboros.Consensus.Mempool.Query
@@ -1388,6 +1389,7 @@ library diffusion
     Ouroboros.Consensus.Node.Tracers
     Ouroboros.Consensus.NodeKernel
     Ouroboros.Consensus.NodeKernel.Forge
+    Ouroboros.Consensus.NodeKernel.ForgeView
 
   reexported-modules:
     Ouroboros.Consensus.Block,
@@ -2115,7 +2117,7 @@ test-suite cardano-test
     measures,
     microlens,
     mtl,
-    ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
+    ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-simple,
     process-extras,

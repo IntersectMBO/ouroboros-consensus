@@ -38,6 +38,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
 import Ouroboros.Consensus.Node.Tracers (TraceForgeEvent (..), TraceLabelCreds (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.NodeKernel.ForgeView (noForgeViews)
 import Ouroboros.Consensus.Storage.ChainDB.API (getCurrentChain)
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..), withReader)
 import Ouroboros.Consensus.Util.EarlyExit (withEarlyExit_)
@@ -205,6 +206,7 @@ forgeOnTopOf chain callback = withNode $ \node -> do
       certForging
       recordingCallback
       (\_ _ _ -> pure ())
+      (pure noForgeViews)
       slotAfterTip
   forgeEvents <- reverse <$> readTVarIO events
   certRequests <- reverse <$> readTVarIO requests

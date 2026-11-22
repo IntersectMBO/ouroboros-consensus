@@ -19,6 +19,7 @@ import Ouroboros.Consensus.Mempool.API (Mempool (..), MempoolTimeoutConfig)
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
+import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mempool.Update
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
@@ -115,6 +116,8 @@ mkMempool mpEnv =
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
+    , getTxsAfter = \tn ->
+        TxSeq.toList . snd . flip TxSeq.splitAfterTicketNo tn . isTxs <$> readTMVar istate
     , getCapacity = isCapacity <$> readTMVar istate
     , getLeiosTxIndex = do
         is <- readTMVar istate
