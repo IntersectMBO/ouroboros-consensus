@@ -54,8 +54,7 @@ claimLeiosCert :: Header StandardDijkstraBlock -> Header StandardDijkstraBlock
 claimLeiosCert hdr =
   mkShelleyHeader $
     -- TODO: should be able to use lenses, but blockBodyContainsLeiosCert has none yet in ledger
-    Leios.mkHeader
-      era
+    Leios.Header
       (Leios.mkHeaderBody era rawBody{Leios.hbrBlockBodyContainsLeiosCert = True})
       (Leios.headerSig raw)
  where
