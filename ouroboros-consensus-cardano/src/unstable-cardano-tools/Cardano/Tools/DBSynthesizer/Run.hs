@@ -47,7 +47,6 @@ import Ouroboros.Consensus.Config
   , configStorage
   , emptyCheckpointsMap
   )
-import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
@@ -65,7 +64,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
@@ -173,9 +172,6 @@ synthesize ::
 synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
     snapshotDelayRng <- newStdGen
-    -- TODO Open the LeiosDB in the ChainDB's directory rather than an empty
-    -- one.
-    leiosDb <- newLeiosDBInMemory
     let
       epochSize = sgEpochLength shelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
@@ -191,9 +187,8 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
           (Node.stdMkChainDbHasFS confDbDir)
           snapshotDelayRng
           flavargs
-          leiosDb
-          -- It fetches nothing, so it acquires nothing.
-          noLeiosAcquisitions
+          -- In the ChainDB's directory, as the node's.
+          (LeiosDB.sqliteArgs confDbDir confDbDir)
           $ ChainDB.defaultArgs
 
     -- The KES agent client only reports a failure to connect by tracing it, so

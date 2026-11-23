@@ -148,7 +148,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -163,6 +163,7 @@ import Ouroboros.Network.Block (ChainUpdate, MaxSlotNo)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Ouroboros.Storage.ChainDB.Model
   ( FollowerId
   , IteratorId
@@ -2664,7 +2665,7 @@ mkArgs ::
   ExtLedgerState Blk ValuesMK ->
   ResourceRegistry m ->
   NodeDBs (StrictTMVar m MockFS) ->
-  LeiosDbHandle m ->
+  LeiosDB m ->
   CT.Tracer m (TraceEvent Blk) ->
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
   ChainDbArgs Identity m Blk

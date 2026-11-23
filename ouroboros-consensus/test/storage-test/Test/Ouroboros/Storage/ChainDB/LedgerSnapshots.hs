@@ -44,7 +44,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util (dropLast)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))
@@ -55,6 +54,7 @@ import System.FS.API (SomeHasFS)
 import System.FS.API.Types (mkFsPath)
 import System.FS.BlockIO.Sim (simHasBlockIO')
 import qualified System.FS.Sim.MockFS as MockFS
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (NonZero)
 import Test.Util.ChainDB

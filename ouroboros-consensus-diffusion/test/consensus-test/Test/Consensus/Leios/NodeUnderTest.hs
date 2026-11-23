@@ -93,7 +93,7 @@ import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation (certifiedLeiosAnnouncement)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -137,7 +137,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDB)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -157,6 +157,10 @@ import System.FS.Sim.STM (simHasFS)
 import System.Random (StdGen, mkStdGen, random, splitGen)
 import Test.Consensus.Leios.Committee (testCommittee, testQuorumStakeThreshold)
 import Test.Consensus.Leios.TestBlock
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
+  ( existingLeiosDbArgs
+  , newLeiosDBInMemory
+  )
 import Test.Util.ChainDB (NodeDBs (..), emptyNodeDBs)
 import Test.Util.FS.Subdirectory (subdirectoryHasFS)
 import Test.Util.Orphans.IOLike ()
@@ -226,6 +230,8 @@ data NodeUnderTest m = NodeUnderTest
   , nodeLeiosAcquisitions :: LeiosAcquisitions m
   -- ^ Where a test emits the endorser blocks and closures the node
   -- acquires, as the node's LeiosFetch would.
+  , nodeLeiosDB :: LeiosDB m
+  -- ^ The node's LeiosDB, which a test can read or write directly.
   , nodeConnectedPeers :: StrictTVar m (Set PeerAddr)
   -- ^ The peers the node has a connection to.
   }
@@ -303,7 +309,7 @@ withNodeUnderTest ::
   NodeUnderTestConfig ->
   Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
-  LeiosDbHandle (IOSim s) ->
+  LeiosDB (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
 withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
@@ -312,7 +318,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   let genesisConfig = disableGenesisConfig{gcCSJConfig = nodeConfigCsj cfg}
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs genesisConfig
   let seeds = configSeeds cfg
-  leiosAcquisitions <- newLeiosAcquisitions
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -328,8 +333,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             (mountedIn (nodeDBsVol nodeDBs))
             (seedSnapshotDelay seeds)
             (fst (mkInMemoryArgs ()))
-            leiosDB
-            leiosAcquisitions
+            (existingLeiosDbArgs leiosDB)
             ChainDB.defaultArgs
             ( (if nodeConfigLastShutDownWasClean cfg then id else ChainDB.ensureValidateAll)
                 . updateChainDbArgs
@@ -356,8 +360,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               -- With Genesis disabled, there is no historicity cutoff.
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
-              leiosDB
-              leiosAcquisitions
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0
@@ -413,7 +415,8 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                   (supportedNodeToNodeVersions (Proxy @Blk))
                   apps
             , nodeSeeds = seeds
-            , nodeLeiosAcquisitions = leiosAcquisitions
+            , nodeLeiosAcquisitions = ChainDB.leiosAcquisitions chainDB
+            , nodeLeiosDB = leiosDB
             , nodeConnectedPeers = connectedPeers
             }
 
@@ -473,7 +476,7 @@ withNodeCommittee committee range body = do
 
 -- | 'withNode' over the given LeiosDB, which a test can fill before the node
 -- starts.
-withNodeOver :: LeiosDbHandle (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeOver :: LeiosDB (IOSim s) -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNodeOver leiosDB body = do
   nodeDBs <- emptyNodeDBs
   withNodeOverDBs nodeDBs leiosDB body
@@ -482,7 +485,7 @@ withNodeOver leiosDB body = do
 -- starts, or reuse to restart it.
 withNodeOverDBs ::
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
-  LeiosDbHandle (IOSim s) ->
+  LeiosDB (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
 withNodeOverDBs =
@@ -493,7 +496,7 @@ withNodeOverDBs =
 -- | 'withNodeOverDBs', after a crash of the node that last used the databases.
 withNodeOverDBsAfterUncleanShutdown ::
   NodeDBs (StrictTMVar (IOSim s) MockFS) ->
-  LeiosDbHandle (IOSim s) ->
+  LeiosDB (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
 withNodeOverDBsAfterUncleanShutdown =

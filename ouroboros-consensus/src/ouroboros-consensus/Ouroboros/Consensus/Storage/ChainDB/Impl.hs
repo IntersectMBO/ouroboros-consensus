@@ -165,7 +165,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningLeiosDB
   leiosDb <-
     allocateTemp
-      (LeiosDB.openDB argsLeiosDb)
+      (LeiosDB.openDB (Args.cdbsRegistry cdbSpecificArgs) argsLeiosDb)
       (\db -> LeiosDB.closeDB db >> pure True)
       impossibleToNotTransfer
   ( immutableDB

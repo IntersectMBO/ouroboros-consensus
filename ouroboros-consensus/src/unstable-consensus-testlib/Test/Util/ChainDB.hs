@@ -22,7 +22,6 @@ import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -34,7 +33,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDB, LeiosDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -46,6 +45,7 @@ import System.FS.Sim.MockFS
 import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
 import System.Random (mkStdGen)
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (existingLeiosDbArgs)
 import Test.Util.Orphans.NoThunks ()
 import Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 
@@ -82,8 +82,8 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTMVar's containing empty MockFS's.
-  , mcdbLeiosDb :: LeiosDbHandle m
-  -- ^ The node's LeiosDB, eg an in-memory one.
+  , mcdbLeiosDb :: LeiosDB m
+  -- ^ The node's LeiosDB, eg an in-memory one. The ChainDB closes it on close.
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -140,6 +140,11 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           }
+    , cdbLeiosDbArgs =
+        LeiosDbArgs
+          { leiosDbTracer = nullTracer
+          , leiosBackendArgs = existingLeiosDbArgs mcdbLeiosDb
+          }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
           { pcdbaTracer = nullTracer
@@ -159,8 +164,5 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsSnapshotDelayRNG = mkStdGen 0
-          , cdbsLeiosDb = mcdbLeiosDb
-          , -- These tests fetch no endorser block, so none is acquired.
-            cdbsSubscribeLeiosAcquisitions = noLeiosAcquisitions
           }
     }

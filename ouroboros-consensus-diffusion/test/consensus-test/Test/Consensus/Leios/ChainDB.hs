@@ -38,9 +38,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
@@ -53,6 +52,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.Leios.Committee (certOf)
 import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Util.ChainDB (emptyNodeDBs)
@@ -202,7 +202,7 @@ lostRowBeforeAnother = do
     threadDelay 100
   damaged <- newLeiosDBInMemory
   writeClosure damaged pointB ebB txB
-  leiosDbPromoteToImmutable damaged (blockSlot certifyingB) [pointB]
+  promoteToImmutable damaged (blockSlot certifyingB) [pointB]
   withNodeOverDBsAfterUncleanShutdown nodeDBs damaged $ \node -> do
     immTip <- atomically (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain (nodeChainDB node))
     keptB <- withReader damaged (\reader -> isImmutable reader pointB)
@@ -356,7 +356,7 @@ txB = BS.replicate 10 2
 -- arrive and the node emits their acquisition, and after.
 tipsAroundClosure :: IOSim s (Point LeiosTestBlock, Point LeiosTestBlock)
 tipsAroundClosure = withNode $ \node -> do
-  let leiosDb = getLeiosDB (nodeKernel node)
+  let leiosDb = nodeLeiosDB node
       chainDB = nodeChainDB node
   withWriter leiosDb $ \writer -> do
     void $ await =<< writeEbBody writer pointA ebA mempty mempty

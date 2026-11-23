@@ -2,11 +2,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeData #-}
 
 module Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   ( InMemoryLeiosDb (..)
-  , Mem
+  , inMemoryArgs
+  , existingLeiosDbArgs
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemory
   , newLeiosDBInMemoryWith
@@ -43,7 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , hashLeiosTx
   )
-import Ouroboros.Consensus.Storage.LeiosDB
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosBackendArgs (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDB (..)
   , LeiosDbReader (..)
@@ -67,8 +67,15 @@ import Ouroboros.Consensus.Util.IOLike
   , try
   )
 
-inmemArgs :: LeiosBackendArgs (IOSim s)
-inmemArgs = const newLeiosDBInMemory
+-- | Backend arguments for a fresh in-memory LeiosDB, ignoring the tracer.
+inMemoryArgs :: IOLike m => LeiosBackendArgs m
+inMemoryArgs = LeiosBackendArgs (\_ _ -> newLeiosDBInMemory)
+
+-- | Backend arguments that hand the ChainDB an already open LeiosDB, so that a
+-- test can share it across ChainDB restarts or inspect it. The ChainDB closes it
+-- when it closes, which for the in-memory backend does nothing.
+existingLeiosDbArgs :: Applicative m => LeiosDB m -> LeiosBackendArgs m
+existingLeiosDbArgs db = LeiosBackendArgs (\_ _ -> pure db)
 
 -- | In-memory database state, as the SQLite backend's: a row per point in
 -- each partition, and the promoted slot.

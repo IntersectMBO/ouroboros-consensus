@@ -152,7 +152,6 @@ import Ouroboros.Consensus.Network.LeiosNotify
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePrunerInterval)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , Promise (..)
@@ -184,6 +183,7 @@ import Test.Consensus.Leios.TestBlock
   , setLeiosCert
   , successorLeiosBlock
   )
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -1990,7 +1990,7 @@ nonCanonicalPoint = MkLeiosPoint 2 (UnsafeHash (SBS.replicate 32 3))
 -- | Write 'heldEb' and its 'heldOffsets', and the endorser block of
 -- 'nonCanonicalBytes'.
 holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
-holdHeldEb node = withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
+holdHeldEb node = withWriter (nodeLeiosDB node) $ \writer -> do
   _ <- await =<< writeEbBody writer heldPoint heldEb mempty mempty
   _ <- await =<< writeTxs writer heldPoint (Map.fromList [(i, heldTxBytes i) | i <- heldOffsets])
   nonCanonicalEb <-

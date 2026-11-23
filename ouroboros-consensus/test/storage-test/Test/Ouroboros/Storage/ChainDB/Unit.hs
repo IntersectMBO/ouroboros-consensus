@@ -46,7 +46,6 @@ import Ouroboros.Consensus.Storage.Common
   , StreamTo (..)
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block
@@ -58,6 +57,7 @@ import Ouroboros.Network.Block
   , genesisPoint
   )
 import qualified Ouroboros.Network.Mock.Chain as Mock
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.ChainDB.StateMachine

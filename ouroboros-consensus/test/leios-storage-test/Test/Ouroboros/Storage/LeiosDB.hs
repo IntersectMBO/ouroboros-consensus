@@ -4,7 +4,7 @@
 
 -- | Tests for the "Ouroboros.Consensus.Storage.LeiosDB" interface.
 --
--- These tests verify the semantics of the LeiosDbHandle operations for both
+-- These tests verify the semantics of the LeiosDB operations for both
 -- InMemory and SQLite implementations. Each test case uses a fresh database
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
 module Test.Ouroboros.Storage.LeiosDB (tests) where
@@ -44,12 +44,11 @@ import Ouroboros.Consensus.Leios.Types
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
-  , newLeiosDBInMemory
   , withLeiosDBSQLite
   , withReader
   , withWriter
@@ -69,6 +68,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Read (lookupBlob, readPar
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Tooling (withExistingLeiosDbFile)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.QuickCheck
   ( Gen
   , Property
@@ -151,7 +151,7 @@ data RW = RW
   , rwWriter :: LeiosDbWriter IO
   }
 
-withRW :: LeiosDbHandle IO -> (RW -> IO a) -> IO a
+withRW :: LeiosDB IO -> (RW -> IO a) -> IO a
 withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
 
 -- Writes are awaited, so a read that follows one sees it.
@@ -186,12 +186,12 @@ rwBatchRetrieveTxs rw point = batchRetrieveTxs (rwReader rw) point . Set.fromLis
 
 -- | Create a fresh database and run an action with it.
 -- Ensures proper cleanup for SQLite databases.
-withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
+withFreshDb :: DbImpl -> (LeiosDB IO -> IO a) -> IO a
 withFreshDb InMemory action =
   newLeiosDBInMemory >>= action
 withFreshDb SQLite action = withFreshSQLiteDb action
 
-withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
+withFreshSQLiteDb :: (LeiosDB IO -> IO a) -> IO a
 withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 
 -- | Create a fresh SQLite database and hand its paths to the action, which
@@ -199,7 +199,7 @@ withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 -- flushed, threads stopped, connections closed -- before the directory is
 -- removed; a still-open connection makes the removal flaky (a hard failure
 -- on Windows, where deleting an open WAL is a sharing violation).
-withFreshSQLiteFile :: (FilePath -> FilePath -> LeiosDbHandle IO -> IO a) -> IO a
+withFreshSQLiteFile :: (FilePath -> FilePath -> LeiosDB IO -> IO a) -> IO a
 withFreshSQLiteFile action =
   withTempLeiosDbPaths $ \volDbPath immDbPath ->
     withLeiosDBSQLite nullTracer volDbPath immDbPath $
@@ -501,7 +501,7 @@ prop_txsRetrieveMissing impl =
 
 -- | The scan finds an EB only once each of its txs is written, and only that
 -- EB.
-test_completion :: LeiosDbHandle IO -> IO ()
+test_completion :: LeiosDB IO -> IO ()
 test_completion db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
@@ -517,7 +517,7 @@ test_completion db = do
 
 -- | A tx whose bytes are zeroes, as the closure holds before any write, counts
 -- as written once it is: its marker, not its bytes, tells.
-test_completionZeroTx :: LeiosDbHandle IO -> IO ()
+test_completionZeroTx :: LeiosDB IO -> IO ()
 test_completionZeroTx db = do
   let point = mkTestPoint (SlotNo 1) 1
       zero = BS.singleton 0
@@ -532,7 +532,7 @@ test_completionZeroTx db = do
 
 -- | The same EB content can be announced at several slots; the DB keeps each
 -- 'LeiosPoint' on its own, and the scan finds each whose closure is complete.
-test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
+test_multipleSlotsSameHash :: LeiosDB IO -> IO ()
 test_multipleSlotsSameHash db = do
   let hashSeed = 1
       point1 = mkTestPoint (SlotNo 1) hashSeed
@@ -548,7 +548,7 @@ test_multipleSlotsSameHash db = do
 
 -- | An EB announced again after its closure completed at an older point: the
 -- new point is complete only once its own txs are written.
-test_scanFindsLaterPoint :: LeiosDbHandle IO -> IO ()
+test_scanFindsLaterPoint :: LeiosDB IO -> IO ()
 test_scanFindsLaterPoint db = do
   let older = mkTestPoint (SlotNo 10) 1
       younger = mkTestPoint (SlotNo 30) 1
@@ -562,7 +562,7 @@ test_scanFindsLaterPoint db = do
     rwScanComplete con 20 >>= (@?= [younger])
 
 -- | A body write records its point.
-test_ebBodyWritesPoint :: LeiosDbHandle IO -> IO ()
+test_ebBodyWritesPoint :: LeiosDB IO -> IO ()
 test_ebBodyWritesPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
   rwInsertEbBody con (mkTestPoint 1 1) eb
@@ -570,7 +570,7 @@ test_ebBodyWritesPoint db = withRW db $ \con -> do
 
 -- | A body written again holds the txs written since, and one written at a new
 -- point of the EB holds none, whatever another point holds.
-test_ebBodyReportsHeldTxs :: LeiosDbHandle IO -> IO ()
+test_ebBodyReportsHeldTxs :: LeiosDB IO -> IO ()
 test_ebBodyReportsHeldTxs db = withRW db $ \con -> do
   let eb = mkTestEb 3
       point = mkTestPoint 1 1
@@ -581,7 +581,7 @@ test_ebBodyReportsHeldTxs db = withRW db $ \con -> do
 
 -- | Each point of an EB is read on its own: a point holds only the body and
 -- txs written at it, whatever another point of the EB holds.
-test_readsAtPoint :: LeiosDbHandle IO -> IO ()
+test_readsAtPoint :: LeiosDB IO -> IO ()
 test_readsAtPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
   writeWholeEb con [mkTestPoint 1 1] eb
@@ -598,7 +598,7 @@ test_readsAtPoint db = withRW db $ \con -> do
 --
 -- Neither the LeiosDB nor this test requires the bytes to hash to the body's
 -- tx hash: the LeiosDB assumes that its caller checked that.
-test_malformedTxWritesDropped :: LeiosDbHandle IO -> IO ()
+test_malformedTxWritesDropped :: LeiosDB IO -> IO ()
 test_malformedTxWritesDropped db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 2
@@ -634,7 +634,7 @@ fillFixtures =
   , mkEndorserBlock [(testTxHash 1 101, 101), (testTxHash 1 107, 107)]
   )
 
-test_fillFromAnotherEb :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherEb :: LeiosDB IO -> IO ()
 test_fillFromAnotherEb db = do
   let (pointA, ebA, pointB, ebB) = fillFixtures
   withRW db $ \con -> do
@@ -656,7 +656,7 @@ test_fillFromAnotherEb db = do
     rwInsertTxs con pointB [(1, txBytesFor ebB 1)]
     rwScanComplete con 0 >>= (@?= [pointA, pointB])
 
-test_fillWithoutSourceBytes :: LeiosDbHandle IO -> IO ()
+test_fillWithoutSourceBytes :: LeiosDB IO -> IO ()
 test_fillWithoutSourceBytes db = do
   let (pointA, ebA, pointB, ebB) = fillFixtures
   withRW db $ \con -> do
@@ -675,7 +675,7 @@ test_fillWithoutSourceBytes db = do
         )
     result @?= []
 
-test_fillCompletesClosure :: LeiosDbHandle IO -> IO ()
+test_fillCompletesClosure :: LeiosDB IO -> IO ()
 test_fillCompletesClosure db = do
   let (pointA, ebA, _, _) = fillFixtures
       pointB = mkTestPoint (SlotNo 2) 2
@@ -688,7 +688,7 @@ test_fillCompletesClosure db = do
 
 -- | An EB announced again: the new point fills its txs from the older one's,
 -- which a point does not share otherwise.
-test_fillFromAnotherPoint :: LeiosDbHandle IO -> IO ()
+test_fillFromAnotherPoint :: LeiosDB IO -> IO ()
 test_fillFromAnotherPoint db = withRW db $ \con -> do
   let eb = mkTestEb 2
       older = mkTestPoint 1 1
@@ -704,7 +704,7 @@ test_fillFromAnotherPoint db = withRW db $ \con -> do
   rwLookupEbClosure con younger >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | A body listing the tx of the source by its hash, but with another size.
-test_fillOfMisstatedSize :: LeiosDbHandle IO -> IO ()
+test_fillOfMisstatedSize :: LeiosDB IO -> IO ()
 test_fillOfMisstatedSize db = do
   let (pointA, ebA, pointB, _) = fillFixtures
       ebB = mkEndorserBlock [(testTxHash 1 101, 102)]
@@ -718,7 +718,7 @@ test_fillOfMisstatedSize db = do
 
 -- | Txs given with a body are written with it, unless the body lists another
 -- size at their offset, and the write reports those the point then holds.
-test_bodyWithTxs :: LeiosDbHandle IO -> IO ()
+test_bodyWithTxs :: LeiosDB IO -> IO ()
 test_bodyWithTxs db = do
   let (pointA, ebA, _, _) = fillFixtures
   withRW db $ \con -> do
@@ -738,7 +738,7 @@ test_bodyWithTxs db = do
 -- | A second write of a body at a point, with no fills of its own, reports the
 -- txs the point holds, as the settlement of whichever write settles first
 -- needs.
-test_secondBodyWriteReportsHeld :: LeiosDbHandle IO -> IO ()
+test_secondBodyWriteReportsHeld :: LeiosDB IO -> IO ()
 test_secondBodyWriteReportsHeld db = do
   let (pointA, ebA, pointB, ebB) = fillFixtures
   withRW db $ \con -> do
@@ -764,7 +764,7 @@ test_readsDispatchBySlot impl = withFreshDb impl $ \db -> withRW db $ \con -> do
       promoted = mkTestPoint 5 1
       again = mkTestPoint 10 1
   writeWholeEb con [promoted] eb
-  leiosDbPromoteToImmutable db 6 [promoted]
+  promoteToImmutable db 6 [promoted]
   garbageCollect db
   rwInsertEbBody con again eb
   rwInsertTxs con again (take 1 (allTxsFor eb))
@@ -783,14 +783,14 @@ test_promoteAgainAfterLosingVolatileTxs volDbPath immDbPath = do
       point = mkTestPoint 5 1
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     writeWholeEb con [point] eb
-    leiosDbPromoteToImmutable db 6 [point]
+    promoteToImmutable db 6 [point]
   -- What the crash leaves of the volatile partition: the body, but no txs.
   withSqlFile volDbPath $ \sql ->
     SQL.exec
       sql
       (T.pack "UPDATE ebs SET txWritten = zeroblob(length(txWritten)), txs = zeroblob(length(txs))")
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
-    leiosDbPromoteToImmutable db 6 [point]
+    promoteToImmutable db 6 [point]
     rwLookupEbClosure con point >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | EBs promoted at slots 90 and 100 up to slot 110, and collected, before the
@@ -804,9 +804,9 @@ test_truncateKeepsPromotedEb volDbPath immDbPath = do
       dropped = mkTestPoint 100 2
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     writeWholeEb con [kept, dropped] eb
-    leiosDbPromoteToImmutable db 110 [kept, dropped]
+    promoteToImmutable db 110 [kept, dropped]
     garbageCollect db
-    leiosDbTruncateImmutable db 100
+    truncateImmutable db 100
   withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db -> withRW db $ \con -> do
     rwLookupEbClosure con kept >>= (@?= Just (map snd (allTxsFor eb)))
     rwScanComplete con 0 >>= (@?= [kept])
@@ -815,23 +815,23 @@ test_truncateKeepsPromotedEb volDbPath immDbPath = do
 
 -- | An EB announced again after the announcement that gets certified: the
 -- immutable copy is at the certified slot.
-test_promoteAtCertifiedSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_promoteAtCertifiedSlot :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_promoteAtCertifiedSlot _volDbPath immDbPath db = do
   let certified = mkTestPoint 10 1
   withRW db $ \con -> writeWholeEb con [certified, mkTestPoint 20 1] (mkTestEb 2)
-  leiosDbPromoteToImmutable db 11 [certified]
+  promoteToImmutable db 11 [certified]
   ebSlotIn immDbPath (mkTestEbHash 1) >>= (@?= 10)
 
 -- | An EB promoted at slot 5 up to slot 6 and collected, read by a reader that
 -- chose the volatile partition before that promotion: as of its choice, the
 -- promoted slot was 0. It finds no row there, and reads the immutable partition
 -- only if the promotion has overtaken it.
-test_readOvertakenByCollection :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_readOvertakenByCollection :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_readOvertakenByCollection volDbPath immDbPath db = do
   let eb = mkTestEb 2
       point = mkTestPoint 5 1
   withRW db $ \con -> writeWholeEb con [point] eb
-  leiosDbPromoteToImmutable db 6 [point]
+  promoteToImmutable db 6 [point]
   garbageCollect db
   statsVar <- newTVarIO =<< initialStats volDbPath immDbPath
   promotedSlotVar <- newTVarIO 0
@@ -851,12 +851,12 @@ holdsClosure con point = isJust <$> rwLookupEbClosure con point
 
 -- | Advance the promoted slot without promoting anything, as for blocks that
 -- certify nothing, then collect.
-collectBefore :: LeiosDbHandle IO -> SlotNo -> IO ()
+collectBefore :: LeiosDB IO -> SlotNo -> IO ()
 collectBefore db slot = do
-  leiosDbPromoteToImmutable db slot []
+  promoteToImmutable db slot []
   garbageCollect db
 
-test_gcEvictsOldEb :: LeiosDbHandle IO -> IO ()
+test_gcEvictsOldEb :: LeiosDB IO -> IO ()
 test_gcEvictsOldEb db = withRW db $ \con -> do
   -- The old EB references transactions 0, 1 and 2, and the other only 0 and 1.
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 3)
@@ -871,7 +871,7 @@ test_gcEvictsOldEb db = withRW db $ \con -> do
   holdsClosure con (mkTestPoint 20 3) >>= (@?= False)
 
 -- | An EB written whole at slot 5 and again at slot 10, collected at slot 6.
-test_gcDropsOlderPoints :: LeiosDbHandle IO -> IO ()
+test_gcDropsOlderPoints :: LeiosDB IO -> IO ()
 test_gcDropsOlderPoints db = withRW db $ \con -> do
   let eb = mkTestEb 2
       again = mkTestPoint 10 1
@@ -882,7 +882,7 @@ test_gcDropsOlderPoints db = withRW db $ \con -> do
 -- | After a promotion up to slot 6, a point at slot 5 and a body for another
 -- point at slot 5 are written, and one at slot 4 that a later promotion up to
 -- slot 3 does not bring back.
-test_gcDropsWritesOfCollectedPoint :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcDropsWritesOfCollectedPoint :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_gcDropsWritesOfCollectedPoint volDbPath _immDbPath db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 10 1] (mkTestEb 2)
   collectBefore db 6
@@ -895,7 +895,7 @@ test_gcDropsWritesOfCollectedPoint volDbPath _immDbPath db = withRW db $ \con ->
 
 -- | An EB written whole at slot 10 is announced again in each of nine more
 -- rounds, each followed by a collection at its slot.
-test_gcBoundsPointsOfReannouncedEb :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcBoundsPointsOfReannouncedEb :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_gcBoundsPointsOfReannouncedEb volDbPath _immDbPath db = withRW db $ \con -> do
   let eb = mkTestEb 2
   writeWholeEb con [mkTestPoint 10 1] eb
@@ -905,7 +905,7 @@ test_gcBoundsPointsOfReannouncedEb volDbPath _immDbPath db = withRW db $ \con ->
   ebRows volDbPath >>= (@?= 1)
   rwLookupEbBody con (mkTestPoint 100 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
-test_gcKeepsEbWithPointAtSlot :: LeiosDbHandle IO -> IO ()
+test_gcKeepsEbWithPointAtSlot :: LeiosDB IO -> IO ()
 test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1, mkTestPoint 6 1] (mkTestEb 2)
   collectBefore db 6
@@ -913,7 +913,7 @@ test_gcKeepsEbWithPointAtSlot db = withRW db $ \con -> do
 
 -- | More points before the slot than the SQLite implementation deletes in one
 -- job, and one at the slot.
-test_gcCollectsManyPoints :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_gcCollectsManyPoints :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_gcCollectsManyPoints volDbPath _immDbPath db = withRW db $ \con -> do
   let eb = mkTestEb 2
       n = 2 * gcBatchSize + 1
@@ -923,36 +923,36 @@ test_gcCollectsManyPoints volDbPath _immDbPath db = withRW db $ \con -> do
   ebRows volDbPath >>= (@?= 1)
   rwLookupEbBody con (mkTestPoint (fromIntegral n) 1) >>= (@?= Just (serialiseEndorserBlock eb))
 
-test_gcKeepsPromotedEb :: LeiosDbHandle IO -> IO ()
+test_gcKeepsPromotedEb :: LeiosDB IO -> IO ()
 test_gcKeepsPromotedEb db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 5 1] (mkTestEb 2)
-  leiosDbPromoteToImmutable db 6 [mkTestPoint 5 1]
+  promoteToImmutable db 6 [mkTestPoint 5 1]
   garbageCollect db
   holdsClosure con (mkTestPoint 5 1) >>= (@?= True)
 
 -- | An EB promoted at slot 10, and later at slot 20, both collected.
-test_promoteAtEachPoint :: LeiosDbHandle IO -> IO ()
+test_promoteAtEachPoint :: LeiosDB IO -> IO ()
 test_promoteAtEachPoint db = withRW db $ \con -> do
   let earlier = mkTestPoint 10 1
       later = mkTestPoint 20 1
   writeWholeEb con [earlier, later] (mkTestEb 2)
-  leiosDbPromoteToImmutable db 11 [earlier]
-  leiosDbPromoteToImmutable db 21 [later]
+  promoteToImmutable db 11 [earlier]
+  promoteToImmutable db 21 [later]
   garbageCollect db
   holdsClosure con earlier >>= (@?= True)
   holdsClosure con later >>= (@?= True)
 
 -- | EBs promoted at slots 4 and 5 up to slot 6 and collected, then the
 -- immutable partition truncated to slot 5.
-test_truncateImmutable :: LeiosDbHandle IO -> IO ()
+test_truncateImmutable :: LeiosDB IO -> IO ()
 test_truncateImmutable db = withRW db $ \con -> do
   let eb = mkTestEb 2
       kept = mkTestPoint 4 1
       dropped = mkTestPoint 5 2
   writeWholeEb con [kept, dropped] eb
-  leiosDbPromoteToImmutable db 6 [kept, dropped]
+  promoteToImmutable db 6 [kept, dropped]
   garbageCollect db
-  leiosDbTruncateImmutable db 5
+  truncateImmutable db 5
   mapM (isImmutable (rwReader con)) [kept, dropped] >>= (@?= [True, False])
   rwLookupEbClosure con kept >>= (@?= Just (map snd (allTxsFor eb)))
   rwLookupEbClosure con dropped >>= (@?= Nothing)
@@ -960,7 +960,7 @@ test_truncateImmutable db = withRW db $ \con -> do
   rwLookupEbClosure con dropped >>= (@?= Just (map snd (allTxsFor eb)))
 
 -- | A complete EB promoted along with one whose closure lacks a tx, up to slot 6.
-test_promoteIncompleteFails :: LeiosDbHandle IO -> IO ()
+test_promoteIncompleteFails :: LeiosDB IO -> IO ()
 test_promoteIncompleteFails db = withRW db $ \con -> do
   writeWholeEb con [mkTestPoint 4 2] (mkTestEb 3)
   rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
@@ -970,16 +970,16 @@ test_promoteIncompleteFails db = withRW db $ \con -> do
   holdsClosure con (mkTestPoint 4 2) >>= (@?= False)
 
 -- | An EB with its body but none of its txs.
-test_promoteNothingWrittenFails :: LeiosDbHandle IO -> IO ()
+test_promoteNothingWrittenFails :: LeiosDB IO -> IO ()
 test_promoteNothingWrittenFails db = withRW db $ \con -> do
   rwInsertEbBody con (mkTestPoint 5 1) (mkTestEb 2)
   assertPromoteFails db [mkTestPoint 5 1]
   isImmutable (rwReader con) (mkTestPoint 5 1) >>= (@?= False)
 
 -- | Promoting the points up to slot 6 fails.
-assertPromoteFails :: LeiosDbHandle IO -> [LeiosPoint] -> Assertion
+assertPromoteFails :: LeiosDB IO -> [LeiosPoint] -> Assertion
 assertPromoteFails db points =
-  tryDb (leiosDbPromoteToImmutable db 6 points) >>= \case
+  tryDb (promoteToImmutable db 6 points) >>= \case
     Left _ -> pure ()
     Right () -> assertFailure "promoting an EB whose closure is incomplete succeeded"
  where
@@ -1035,7 +1035,7 @@ prop_completedEbNoBody impl =
 
 -- * deleteEbsFrom on a partition file
 
-test_truncateDropsEbsAfterSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_truncateDropsEbsAfterSlot :: FilePath -> FilePath -> LeiosDB IO -> IO ()
 test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
   let eb = mkTestEb 2
       keptHash = mkTestEbHash 1
@@ -1270,7 +1270,7 @@ poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
 -- the immutable chain certifies, and a chain cannot certify the same endorser
 -- block twice, since it cannot be valid twice.
 observe ::
-  LeiosDbHandle IO ->
+  LeiosDB IO ->
   Bodies ->
   [Op] ->
   IO
@@ -1315,7 +1315,7 @@ observe db bodies ops = withRW db $ \rw -> do
         complete <- holdsClosure rw point
         if complete
           then do
-            leiosDbPromoteToImmutable db promotedSlot [point]
+            promoteToImmutable db promotedSlot [point]
             go rw promotedSlot points bodied (nub (ebHash : promoted)) nEvicted rest
           else go rw promotedSlot points bodied promoted nEvicted rest
       [] -> go rw promotedSlot points bodied promoted nEvicted rest

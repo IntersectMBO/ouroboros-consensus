@@ -168,7 +168,6 @@ import Ouroboros.Consensus.Network.LeiosNotify
   )
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePrunerInterval)
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
@@ -200,6 +199,7 @@ import Test.Consensus.Leios.TestBlock
   , singleNodeLeiosTestConfig
   , successorLeiosBlock
   )
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.QuickCheck
   ( Gen
   , Property

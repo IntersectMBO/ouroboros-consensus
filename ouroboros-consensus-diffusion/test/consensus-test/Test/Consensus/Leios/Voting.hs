@@ -53,7 +53,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchCli
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (LeiosFetchKernel (..))
 import Ouroboros.Consensus.Node.Tracers (Tracers' (..), nullTracers)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , await
@@ -94,6 +93,7 @@ import Test.Consensus.Leios.TestBlock
   , setAnnouncement
   , successorLeiosBlock
   )
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Util.ChainDB (emptyNodeDBs)
@@ -294,7 +294,7 @@ runVoting Voting{keys, ups, adopts, closures, validating, validatedBefore} = run
     waitUntil at
     let eb = mkEndorserBlock [(txHashOf i, fromIntegral (BS.length tx)) | (i, tx) <- zip [0 ..] txs]
         point = MkLeiosPoint (blockSlot blk) (ebHashOf blk)
-    withWriter (getLeiosDB (nodeKernel node)) $ \writer -> do
+    withWriter (nodeLeiosDB node) $ \writer -> do
       _ <- await =<< writeEbBody writer point eb Map.empty (Map.fromList (zip [0 ..] txs))
       pure ()
     -- As the node's LeiosFetch would, before the voter looks the txs up.

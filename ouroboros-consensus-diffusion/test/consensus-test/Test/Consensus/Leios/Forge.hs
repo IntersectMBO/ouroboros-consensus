@@ -317,7 +317,7 @@ forgedEbs = withNode $ \node -> do
   -- lets the forge of slot 3 add its block to the ChainDB.
   threadDelay 3.5
   chain <- atomically $ getCurrentChain (nodeChainDB node)
-  withReader (getLeiosDB (nodeKernel node)) $ \reader -> do
+  withReader (nodeLeiosDB node) $ \reader -> do
     announcedEbs <-
       sequence
         [ AnnouncedEb (blockSlot hdr) ebHash [txInSlot (blockSlot hdr)]

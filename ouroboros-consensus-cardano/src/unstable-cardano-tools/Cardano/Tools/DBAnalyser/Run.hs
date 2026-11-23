@@ -29,7 +29,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMem
   ( HasTxs
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
@@ -52,7 +51,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBSQLite)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosBackendArgs (..), newLeiosDBSQLite)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -211,9 +210,8 @@ analyse dbaConfig args =
             shfs
             snapshotDelayRng
             flavargs
-            leiosDb
-            -- It fetches nothing, so it acquires nothing.
-            noLeiosAcquisitions
+            -- The one opened above, which the analyses read directly.
+            (LeiosBackendArgs (\_ _ -> pure leiosDb))
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
         -- go forward so we don't need to account for rollbacks.

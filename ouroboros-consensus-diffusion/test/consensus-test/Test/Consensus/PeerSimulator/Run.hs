@@ -54,7 +54,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
-import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
@@ -101,6 +100,7 @@ import Test.Consensus.PointSchedule.Peers
   , PeerId
   , getPeerIds
   )
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Util.ChainDB
 import Test.Util.Header (dropTimeFromFragment)
 import Test.Util.Orphans.IOLike ()

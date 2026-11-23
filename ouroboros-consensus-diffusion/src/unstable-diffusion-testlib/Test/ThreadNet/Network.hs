@@ -89,7 +89,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -120,7 +119,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -159,6 +158,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V2
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.Random (mkStdGen, splitGen)
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.Util.NodeJoinPlan
 import Test.ThreadNet.Util.NodeRestarts
@@ -752,8 +752,7 @@ runThreadNetwork
       -- \^ ledger updates tracer
       Tracer m (ChainDB.TracePipeliningEvent blk) ->
       NodeDBs (StrictTMVar m MockFS) ->
-      LeiosDbHandle m ->
-      LeiosAcquisitions m ->
+      LeiosDB m ->
       CoreNodeId ->
       ChainDbArgs Identity m blk
     mkArgs
@@ -767,7 +766,6 @@ runThreadNetwork
       pipeliningTracer
       nodeDBs
       leiosDB
-      leiosAcquisitions
       _coreNodeId =
         let args =
               fromMinimalChainDbArgs
@@ -799,7 +797,6 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions leiosAcquisitions
                     , cdbsTracer = instrumentationTracer <> nullDebugTracer
                     }
               }
@@ -878,7 +875,6 @@ runThreadNetwork
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
       leiosDB <- newLeiosDBInMemory
-      leiosAcquisitions <- newLeiosAcquisitions
       let chainDbArgs =
             mkArgs
               registry
@@ -891,7 +887,6 @@ runThreadNetwork
               pipeliningTracer
               nodeInfoDBs
               leiosDB
-              leiosAcquisitions
               coreNodeId
       chainDB <-
         snd
@@ -1074,7 +1069,6 @@ runThreadNetwork
               , btime
               , systemTime
               , chainDB
-              , leiosDB
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck
@@ -1087,7 +1081,6 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , leiosAcquisitions
               , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
               , miniProtocolParameters = defaultMiniProtocolParameters

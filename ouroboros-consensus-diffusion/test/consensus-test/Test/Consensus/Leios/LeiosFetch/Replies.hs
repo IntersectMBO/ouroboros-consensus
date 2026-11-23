@@ -97,8 +97,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , fetchArrivalGood
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
-  , newLeiosDBInMemory
+  ( LeiosDB (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
@@ -108,6 +107,7 @@ import Ouroboros.Consensus.Util.IOLike (modifyMVar, modifyMVar_, readMVar, takeM
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar (uncheckedNewEmptyMVar, uncheckedNewMVar)
 import System.Random (mkStdGen)
 import qualified System.Timeout as Timeout
+import Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory (newLeiosDBInMemory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 

@@ -47,7 +47,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDB)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -106,7 +106,7 @@ data LiveResources blk m = LiveResources
   -- After 'lnCopyToImmDb' was executed, the latter will contain the final
   -- state of an interval.
   -- The rest is reset when the chain DB is recreated.
-  , lrLeiosDb :: LeiosDbHandle m
+  , lrLeiosDb :: LeiosDB m
   -- ^ The node's LeiosDB, kept across live intervals as the immutable and
   -- volatile DBs are.
   , lrLoEVar :: LoE (StrictTVar m (AnchoredFragment (HeaderWithTime blk)))

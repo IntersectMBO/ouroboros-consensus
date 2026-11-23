@@ -100,7 +100,7 @@ import Ouroboros.Consensus.Leios.Types
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , TraceLeiosDb (..)
@@ -183,7 +183,7 @@ main = do
         , "Phases              : " <> describeSeries
         , ""
         ]
-    before <- leiosDbSampleStats db
+    before <- sampleStats db
     hPutStrLn stderr (renderStats "before" before)
     latRef <- newIORef 0
     putStrLn csvHeader
@@ -191,7 +191,7 @@ main = do
       withAsync mutator $ \_ ->
         withAsync (tickProbe latRef) $ \_ ->
           runPhases opts db flushEvents latRef schedule
-    after <- leiosDbSampleStats db
+    after <- sampleStats db
     hPutStrLn stderr (renderStats "after " after)
     hPutStr stderr (renderSummary opts phaseStats)
 
@@ -349,7 +349,7 @@ validateOpts opts = do
 
 -- | Insert deterministic volatile EBs (untimed), one every 'slotsPerEb'
 -- slots, and return the (slot, hash) schedule ascending in slot.
-populateDb :: Opts -> LeiosDbHandle IO -> IO [(Word64, BS.ByteString)]
+populateDb :: Opts -> LeiosDB IO -> IO [(Word64, BS.ByteString)]
 populateDb opts db =
   withWriter db $ \writer ->
     forM [0 .. populationEbs - 1] $ \ebIdx -> do
@@ -432,7 +432,7 @@ data PhaseResult = PhaseResult
 
 runPhases ::
   Opts ->
-  LeiosDbHandle IO ->
+  LeiosDB IO ->
   IO [TraceLeiosDb] ->
   IORef DiffTime ->
   [(Word64, BS.ByteString)] ->
@@ -481,7 +481,7 @@ runPhases opts db flushEvents latRef schedule =
           writeIORef remainingRef rest
           -- 1. quiescent full-EB insertion latency at the current load
           insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
-          resident <- volatileEbs <$> leiosDbSampleStats db
+          resident <- volatileEbs <$> sampleStats db
           -- 2. promote a fraction
           let nPromote =
                 -- ceiling, so the 1-EB steady phases promote their EB and
@@ -490,7 +490,7 @@ runPhases opts db flushEvents latRef schedule =
           -- One batched call, as 'copyToImmutableDB' does it.
           (_, promoteWall) <-
             timed $
-              leiosDbPromoteToImmutable
+              promoteToImmutable
                 db
                 (SlotNo frontier)
                 [MkLeiosPoint (SlotNo s) (UnsafeHash (SBS.toShort h)) | (s, h) <- take nPromote due]

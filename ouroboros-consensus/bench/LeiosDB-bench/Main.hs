@@ -85,7 +85,7 @@ import Ouroboros.Consensus.Leios.Types
   , mkEndorserBlock
   )
 import Ouroboros.Consensus.Storage.LeiosDB
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
@@ -261,7 +261,7 @@ runBench mLoad BenchEnv{beDb, beVoter, bePeers, beApplier} = do
     fetchEb eb onDone = do
       slot <- atomicModifyIORef' slotVar $ \n -> (n + 1, n)
       when (slot `mod` gcEvery == 0) $ do
-        leiosDbPromoteToImmutable beDb (SlotNo (fromIntegral (slot + 1 - numVolatileEbs))) []
+        promoteToImmutable beDb (SlotNo (fromIntegral (slot + 1 - numVolatileEbs))) []
         garbageCollect beDb
       let point = MkLeiosPoint (SlotNo (fromIntegral slot)) (beHash eb)
       started <- getMonotonicTime
@@ -413,7 +413,7 @@ mix seed ebIdx j = h `xor` (h `shiftR` 29)
 -- * Benchmark environment
 
 data BenchEnv = BenchEnv
-  { beDb :: !(LeiosDbHandle IO)
+  { beDb :: !(LeiosDB IO)
   , beVoter :: !(LeiosDbReader IO)
   , bePeers :: ![LeiosDbReader IO]
   , beApplier :: !(LeiosDbReader IO)
