@@ -48,6 +48,7 @@ import Ouroboros.Consensus.Config
   , emptyCheckpointsMap
   )
 import Ouroboros.Consensus.Leios.Acquisitions (noLeiosAcquisitions)
+import Ouroboros.Consensus.Leios.NewValidClaims (ignoreNewLeiosValidClaim)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
@@ -194,6 +195,8 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
           leiosDb
           -- It fetches nothing, so it acquires nothing.
           noLeiosAcquisitions
+          -- Nor does it fetch the endorser blocks certified announcements name.
+          ignoreNewLeiosValidClaim
           $ ChainDB.defaultArgs
 
     -- The KES agent client only reports a failure to connect by tracing it, so

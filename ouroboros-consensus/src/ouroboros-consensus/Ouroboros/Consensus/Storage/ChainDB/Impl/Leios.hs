@@ -38,13 +38,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Leios
 
 import Control.Monad (guard)
 import qualified Data.List as List
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Set.NonEmpty (NESet)
-import qualified Data.Set.NonEmpty as NESet
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -53,10 +49,7 @@ import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosProtocol (..)
   )
-import Ouroboros.Consensus.Leios.Types
-  ( LeiosPoint (..)
-  , RankingBlockHash
-  )
+import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (Parent (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -190,44 +183,41 @@ ignoreParkedCertRBSuc acquired lookupBlockInfo succsOf =
 -- certifies, each with its slot.
 --
 -- A block containing a certificate claims that the endorser block its
--- predecessor announced is certified. The claims that valid certificates have
--- established are how LeiosFetch will learn which endorser blocks are
--- certified, for its Recovery Path; that part is not ported yet. Meanwhile, a
--- block making an already established claim need not have its certificate
--- verified.
+-- predecessor announced is certified. A block making an already established
+-- claim need not have its certificate verified immediately upon arrival.
 data LeiosValidClaims = LeiosValidClaims
-  { lvcSlot :: !(Map RankingBlockHash SlotNo)
-  , lvcBySlot :: !(Map SlotNo (NESet RankingBlockHash))
-  -- ^ The inverse of 'lvcSlot', so that pruning costs only what it prunes.
+  { lvcClaims :: !(Set LeiosClaim)
+  , lvcPrunedSlot :: !SlotNo
+  -- ^ The slot this has most recently been pruned to, so that a claim established
+  -- after the pruning cannot undo it.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyLeiosValidClaims :: LeiosValidClaims
-emptyLeiosValidClaims = LeiosValidClaims Map.empty Map.empty
+emptyLeiosValidClaims = LeiosValidClaims Set.empty (SlotNo 0)
 
--- | Record that some valid certificate established the claim.
-insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> LeiosValidClaims
-insertLeiosValidClaim (LeiosClaim slot rbHash) claims@(LeiosValidClaims slots bySlot)
-  | Map.member rbHash slots = claims
-  | otherwise =
-      LeiosValidClaims
-        (Map.insert rbHash slot slots)
-        (Map.insertWith NESet.union slot (NESet.singleton rbHash) bySlot)
+-- | Record that some valid certificate established the claim, or 'Nothing' if
+-- it is already established or its announcing block is older than what has
+-- been pruned.
+insertLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Maybe LeiosValidClaims
+insertLeiosValidClaim claim@(LeiosClaim slot _rbHash) (LeiosValidClaims established prunedSlot)
+  | slot < prunedSlot = Nothing
+  | Set.member claim established = Nothing
+  | otherwise = Just $ LeiosValidClaims (Set.insert claim established) prunedSlot
 
-isLeiosValidClaim :: RankingBlockHash -> LeiosValidClaims -> Bool
-isLeiosValidClaim rbHash = Map.member rbHash . lvcSlot
+isLeiosValidClaim :: LeiosClaim -> LeiosValidClaims -> Bool
+isLeiosValidClaim claim = Set.member claim . lvcClaims
 
 -- | Forget every claim whose announcing block is older than the slot: once the
 -- immutable tip has passed it, no block that ChainSel has yet to select can
 -- make the claim.
 pruneLeiosValidClaims :: SlotNo -> LeiosValidClaims -> LeiosValidClaims
-pruneLeiosValidClaims slot (LeiosValidClaims slots bySlot) =
+pruneLeiosValidClaims slot (LeiosValidClaims established prunedSlot) =
   LeiosValidClaims
-    (slots `Map.withoutKeys` foldMap NESet.toSet pruned)
-    kept
- where
-  (pruned, kept) = Map.spanAntitone (< slot) bySlot
+    -- 'LeiosClaim' orders by slot first.
+    (Set.dropWhileAntitone ((< slot) . leiosClaimSlot) established)
+    (max slot prunedSlot)
 
 {-------------------------------------------------------------------------------
   Checking the ImmutableDB

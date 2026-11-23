@@ -205,6 +205,7 @@ library
     Ouroboros.Consensus.Leios.Acquisitions
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
+    Ouroboros.Consensus.Leios.NewValidClaims
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
     Ouroboros.Consensus.Leios.Types
@@ -988,6 +989,7 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1605,7 +1607,7 @@ test-suite consensus-diffusion-test
     nonempty-containers,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
-    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
+    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols, protocols-tests-lib},
     pretty,
     QuickCheck,
     quickcheck-dynamic ^>=4,
