@@ -26,10 +26,6 @@ data TraceLeiosFetchClientEvent peer
     -- write settles, and was needed only if no other reply's write
     -- settled first.
     TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
-  | -- | The node took the endorser block at this point from the body the
-    -- LeiosTxCache held for another point, rather than fetching it. Traced once
-    -- the write is durable, if no reply's write settled first.
-    TraceLeiosFetchClientBlockFromCache !LeiosPoint
   | -- | Some of an endorser block's transactions arrived from this peer, their
     -- bytes classified by whether the node needed them. Ones the node writes
     -- are traced once the write settles, and were needed only if no other

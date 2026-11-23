@@ -101,10 +101,6 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- cross-EB fill. When the body is inserted, the entry is already in hand for
   -- the refcount bump, so this location read rides that pass rather than
   -- costing a second one.
-  , lookupBody :: EndorserBlockHash -> m (Maybe b)
-  -- ^ The EB's body if we hold it. A hit means only that the body was taken in
-  -- for some point of the EB: it says nothing about what the LeiosDb holds at
-  -- any point.
   , withLockedInsertUnappliedTx ::
       (forall w. w -> (w -> TxHash -> BytesSize -> a -> m w) -> m w) ->
       m FetchArrivalBytes

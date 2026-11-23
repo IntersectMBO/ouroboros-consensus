@@ -72,7 +72,6 @@ module Ouroboros.Consensus.Leios.Types
   , SizeRole (..)
   , leiosEbByteSizes
   , idLeiosEbByteSizesLimit
-  , admitsSizes
   , referencesCapacity
   , maxEndorserBlockBytesSize
   , maxTxsPerEndorserBlock
@@ -563,12 +562,6 @@ leiosEbByteSizes eb =
 -- fixes it.
 idLeiosEbByteSizesLimit :: LeiosEbByteSizes SizeLimit -> LeiosEbByteSizes SizeLimit
 idLeiosEbByteSizesLimit = id
-
--- | Whether these bounds admit an endorser block of these sizes.
-admitsSizes :: LeiosEbByteSizes SizeLimit -> LeiosEbByteSizes SizeActual -> Bool
-admitsSizes bounds sizes =
-  lebBodySize sizes <= lebBodySize bounds
-    && lebTxsSize sizes <= lebTxsSize bounds
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.

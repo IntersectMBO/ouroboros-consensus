@@ -504,10 +504,10 @@ initNodeKernel
     -- requires.
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchAnnouncementFocuser" $
-        leiosFetchAnnouncementFocuser registry leiosFetchKernel
+        leiosFetchAnnouncementFocuser leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchCertificateFocuser" $
-        leiosFetchCertificateFocuser registry (atomically nextNewLeiosValidClaims) leiosFetchKernel
+        leiosFetchCertificateFocuser (atomically nextNewLeiosValidClaims) leiosFetchKernel
     void $
       forkLinkedThread registry "NodeKernel.leiosOfferRelay" $
         leiosOfferRelay nextLeiosAcquisition leiosNotifyLog

@@ -42,7 +42,6 @@ module Ouroboros.Consensus.Leios.TxCache.Reference
   , insertUnappliedTx
   , insertAppliedTx
   , lookupTx
-  , lookupBody
   , setTxLocations
   , lookupTxLocation
 
@@ -407,9 +406,6 @@ lookupTx txh idx = case Map.lookup txh (txState idx) of
   Just (TxNotYetInserted _) -> Nothing
   Just (TxAlreadyInserted _ a) -> Just (Left a)
   Just (TxAlreadyValidated _ v) -> Just (Right v)
-
-lookupBody :: EndorserBlockHash -> LeiosTxCacheIndex a v b -> Maybe b
-lookupBody ebh idx = (\(MkHeldBody _ b) -> b) <$> Map.lookup ebh (bodyState idx)
 
 -- | Record where each tx's durable bytes now live: point each /tracked/ tx at
 -- the source point's ring entry. The latest location wins -- the newest source

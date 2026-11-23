@@ -57,9 +57,6 @@ tests =
         "bodies"
         [ testCase "insertBody references its txs (NotYetInserted rc=1)" test_body
         , testCase "insertBody is idempotent" test_bodyIdempotent
-        , testCase "lookupBody on an untracked EB is Nothing" test_lookupBodyUntracked
-        , testCase "lookupBody after insertBody returns the body" test_lookupBodyInserted
-        , testCase "lookupBody after eviction is Nothing" test_lookupBodyEvicted
         ]
     , testGroup
         "txs"
@@ -169,20 +166,6 @@ test_body = do
 test_bodyIdempotent :: Assertion
 test_bodyIdempotent = txRC 10 (body 1 1 [10] (body 1 1 [10] empty)) @?= Just (MkRefCount 1)
 
-test_lookupBodyUntracked :: Assertion
-test_lookupBodyUntracked = lookupBody (ebhOf 1) empty @?= Nothing
-
-test_lookupBodyInserted :: Assertion
-test_lookupBodyInserted =
-  lookupBody (ebhOf 1) (body 1 1 [10, 11] empty)
-    @?= Just (TestBody [txhOf 10, txhOf 11])
-
--- | Evicting the point (its slot falls below the boundary) drops its body too.
-test_lookupBodyEvicted :: Assertion
-test_lookupBodyEvicted = do
-  let (idx', _, _) = evictOlderThan (SlotNo 2) (body 1 1 [10] empty)
-  lookupBody (ebhOf 1) idx' @?= Nothing
-
 {-------------------------------------------------------------------------------
   Txs
 -------------------------------------------------------------------------------}
@@ -215,8 +198,8 @@ test_evict :: Assertion
 test_evict = do
   let base = bodies 2 maxLeiosPointCount (body 1 1 [200] empty)
       idx' = body 129 129 [] base
-  (pointCount idx', lookupBody (ebhOf 1) idx', txRC 200 idx')
-    @?= (maxLeiosPointCount, Nothing, Nothing)
+  (pointCount idx', txRC 200 idx')
+    @?= (maxLeiosPointCount, Nothing)
 
 test_evictSharedBody :: Assertion
 test_evictSharedBody = do

@@ -87,9 +87,6 @@ newPureLeiosTxCache nshift = do
              in pure (idx', (evEbs, evTxs))
       , insertBody = \point b nil snoc ->
           MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) point b nil snoc idx)
-      , lookupBody = \ebh -> do
-          idx <- MVar.readMVar var
-          pure $! Pure.lookupBody ebh idx
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar var $ \idx ->
             k
@@ -119,7 +116,6 @@ nullLeiosTxCache =
   LeiosTxCache
     { evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
     , insertBody = \_point _b nil _snoc -> pure (Nothing, nil)
-    , lookupBody = \_ebh -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k mempty (\fab _txh sz _a -> pure (fab <> bucketTxArrival TxWasUntracked sz))
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
     , withLookupTx = \k -> k (\_txh -> pure Nothing)

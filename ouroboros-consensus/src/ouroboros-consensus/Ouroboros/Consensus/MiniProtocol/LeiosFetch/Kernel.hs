@@ -27,7 +27,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
-import Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Foldable as F
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.NonEmpty as NEMap
@@ -88,13 +87,10 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
-  , acquireCachedBody
   , acquireForgedEb
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
-  ( EbFetchState (..)
-  , EbState (..)
-  , LeiosFetchRequest
+  ( LeiosFetchRequest
   , LeiosOutstanding (..)
   , OfferedHalves (..)
   , PeerOffer (..)
@@ -474,14 +470,10 @@ enqueueLeiosAnnouncement kernel = writeTQueue (lfkAnnouncements kernel)
 -- ~10000).
 leiosFetchAnnouncementFocuser ::
   IOLike m =>
-  -- | the registry this thread runs in, where it forks, linked, the workers that
-  -- write cached bodies
-  ResourceRegistry m ->
   LeiosFetchKernel m peer blk ->
   m Void
-leiosFetchAnnouncementFocuser registry kernel =
-  forever $
-    atomically (readTQueue (lfkAnnouncements kernel)) >>= onNewLeiosAnnouncement registry kernel
+leiosFetchAnnouncementFocuser kernel =
+  forever $ atomically (readTQueue (lfkAnnouncements kernel)) >>= onNewLeiosAnnouncement kernel
 
 -- | List the endorser block a new announcement names as one to fetch, if it
 -- takes its election's focus.
@@ -491,17 +483,12 @@ leiosFetchAnnouncementFocuser registry kernel =
 -- tracking its endorser block too would let a pool double what its won slots
 -- cost us. If that one turns out to be the certified one, a verified
 -- certificate gives it an entry then.
---
--- If the announcement takes the focus and the LeiosTxCache holds its endorser
--- block's body, taken in for another point, this acquires it at this point
--- from there ('acquireCachedBody'), rather than fetching it again.
 onNewLeiosAnnouncement ::
   IOLike m =>
-  ResourceRegistry m ->
   LeiosFetchKernel m peer blk ->
   ValidAnnouncement blk ->
   m ()
-onNewLeiosAnnouncement registry kernel valid = do
+onNewLeiosAnnouncement kernel valid = do
   changed <- modifyMVar lfcOutstanding $ \outstanding ->
     let tooOld = slot < outstandingPrunedSlot outstanding
         introducesFocus = not $ Map.member elId (elFocus outstanding)
@@ -512,12 +499,12 @@ onNewLeiosAnnouncement registry kernel valid = do
           if tooOld || not introducesFocus
             then (outstanding, False)
             else (outstanding', True)
-  when changed $ do
-    acquireCachedBody registry (lfkContext kernel) point announcementEbBounds
-    void $ tryPutMVar lfcReady ()
+  when changed $
+    void $
+      tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
-  MkValidAnnouncement{announcingHeader = anc, announcementOnset, announcementEbBounds} = valid
+  MkValidAnnouncement{announcingHeader = anc, announcementOnset} = valid
   announcement = ancAnnouncement anc
   elId = ancElectionId anc
   slot = electionSlot elId
@@ -631,43 +618,27 @@ leiosFetchDecisionLoop cfg chainDB btime kernel = forever $ do
 -- it started, comes to fetch the certified one. Each iteration focuses the
 -- elections certified since the one before, so a certificate verified after
 -- the offer arrived still moves the focus.
---
--- If that moves an election's focus onto an endorser block whose body the
--- LeiosTxCache holds, taken in for another point, this acquires it at the
--- certified point from there ('acquireCachedBody'), rather than fetching it
--- again.
 leiosFetchCertificateFocuser ::
   IOLike m =>
-  -- | the registry this thread runs in, where it forks, linked, the workers that
-  -- write cached bodies
-  ResourceRegistry m ->
   -- | The claims of the new Leios certifications validated since this last
   -- returned, each with the announcement it certifies, blocking until there is
   -- one
   m (NonEmpty (LeiosClaim, LeiosAnnouncement)) ->
   LeiosFetchKernel m peer blk ->
   m Void
-leiosFetchCertificateFocuser registry consumeValidClaims kernel = forever $ do
+leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
   validClaims <- consumeValidClaims
-  missing <- modifyMVar lfcOutstanding $ \outstanding ->
-    pure $ F.foldl' focus (outstanding, []) validClaims
-  -- The committee voted for each at its point, so the ledger's bounds there
-  -- admit it.
-  forM_ missing $ \point -> acquireCachedBody registry (lfkContext kernel) point maxBound
+  modifyMVar_ lfcOutstanding $ \outstanding ->
+    pure $ F.foldl' focus outstanding validClaims
   void $ tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
 
-  focus (outstanding, missing) (claim, ann) =
-    let elId = ElectionId (leiosClaimSlot claim) (announcementElectee ann)
-        ebHash = announcementEbHash ann
-        outstanding' = focusCertifiedEb elId ebHash outstanding
-        point = MkLeiosPoint (electionSlot elId) ebHash
-     in ( outstanding'
-        , case ebState outstanding' Map.!? point of
-            Just (MkEbState _onset NoBody) -> point : missing
-            _ -> missing
-        )
+  focus outstanding (claim, ann) =
+    focusCertifiedEb
+      (ElectionId (leiosClaimSlot claim) (announcementElectee ann))
+      (announcementEbHash ann)
+      outstanding
 
 -- | Prune the node's LeiosFetch state, the peers' offers and claims, and the
 -- LeiosTxCache to the immutable tip's slot.
