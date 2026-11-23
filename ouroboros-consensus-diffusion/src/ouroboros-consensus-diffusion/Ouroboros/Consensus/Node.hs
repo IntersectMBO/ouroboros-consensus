@@ -259,6 +259,8 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   , rnFeatureFlags :: Set CardanoFeatureFlag
   -- ^ Enabled experimental features
   , rnMempoolTimeoutConfig :: Maybe Mempool.MempoolTimeoutConfig
+  , rnForgeViewLeadTime :: DiffTime
+  -- ^ How long before a slot the node leads it starts preparing the forge view.
   , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
   -- ^ Version of the tx-submission logic to run.
   -- See the networking specs' section on tx-submission
@@ -642,6 +644,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnForgeViewLeadTime
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -1052,6 +1055,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  DiffTime ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -1078,6 +1082,7 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
+  forgeViewLeadTime
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
@@ -1100,6 +1105,7 @@ mkNodeKernelArgs
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
+          , forgeViewLeadTime
           , miniProtocolParameters = defaultMiniProtocolParameters
           , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
           , gsmArgs =

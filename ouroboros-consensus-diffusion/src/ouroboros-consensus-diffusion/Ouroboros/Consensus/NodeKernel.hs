@@ -319,6 +319,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , blockFetchSize :: Header blk -> SizeInBytes
   , mempoolCapacityOverride :: MempoolCapacityBytesOverride
   , mempoolTimeoutConfig :: Maybe MempoolTimeoutConfig
+  , forgeViewLeadTime :: DiffTime
+  -- ^ How long before a slot the node leads it starts preparing the forge view.
   , miniProtocolParameters :: MiniProtocolParameters
   , blockFetchConfiguration :: BlockFetchConfiguration
   , keepAliveRng :: StdGen
@@ -364,6 +366,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     , systemTime
+    , forgeViewLeadTime
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -658,7 +661,7 @@ initNodeKernel
             atomically $ writeTVar votingKeys []
             blockForging' <-
               traverse
-                (forkBlockForging st onForgedEb (votingVoteState votingEnv) votingKeys)
+                (forkBlockForging st systemTime forgeViewLeadTime onForgedEb (votingVoteState votingEnv) votingKeys)
                 blockForging
             voting' <-
               forkLinkedThread registry "NodeKernel.leiosVoting" $ do
@@ -816,6 +819,9 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
+  SystemTime m ->
+  -- | How long before a slot the node leads it starts preparing the forge view.
+  DiffTime ->
   -- | What 'forge' does with each endorser block it produces, given the
   -- wall-clock onset of the slot it forged it in
   (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
@@ -825,7 +831,7 @@ forkBlockForging ::
   StrictTVar m [[LeiosSigningKey]] ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} onForgedEb voteState votingKeys (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} systemTime forgeViewLeadTime onForgedEb voteState votingKeys (MkBlockForging blockForgingM) =
   forkLinkedThread registry label $ do
     (key, bf) <- allocate registry (const blockForgingMLabel) finalize
     varView <- uncheckedNewTVarM noForgeViews
@@ -835,7 +841,7 @@ forkBlockForging IS{..} onForgedEb voteState votingKeys (MkBlockForging blockFor
       `finally` release key
  where
   preparing bf =
-    prepareForgeViews cfg btime chainDB leiosDB mempool (canBeLeader bf) forgeViewLeadTime
+    prepareForgeViews cfg btime systemTime chainDB leiosDB mempool (canBeLeader bf) forgeViewLeadTime
 
   forging bf varView = knownSlotWatcher btime $
     \currentSlot slotOnset ->
@@ -860,11 +866,7 @@ forkBlockForging IS{..} onForgedEb voteState votingKeys (MkBlockForging blockFor
   label = "NodeKernel.blockForging"
 
   labelView :: String
-  labelView = "NodeKernel.forgeView"
-
-  -- How long before a slot the node leads it starts preparing the forge view.
-  forgeViewLeadTime :: NominalDiffTime
-  forgeViewLeadTime = 1
+labelView = "NodeKernel.forgeView"
 
   blockForgingMLabel = do
     bf <- blockForgingM

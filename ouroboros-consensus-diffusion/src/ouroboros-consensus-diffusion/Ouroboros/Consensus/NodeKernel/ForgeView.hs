@@ -15,9 +15,9 @@ module Ouroboros.Consensus.NodeKernel.ForgeView
 
 import Control.Monad (when)
 import Control.Monad.Except (runExcept)
+import Data.Foldable (for_)
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.Measure as Measure
-import Data.Time (NominalDiffTime)
 import Data.Void (absurd)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -57,6 +57,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
 import Ouroboros.Consensus.Util.EarlyExit (lift, withEarlyExit)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (Watcher)
+import Ouroboros.Consensus.Util.Time (nominalDelay)
+import Ouroboros.Consensus.Util.TimeBoundedLoop (iterateUntilOrTimeout_)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 
 -- | On each slot, look for a slot this node leads within the lead time, and
@@ -66,41 +68,44 @@ prepareForgeViews ::
   (IOLike m, RunNode blk) =>
   TopLevelConfig blk ->
   BlockchainTime m ->
+  SystemTime m ->
   ChainDB m blk ->
   LeiosDbHandle m ->
   Mempool m blk ->
   CanBeLeader (BlockProtocol blk) ->
   -- | The lead time.
-  NominalDiffTime ->
+  DiffTime ->
   -- | Where the forge reads the views from.
   StrictTVar m (ForgeViews blk) ->
   Watcher m (SlotNo, RelativeTime) SlotNo
-prepareForgeViews cfg btime chainDB leiosDb mempool creds leadTime varViews =
+prepareForgeViews cfg btime systemTime chainDB leiosDb mempool creds leadTime varViews =
   knownSlotWatcher btime $ \currentSlot _onset -> do
     st <- atomically $ ChainDB.getCurrentLedger chainDB
-    mapM_ prepare (nextLeaderSlot st currentSlot)
+    now <- systemTimeCurrent systemTime
+    for_ (nextLeaderSlot st now currentSlot) $ \(s, untilSlot) -> do
+      deadline <- addTime untilSlot <$> getMonotonicTime
+      prepare s deadline
  where
   lcfg = configLedger cfg
 
   -- The first slot after the current one, starting within the lead time,
-  -- that this node leads.
-  nextLeaderSlot :: ExtLedgerState blk EmptyMK -> SlotNo -> Maybe SlotNo
-  nextLeaderSlot st currentSlot = do
-    now <- onset currentSlot
+  -- that this node leads, and how long until it starts.
+  nextLeaderSlot ::
+    ExtLedgerState blk EmptyMK -> RelativeTime -> SlotNo -> Maybe (SlotNo, DiffTime)
+  nextLeaderSlot st now currentSlot =
     listToMaybe
-      [ s
-      | s <- takeWhile (withinLeadTime now) [succ currentSlot ..]
+      [ next
+      | next@(s, _) <- takeWhile ((<= leadTime) . snd) (untilEach [succ currentSlot ..])
       , leads s
       ]
    where
     summary = hardForkSummary lcfg (ledgerState st)
 
-    onset s =
-      either (const Nothing) (Just . fst) $
-        HardFork.runQuery (HardFork.slotToWallclock s) summary
-
-    withinLeadTime now s =
-      maybe False (\t -> diffRelTime t now <= leadTime) (onset s)
+    untilEach = \case
+      s : ss
+        | Right (t, _) <- HardFork.runQuery (HardFork.slotToWallclock s) summary ->
+            (s, nominalDelay (diffRelTime t now)) : untilEach ss
+      _ -> []
 
     leads s = either (const False) id $ runExcept $ do
       ledgerView <- forecastFor (ledgerViewForecastAt lcfg (ledgerState st)) s
@@ -114,16 +119,16 @@ prepareForgeViews cfg btime chainDB leiosDb mempool creds leadTime varViews =
 
   -- Prepare the views for the slot on the tip, starting over whenever the tip
   -- changes, until the slot begins. Each view has a thread of its own.
-  prepare :: SlotNo -> m ()
-  prepare s = do
+  prepare :: SlotNo -> Time -> m ()
+  prepare s deadline = do
     tip <- atomically $ do
       writeTVar varViews noForgeViews
       ChainDB.getTipPoint chainDB
     (restartTip, restartCert) <-
       concurrently
-        (withForkerAt tip $ prepareTip s tip)
-        (withForkerAt tip $ prepareCertifying s tip)
-    when (restartTip || restartCert) $ prepare s
+        (withForkerAt tip $ prepareTip s deadline tip)
+        (withForkerAt tip $ prepareCertifying s deadline tip)
+    when (restartTip || restartCert) $ prepare s deadline
 
   -- Run with a forker on the tip, which tells whether to start over.
   withForkerAt tip k =
@@ -133,15 +138,15 @@ prepareForgeViews cfg btime chainDB leiosDb mempool creds leadTime varViews =
           Left _ -> pure False
           Right forker -> lift (k forker)
 
-  prepareTip s tip forker = do
+  prepareTip s deadline tip forker = do
     unticked <- ledgerState <$> atomically (roforkerGetLedgerState forker)
-    fill s tip forker (\v vs -> vs{tipView = Just v}) $
+    fill s deadline tip forker (\v vs -> vs{tipView = Just v}) $
       let ticked = applyChainTick OmitLedgerEvents lcfg s unticked
        in forgeView lcfg s (blockCapacityTxMeasure lcfg ticked) ticked
 
   -- Once the node holds the closure of the endorser block the tip announced,
   -- a view with that closure applied.
-  prepareCertifying s tip forker = do
+  prepareCertifying s deadline tip forker = do
     unticked <- ledgerState <$> atomically (roforkerGetLedgerState forker)
     next <- atomically $ do
       acquired <- ChainDB.getIsLeiosClosureAcquired chainDB
@@ -159,27 +164,41 @@ prepareForgeViews cfg btime chainDB leiosDb mempool creds leadTime varViews =
             atomically (untilSlotOrTipChange s tip retry) >>= \case
               Stop restart -> pure restart
               Continue v -> absurd v
-          Just view -> fill s tip forker (\v vs -> vs{certifyingView = Just v}) view
+          Just view -> fill s deadline tip forker (\v vs -> vs{certifyingView = Just v}) view
 
   -- Take in the mempool's transactions until the slot begins, publishing the
-  -- view after each chunk.
-  fill s tip forker publish = go
+  -- view after each chunk. The chunk in hand when the slot begins is finished.
+  fill s deadline tip forker publish view = do
+    atomically $ modifyTVar varViews (publish view)
+    untilSlot <- diffTime deadline <$> getMonotonicTime
+    iterateUntilOrTimeout_ untilSlot stopped step (Continue view) >>= \case
+      Stop restart -> pure restart
+      Continue _ -> pure False
    where
-    go view = do
-      atomically $ modifyTVar varViews (publish view)
-      next <-
-        atomically $
-          untilSlotOrTipChange s tip $
-            if forgeViewIsFull view
-              then retry
-              else do
-                txs <- getTxsAfter mempool (forgeViewLastTicket view)
-                if null txs then retry else pure (Continue (take chunkSize txs))
-      case next of
-        Stop restart -> pure restart
-        Continue txs -> extendView (ledgerStateReadOnlyForker forker) view txs >>= go
+    stopped = \case
+      Stop _ -> True
+      Continue _ -> False
 
-  -- Stop at the slot (False) or when the tip changes (True), otherwise go on.
+    step = \case
+      Stop restart -> pure (Stop restart)
+      Continue v -> do
+        next <-
+          atomically $
+            untilSlotOrTipChange s tip $
+              if forgeViewIsFull v
+                then retry
+                else do
+                  txs <- getTxsAfter mempool (forgeViewLastTicket v)
+                  if null txs then retry else pure (Continue (take chunkSize txs))
+        case next of
+          Stop restart -> pure (Stop restart)
+          Continue txs -> do
+            v' <- extendView (ledgerStateReadOnlyForker forker) v txs
+            atomically $ modifyTVar varViews (publish v')
+            pure (Continue v')
+
+  -- Stop at the slot (False) or when the tip changes (True), otherwise go on,
+  -- so that waiting for the mempool ends at the slot too.
   untilSlotOrTipChange s tip continue = do
     slotNow <- getCurrentSlot btime
     tip' <- ChainDB.getTipPoint chainDB
