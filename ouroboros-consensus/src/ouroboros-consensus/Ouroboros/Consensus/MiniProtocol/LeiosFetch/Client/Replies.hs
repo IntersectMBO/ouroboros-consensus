@@ -117,11 +117,8 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , StrictMVar
   , StrictTVar
-  , async
   , atomically
   , evaluate
-  , labelThisThread
-  , link
   , modifyMVar
   , modifyMVar_
   , readMVar
@@ -301,16 +298,10 @@ processLeiosBlock ctx peer req bytes = do
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
     BodyToWrite eb localFills -> do
-      bodyWritten <- writeEbBody lfcWriter point eb localFills
-      -- A failed write brings the node down, since the SQLite LeiosDB's writer
-      -- is linked to it. This worker runs off this thread but is linked to it,
-      -- so a failure also disconnects the peer, if its client still runs. Like
-      -- the worker that 'processLeiosBlockTxs' forks, it may outlive the peer.
-      link
-        =<< async
-          ( labelThisThread "LeiosFetch.settleBody"
-              >> settleBody ctx peer point eb bodyWritten
-          )
+      -- The client takes the peer's next reply only once this write lands, so
+      -- a slow disk slows the peer down rather than piling up writes.
+      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills
+      settleBody ctx peer point eb heldOffs
   -- Checked last, so that the body is still taken: throwing it away would let
   -- a peer deny us an endorser block just by lowballing its own offer.
   when (ebBytesSize /= lbrOfferedSize req) $
@@ -350,7 +341,8 @@ data BodyDisposition
   | -- | Wanted, so written, with these fills, and traced once that settles.
     BodyToWrite !EndorserBlock !LocalFills
 
--- | Record the body as acquired at its point, now that its write is durable,
+-- | Record the body as acquired at its point, now that its write is durable
+-- and holds the txs at these offsets,
 -- with jobs for the txs the point does not hold yet, and emit what is acquired.
 -- Nothing if the point was pruned meanwhile, or another reply with it settled
 -- first. Either way, trace the reply's arrival: its bytes were needed only if
@@ -368,10 +360,9 @@ settleBody ::
   peer ->
   LeiosPoint ->
   EndorserBlock ->
-  Promise m (Set TxOffset) ->
+  Set TxOffset ->
   m ()
-settleBody ctx peer point eb bodyWritten = do
-  heldOffs <- await bodyWritten
+settleBody ctx peer point eb heldOffs = do
   traces <- modifyMVar lfcOutstanding $ \outstanding ->
     case Map.lookup point (ebState outstanding) of
       Nothing -> pure (outstanding, \_now -> [arrived fetchArrivalEvicted])
@@ -524,8 +515,14 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
       IntMap.traverseWithKey
         (\i job -> checkJobCommitment point aligned (Jobs.MkLeiosJobId i) job)
         pendingJobs
-  txsWritten <-
-    writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
+  -- The client takes the peer's next reply only once this write lands, so a
+  -- slow disk slows the peer down rather than piling up writes. Until then the
+  -- jobs stay picked by this peer, which others may already be asked for too,
+  -- and which its disconnection releases.
+  await
+    =<< writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
+  -- After the write, so that the LeiosTxCache holds a tx as inserted only once
+  -- the LeiosDB holds it.
   arrival <-
     withLockedInsertUnappliedTx lfcTxCache $ \w0 step ->
       foldM (\w (_off, txHash, bytes) -> step w txHash (fromIntegral (BS.length bytes)) ()) w0 toIngest
@@ -535,34 +532,15 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     traceWith lfcTracer $
       TraceLeiosFetchClientTxsArrived peer point discarded
   modifyMVar_ lfcOutstanding (pure . refundTxRequest peer (fromIntegral batchBytes))
-  void $ tryPutMVar lfcReady ()
-  -- Only retiring the jobs waits for the write, on a worker thread, so the
-  -- client goes on with the peer's next replies meanwhile. Retiring them drops
-  -- them from the pool for every peer, so doing it on arrival would leave the
-  -- closure incomplete for good if the write never landed. Until then they
-  -- stay picked by this peer, which others may already be asked for too, and
-  -- which its disconnection releases.
-  --
-  -- The worker may outlive the peer's registration, harmlessly: it settles
-  -- only what is now durable, and the node keys the peer's state by its
-  -- registration's @LeiosPeerLifetimeId@, so the worker neither recreates the
-  -- state that unregistering removed nor touches a later registration's. It
-  -- ends once the write lands, which closing the LeiosDB ensures.
-  link
-    =<< async
-      ( labelThisThread "LeiosFetch.settleTxs"
-          >> settleTxs
-            ctx
-            peer
-            req
-            [(off, txHash) | (off, txHash, _bytes) <- toIngest]
-            (arrival <> discarded)
-            txsWritten
-      )
+  settleTxs
+    ctx
+    peer
+    req
+    [(off, txHash) | (off, txHash, _bytes) <- toIngest]
+    (arrival <> discarded)
  where
   MkLeiosFetchClientContext
     { lfcOutstanding
-    , lfcReady
     , lfcTxCache
     , lfcWriter
     , lfcTracer
@@ -596,11 +574,8 @@ settleTxs ::
   [(TxOffset, TxHash)] ->
   -- | the reply's bytes, classified when it arrived
   FetchArrivalBytes ->
-  -- | the write of the txs
-  Promise m () ->
   m ()
-settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written arrival txsWritten = do
-  await txsWritten
+settleTxs ctx peer req@(MkLeiosBlockTxsRequest point _jobs) written arrival = do
   traces <- modifyMVar lfcOutstanding $ \outstanding -> do
     let outstanding' = completeTxRequest peer req outstanding
     case (Map.lookup point (ebState outstanding), Map.lookup point (ebState outstanding')) of

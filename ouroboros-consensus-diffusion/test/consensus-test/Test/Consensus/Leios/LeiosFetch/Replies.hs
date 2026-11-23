@@ -21,6 +21,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (try)
+import Control.Monad.Class.MonadAsync (wait, withAsync)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
@@ -244,6 +245,18 @@ newContextGated point gate = do
           pure $ Promise $ release >> await written
       }
 
+-- | Writes that hold until released: what to run in a held write, waiting
+-- until this many writers are held, and releasing them all.
+newWriteHold :: IO (IO (), Int -> IO (), IO ())
+newWriteHold = do
+  written <- newEmptyTMVarIO
+  held <- newTVarIO (0 :: Int)
+  pure
+    ( atomically (modifyTVar held (+ 1)) >> atomically (readTMVar written)
+    , \n -> atomically $ readTVar held >>= check . (>= n)
+    , atomically $ putTMVar written ()
+    )
+
 -- | Wait until this many notifications have arrived, and return them, oldest
 -- first.
 awaitNotes :: StrictTVar IO [Acquired] -> Int -> IO [Acquired]
@@ -342,18 +355,23 @@ test_announcedAgainWhileWriting = do
   let (point, eb, _txs) = fixture
       ebHash = pointEbHash point
       newer = MkLeiosPoint (SlotNo 7) ebHash
-  written <- newEmptyTMVarIO
-  (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock
-    ctx
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  modifyMVar_ (lfcOutstanding ctx) $
-    pure
-      . focusElectionIfUnfocused (ElectionId (pointSlotNo newer) electee) ebHash
-      . recordReferencedPoint newer SNothing
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes) <- newContextHolding hold
+  withAsync
+    ( processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+        (serialiseEndorserBlock eb)
+    )
+    $ \client -> do
+      awaitHeld 1
+      modifyMVar_ (lfcOutstanding ctx) $
+        pure
+          . focusElectionIfUnfocused (ElectionId (pointSlotNo newer) electee) ebHash
+          . recordReferencedPoint newer SNothing
+      release
+      wait client
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
@@ -365,20 +383,25 @@ test_prunedWhileWriting = do
   let (point, eb, _txs) = fixture
       ebHash = pointEbHash point
       newer = MkLeiosPoint (SlotNo 8) ebHash
-  written <- newEmptyTMVarIO
-  (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock
-    ctx
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  -- What 'processLeiosBlock' itself signals, so that what is left to await is
-  -- the body's settlement.
-  takeMVar (lfcReady ctx)
-  modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
-  modifyMVar_ (lfcOutstanding ctx) $
-    pure . recordReferencedPoint newer SNothing
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes) <- newContextHolding hold
+  withAsync
+    ( processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+        (serialiseEndorserBlock eb)
+    )
+    $ \client -> do
+      awaitHeld 1
+      -- What 'processLeiosBlock' itself signals, so that what is left to await
+      -- is the body's settlement.
+      takeMVar (lfcReady ctx)
+      modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
+      modifyMVar_ (lfcOutstanding ctx) $
+        pure . recordReferencedPoint newer SNothing
+      release
+      wait client
   Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
     >>= maybe (assertFailure "timed out waiting for the body to settle") pure
   readTVarIO notes >>= (@?= [])
@@ -546,11 +569,13 @@ test_overlappingReplies = do
   let (point, eb, _txs) = fixture
       size = encodeEndorserBlockSize eb
       req = MkLeiosBlockRequest point size maxBound
-  written <- newEmptyTMVarIO
-  (ctx, notes, traces) <- withTraces $ newContextHolding (atomically (readTMVar written))
-  processLeiosBlock ctx peer req (serialiseEndorserBlock eb)
-  processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes, traces) <- withTraces $ newContextHolding hold
+  withAsync (processLeiosBlock ctx peer req (serialiseEndorserBlock eb)) $ \client ->
+    withAsync (processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)) $ \otherClient -> do
+      awaitHeld 2
+      release
+      wait client >> wait otherClient
   arrivals <- awaitArrivals blockArrivals traces 2
   [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
   let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
@@ -579,9 +604,9 @@ test_overlappingTxsReplies :: Assertion
 test_overlappingTxsReplies = do
   let (point, eb, txs) = fixture
       closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
-  written <- newEmptyTMVarIO
+  (hold, awaitHeld, release) <- newWriteHold
   (ctx0, notes, traces) <- withTraces newContext
-  let ctx = ctx0{lfcWriter = holdingTxs (atomically (readTMVar written)) (lfcWriter ctx0)}
+  let ctx = ctx0{lfcWriter = holdingTxs hold (lfcWriter ctx0)}
   processLeiosBlock
     ctx
     peer
@@ -589,9 +614,11 @@ test_overlappingTxsReplies = do
     (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   req <- closureRequest ctx point
-  processLeiosBlockTxs ctx peer req (V.fromList txs)
-  processLeiosBlockTxs ctx otherPeer req (V.fromList txs)
-  atomically $ putTMVar written ()
+  withAsync (processLeiosBlockTxs ctx peer req (V.fromList txs)) $ \client ->
+    withAsync (processLeiosBlockTxs ctx otherPeer req (V.fromList txs)) $ \otherClient -> do
+      awaitHeld 2
+      release
+      wait client >> wait otherClient
   arrivals <- awaitArrivals txsArrivals traces 2
   [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
   let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
