@@ -2,9 +2,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeData #-}
 
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   ( InMemoryLeiosDb (..)
+  , Mem
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemory
   , newLeiosDBInMemoryWith
@@ -42,7 +44,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
@@ -63,6 +65,8 @@ import Ouroboros.Consensus.Util.IOLike
   , toException
   , try
   )
+
+type data Mem
 
 -- | In-memory database state, as the SQLite backend's: a row per point in
 -- each partition, and the promoted slot.
@@ -100,26 +104,26 @@ data EbRow = EbRow
 
 -- | Create a new in-memory Leios database handle.
 -- This is suitable for testing in IOSim.
-newLeiosDBInMemory :: IOLike m => m (LeiosDbHandle m)
+newLeiosDBInMemory :: IOLike m => m (LeiosDB m)
 newLeiosDBInMemory = do
   stateVar <- newTVarIO emptyInMemoryLeiosDb
   newLeiosDBInMemoryWith stateVar
 
-newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
+newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDB m)
 newLeiosDBInMemoryWith stateVar =
   pure $
-    LeiosDbHandle
+    LeiosDB
       { -- Nothing to close: the state is a 'StrictTVar'.
-        closeLeiosDbHandle = pure ()
+        closeDB = pure ()
       , garbageCollect = imGarbageCollect stateVar
-      , leiosDbPromoteToImmutable = imPromoteToImmutable stateVar
-      , leiosDbTruncateImmutable = \slot -> atomically $ modifyTVar stateVar $ \s ->
+      , promoteToImmutable = imPromoteToImmutable stateVar
+      , truncateImmutable = \slot -> atomically $ modifyTVar stateVar $ \s ->
           s
             { imImmutable = Map.filterWithKey (\p _ -> pointSlotNo p < slot) (imImmutable s)
             , imPromotedSlot = slot
             }
       , -- The in-memory implementation does not track stats.
-        leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
+        sampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
       , openWriter = openInMemoryWriter stateVar
       }

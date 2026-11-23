@@ -64,7 +64,6 @@ import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Trace (TraceLeiosDb)
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
   ( TraceFetchClientState
@@ -92,7 +91,6 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , leiosFetchClientTracer :: f (TraceLeiosFetchClientEvent remotePeer)
   , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
   , leiosNotifyClientTracer :: f (TraceLabelPeer remotePeer TraceLeiosNotifyClientEvent)
-  , leiosDbTracer :: f TraceLeiosDb
   , leiosVoteStateTracer :: f TraceLeiosVoteState
   , leiosVotingTracer :: f TraceLeiosVoting
   , txInboundTracer ::
@@ -143,7 +141,6 @@ instance
       , leiosFetchClientTracer = f leiosFetchClientTracer
       , leiosFetchServerTracer = f leiosFetchServerTracer
       , leiosNotifyClientTracer = f leiosNotifyClientTracer
-      , leiosDbTracer = f leiosDbTracer
       , leiosVoteStateTracer = f leiosVoteStateTracer
       , leiosVotingTracer = f leiosVotingTracer
       , txInboundTracer = f txInboundTracer
@@ -194,7 +191,6 @@ nullTracers =
     , leiosFetchClientTracer = nullTracer
     , leiosFetchServerTracer = nullTracer
     , leiosNotifyClientTracer = nullTracer
-    , leiosDbTracer = nullTracer
     , leiosVoteStateTracer = nullTracer
     , leiosVotingTracer = nullTracer
     , txInboundTracer = nullTracer
@@ -255,7 +251,6 @@ showTracers tr =
     , leiosFetchClientTracer = show >$< tr
     , leiosFetchServerTracer = show >$< tr
     , leiosNotifyClientTracer = show >$< tr
-    , leiosDbTracer = show >$< tr
     , leiosVoteStateTracer = show >$< tr
     , leiosVotingTracer = show >$< tr
     , txInboundTracer = show >$< tr

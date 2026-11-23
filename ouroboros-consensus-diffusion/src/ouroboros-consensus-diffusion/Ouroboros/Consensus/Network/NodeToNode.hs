@@ -164,7 +164,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosDbReader (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -1011,7 +1011,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
-  NodeKernel{getDiffusionPipeliningSupport, getLeiosDB} = kernel
+  NodeKernel{getDiffusionPipeliningSupport, getChainDB} = kernel
 
   aChainSyncClient ::
     NodeToNodeVersion ->
@@ -1039,7 +1039,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         $ CsClient.bracketChainSyncClient
           (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
           (contramap (TraceLabelPeer them) (Node.csjTracer (getTracers kernel)))
-          (CsClient.defaultChainDbView (getChainDB kernel))
+          (CsClient.defaultChainDbView getChainDB)
           (getChainSyncHandles kernel)
           (getGsmState kernel)
           them
@@ -1088,7 +1088,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     labelThisThread "ChainSyncServer"
     bracketWithPrivateRegistry
       ( chainSyncHeaderServerFollower
-          (getChainDB kernel)
+          getChainDB
           ( case getDiffusionPipeliningSupport of
               DiffusionPipeliningOn -> ChainDB.TentativeChain
               DiffusionPipeliningOff -> ChainDB.SelectedChain
@@ -1471,10 +1471,10 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     ResponderContext{rcConnectionId = them}
     channel = do
       labelThisThread "LeiosFetchServer"
-      -- A reader of its own, since one must not be shared across threads.
-      bracket
-        (catchAndRethrow tracer TraceLeiosFetchServerOpenReaderDbFailure (openReader getLeiosDB))
-        closeReader
+      catchAndRethrow
+        tracer
+        TraceLeiosFetchServerOpenReaderDbFailure
+        $ ChainDB.withLeiosReader getChainDB -- A reader of its own, since one must not be shared across threads.
         $ \reader ->
           runPeerWithLimits
             (TraceLabelPeer them `contramap` tLeiosFetchTracer)

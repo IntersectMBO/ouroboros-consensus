@@ -116,7 +116,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -156,7 +155,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, withLeiosDBSQLite)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -295,8 +294,6 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
   -- ^ File-system on which the directories for databases other than the ImmutableDB will
   -- be created.
-  , llrnWithLeiosDB :: forall a. (LeiosDbHandle m -> m a) -> m a
-  -- ^ Open the LeiosDB, run the action with it, and close it.
   , llrnCustomiseChainDbArgs ::
       Complete ChainDbArgs m blk ->
       Complete ChainDbArgs m blk
@@ -350,6 +347,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , llrnLdbFlavorArgs :: LedgerDbBackendArgs m blk
   -- ^ The flavor arguments
+  , llrnLeiosDbArgs :: LeiosDB.LeiosBackendArgs m
   , llrnFeatureFlags :: Set CardanoFeatureFlag
   -- ^ Enabled experimental features
   }
@@ -500,6 +498,8 @@ runWith ::
   m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
+    -- TODO @js: review this comment:
+    --
     -- Opened outside the registry, so that it outlives every thread that reads
     -- it. The ChainDB and the NodeKernel share it.
     --
@@ -509,7 +509,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
     -- such a block to the ImmutableDB must wait until that closure is in the
     -- LeiosDB's immutable partition, so that the non-immutable database
     -- directory can be deleted between restarts.
-    llrnWithLeiosDB $ \leiosDB -> withRegistry $ \registry ->
+    withRegistry $ \registry ->
       handleJust
         -- Ignore exception thrown in connection handlers and diffusion.
         -- Also ignore 'ExitSuccess'.
@@ -556,9 +556,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckSnapshotPolicyArgs (configSecurityParam cfg) snapshotPolicyArgs) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
-          -- Where the node emits what it acquires, to the ChainDB among
-          -- others.
-          leiosAcquisitions <- newLeiosAcquisitions
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -568,8 +565,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkVolatileHasFS
               snapshotDelayRng
               llrnLdbFlavorArgs
-              leiosDB
-              leiosAcquisitions
+              llrnLeiosDbArgs
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -623,8 +619,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnMaxClockSkew
                   historicityCheck
                   chainDB
-                  leiosDB
-                  leiosAcquisitions
                   llrnMaxCaughtUpAge
                   (Just durationUntilTooOld)
                   gsmMarkerFileView
@@ -986,16 +980,13 @@ openChainDB ::
   -- | RNG used to randomise snapshot delays
   StdGen ->
   LedgerDbBackendArgs m blk ->
-  -- | The node's LeiosDB
-  LeiosDbHandle m ->
-  -- | The node's Leios acquisitions
-  LeiosAcquisitions m ->
+  LeiosDB.LeiosBackendArgs m ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leiosAcquisitions defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDbArgs defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -1008,8 +999,7 @@ openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDB leio
             fsVol
             delayRng
             flavorArgs
-            leiosDB
-            (subscribeLeiosAcquisitions leiosAcquisitions)
+            leiosDbArgs
             defArgs
    in (,args) <$> ChainDB.openDB args
 
@@ -1028,8 +1018,6 @@ mkNodeKernelArgs ::
   InFutureCheck.ClockSkew ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
-  LeiosDbHandle m ->
-  LeiosAcquisitions m ->
   NominalDiffTime ->
   Maybe (GSM.WrapDurationUntilTooOld m blk) ->
   GSM.MarkerFileView m ->
@@ -1053,8 +1041,6 @@ mkNodeKernelArgs
   maxClockSkew
   chainSyncHistoricityCheck
   chainDB
-  leiosDB
-  leiosAcquisitions
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
@@ -1076,7 +1062,6 @@ mkNodeKernelArgs
           , btime
           , systemTime
           , chainDB
-          , leiosDB
           , initChainDB = nodeInitChainDB
           , chainSyncFutureCheck =
               InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
@@ -1097,7 +1082,6 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
-          , leiosAcquisitions
           , leiosFetchRng = lfRng
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
           , publicPeerSelectionStateVar
@@ -1204,7 +1188,6 @@ stdLowLevelRunNodeArgsIO
     , rnPeerSharing
     , rnGenesisConfig
     , rnFeatureFlags
-    , rnTraceConsensus
     }
   $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt <- stdBfcSaltIO
@@ -1218,13 +1201,6 @@ stdLowLevelRunNodeArgsIO
         , llrnRng
         , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
         , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
-        , -- Beside the VolatileDB and the ImmutableDB, as 'NodeDatabasePaths'
-          -- places them.
-          llrnWithLeiosDB =
-            withLeiosDBSQLite
-              (leiosDbTracer rnTraceConsensus)
-              (nonImmutableDbPath srnDatabasePath </> "leios.vol.db")
-              (immutableDbPath srnDatabasePath </> "leios.imm.db")
         , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
         , llrnCustomiseChainDbArgs = id
         , llrnCustomiseNodeKernelArgs
@@ -1262,6 +1238,8 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs = ldbBackendArgs
+        , llrnLeiosDbArgs =
+            LeiosDB.sqliteArgs (immutableDbPath srnDatabasePath) (nonImmutableDbPath srnDatabasePath)
         , llrnFeatureFlags = rnFeatureFlags
         }
    where

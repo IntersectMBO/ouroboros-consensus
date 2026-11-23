@@ -43,9 +43,6 @@ import Control.Monad (unless, void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
-  ( allocate
-  , runWithTempRegistry
-  )
 import Control.Tracer
 import Data.Foldable (for_)
 import Data.Functor ((<&>))
@@ -60,6 +57,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Acquisitions
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
@@ -90,11 +88,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (leiosDbTruncateImmutable)
-  , LeiosDbReader (..)
-  , withReader
-  )
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -166,16 +160,24 @@ openDBInternal ::
   Bool ->
   m (ChainDB m blk, Internal m blk)
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
+  lift $ do
+    traceWith tracer $ TraceOpenEvent StartedOpeningDB
+    traceWith tracer $ TraceOpenEvent StartedOpeningLeiosDB
+  leiosDb <-
+    allocateTemp
+      (LeiosDB.openDB argsLeiosDb)
+      (\db -> LeiosDB.closeDB db >> pure True)
+      impossibleToNotTransfer
   ( immutableDB
     , immutableDbTip
     , volatileDB
     , ledgerDbGetVolatileSuffix
     , setGetCurrentChainForLedgerDB
     ) <- lift $ do
-    traceWith tracer $ TraceOpenEvent StartedOpeningDB
+    traceWith tracer $ TraceOpenEvent OpenedLeiosDB
     traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
     immutableDB <-
-      withReader leiosDb $ \reader ->
+      LeiosDB.withReader leiosDb $ \reader ->
         ImmutableDB.openDB
           argsImmutableDb
             { ImmutableDB.immCheckExternalCompleteness =
@@ -189,7 +191,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
     -- Before anything reads the LeiosDB, as its reads dispatch by the slot.
-    leiosDbTruncateImmutable leiosDb (fromWithOrigin 0 (pointSlot immutableDbTipPoint))
+    LeiosDB.truncateImmutable leiosDb (fromWithOrigin 0 (pointSlot immutableDbTipPoint))
 
     traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
     volatileDB <- VolatileDB.openDB argsVolatileDb
@@ -247,10 +249,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Subscribe before seeding, so that no closure acquired in between is
     -- missed. The seed is every closure the LeiosDB holds that a block the
     -- initial chain selection could select may certify.
-    nextLeiosAcquisition <- Args.cdbsSubscribeLeiosAcquisitions cdbSpecificArgs
+    leiosAcquisitions <- newLeiosAcquisitions
+    nextLeiosAcquisition <- subscribeLeiosAcquisitions leiosAcquisitions
     initialAcquiredEbs <-
-      withReader leiosDb $ \reader ->
-        scanCompleteEbClosuresNotOlderThanSlot
+      LeiosDB.withReader leiosDb $ \reader ->
+        LeiosDB.scanCompleteEbClosuresNotOlderThanSlot
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredEbs <- newTVarIO (mkAcquiredEbs initialAcquiredEbs)
@@ -318,7 +321,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
-            , cdbLeiosDb = leiosDb
+            , cdbLeiosDB = leiosDb
             , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
             }
@@ -386,6 +389,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                       (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
+            , leiosAcquisitions = leiosAcquisitions
+            , leiosAllocateWriter = LeiosDB.allocateWriter (Args.cdbsRegistry cdbSpecificArgs) leiosDb
+            , withLeiosReader = LeiosDB.withReader leiosDb
             }
     addBlockTestFuse <- newFuse "test chain selection"
     let testing =
@@ -429,11 +435,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
-  leiosDb = Args.cdbsLeiosDb cdbSpecificArgs
   Args.ChainDbArgs
     argsImmutableDb
     argsVolatileDb
     argsLgrDb
+    argsLeiosDb
     argsPerasCertDB
     argsPerasVoteDB
     cdbSpecificArgs = args
@@ -501,9 +507,10 @@ closeDB (CDBHandle varState) = do
     killBgThreads <- atomically $ readTVar cdbKillBgThreads
     killBgThreads
 
+    LedgerDB.closeDB cdbLedgerDB
     ImmutableDB.closeDB cdbImmutableDB
     VolatileDB.closeDB cdbVolatileDB
-    LedgerDB.closeDB cdbLedgerDB
+    LeiosDB.closeDB cdbLeiosDB
 
     chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 

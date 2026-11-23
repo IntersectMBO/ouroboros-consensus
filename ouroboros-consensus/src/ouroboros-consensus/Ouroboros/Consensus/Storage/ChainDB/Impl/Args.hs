@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
   , LoE (LoEDisabled)
@@ -40,7 +39,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -57,6 +56,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   { cdbImmDbArgs :: ImmutableDB.ImmutableDbArgs f m blk
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
+  , cdbLeiosDbArgs :: LeiosDB.LeiosDbArgs f m
   , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
   , cdbPerasVoteDbArgs :: PerasVoteDB.PerasVoteDbArgs f m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
@@ -95,11 +95,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- current LoE fragment.
   , cdbsSnapshotDelayRNG :: HKD f StdGen
   -- ^ RNG used to randomly determine the duration of snapshot delays
-  , cdbsLeiosDb :: HKD f (LeiosDbHandle m)
-  -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
-  , cdbsSubscribeLeiosAcquisitions :: HKD f (m (STM m LeiosAcquisition))
-  -- ^ The next Leios acquisition; see
-  -- 'Ouroboros.Consensus.NodeKernel.leiosAcquisitions'.
   }
 
 -- | Default arguments
@@ -135,8 +130,6 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsSnapshotDelayRNG = noDefault
-    , cdbsLeiosDb = noDefault
-    , cdbsSubscribeLeiosAcquisitions = noDefault
     }
 
 -- | Default arguments
@@ -156,6 +149,7 @@ defaultArgs =
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
     (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
+    LeiosDB.defaultArgs
     PerasCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs
@@ -193,10 +187,7 @@ completeChainDbArgs ::
   -- | Randomised snapshot delay RNG
   StdGen ->
   LedgerDbBackendArgs m blk ->
-  -- | The node's LeiosDB
-  LeiosDbHandle m ->
-  -- | 'cdbsSubscribeLeiosAcquisitions'
-  m (STM m LeiosAcquisition) ->
+  LeiosDB.LeiosBackendArgs m ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -210,8 +201,7 @@ completeChainDbArgs
   mkVolFS
   snapshotDelayRNG
   flavorArgs
-  leiosDb
-  subscribeLeiosAcquisitions
+  backendArgs
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -222,6 +212,7 @@ completeChainDbArgs
             , ImmutableDB.immCodecConfig = configCodec cdbsTopLevelConfig
             , ImmutableDB.immHasFS = mkImmFS $ RelativeMountPoint "immutable"
             }
+      , cdbLeiosDbArgs = (cdbLeiosDbArgs defArgs){LeiosDB.leiosBackendArgs = backendArgs}
       , cdbVolDbArgs =
           (cdbVolDbArgs defArgs)
             { VolatileDB.volHasFS = mkVolFS $ RelativeMountPoint "volatile"
@@ -253,8 +244,6 @@ completeChainDbArgs
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
             , cdbsSnapshotDelayRNG = snapshotDelayRNG
-            , cdbsLeiosDb = leiosDb
-            , cdbsSubscribeLeiosAcquisitions = subscribeLeiosAcquisitions
             }
       }
 
@@ -267,6 +256,7 @@ updateTracer trcr args =
   args
     { cdbImmDbArgs = (cdbImmDbArgs args){ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr}
     , cdbVolDbArgs = (cdbVolDbArgs args){VolatileDB.volTracer = TraceVolatileDBEvent >$< trcr}
+    , cdbLeiosDbArgs = (cdbLeiosDbArgs args){LeiosDB.leiosDbTracer = TraceLeiosDbEvent >$< trcr}
     , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
     , cdbPerasCertDbArgs =
         (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}

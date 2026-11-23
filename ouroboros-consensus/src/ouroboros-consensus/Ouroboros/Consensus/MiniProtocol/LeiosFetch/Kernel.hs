@@ -112,11 +112,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
-  , LeiosDbReader (..)
-  , withReader
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
   , Exception
@@ -213,7 +209,6 @@ data LeiosFetchPeer m blk = MkLeiosFetchPeer
 newLeiosFetchKernel ::
   (IOLike m, LedgerSupportsProtocol blk) =>
   ChainDB m blk ->
-  LeiosDbHandle m ->
   -- | Seeds the decision loop's PRNG.
   StdGen ->
   -- | Everything of the clients' context but the state this creates.
@@ -222,11 +217,11 @@ newLeiosFetchKernel ::
     LeiosFetchClientContext m (LeiosPeerLifetimeId peer)
   ) ->
   m (LeiosFetchKernel m peer blk)
-newLeiosFetchKernel chainDB leiosDb prng mkContext = do
+newLeiosFetchKernel chainDB prng mkContext = do
   immTipSlot <-
     atomically $
       withOrigin (SlotNo 0) id . getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
-  acquired <- withReader leiosDb $ \reader ->
+  acquired <- ChainDB.withLeiosReader chainDB $ \reader ->
     scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
   outstanding <- uncheckedNewMVar $ initializeLeiosOutstanding prng acquired immTipSlot
   ready <- uncheckedNewEmptyMVar

@@ -115,7 +115,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock)
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
+  ( LeiosDB
   , LeiosDbReader (..)
   , withReader
   )
@@ -586,7 +586,7 @@ getAnyKnownBlock immutableDB volatileDB =
 getKnownEndorserBlock ::
   forall blk m.
   (IOLike m, HasHeader blk) =>
-  LeiosDbHandle m ->
+  LeiosDB m ->
   ResolveEndorserBlock m
 getKnownEndorserBlock leiosDb point = withReader leiosDb $ \reader -> do
   body <- lookupEbBody reader point

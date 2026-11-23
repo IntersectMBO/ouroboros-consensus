@@ -1,11 +1,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeData #-}
 
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
   , withLeiosDBSQLite
+  , SQLite
 
     -- * SQL strings (re-exported for leios-schedule-gen)
   , sql_schema_vol
@@ -49,7 +51,7 @@ import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Stack
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( LeiosDB (..)
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
@@ -72,12 +74,14 @@ import System.Environment (lookupEnv)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
 
+type data SQLite
+
 -- * Public API
 
 --- | Create a new Leios database connection from environment variable.
 --- This looks up the LEIOS_VOL_DB_PATH and LEIOS_VOL_DB_PATH environment variables
 --  and opens the database.
-newLeiosDBSQLiteFromEnv :: ResourceRegistry IO -> Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
+newLeiosDBSQLiteFromEnv :: ResourceRegistry IO -> Tracer IO TraceLeiosDb -> IO (LeiosDB IO)
 newLeiosDBSQLiteFromEnv registry tracer = do
   volDbPath <-
     lookupEnv "LEIOS_VOL_DB_PATH" >>= \case
@@ -97,14 +101,14 @@ newLeiosDBSQLiteFromEnv registry tracer = do
 -- its own worker thread.
 --
 -- The registry owns the background threads (writer and a thread that samples
--- the database's size) and the promoter's connection: 'closeLeiosDbHandle'
+-- the database's size) and the promoter's connection: 'closeDB'
 -- stops and closes them in order, and closing the registry releases whatever
 -- is still open.
 --
 -- Creates both files with their schemas before returning, so call it only
 -- once their directories may be non-empty (after the ChainDB marker check).
 newLeiosDBSQLite ::
-  ResourceRegistry IO -> Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
+  ResourceRegistry IO -> Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDB IO)
 newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
@@ -129,14 +133,14 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       volLeiosDbPath
       immLeiosDbPath
   pure
-    LeiosDbHandle
-      { closeLeiosDbHandle = close samplerThread promoterKey writeQueue
+    LeiosDB
+      { closeDB = close samplerThread promoterKey writeQueue
       , openReader = implOpenReader statsVar promotedSlotVar
       , openWriter = implOpenWriter writeQueue
       , garbageCollect = sqlGarbageCollect writeQueue
-      , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar
-      , leiosDbTruncateImmutable = sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar
-      , leiosDbSampleStats = readTVarIO statsVar
+      , promoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar
+      , truncateImmutable = sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar
+      , sampleStats = readTVarIO statsVar
       }
  where
   close :: Thread IO () -> ResourceKey IO -> WriteQueue -> IO ()
@@ -183,16 +187,16 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
--- | 'newLeiosDBSQLite' bracketed with its 'closeLeiosDbHandle': on release
+-- | 'newLeiosDBSQLite' bracketed with its 'closeDB': on release
 -- every pending write has landed, the background threads are gone and the
 -- connections are closed, so e.g. the database files can be deleted.
 withLeiosDBSQLite ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
+  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDB IO -> IO a) -> IO a
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
   withRegistry $ \registry ->
     bracket
       (newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath)
-      closeLeiosDbHandle
+      closeDB
       k
 
 -- | What the writer's worker owns while it serves: its connections to both
@@ -243,61 +247,57 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
   let worker :: WriterConns -> IO ()
-      worker
-        WriterConns
-          { wcVolDb = volDb
-          , wcConn = conn
-          } = serve
-         where
-          serve :: IO ()
-          serve = do
-            job <- atomically $ readTBQueue queue
-            start <- getMonotonicTime
-            next <- runJob job
-            end <- getMonotonicTime
-            traceWith tracer $
-              TraceLeiosDbWriteJobDone (describeJob job) (diffTime end start)
-            case next of
-              Stop -> pure ()
-              Continue -> serve
+      worker WriterConns{wcVolDb = volDb, wcConn = conn} = serve
+       where
+        serve :: IO ()
+        serve = do
+          job <- atomically $ readTBQueue queue
+          start <- getMonotonicTime
+          next <- runJob job
+          end <- getMonotonicTime
+          traceWith tracer $
+            TraceLeiosDbWriteJobDone (describeJob job) (diffTime end start)
+          case next of
+            Stop -> pure ()
+            Continue -> serve
 
-          runJob :: WriteJob -> IO WhetherContinueServing
-          runJob = \case
-            Shutdown resolve -> do
-              -- Only stop serving: the brackets in 'withWriterConns' close the
-              -- connections once 'serve' returns, and the worker resolves this
-              -- job with the outcome of that close.
-              writeIORef shutdownVar (Just resolve)
-              pure Stop
-            WriteEbBody point eb fills held resolve -> do
-              promoted <- isPromoted point
-              resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills held
-              pure Continue
-            WriteTxs point txs resolve -> do
-              promoted <- isPromoted point
-              resolve =<< if promoted then pure () else sqlInsertTxs conn point txs
-              pure Continue
-            Flush resolve -> do
-              resolve ()
-              pure Continue
-            GarbageCollect resolve -> do
-              resolve =<< collect
-              pure Continue
+        runJob :: WriteJob -> IO WhetherContinueServing
+        runJob = \case
+          Shutdown resolve -> do
+            -- Only stop serving: the brackets in 'withWriterConns' close the
+            -- connections once 'serve' returns, and the worker resolves this
+            -- job with the outcome of that close.
+            writeIORef shutdownVar (Just resolve)
+            pure Stop
+          WriteEbBody point eb fills held resolve -> do
+            promoted <- isPromoted point
+            resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills held
+            pure Continue
+          WriteTxs point txs resolve -> do
+            promoted <- isPromoted point
+            resolve =<< if promoted then pure () else sqlInsertTxs conn point txs
+            pure Continue
+          Flush resolve -> do
+            resolve ()
+            pure Continue
+          GarbageCollect resolve -> do
+            resolve =<< collect
+            pure Continue
 
-          -- Whether promotion passed this point already, so its writes are
-          -- dropped: it is either promoted or not needed by the immutable chain.
-          isPromoted :: LeiosPoint -> IO Bool
-          isPromoted point = (pointSlotNo point <) <$> readTVarIO promotedSlotVar
+        -- Whether promotion passed this point already, so its writes are
+        -- dropped: it is either promoted or not needed by the immutable chain.
+        isPromoted :: LeiosPoint -> IO Bool
+        isPromoted point = (pointSlotNo point <) <$> readTVarIO promotedSlotVar
 
-          -- Whether rows before the promoted slot are left.
-          collect :: IO Bool
-          collect = do
-            evicted <- deleteEbsBefore volDb gcBatchSize =<< readTVarIO promotedSlotVar
-            when (evicted > 0) $ do
-              bumpVolatileStatsVar statsVar (negate evicted)
-              dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
-              traceWith tracer $ TraceLeiosDbEvicted evicted
-            pure (evicted == gcBatchSize)
+        -- Whether rows before the promoted slot are left.
+        collect :: IO Bool
+        collect = do
+          evicted <- deleteEbsBefore volDb gcBatchSize =<< readTVarIO promotedSlotVar
+          when (evicted > 0) $ do
+            bumpVolatileStatsVar statsVar (negate evicted)
+            dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
+            traceWith tracer $ TraceLeiosDbEvicted evicted
+          pure (evicted == gcBatchSize)
 
       -- Nothing can be queued after the seal ('submitJob'), and awaiting a
       -- job left in the queue throws the cause.

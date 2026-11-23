@@ -118,11 +118,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ReadOnlyForker (..))
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
-  , LeiosDbReader (..)
-  , withReader
-  )
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadAsync (Async, async, cancel, waitSTM)
@@ -141,7 +137,6 @@ import qualified Ouroboros.Network.Protocol.LocalStateQuery.Type as LSQ
 data VotingEnv m blk = MkVotingEnv
   { votingConfig :: TopLevelConfig blk
   , votingChainDB :: ChainDB m blk
-  , votingLeiosDb :: LeiosDbHandle m
   , votingTxCache :: LeiosTxCache m () ProtVerParity PackedEndorserBlock
   -- ^ Which transactions the node validated already, and under which parity.
   , votingAnnounceState :: AnnounceState m blk
@@ -242,7 +237,6 @@ runLeiosVoting env keys = do
   MkVotingEnv
     { votingConfig
     , votingChainDB
-    , votingLeiosDb
     , votingTxCache
     , votingAnnounceState
     , votingVoteState
@@ -347,7 +341,7 @@ runLeiosVoting env keys = do
       notEquivocated announcing
 
       (reapplied, applied) <-
-        ExceptT $ validateEndorserBlock lcfg votingChainDB votingLeiosDb votingTxCache point announcing
+        ExceptT $ validateEndorserBlock lcfg votingChainDB votingTxCache point announcing
       lift $ traceWith votingTracer (TraceLeiosEbValidated point reapplied applied)
 
       lift $ do
@@ -515,14 +509,13 @@ validateEndorserBlock ::
   (IOLike m, BlockSupportsLeios blk) =>
   LedgerConfig blk ->
   ChainDB m blk ->
-  LeiosDbHandle m ->
   LeiosTxCache m () ProtVerParity b ->
   LeiosPoint ->
   -- | The block that announced it
   RealPoint blk ->
   m (Either NotVotedReason (Int, Int))
-validateEndorserBlock lcfg chainDB leiosDb txCache point announcing =
-  withReader leiosDb $ \reader -> runExceptT $ do
+validateEndorserBlock lcfg chainDB txCache point announcing =
+  ChainDB.withLeiosReader chainDB $ \reader -> runExceptT $ do
     body <- lift (lookupEbBody reader point) >>= (?>= BodyUnavailable)
     txs <- lift (lookupEbClosure reader point) >>= (?>= ClosureUnavailable)
     ExceptT $ withForkerAt (realPointToPoint announcing) $ \case

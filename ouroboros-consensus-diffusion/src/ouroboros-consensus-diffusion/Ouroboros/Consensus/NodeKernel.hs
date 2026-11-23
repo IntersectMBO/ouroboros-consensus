@@ -157,10 +157,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle
-  , allocateWriter
-  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -224,8 +220,6 @@ import System.Random (StdGen, splitGen, uniform)
 data NodeKernel m addrNTN addrNTC blk = NodeKernel
   { getChainDB :: ChainDB m blk
   -- ^ The 'ChainDB' of the node
-  , getLeiosDB :: LeiosDbHandle m
-  -- ^ The node's LeiosDB
   , getMempool :: Mempool m blk
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
@@ -294,10 +288,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , btime :: BlockchainTime m
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
-  , leiosDB :: LeiosDbHandle m
-  -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
-  , leiosAcquisitions :: LeiosAcquisitions m
-  -- ^ Where the node's LeiosFetch emits what it acquires.
   , leiosFetchRng :: StdGen
   -- ^ Seeds the LeiosFetch decision loop's PRNG and the LeiosTxCache's salt.
   , leiosAnnouncementAgeLimits :: LeiosAnnouncementAgeLimits
@@ -343,8 +333,6 @@ initNodeKernel
     , cfg
     , tracers
     , chainDB
-    , leiosDB
-    , leiosAcquisitions
     , leiosFetchRng
     , leiosAnnouncementAgeLimits
     , initChainDB
@@ -466,7 +454,7 @@ initNodeKernel
 
     -- Before anything that acquires runs, so that the offer relay misses no
     -- acquisition.
-    nextLeiosAcquisition <- subscribeLeiosAcquisitions leiosAcquisitions
+    nextLeiosAcquisition <- subscribeLeiosAcquisitions (ChainDB.leiosAcquisitions chainDB)
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
@@ -498,24 +486,23 @@ initNodeKernel
           MkVotingEnv
             { votingConfig = cfg
             , votingChainDB = chainDB
-            , votingLeiosDb = leiosDB
             , votingTxCache = leiosTxCache
             , votingAnnounceState = leiosAnnounceState
             , votingVoteState = leiosVoteState
             , votingSystemTime = systemTime
             , votingTracer = leiosVotingTracer tracers
-            , votingSubscribeClosures = subscribeLeiosClosures leiosAcquisitions
+            , votingSubscribeClosures = subscribeLeiosClosures (ChainDB.leiosAcquisitions chainDB)
             }
-    leiosWriter <- allocateWriter registry leiosDB
+    leiosWriter <- ChainDB.leiosAllocateWriter chainDB
     leiosFetchKernel <-
-      newLeiosFetchKernel chainDB leiosDB leiosFetchPrng $ \outstanding ready ->
+      newLeiosFetchKernel chainDB leiosFetchPrng $ \outstanding ready ->
         MkLeiosFetchClientContext
           { lfcStaticEnv = defaultLeiosFetchStaticEnv (fromIntegral maxLeiosFetchIngressBytes)
           , lfcOutstanding = outstanding
           , lfcReady = ready
           , lfcTxCache = leiosTxCache
           , lfcWriter = leiosWriter
-          , lfcNotify = emitLeiosAcquisition leiosAcquisitions
+          , lfcNotify = emitLeiosAcquisition (ChainDB.leiosAcquisitions chainDB)
           , lfcSystemTime = systemTime
           , lfcMempoolTxs = leiosTxsInMempool mempool
           , -- Each trace names the connection, not which of its registrations.
@@ -609,7 +596,6 @@ initNodeKernel
     return
       NodeKernel
         { getChainDB = chainDB
-        , getLeiosDB = leiosDB
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
@@ -677,7 +663,6 @@ data InternalState m addrNTN addrNTC blk = IS
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
-  , leiosDB :: LeiosDbHandle m
   , blockFetchInterface ::
       BlockFetchConsensusInterface
         (ConnectionId addrNTN)
@@ -713,7 +698,6 @@ initInternalState
   NodeKernelArgs
     { tracers
     , chainDB
-    , leiosDB
     , registry
     , cfg
     , blockFetchSize

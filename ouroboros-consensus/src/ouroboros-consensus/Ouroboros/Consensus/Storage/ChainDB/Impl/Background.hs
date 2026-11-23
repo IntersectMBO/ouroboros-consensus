@@ -89,7 +89,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..))
 import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
@@ -242,7 +241,7 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
     -- copy.
     then trace NoBlocksToCopyToImmutableDB
     else do
-      leiosDbPromoteToImmutable cdbLeiosDb (realPointSlot (headerRealPoint (last toCopy)))
+      LeiosDB.promoteToImmutable cdbLeiosDB (realPointSlot (headerRealPoint (last toCopy)))
         =<< certifiedEbs toCopy
       forM_ (map headerPoint toCopy) $ \pt -> do
         let hash = case pointHash pt of
@@ -539,7 +538,7 @@ mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
 garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
-  LeiosDB.garbageCollect cdbLeiosDb
+  LeiosDB.garbageCollect cdbLeiosDB
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo

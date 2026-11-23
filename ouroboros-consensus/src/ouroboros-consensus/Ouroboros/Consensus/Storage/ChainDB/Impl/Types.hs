@@ -132,7 +132,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDB)
+import Ouroboros.Consensus.Storage.LeiosDB.Trace
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
@@ -398,8 +399,7 @@ data ChainDbEnv m blk = CDB
   -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
-  , cdbLeiosDb :: !(LeiosDbHandle m)
-  -- ^ The node's LeiosDB. Whoever opened it closes it, not the ChainDB.
+  , cdbLeiosDB :: !(LeiosDB m)
   , cdbAcquiredEbs :: !(StrictTVar m AcquiredEbs)
   -- ^ The endorser blocks whose closure the LeiosDB holds, so that ChainSel
   -- can park the blocks certifying the others. Seeded from the LeiosDB at
@@ -859,6 +859,7 @@ data TraceEvent blk
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
   | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
   | TracePerasVoteDbEvent (PerasVoteDB.TraceEvent blk)
+  | TraceLeiosDbEvent TraceLeiosDb
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
   | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)
@@ -888,6 +889,10 @@ data TraceOpenEvent blk
       (Point blk)
       -- | Tip of the current chain
       (Point blk)
+  | -- | The LeiosDB started the process of opening.
+    StartedOpeningLeiosDB
+  | -- | The LeiosDB was opened.
+    OpenedLeiosDB
   | -- | The ImmutableDB started the process of opening.
     StartedOpeningImmutableDB
   | -- | The ImmutableDB was opened.

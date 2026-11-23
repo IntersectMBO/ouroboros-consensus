@@ -5,7 +5,7 @@
 
 module Ouroboros.Consensus.Storage.LeiosDB.API
   ( -- * Handle
-    LeiosDbHandle (..)
+    LeiosDB (..)
   , LeiosDbStats (..)
 
     -- * Reading
@@ -43,8 +43,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
 -- | The Leios database. Hands out readers and writers.
-data LeiosDbHandle m = LeiosDbHandle
-  { closeLeiosDbHandle :: m ()
+data LeiosDB m = LeiosDB
+  { closeDB :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs
   -- behind the scenes, release its connections. Readers and writers handed
   -- out earlier are not usable afterwards.
@@ -56,7 +56,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Delete the volatile EBs announced before the promoted slot.
   --
   -- See 'sqlGarbageCollect' for the SQL backend implementation.
-  , leiosDbPromoteToImmutable :: HasCallStack => SlotNo -> [LeiosPoint] -> m ()
+  , promoteToImmutable :: HasCallStack => SlotNo -> [LeiosPoint] -> m ()
   -- ^ Copy the given EBs' bodies and tx closures from volatile into immutable
   -- LeiosDb, then advance the promoted slot to the given one, the ImmutableDB
   -- tip's once the blocks certifying them are appended. Takes a batch: the
@@ -66,7 +66,7 @@ data LeiosDbHandle m = LeiosDbHandle
   --
   -- The promoted slot goes back only by 'leiosDbTruncateImmutable'. Reopened,
   -- it is the one after the newest promoted point.
-  , leiosDbTruncateImmutable :: HasCallStack => SlotNo -> m ()
+  , truncateImmutable :: HasCallStack => SlotNo -> m ()
   -- ^ Delete the immutable EBs announced at or after the slot, the ImmutableDB
   -- tip's, and set the promoted slot to it: a block of the ImmutableDB
   -- certifies only an EB announced before its tip. Restores, when the ChainDB
@@ -74,10 +74,10 @@ data LeiosDbHandle m = LeiosDbHandle
   -- which a crash, a truncation or a lost row can break. The volatile partition
   -- keeps its EBs, so a deleted EB that is still there is promoted again, and
   -- any other fetched again.
-  , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
+  , sampleStats :: HasCallStack => m LeiosDbStats
   -- ^ Sample 'LeiosDbStats' counters.
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbHandle" (LeiosDbHandle m)
+  deriving NoThunks via OnlyCheckWhnfNamed "LeiosDB" (LeiosDB m)
 
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 --
@@ -187,14 +187,14 @@ awaitAll = traverse_ await
 -- 'TxLocation' at another point. See 'writeEbBody'.
 type LocalFills = Map TxOffset TxLocation
 
-withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
+withReader :: MonadThrow m => LeiosDB m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) closeReader
 
-withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
+withWriter :: MonadThrow m => LeiosDB m -> (LeiosDbWriter m -> m a) -> m a
 withWriter db = bracket (openWriter db) closeWriter
 
-allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
+allocateReader :: IOLike m => ResourceRegistry m -> LeiosDB m -> m (LeiosDbReader m)
 allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) closeReader
 
-allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
+allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDB m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter

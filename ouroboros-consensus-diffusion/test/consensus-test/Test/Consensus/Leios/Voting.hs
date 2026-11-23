@@ -299,8 +299,8 @@ runVoting Voting{keys, ups, adopts, closures, validating, validatedBefore} = run
       pure ()
     -- As the node's LeiosFetch would, before the voter looks the txs up.
     let txCache = txCacheOf node
-    _ <- insertAnnouncement txCache (blockSlot blk) (rbHashOf (ltbHeader blk)) (pointEbHash point)
-    _ <- insertBody txCache (pointEbHash point) (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
+    _ <- undefined txCache (blockSlot blk) (rbHashOf (ltbHeader blk)) (pointEbHash point)
+    _ <- undefined txCache (pointEbHash point) (packEndorserBlock eb) () (\w _off _txh _sz _loc -> w)
     withLockedInsertAppliedTx txCache $ \w0 step ->
       foldM (\w (txHash, parity) -> step w txHash parity) w0 (Map.toList validatedBefore)
     atomically $ emitLeiosAcquisition (nodeLeiosAcquisitions node) (AcquiredEbTxs point)

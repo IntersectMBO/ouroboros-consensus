@@ -107,6 +107,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Leios.Acquisitions
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement
   , LeiosLedgerView
@@ -136,6 +137,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
+import Ouroboros.Consensus.Storage.LeiosDB hiding (openDB)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertTicketNo
@@ -546,6 +548,9 @@ data ChainDB m blk = ChainDB
   --
   -- Currently, the only use-case of this function is to verify the immutability
   -- of a block from the big ledger peer snapshot file.
+  , leiosAcquisitions :: LeiosAcquisitions m
+  , leiosAllocateWriter :: m (LeiosDbWriter m)
+  , withLeiosReader :: forall a. (LeiosDbReader m -> m a) -> m a
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
