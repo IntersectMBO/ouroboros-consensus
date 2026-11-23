@@ -208,7 +208,10 @@ duplicateLSMTable tracer t = do
 -------------------------------------------------------------------------------}
 
 type LSMConstraints blk =
-  (HasLedgerTables ExtLedgerState blk, MemPack (TxIn blk), IndexedMemPack ExtLedgerState blk (TxOut blk))
+  ( HasLedgerTables ExtLedgerState blk
+  , MemPack (TxIn blk)
+  , IndexedMemPack ExtLedgerState blk (TxOut blk)
+  )
 
 newLSMLedgerTablesHandle ::
   forall m blk.

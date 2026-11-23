@@ -94,7 +94,8 @@ import Prelude hiding (read)
 data LedgerTablesHandle m blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(ExtLedgerState blk EmptyMK -> ExtLedgerState blk DiffMK -> m (LedgerTablesHandle m blk))
+  , duplicateWithDiffs ::
+      !(ExtLedgerState blk EmptyMK -> ExtLedgerState blk DiffMK -> m (LedgerTablesHandle m blk))
   -- ^ Create a new handle by duplicating this one and push some diffs to it.
   --
   -- The first argument has to be the ledger state before applying
@@ -114,7 +115,10 @@ data LedgerTablesHandle m blk = LedgerTablesHandle
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
   , readRange ::
-      !(ExtLedgerState blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !( ExtLedgerState blk EmptyMK ->
+         (Maybe (TxIn blk), Int) ->
+         m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
+       )
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -170,7 +174,9 @@ data StateRef m blk = StateRef
   }
   deriving Generic
 
-deriving instance (IOLike m, NoThunks (PerasVotingCommittee blk), LedgerSupportsProtocol blk) => NoThunks (StateRef m blk)
+deriving instance
+  (IOLike m, NoThunks (PerasVotingCommittee blk), LedgerSupportsProtocol blk) =>
+  NoThunks (StateRef m blk)
 
 instance (Eq (PerasVotingCommittee blk), LedgerSupportsProtocol blk) => Eq (StateRef m blk) where
   (==) = (==) `on` state
