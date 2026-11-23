@@ -346,7 +346,6 @@ library
     Ouroboros.Consensus.Storage.LeiosDB
     Ouroboros.Consensus.Storage.LeiosDB.API
     Ouroboros.Consensus.Storage.LeiosDB.Exception
-    Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
     Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
@@ -613,6 +612,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.DiffusionPipelining
     Test.Ouroboros.Consensus.Protocol
     Test.Ouroboros.Consensus.QuickCheck.Extras
+    Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
     Test.Ouroboros.Storage.TestBlock
     Test.Util.BoolProps
     Test.Util.ChainDB

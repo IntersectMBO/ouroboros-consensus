@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeData #-}
 
-module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
+module Test.Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
   ( InMemoryLeiosDb (..)
   , Mem
   , emptyInMemoryLeiosDb
@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockReferences
   , hashLeiosTx
   )
+import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDB (..)
   , LeiosDbReader (..)
@@ -66,7 +67,8 @@ import Ouroboros.Consensus.Util.IOLike
   , try
   )
 
-type data Mem
+inmemArgs :: LeiosBackendArgs (IOSim s)
+inmemArgs = const newLeiosDBInMemory
 
 -- | In-memory database state, as the SQLite backend's: a row per point in
 -- each partition, and the promoted slot.
