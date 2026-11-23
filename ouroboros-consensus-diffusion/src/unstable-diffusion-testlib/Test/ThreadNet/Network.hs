@@ -1086,6 +1086,7 @@ runThreadNetwork
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
               , mempoolTimeoutConfig = Nothing
+              , forgeViewLeadTime = 1
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
               , leiosAcquisitions
