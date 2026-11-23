@@ -1295,7 +1295,6 @@ library protocol
     cardano-protocol ^>=0.3,
     cardano-protocol-tpraos ^>=1.6,
     cardano-slotting,
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
