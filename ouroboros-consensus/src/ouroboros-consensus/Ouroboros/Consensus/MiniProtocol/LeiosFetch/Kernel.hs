@@ -24,6 +24,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 
 import Control.Monad (forM_, forever, unless, void, when)
 import Control.Monad.Except (runExcept)
+import qualified Data.Foldable as F
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
@@ -454,7 +455,7 @@ leiosFetchCertificateFocuser ::
 leiosFetchCertificateFocuser consumeValidClaims kernel = forever $ do
   validClaims <- consumeValidClaims
   modifyMVar_ lfcOutstanding $ \outstanding ->
-    pure $ foldl' focus outstanding validClaims
+    pure $ F.foldl' focus outstanding validClaims
   void $ tryPutMVar lfcReady ()
  where
   MkLeiosFetchClientContext{lfcOutstanding, lfcReady} = lfkContext kernel
