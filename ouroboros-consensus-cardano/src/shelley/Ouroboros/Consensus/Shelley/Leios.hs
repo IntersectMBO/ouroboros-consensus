@@ -24,6 +24,7 @@ import Cardano.Ledger.State (EbAnnouncement (..))
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosLedger
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Sequence.Strict as StrictSeq
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
@@ -41,7 +42,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , getPParams
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (..), Validated (..), mkShelleyTx)
-import Ouroboros.Consensus.Util (coerceSet)
 
 -- | Only an era with a 'LeiosEraDict' has endorser blocks, whose transactions
 -- are encoded as in a block of the era.
@@ -113,7 +113,7 @@ applyEraEndorserBlock dict@LeiosEraDict cfg readTables serialised st =
         & transactionsEndorserBlockL .~ EbTransactions (StrictSeq.fromList txs)
 
   keys eb =
-    LedgerTables . KeysMK . coerceSet $
+    LedgerTables . KeysMK . Set.mapMonotonic BigEndianTxIn $
       foldMap
         (^. Core.bodyTxL . Core.allInputsTxBodyF)
         (unEbTransactions (eb ^. transactionsEndorserBlockL))
