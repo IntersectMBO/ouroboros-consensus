@@ -243,8 +243,8 @@ import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
-  , TxDecisionPolicy (..)
   , TxSubmissionLogicVersion (..)
+  , maxUnacknowledgedTxIds
   , txSubmissionInboundV2
   , withPeer
   )
@@ -308,9 +308,8 @@ data Handlers m addr blk = Handlers
         ( PeerTxAPI m (GenTxId blk) (GenTx blk) ->
           TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
         )
-  -- ^ Either we use the legacy tx submission protocol or the newest one
-  -- which require PeerTxAPI. This is decided by
-  -- 'EnableNewTxSubmissionProtocol' flag.
+  -- ^ 'txSubmissionLogicVersion' selects the legacy server or the V2 server
+  -- that requires a 'PeerTxAPI'.
   , hPerasCertDiffusionClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
@@ -390,7 +389,6 @@ mkHandlers ::
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
-  TxSubmissionLogicVersion ->
   Handlers m addrNTN blk
 mkHandlers
   NodeKernelArgs
@@ -400,6 +398,7 @@ mkHandlers
     , keepAliveRng
     , miniProtocolParameters
     , getDiffusionPipeliningSupport
+    , txSubmissionLogicVersion
     , txSubmissionInitDelay
     , systemTime
     }
@@ -415,8 +414,8 @@ mkHandlers
     , getLeiosVoteState
     , getLeiosNotifyLog
     , getLeiosFetchKernel
-    }
-  txSubmissionLogicVersion =
+    , getTxDecisionPolicy
+    } =
     Handlers
       { hChainSyncClient = \peer _isBigLedgerpeer dynEnv mbLeiosPeer ->
           CsClient.chainSyncClient
@@ -485,7 +484,7 @@ mkHandlers
                       (Node.txInboundTracer tracers)
                   )
                   txSubmissionInitDelay
-                  (txDecisionPolicy miniProtocolParameters)
+                  getTxDecisionPolicy
                   (getMempoolWriter getMempool)
                   txWireSize
                   api
