@@ -11,7 +11,7 @@ module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
+import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -150,6 +150,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Node (defaultMiniProtocolParameters)
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..), leiosDeadlinePrunerInterval)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
