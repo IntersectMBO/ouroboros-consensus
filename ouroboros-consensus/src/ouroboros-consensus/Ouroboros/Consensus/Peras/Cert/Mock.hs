@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Peras.Types
   , PerasRoundNo
   , PerasSeatIndex
   )
+import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Util (ShowProxy (..))
 
@@ -157,6 +158,12 @@ instance
       case NonEmpty.nonEmpty xs of
         Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
         Just neSet -> pure (NESet.fromList neSet)
+
+instance (Typeable blk, ToCBOR (Point blk)) => EncodeDisk blk (MockPerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance (Typeable blk, FromCBOR (Point blk)) => DecodeDisk blk (MockPerasCert blk) where
+  decodeDisk _ = fromCBOR
 
 -- * Orphan instances
 

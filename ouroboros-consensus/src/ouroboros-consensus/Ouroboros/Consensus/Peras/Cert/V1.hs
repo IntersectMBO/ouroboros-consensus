@@ -80,6 +80,10 @@ import Ouroboros.Consensus.Peras.Voting.Adapter
   , fromPerasSeatIndex
   , toPerasSeatIndex
   )
+import Ouroboros.Consensus.Storage.Serialisation
+  ( DecodeDisk (..)
+  , EncodeDisk (..)
+  )
 import Ouroboros.Consensus.Util.Bitmap (Bitmap)
 import qualified Ouroboros.Consensus.Util.Bitmap as Bitmap
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
@@ -153,6 +157,12 @@ instance
         <> toCBOR pcBoostedBlock
         <> toCBOR pcVoters
         <> toCBOR pcSignature
+
+instance Typeable blk => EncodeDisk blk (PerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance Typeable blk => DecodeDisk blk (PerasCert blk) where
+  decodeDisk _ = fromCBOR
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)

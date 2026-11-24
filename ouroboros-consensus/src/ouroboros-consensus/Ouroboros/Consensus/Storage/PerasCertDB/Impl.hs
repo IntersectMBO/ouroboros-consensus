@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -12,6 +13,7 @@
 module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ( -- * Opening
     PerasCertDbArgs (..)
+  , PerasCertDbSerialiseConstraints
   , defaultArgs
   , createDB
 
@@ -31,6 +33,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot, mkPerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
+import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
@@ -139,6 +142,11 @@ createDB args = do
   PerasCertDbArgs
     { pcdbaTracer = pcdbTracer
     } = args
+
+type PerasCertDbSerialiseConstraints blk =
+  ( EncodeDisk blk (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
+  )
 
 {-------------------------------------------------------------------------------
   API implementation

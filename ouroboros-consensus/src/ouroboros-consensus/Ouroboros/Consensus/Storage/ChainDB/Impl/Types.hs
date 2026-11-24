@@ -134,7 +134,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
-import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB, PerasCertDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
@@ -165,6 +165,7 @@ class
   ( ImmutableDbSerialiseConstraints blk
   , LedgerDbSerialiseConstraints blk
   , VolatileDbSerialiseConstraints blk
+  , PerasCertDbSerialiseConstraints blk
   , -- Needed for Follower
     EncodeDiskDep (NestedCtxt Header) blk
   ) =>
