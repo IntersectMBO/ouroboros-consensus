@@ -2060,21 +2060,22 @@ instance MetaTrace (TraceForgeEvent blk) where
   documentFor (Namespace _ ["ForgeNotCertifiable"]) =
     Just $
       mconcat
-        [ "The block in this slot cannot contain a Leios certificate. We record"
-        , "  the current slot number and the reason. We trace this in each slot"
-        , "  where the node leads."
+        [ "The block in this slot cannot certify an endorser block. We record"
+        , "  the current slot number and the reason. The node checks this first,"
+        , "  in each slot where it leads."
         ]
   documentFor (Namespace _ ["ForgeNoLeiosCert"]) =
     Just $
       mconcat
-        [ "The node has no Leios certificate for the endorser block that the"
-        , "  block at this point announces, so the forged block certifies nothing."
+        [ "The block in this slot can certify the endorser block that the block"
+        , "  at this point announces, and the node holds its closure. But the node"
+        , "  has no certificate for it, so the forged block certifies nothing."
         ]
   documentFor (Namespace _ ["ForgeLeiosClosureNotAcquired"]) =
     Just $
       mconcat
-        [ "The node does not hold the closure of this endorser block, so the"
-        , "  forged block does not certify it."
+        [ "The block in this slot can certify this endorser block, but the node"
+        , "  does not hold its closure, so the forged block does not certify it."
         ]
   documentFor (Namespace _ ["ForgedEndorserBlock"]) =
     Just $

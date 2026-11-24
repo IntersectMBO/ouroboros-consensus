@@ -447,17 +447,18 @@ data TraceForgeEvent blk
       (RealPoint blk)
       -- | The hash of the certified endorser block.
       EndorserBlockHash
-  | -- | The block in this slot cannot contain a Leios certificate, because
+  | -- | The block in this slot cannot certify an endorser block, because
     -- 'leiosAnnouncementToCertify' gives this reason.
     --
-    -- We trace this in each slot where the node leads.
+    -- The node checks this first, in each slot where it leads.
     TraceForgeNotCertifiable SlotNo NotCertifiable
-  | -- | The node has no Leios certificate for the endorser block that the block
-    -- at this point announces, so the forged block certifies nothing.
+  | -- | The block in this slot can certify the endorser block that the block
+    -- at this point announces, and the node holds its closure. But the vote
+    -- state has no certificate for it, so the forged block certifies nothing.
     TraceForgeNoLeiosCert (RealPoint blk)
-  | -- | The node does not hold the closure of this endorser block, so the
-    -- forged block does not certify it. ChainSel parks a block that certifies
-    -- a closure the node does not hold.
+  | -- | The block in this slot can certify this endorser block, but the node
+    -- does not hold its closure, so the forged block does not certify it.
+    -- ChainSel parks a block that certifies a closure the node does not hold.
     TraceForgeLeiosClosureNotAcquired LeiosPoint
   | -- | We forged an endorser block.
     TraceForgedEndorserBlock
