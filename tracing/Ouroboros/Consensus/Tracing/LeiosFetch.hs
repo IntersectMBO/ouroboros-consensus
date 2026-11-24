@@ -74,10 +74,10 @@ instance MetaTrace (TraceLeiosFetchClientEvent peer) where
 
   documentFor (Namespace _ ["BlockArrived"]) =
     Just
-      "An endorser block arrived, its bytes classified by whether the node needed them. One the node writes is traced once the write settles."
+      "An endorser block arrived. Its bytes are invalid if it failed its checks, evicted if its point was pruned before its write settled, extra if another reply's write for the point settled first, and good otherwise. One the node writes is traced once its write settles."
   documentFor (Namespace _ ["TxsArrived"]) =
     Just
-      "Some of an endorser block's transactions arrived, their bytes classified by whether the node needed them. Ones the node writes are traced once the write settles."
+      "Some of an endorser block's transactions arrived. The whole reply is invalid if it failed its checks. Otherwise each transaction's bytes are evicted if its point was pruned or the LeiosTxCache no longer retains the point, extra if its job was already done or the LeiosTxCache already held it, and good otherwise. A reply is traced once its write, if any, lands."
   documentFor (Namespace _ ["BlockAcquired"]) =
     Just
       "The node acquired an endorser block it fetched; its age is how long after its point's slot began."

@@ -139,7 +139,7 @@ unit_hardForkForgeBlockPassesTxsAndReturnsEb = do
       }
 
   mkForgedLeiosEb :: NonEmpty (GenTx BlockA) -> ForgedEndorserBlock
-  mkForgedLeiosEb = forgeLeiosEb . fmap (fromShort . toRawTxIdHash . txId)
+  mkForgedLeiosEb = forgeLeiosEb minBound . fmap (fromShort . toRawTxIdHash . txId)
 
   txA :: Int -> GenTx BlockA
   txA n = TxA (TxIdA n) InitiateAtoB

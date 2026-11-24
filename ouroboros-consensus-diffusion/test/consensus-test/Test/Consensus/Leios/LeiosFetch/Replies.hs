@@ -21,6 +21,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   )
 import Control.Exception (try)
+import Control.Monad.Class.MonadAsync (wait, withAsync)
 import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
@@ -37,6 +38,11 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   )
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
+import Ouroboros.Consensus.Leios.TxCache
+  ( defaultLeiosTxCacheShift
+  , evictOlderThan
+  , newPureLeiosTxCache
+  )
 import Ouroboros.Consensus.Leios.Types
   ( ElectionId (..)
   , EndorserBlock
@@ -150,6 +156,12 @@ tests =
     , testCase "the client counts transactions for a point pruned meanwhile as evicted" $
         test_txsForPrunedPoint
     , testCase
+        "the client copies into a body's write the transactions another point holds, and fetches only the rest"
+        test_fillsFromAnotherPoint
+    , testCase
+        "the client fetches all of a body's transactions once the point holding some of them leaves the LeiosTxCache"
+        test_noFillsFromPrunedPoint
+    , testCase
         "the client acquires the closure of an endorser block the node forged at a point whose body it already held, without acquiring the body again"
         test_forgedAfterBody
     , testCase
@@ -206,6 +218,7 @@ newContextGated point gate = do
   let MkLeiosPoint slot ebHash = point
   db <- newLeiosDBInMemory
   writer <- holdingBodies <$> openWriter db
+  txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   outstanding <-
     uncheckedNewMVar $
       focusElectionIfUnfocused (ElectionId slot electee) ebHash $
@@ -221,6 +234,7 @@ newContextGated point gate = do
         { lfcStaticEnv = defaultLeiosFetchStaticEnv maxBound
         , lfcOutstanding = outstanding
         , lfcReady = ready
+        , lfcTxCache = txCache
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
@@ -236,6 +250,18 @@ newContextGated point gate = do
           written <- writeEbBody writer p eb fills
           pure $ Promise $ release >> await written
       }
+
+-- | Writes that hold until released: what to run in a held write, waiting
+-- until this many writers are held, and releasing them all.
+newWriteHold :: IO (IO (), Int -> IO (), IO ())
+newWriteHold = do
+  written <- newEmptyTMVarIO
+  held <- newTVarIO (0 :: Int)
+  pure
+    ( atomically (modifyTVar held (+ 1)) >> atomically (readTMVar written)
+    , \n -> atomically $ readTVar held >>= check . (>= n)
+    , atomically $ putTMVar written ()
+    )
 
 -- | Wait until this many notifications have arrived, and return them, oldest
 -- first.
@@ -335,18 +361,23 @@ test_announcedAgainWhileWriting = do
   let (point, eb, _txs) = fixture
       ebHash = pointEbHash point
       newer = MkLeiosPoint (SlotNo 7) ebHash
-  written <- newEmptyTMVarIO
-  (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock
-    ctx
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  modifyMVar_ (lfcOutstanding ctx) $
-    pure
-      . focusElectionIfUnfocused (ElectionId (pointSlotNo newer) electee) ebHash
-      . recordReferencedPoint newer SNothing
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes) <- newContextHolding hold
+  withAsync
+    ( processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+        (serialiseEndorserBlock eb)
+    )
+    $ \client -> do
+      awaitHeld 1
+      modifyMVar_ (lfcOutstanding ctx) $
+        pure
+          . focusElectionIfUnfocused (ElectionId (pointSlotNo newer) electee) ebHash
+          . recordReferencedPoint newer SNothing
+      release
+      wait client
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   outstanding <- readMVar (lfcOutstanding ctx)
   assertNoBody newer outstanding
@@ -358,20 +389,25 @@ test_prunedWhileWriting = do
   let (point, eb, _txs) = fixture
       ebHash = pointEbHash point
       newer = MkLeiosPoint (SlotNo 8) ebHash
-  written <- newEmptyTMVarIO
-  (ctx, notes) <- newContextHolding (atomically (readTMVar written))
-  processLeiosBlock
-    ctx
-    peer
-    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
-    (serialiseEndorserBlock eb)
-  -- What 'processLeiosBlock' itself signals, so that what is left to await is
-  -- the body's settlement.
-  takeMVar (lfcReady ctx)
-  modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
-  modifyMVar_ (lfcOutstanding ctx) $
-    pure . recordReferencedPoint newer SNothing
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes) <- newContextHolding hold
+  withAsync
+    ( processLeiosBlock
+        ctx
+        peer
+        (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+        (serialiseEndorserBlock eb)
+    )
+    $ \client -> do
+      awaitHeld 1
+      -- What 'processLeiosBlock' itself signals, so that what is left to await
+      -- is the body's settlement.
+      takeMVar (lfcReady ctx)
+      modifyMVar_ (lfcOutstanding ctx) $ pure . pruneOutstandingToImmTip (SlotNo 6)
+      modifyMVar_ (lfcOutstanding ctx) $
+        pure . recordReferencedPoint newer SNothing
+      release
+      wait client
   Timeout.timeout 5000000 (takeMVar (lfcReady ctx))
     >>= maybe (assertFailure "timed out waiting for the body to settle") pure
   readTVarIO notes >>= (@?= [])
@@ -539,11 +575,13 @@ test_overlappingReplies = do
   let (point, eb, _txs) = fixture
       size = encodeEndorserBlockSize eb
       req = MkLeiosBlockRequest point size maxBound
-  written <- newEmptyTMVarIO
-  (ctx, notes, traces) <- withTraces $ newContextHolding (atomically (readTMVar written))
-  processLeiosBlock ctx peer req (serialiseEndorserBlock eb)
-  processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)
-  atomically $ putTMVar written ()
+  (hold, awaitHeld, release) <- newWriteHold
+  (ctx, notes, traces) <- withTraces $ newContextHolding hold
+  withAsync (processLeiosBlock ctx peer req (serialiseEndorserBlock eb)) $ \client ->
+    withAsync (processLeiosBlock ctx otherPeer req (serialiseEndorserBlock eb)) $ \otherClient -> do
+      awaitHeld 2
+      release
+      wait client >> wait otherClient
   arrivals <- awaitArrivals blockArrivals traces 2
   [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
   let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
@@ -572,9 +610,9 @@ test_overlappingTxsReplies :: Assertion
 test_overlappingTxsReplies = do
   let (point, eb, txs) = fixture
       closure = sum [fromIntegral (BS8.length (leiosTxBytes tx)) | tx <- txs]
-  written <- newEmptyTMVarIO
+  (hold, awaitHeld, release) <- newWriteHold
   (ctx0, notes, traces) <- withTraces newContext
-  let ctx = ctx0{lfcWriter = holdingTxs (atomically (readTMVar written)) (lfcWriter ctx0)}
+  let ctx = ctx0{lfcWriter = holdingTxs hold (lfcWriter ctx0)}
   processLeiosBlock
     ctx
     peer
@@ -582,9 +620,11 @@ test_overlappingTxsReplies = do
     (serialiseEndorserBlock eb)
   awaitNotes notes 1 >>= (@?= [AcquiredBody point])
   req <- closureRequest ctx point
-  processLeiosBlockTxs ctx peer req (V.fromList txs)
-  processLeiosBlockTxs ctx otherPeer req (V.fromList txs)
-  atomically $ putTMVar written ()
+  withAsync (processLeiosBlockTxs ctx peer req (V.fromList txs)) $ \client ->
+    withAsync (processLeiosBlockTxs ctx otherPeer req (V.fromList txs)) $ \otherClient -> do
+      awaitHeld 2
+      release
+      wait client >> wait otherClient
   arrivals <- awaitArrivals txsArrivals traces 2
   [p | (p, _point, _bytes) <- arrivals] @?= [peer, otherPeer]
   let byPeer = [bytes | (_peer, _point, bytes) <- arrivals]
@@ -620,6 +660,58 @@ test_txsForPrunedPoint = do
   processLeiosBlockTxs ctx peer req (V.fromList txs)
   events <- readTVarIO traces
   txsArrivals events @?= [(peer, point, fetchArrivalEvicted closure)]
+
+-- | An endorser block at a newer point than the 'fixture''s, referencing the
+-- 'fixture''s second transaction and one of its own.
+sharing :: (LeiosPoint, EndorserBlock, LeiosTx, LeiosTx)
+sharing = (MkLeiosPoint (SlotNo 6) (endorserBlockHash eb), eb, shared, own)
+ where
+  shared = MkLeiosTx (BS8.pack "tx one")
+  own = MkLeiosTx (BS8.pack "tx two")
+  eb = endorserBlockFromTxBytes (fmap leiosTxBytes (shared :| [own]))
+
+-- | The client acquires the 'fixture''s closure, then this runs, then the
+-- client takes in the body of 'sharing' and fetches its closure, which a peer
+-- serves with these transactions. The notifications, oldest first.
+acquireSharing :: (LeiosFetchClientContext IO Int -> IO ()) -> [LeiosTx] -> IO [Acquired]
+acquireSharing between sent = do
+  let (point, eb, txs) = fixture
+      (pointB, ebB, _shared, _own) = sharing
+  (ctx, notes) <- newContext
+  modifyMVar_ (lfcOutstanding ctx) $
+    pure
+      . focusElectionIfUnfocused (fixtureElection pointB) (pointEbHash pointB)
+      . recordReferencedPoint pointB SNothing
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest point (encodeEndorserBlockSize eb) maxBound)
+    (serialiseEndorserBlock eb)
+  closureRequest ctx point >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList txs)
+  _ <- awaitNotes notes 2
+  between ctx
+  processLeiosBlock
+    ctx
+    peer
+    (MkLeiosBlockRequest pointB (encodeEndorserBlockSize ebB) maxBound)
+    (serialiseEndorserBlock ebB)
+  _ <- awaitNotes notes 3
+  closureRequest ctx pointB >>= \req -> processLeiosBlockTxs ctx peer req (V.fromList sent)
+  awaitNotes notes 4
+
+test_fillsFromAnotherPoint :: Assertion
+test_fillsFromAnotherPoint = do
+  let (point, _eb, _txs) = fixture
+      (pointB, _ebB, _shared, own) = sharing
+  acquireSharing (\_ctx -> pure ()) [own]
+    >>= (@?= [AcquiredBody point, AcquiredClosure point, AcquiredBody pointB, AcquiredClosure pointB])
+
+test_noFillsFromPrunedPoint :: Assertion
+test_noFillsFromPrunedPoint = do
+  let (point, _eb, _txs) = fixture
+      (pointB, _ebB, shared, own) = sharing
+  acquireSharing (\ctx -> evictOlderThan (lfcTxCache ctx) (pointSlotNo pointB)) [shared, own]
+    >>= (@?= [AcquiredBody point, AcquiredClosure point, AcquiredBody pointB, AcquiredClosure pointB])
 
 -- | The context, its notifications, and its traces, newest first.
 withTraces ::
@@ -678,7 +770,7 @@ test_txsAfterForged = do
 
 -- | The 'fixture''s endorser block, as the node's own forge produces it.
 fixtureForged :: ForgedEndorserBlock
-fixtureForged = forgeLeiosEb (fmap leiosTxBytes fixtureTxs)
+fixtureForged = forgeLeiosEb minBound (fmap leiosTxBytes fixtureTxs)
 
 -- | The election announcing the endorser block at this point.
 fixtureElection :: LeiosPoint -> ElectionId

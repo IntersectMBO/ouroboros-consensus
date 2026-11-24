@@ -3,6 +3,7 @@
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
+  , LeiosTxCacheInsertBodySummary (..)
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
   , fetchArrivalEvicted
@@ -20,15 +21,18 @@ import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 -- | What the node's LeiosFetch clients do, naming the peer that sent what
 -- arrived.
 data TraceLeiosFetchClientEvent peer
-  = -- | An endorser block arrived from this peer, its bytes classified by
-    -- whether the node needed them. One the node writes is traced once the
-    -- write settles, and was needed only if no other reply's write
-    -- settled first.
+  = -- | An endorser block arrived from this peer. Its bytes are invalid if it
+    -- failed its checks, evicted if its point was pruned before its write
+    -- settled, extra if another reply's write for the point settled first,
+    -- and good otherwise. One the node writes is traced once its write settles.
     TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
-  | -- | Some of an endorser block's transactions arrived from this peer, their
-    -- bytes classified by whether the node needed them. Ones the node writes
-    -- are traced once the write settles, and were needed only if no other
-    -- reply's write of them settled first.
+  | -- | Some of an endorser block's transactions arrived from this peer. The
+    -- whole reply is invalid if it failed its checks. Otherwise each tx's bytes
+    -- are evicted if its point was pruned, or the LeiosTxCache no longer
+    -- retains the point; extra if the tx's job was already done, or the
+    -- LeiosTxCache already held the tx; and good otherwise. Another point's
+    -- write can make the LeiosTxCache hold a tx this point still needed, which
+    -- then counts as extra. A reply is traced once its write, if any, lands.
     TraceLeiosFetchClientTxsArrived peer LeiosPoint FetchArrivalBytes
   | -- | The node acquired the endorser block this long after its point's slot
     -- began, if that is known.
@@ -38,6 +42,22 @@ data TraceLeiosFetchClientEvent peer
     TraceLeiosFetchClientBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
   deriving (Show, Functor)
 
+-- | Summary of an EB body inserted into the LeiosTxCache, for observability.
+-- The counts nest: @ibsTxsInEb >= ibsAcquired >= ibsValidated@.
+data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
+  { ibsTxsInEb :: !Int
+  -- ^ txs the EB body references
+  , ibsAcquired :: !Int
+  -- ^ of those, how many the cache already held (inserted or validated)
+  , ibsValidated :: !Int
+  -- ^ of those acquired, how many were already validated
+  , ibsCacheTxCount :: !Int
+  -- ^ total txs the cache holds after this insert
+  , ibsCacheCapacity :: !Int
+  -- ^ txs the cache is sized for; its load is 'ibsCacheTxCount' over this
+  }
+  deriving (Eq, Show)
+
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
 -- partitioned by what the node already had of them. The four fields sum to the
 -- message's total size.
@@ -46,7 +66,7 @@ data FetchArrivalBytes = MkFetchArrivalBytes
   -- ^ Bytes of an invalid message (the whole message).
   , fabEvicted :: !BytesSize
   -- ^ Bytes the node no longer tracked, though it presumably once did: their
-  -- point was pruned.
+  -- point was pruned, or the LeiosTxCache had evicted them.
   , fabGood :: !BytesSize
   -- ^ Bytes the node needed.
   , fabExtra :: !BytesSize
