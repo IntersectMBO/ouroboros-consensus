@@ -2599,13 +2599,17 @@ forMachineObjectDiffusionInbound = \case
       [ "kind" .= String "TraceObjectDiffusionInboundCannotRequestMoreObjects"
       , "payload" .= String (Text.pack . show $ payload)
       ]
-  TraceObjectDiffusionInboundAwaitReply ->
-    mconcat
-      [ "kind" .= String "TraceObjectDiffusionInboundAwaitReply"
-      ]
   TraceObjectDiffusionInboundServerIdle ->
     mconcat
       [ "kind" .= String "TraceObjectDiffusionInboundServerIdle"
+      ]
+  TraceObjectDiffusionInboundStartedIdling ->
+    mconcat
+      [ "kind" .= String "TraceObjectDiffusionInboundStartedIdling"
+      ]
+  TraceObjectDiffusionInboundStoppedIdling ->
+    mconcat
+      [ "kind" .= String "TraceObjectDiffusionInboundStoppedIdling"
       ]
 
 asMetricsObjectDiffusionInbound ::
@@ -2652,10 +2656,12 @@ namespaceForObjectDiffusionInbound = \case
     Namespace [] ["TraceObjectDiffusionInboundCanRequestMoreObjects"]
   TraceObjectDiffusionInboundCannotRequestMoreObjects _ ->
     Namespace [] ["TraceObjectDiffusionInboundCannotRequestMoreObjects"]
-  TraceObjectDiffusionInboundAwaitReply ->
-    Namespace [] ["TraceObjectDiffusionInboundAwaitReply"]
   TraceObjectDiffusionInboundServerIdle ->
     Namespace [] ["TraceObjectDiffusionInboundServerIdle"]
+  TraceObjectDiffusionInboundStartedIdling ->
+    Namespace [] ["TraceObjectDiffusionInboundStartedIdling"]
+  TraceObjectDiffusionInboundStoppedIdling ->
+    Namespace [] ["TraceObjectDiffusionInboundStoppedIdling"]
 
 documentForObjectDiffusionInbound :: Namespace a -> Maybe Text.Text
 documentForObjectDiffusionInbound = \case
@@ -2678,13 +2684,18 @@ documentForObjectDiffusionInbound = \case
     Just
       "No more objects can be requested from the peer for now; the payload is how\
       \ many are already in flight."
-  Namespace _ ["TraceObjectDiffusionInboundAwaitReply"] ->
-    Just
-      "The server has no object IDs immediately available after its current cursor and will wait.\
-      \ All previously advertised objects have been processed before this caught-up event can be emitted."
   Namespace _ ["TraceObjectDiffusionInboundServerIdle"] ->
     Just
       "The server's bounded wait expired without new object IDs, returning agency to the client."
+  Namespace _ ["TraceObjectDiffusionInboundStartedIdling"] ->
+    Just
+      "The server has no object IDs immediately available after its current cursor and will wait.\
+      \ All previously advertised objects have been processed before this caught-up event can be emitted.\
+      \ The client signals this to the genesis state machine."
+  Namespace _ ["TraceObjectDiffusionInboundStoppedIdling"] ->
+    Just
+      "The server has new object IDs and is sending them to the client.\
+      \ The client signals this to the genesis state machine."
   _ -> Nothing
 
 severityForObjectDiffusionInbound :: Namespace a -> Maybe SeverityS
@@ -2694,8 +2705,9 @@ severityForObjectDiffusionInbound = \case
   Namespace _ ["TraceObjectDiffusionInboundRecvControlMessage"] -> Just Info
   Namespace _ ["TraceObjectDiffusionInboundCanRequestMoreObjects"] -> Just Info
   Namespace _ ["TraceObjectDiffusionInboundCannotRequestMoreObjects"] -> Just Info
-  Namespace _ ["TraceObjectDiffusionInboundAwaitReply"] -> Just Info
   Namespace _ ["TraceObjectDiffusionInboundServerIdle"] -> Just Info
+  Namespace _ ["TraceObjectDiffusionInboundStartedIdling"] -> Just Info
+  Namespace _ ["TraceObjectDiffusionInboundStoppedIdling"] -> Just Info
   _ -> Nothing
 
 allNamespacesObjectDiffusionInbound :: [Namespace a]
@@ -2705,8 +2717,9 @@ allNamespacesObjectDiffusionInbound =
   , Namespace [] ["TraceObjectDiffusionInboundRecvControlMessage"]
   , Namespace [] ["TraceObjectDiffusionInboundCanRequestMoreObjects"]
   , Namespace [] ["TraceObjectDiffusionInboundCannotRequestMoreObjects"]
-  , Namespace [] ["TraceObjectDiffusionInboundAwaitReply"]
   , Namespace [] ["TraceObjectDiffusionInboundServerIdle"]
+  , Namespace [] ["TraceObjectDiffusionInboundStartedIdling"]
+  , Namespace [] ["TraceObjectDiffusionInboundStoppedIdling"]
   ]
 
 -- | Peras certificate diffusion, inbound side.

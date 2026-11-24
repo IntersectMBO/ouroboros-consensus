@@ -73,6 +73,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasSupported))
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -149,6 +150,7 @@ run = withRegistry \registry -> do
         { csCandidate = csCandidate s AF.:> attachSlotTime cfg (getHeader blkC)
         , csLatestSlot = pure $ NotOrigin $ blockSlot blkC
         , csIdling = csIdling s
+        , csPerasSupport = PerasSupported
         }
     addBlk blkC
 
@@ -158,6 +160,7 @@ run = withRegistry \registry -> do
         { csCandidate = initialFrag
         , csLatestSlot = pure $ AF.headSlot initialFrag
         , csIdling = True
+        , csPerasSupport = PerasSupported
         }
 
   _ <- forkLinkedThread registry "Peer2" $ do
@@ -176,6 +179,7 @@ run = withRegistry \registry -> do
         { csCandidate = csCandidate s
         , csLatestSlot = csLatestSlot s
         , csIdling = True
+        , csPerasSupport = PerasSupported
         }
 
   -- Give time to process the new blocks (any positive amount should do).
@@ -226,6 +230,7 @@ mkTestChainSyncClientHandle frag = do
         { csCandidate = frag
         , csIdling = False
         , csLatestSlot = pure $ AF.headSlot frag
+        , csPerasSupport = PerasSupported
         }
   varJumping <- newTVar $ Disengaged DisengagedDone
   varJumpInfo <- newTVar Nothing
@@ -288,7 +293,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
-      , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+      , GSM.getPeerStates = traverse readTVar =<< fmap cschState <$> cschcMap varChainSyncHandles
       , GSM.getCurrentSelection = ChainDB.getCurrentChain chainDB
       , -- Make sure that we stay in CaughtUp for the duration of the test once we
         -- have entered it.

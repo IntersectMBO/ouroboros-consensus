@@ -125,6 +125,18 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+  ( ChainSyncClientHandle (..)
+  , ChainSyncClientHandleCollection (..)
+  , ChainSyncJumpingState (Disengaged)
+  , ChainSyncState (..)
+  , DisengagedInitState (DisengagedDone)
+  , JumpInfo (..)
+  , newChainSyncClientHandleCollection
+  )
+import Ouroboros.Consensus.MiniProtocol.Util.Idling
+  ( Idling (Idling, idlingStart, idlingStop)
+  , noIdling
+  )
 import Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
@@ -163,6 +175,7 @@ import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.PeerSelection.PeerMetric.Type
   ( HeaderMetricsTracer
   )
+import Ouroboros.Network.PerasSupport (PerasSupport)
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
 import Ouroboros.Network.Protocol.ChainSync.PipelineDecision
 
@@ -275,26 +288,6 @@ chainSyncStateFor ::
 chainSyncStateFor varHandles peer =
   readTVar . cschState . (Map.! peer) =<< readTVar varHandles
 
--- | Interface for the ChainSync client to manipulate the idling flag in
--- 'ChainSyncState'.
-data Idling m = Idling
-  { idlingStart :: !(m ())
-  -- ^ Mark the peer as being idle.
-  , idlingStop :: !(m ())
-  -- ^ Mark the peer as not being idle.
-  }
-  deriving stock Generic
-
-deriving anyclass instance IOLike m => NoThunks (Idling m)
-
--- | No-op implementation, for tests.
-noIdling :: Applicative m => Idling m
-noIdling =
-  Idling
-    { idlingStart = pure ()
-    , idlingStop = pure ()
-    }
-
 -- | Interface to the LoP implementation for the ChainSync client.
 data LoPBucket m = LoPBucket
   { lbPause :: !(m ())
@@ -359,6 +352,7 @@ bracketChainSyncClient ::
   STM m GsmState ->
   peer ->
   NodeToNodeVersion ->
+  PerasSupport ->
   ChainSyncLoPBucketConfig ->
   CSJConfig ->
   DiffusionPipeliningSupport ->
@@ -372,6 +366,7 @@ bracketChainSyncClient
   getGsmState
   peer
   version
+  perasSupport
   csBucketConfig
   csjConfig
   pipelining
@@ -409,6 +404,7 @@ bracketChainSyncClient
           { csCandidate = AF.Empty AF.AnchorGenesis
           , csLatestSlot = SNothing
           , csIdling = False
+          , csPerasSupport = perasSupport
           }
 
     withCSJCallbacks ::

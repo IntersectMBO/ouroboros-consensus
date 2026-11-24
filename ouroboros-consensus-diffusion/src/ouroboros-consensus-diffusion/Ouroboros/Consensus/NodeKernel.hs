@@ -57,6 +57,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe)
+import Data.Maybe (isNothing)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -126,10 +127,18 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
   )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundHandleCollection
+  , newObjectDiffusionInboundHandleCollection
+  )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+  ( PerasCertDiffusionInboundHandleCollection
+  )
 import Ouroboros.Consensus.Network.LeiosFetch (maxLeiosFetchIngressBytes)
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (pruneLeiosNotifyToImmTip)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
+import Ouroboros.Consensus.Node.GSM.PeerState (gsmPeerIsIdle, maybeChainSyncState, mkGsmPeerStates)
 import Ouroboros.Consensus.Node.Genesis
   ( GenesisNodeKernelArgs (..)
   , LoEAndGDDConfig (..)
@@ -235,6 +244,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- from it with 'GSM.gsmStateToLedgerJudgement'.
   , getChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   -- ^ The kill handle and exposed state for each ChainSync client.
+  , getPerasCertDiffusionHandles ::
+      ObjectDiffusionInboundHandleCollection (ConnectionId addrNTN) m blk
+  -- ^ The exposed state for each Peras CertDiffusion client.
   , getPeerSharingRegistry :: PeerSharingRegistry addrNTN m
   -- ^ Read the current peer sharing registry, used for interacting with
   -- the PeerSharing protocol
@@ -369,6 +381,7 @@ initNodeKernel
           , mempool
           , peerSharingRegistry
           , varChainSyncHandles
+          , varPerasCertDiffusionHandles
           , varGsmState
           } = st
 
@@ -387,26 +400,31 @@ initNodeKernel
               GSM.GsmView
                 { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
                 , GSM.getCandidateOverSelection = do
-                    weights <- ChainDB.getPerasWeightSnapshot chainDB
-                    pure $ \(headers, _lst) state ->
-                      case AF.intersectionPoint headers (csCandidate state) of
-                        Nothing -> GSM.CandidateDoesNotIntersect
-                        Just{} ->
-                          GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
-                            shouldSwitch
-                              ( preferAnchoredCandidate
-                                  (configBlock cfg)
-                                  (forgetFingerprint weights)
-                                  headers
-                                  (csCandidate state)
-                              )
-                , GSM.peerIsIdle = csIdling
+                    weights <- forgetFingerprint <$> ChainDB.getPerasWeightSnapshot chainDB
+                    pure $ \(headers, _lst) peerState -> do
+                      case csCandidate <$> maybeChainSyncState peerState of
+                        Just candidate
+                          -- The candidate does not intersect with our current chain.
+                          -- This is a precondition for 'WhetherCandidateIsBetter'.
+                          | isNothing (AF.intersectionPoint headers candidate) ->
+                              GSM.CandidateDoesNotIntersect
+                          -- The candidate is better than our current chain.
+                          | shouldSwitch $ preferAnchoredCandidate (configBlock cfg) weights headers candidate ->
+                              GSM.WhetherCandidateIsBetter True
+                          -- The candidate is not better than our current chain.
+                          | otherwise ->
+                              GSM.WhetherCandidateIsBetter False
+                        Nothing ->
+                          -- We don't have an established ChainSync connection with this peer.
+                          -- We conservatively assume that its candidate is not better than ours.
+                          GSM.WhetherCandidateIsBetter False
+                , GSM.peerIsIdle = gsmPeerIsIdle
                 , GSM.durationUntilTooOld =
                     gsmDurationUntilTooOld
                       <&> \wd (_headers, lst) ->
                         GSM.getDurationUntilTooOld wd (getTipSlot lst)
                 , GSM.equivalent = (==) `on` (AF.headPoint . fst)
-                , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+                , GSM.getPeerStates = mkGsmPeerStates varChainSyncHandles varPerasCertDiffusionHandles
                 , GSM.getCurrentSelection = do
                     headers <- ChainDB.getCurrentChainWithTime chainDB
                     extLedgerState <- ChainDB.getCurrentLedger chainDB
@@ -593,6 +611,7 @@ initNodeKernel
         , getFetchMode = readFetchMode blockFetchInterface
         , getGsmState = readTVar varGsmState
         , getChainSyncHandles = varChainSyncHandles
+        , getPerasCertDiffusionHandles = varPerasCertDiffusionHandles
         , getPeerSharingRegistry = peerSharingRegistry
         , getTracers = tracers
         , setBlockForging = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
@@ -667,6 +686,8 @@ data InternalState m addrNTN addrNTC blk = IS
         m
   , keepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
+  , varPerasCertDiffusionHandles ::
+      PerasCertDiffusionInboundHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
@@ -710,6 +731,8 @@ initInternalState
       newTVarIO gsmState
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
+    varPerasCertDiffusionHandles <- atomically newObjectDiffusionInboundHandleCollection
+
     mempool <-
       openMempool
         registry
