@@ -322,7 +322,10 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
     DoNotIntervene -> withPhase2Validity L.Phase2Valid
     Intervene -> SL.unwrapMempoolTx tx
 
-  -- Setting the flag re-memoizes the transaction, so only a wrong flag is set.
+  -- In Dijkstra, setting 'isPhase2ValidTxL' encodes the whole transaction
+  -- again through 'mkMemoizedEra', and the new bytes and hash stay as thunks.
+  -- If the flag is already right, we keep the received transaction and its
+  -- bytes. If we set the flag, 'force' evaluates the new bytes and hash.
   withPhase2Validity validity
     | SL.unwrapMempoolTx tx ^. Core.isPhase2ValidTxL == validity = SL.unwrapMempoolTx tx
     | otherwise = force $ SL.unwrapMempoolTx tx & Core.isPhase2ValidTxL .~ validity
