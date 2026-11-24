@@ -1,12 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -O2 #-}
 
 -- | A 'LeiosTxCache' handle backed by the mutable 'HT.MutableHashTable': the
@@ -20,17 +15,14 @@
 -- Where the reference names a point by its 'LeiosPoint', a packed word names it
 -- by its 'PointId'.
 --
--- Only @a = ()@ and @v = 'Version'@ are supported (the node's instantiation),
--- since the value is a bare 'Word64'.
+-- Only @a = ()@ and @v = 'VersionWord16'@ are supported (the node's
+-- instantiation), since the value is a bare 'Word64'.
 module Ouroboros.Consensus.Leios.TxCache.Optimized
   ( newHashTableLeiosTxCache
-  , ExnLeiosTxCacheCorruptVersion (..)
-  , MaxProtVerBitWidth
   ) where
 
 import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32), hashToPackedBytes)
 import Cardano.Crypto.PackedBytes (unpackBytes)
-import Cardano.Ledger.Binary.Version (MaxVersion, Version, getVersion64, mkVersion64)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM, void, when)
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -42,10 +34,8 @@ import Data.List (find)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.Proxy (Proxy (..))
-import Data.Type.Ord (type (<))
-import Data.Word (Word64)
-import GHC.TypeNats (natVal, type (^))
+import Data.Word (Word16, Word64)
+import Ouroboros.Consensus.Ledger.SupportsMempool (VersionWord16 (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LandedTx (..)
   , LeiosTxCache (..)
@@ -65,9 +55,8 @@ import Ouroboros.Consensus.Leios.Types
   , TxOffset
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchArrivalBytes)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, MonadThrow (..))
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as MVar
-import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 
 -- | The point state; the txs are in the hash table.
 data HtState b = HtState
@@ -106,9 +95,9 @@ newHashTableLeiosTxCache ::
   Int ->
   Word64 ->
   Word64 ->
-  m (LeiosTxCache m () Version b)
+  m (LeiosTxCache m () VersionWord16 b)
 {-# SPECIALIZE newHashTableLeiosTxCache ::
-  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () Version b)
+  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () VersionWord16 b)
   #-}
 newHashTableLeiosTxCache nshift k0 k1 = do
   ht <- HT.new nshift k0 k1
@@ -310,7 +299,7 @@ insertLandedTx ::
   LeiosPoint ->
   PointId ->
   FetchArrivalBytes ->
-  LandedTx () Version ->
+  LandedTx () VersionWord16 ->
   m FetchArrivalBytes
 {-# SPECIALIZE insertLandedTx ::
   HT.MutableHashTable (PrimState IO) ->
@@ -318,7 +307,7 @@ insertLandedTx ::
   LeiosPoint ->
   PointId ->
   FetchArrivalBytes ->
-  LandedTx () Version ->
+  LandedTx () VersionWord16 ->
   IO FetchArrivalBytes
   #-}
 insertLandedTx ht st point pid fab (MkLandedTx off txh sz payload) = do
@@ -347,15 +336,15 @@ insertLandedTx ht st point pid fab (MkLandedTx off txh sz payload) = do
       pure $! fab <> bucketTxArrival TxWasHeld sz
 
 lookupOne ::
-  (PrimMonad m, MonadThrow m) =>
-  HT.MutableHashTable (PrimState m) -> TxHash -> m (StrictMaybe (TxState () Version))
+  PrimMonad m =>
+  HT.MutableHashTable (PrimState m) -> TxHash -> m (StrictMaybe (TxState () VersionWord16))
 {-# SPECIALIZE lookupOne ::
-  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (StrictMaybe (TxState () Version))
+  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (StrictMaybe (TxState () VersionWord16))
   #-}
 lookupOne ht txh =
   HT.lookup ht (toKey txh) >>= \case
     Nothing -> pure SNothing
-    Just word -> SJust <$> tagOf word
+    Just word -> pure $ SJust $ tagOf word
 
 -- | Fold over the txs this body references, each with its location, if the
 -- table knows one.
@@ -391,63 +380,41 @@ locateTxs ht st b nil snoc = do
 {-------------------------------------------------------------------------------
   The packed word
 
-  > bit  63     62..56      55..32      31..18  17..8       7..1         0
+  > bit  63     62..56      55..32      31..24  23..8       7..1         0
   >      valid  location's  location's  unused  validated   youngest     validated
   >             point id    offset              version     reference's
   >                                                         point id
 
   Bit 63 says whether there is a location: point id 0 at offset 0 is a location
   like any other. 24 offset bits cover the wire's 22-bit addressable range. Bits
-  17..8 hold the validated major protocol version itself, all of it, since
-  'protVerBits' typechecks only while every 'Version' fits there.
+  23..8 hold the major protocol version the tx was validated under, all 16 bits
+  of its 'VersionWord16'.
+
+  The Leios rules that use this version only compare it for equality, with the
+  current one. Since the word holds a whole 'VersionWord16', 'tagOf' decodes
+  every pattern in those bits.
 -------------------------------------------------------------------------------}
 
--- | How many bits of the packed word hold the major protocol version a tx was
--- validated under.
-type MaxProtVerBitWidth = 10
-
--- | 'MaxProtVerBitWidth' as a term. It typechecks only while every major
--- protocol version the ledger can represent, up to its 'MaxVersion', fits in
--- that many bits.
-protVerBits :: Int
-protVerBits = fromIntegral (natVal (Proxy @MaxProtVerBitWidth))
- where
-  _ = keepRedundantConstraint (Proxy @(MaxVersion < 2 ^ MaxProtVerBitWidth))
-
--- | The hash table held a validated tx whose version bits are not a 'Version'
--- the ledger can represent.
---
--- 'protVerBits' typechecks only while every 'Version' fits the packed word, and
--- the table packs only 'Version's, so only a bug or memory corruption can raise
--- this. The node shuts down on it.
-newtype ExnLeiosTxCacheCorruptVersion = ExnLeiosTxCacheCorruptVersion Word64
-  deriving stock Show
-  deriving anyclass Exception
-
-tagBits :: TxState () Version -> Word64
+tagBits :: TxState () VersionWord16 -> Word64
 tagBits = \case
   TxInserted () -> 0
-  TxValidated v -> bit 0 .|. (getVersion64 v `unsafeShiftL` 8)
+  TxValidated (MkVersionWord16 v) -> bit 0 .|. (fromIntegral v `unsafeShiftL` 8)
 
 -- | Whether bit 0 says the tx was validated.
 isValidated :: Word64 -> Bool
 isValidated w = testBit w 0
 
--- | Bit 0 says whether the tx was validated, and bits 17..8 under which major
+-- | Bit 0 says whether the tx was validated, and bits 23..8 under which major
 -- protocol version.
-tagOf :: MonadThrow m => Word64 -> m (TxState () Version)
+tagOf :: Word64 -> TxState () VersionWord16
 tagOf w
-  | not (isValidated w) = pure (TxInserted ())
-  | otherwise = case mkVersion64 bits of
-      Just v -> pure (TxValidated v)
-      Nothing -> throwIO (ExnLeiosTxCacheCorruptVersion bits)
- where
-  bits = (w `unsafeShiftR` 8) .&. (bit protVerBits - 1)
+  | not (isValidated w) = TxInserted ()
+  | otherwise = TxValidated $ MkVersionWord16 $ fromIntegral $ w `unsafeShiftR` 8
 
-withTag :: TxState () Version -> Word64 -> Word64
+withTag :: TxState () VersionWord16 -> Word64 -> Word64
 withTag tag w = (w .&. complement tagMask) .|. tagBits tag
  where
-  tagMask = bit 0 .|. ((bit protVerBits - 1) `unsafeShiftL` 8)
+  tagMask = bit 0 .|. (fromIntegral (maxBound :: Word16) `unsafeShiftL` 8)
 
 -- | The id of the tx's youngest reference.
 youngestOf :: Word64 -> Int

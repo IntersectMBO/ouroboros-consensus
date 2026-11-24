@@ -279,7 +279,9 @@ data ReapplyTxsResult extra blk wtd
   }
 
 -- | A major protocol version, in few enough bits to pack. Every 'Word16' is
--- one, and 'toVersionWord16' converts any 'Version' the ledger can represent.
+-- one, so decoding a version that the LeiosTxCache's hash table
+-- ("Ouroboros.Consensus.Leios.TxCache.Optimized") packs is total.
+-- 'toVersionWord16' converts any 'Version' the ledger can represent.
 newtype VersionWord16 = MkVersionWord16 Word16
   deriving stock (Eq, Ord, Show)
   deriving newtype (Bounded, NoThunks)
