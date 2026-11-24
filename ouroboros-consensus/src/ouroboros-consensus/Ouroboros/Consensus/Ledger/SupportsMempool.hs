@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
@@ -38,10 +39,13 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxEbMeasureByteSize (..)
   , TrivialTxMeasurePhase2 (..)
   , Validated
+  , VersionWord16 (..)
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
+  , toVersionWord16
   ) where
 
+import Cardano.Ledger.Binary.Version (MaxVersion, Version, getVersion64)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
@@ -52,15 +56,19 @@ import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure, zero)
 import qualified Data.Measure as M
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
-import Data.Word (Word32)
+import Data.Type.Ord (type (<))
+import Data.Word (Word16, Word32)
 import GHC.Generics
 import GHC.Stack (HasCallStack)
+import GHC.TypeNats (type (^))
 import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -269,6 +277,19 @@ data ReapplyTxsResult extra blk wtd
   -- which txs were received
   , resultingState :: !(TickedLedgerState blk EmptyMK)
   }
+
+-- | A major protocol version, in few enough bits to pack. Every 'Word16' is
+-- one, and 'toVersionWord16' converts any 'Version' the ledger can represent.
+newtype VersionWord16 = MkVersionWord16 Word16
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (Bounded, NoThunks)
+
+-- | This typechecks only while the ledger's 'MaxVersion' is below @2 ^ 16@, so
+-- it is total.
+toVersionWord16 :: Version -> VersionWord16
+toVersionWord16 = MkVersionWord16 . fromIntegral . getVersion64
+ where
+  _ = keepRedundantConstraint (Proxy @(MaxVersion < 2 ^ 16))
 
 -- | A generalized transaction, 'GenTx', identifier.
 type TxId :: Type -> Type

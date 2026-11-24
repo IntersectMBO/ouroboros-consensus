@@ -114,7 +114,7 @@ forgeShelleyBlock
 
     -- The mempool validated the transactions against this very state.
     validatedUnder =
-      pvMajor $
+      toVersionWord16 . pvMajor $
         getPParams (tickedShelleyLedgerState fbCurrentTickedLedgerState) ^. SL.ppProtocolVersionL
 
     -- TODO Forging does not yet certify endorser blocks.
