@@ -41,7 +41,8 @@
 -- /cumulatively/ do. The type-level DSL used to isolate extension components is
 -- simple and legible; see the 'LeiosOnly' data family, for example.
 module Ouroboros.Consensus.Protocol.PolyPraos
-  ( PolyPraosCrypto
+  ( PolyPraosCanBeLeader (..)
+  , PolyPraosCrypto
   , PolyPraosState (..)
   , PolyPraosValidationErr (..)
   , PraosCannotForge (..)
@@ -85,6 +86,7 @@ import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.BaseTypes
   ( ActiveSlotCoeff
@@ -229,6 +231,19 @@ data PraosToSign c = PraosToSign
 instance Crypto c => NoThunks (PraosToSign c)
 
 deriving instance Crypto c => Show (PraosToSign c)
+
+-- | Praos's credentials to lead and, in a protocol with Leios, the BLS key to
+-- vote with.
+data PolyPraosCanBeLeader proto c = PolyPraosCanBeLeader
+  { polyPraosCanBeLeaderPraos :: !(PraosCanBeLeader c)
+  , polyPraosCanBeLeaderBLSKey :: !(WhenLeios proto (StrictMaybe LeiosSigningKey))
+  -- ^ None if the node does not vote.
+  }
+  deriving Generic
+
+instance
+  (NoThunks (PraosCanBeLeader c), NoThunks (WhenLeios proto (StrictMaybe LeiosSigningKey))) =>
+  NoThunks (PolyPraosCanBeLeader proto c)
 
 forgePraosFields ::
   ( Crypto c
@@ -534,15 +549,18 @@ checkIsLeaderPolyPraos ::
   forall proto c.
   PolyPraosCrypto proto c =>
   PraosParams ->
-  PraosCanBeLeader c ->
+  PolyPraosCanBeLeader proto c ->
   SlotNo ->
   Ticked (PolyPraosState proto) ->
   Maybe (PraosIsLeader c)
 checkIsLeaderPolyPraos
   prms
-  PraosCanBeLeader
-    { praosCanBeLeaderSignKeyVRF
-    , praosCanBeLeaderColdVerKey
+  PolyPraosCanBeLeader
+    { polyPraosCanBeLeaderPraos =
+      PraosCanBeLeader
+        { praosCanBeLeaderSignKeyVRF
+        , praosCanBeLeaderColdVerKey
+        }
     }
   slot
   cs =
