@@ -1312,14 +1312,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
     let roundNo = case Model.roundNoOfLatestCertSeen dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
-    -- Generate an almost-always-valid boost, i.e., below the maximum rollback
-    let k = unPerasWeight (maxRollbackWeight secParam)
-    boost <-
-      PerasWeight
-        <$> frequency
-          [ (10, choose (1, k - 1))
-          , (1, choose (k, k + 1))
-          ]
+    boost <- PerasWeight <$> arbitrary
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Generate some voters to populate the certificate
