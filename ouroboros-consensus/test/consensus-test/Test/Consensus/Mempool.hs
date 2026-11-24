@@ -28,6 +28,7 @@
 -- mempool with the 'NoMempoolCapacityBytesOverride' option set.
 module Test.Consensus.Mempool (tests) where
 
+import Cardano.Base.Bytes (byteArrayToByteString)
 import Cardano.Binary (toCBOR)
 import Cardano.Crypto.Hash
 import Control.Monad (foldM, forM, forM_, void)
@@ -51,6 +52,7 @@ import Data.Word
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs (..), LeiosTx (..), hashLeiosTx)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..), MempoolMeasure (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
@@ -102,6 +104,7 @@ tests =
         , testProperty "Rejected invalid txs are traced" prop_Mempool_TraceRejectedTxs
         , testProperty "Removed invalid txs are traced" prop_Mempool_TraceRemovedTxs
         , testProperty "idx consistency" prop_Mempool_idx_consistency
+        , testProperty "Leios tx index consistency" prop_Mempool_leiosTxIndex_consistency
         , testProperty "Mempool timeout" prop_Mempool_timeout
         ]
     ]
@@ -1117,7 +1120,7 @@ txSizeSplitTestSetupToTxSeq TxSizeSplitTestSetup{tssTxSizes} =
 -- into account.
 prop_Mempool_idx_consistency :: Actions -> Property
 prop_Mempool_idx_consistency (Actions actions) =
-  withTestMempool emptyTestSetup $ \testMempool@TestMempool{mempool} ->
+  withTestMempool emptyTestSetupNoSizeLimits $ \testMempool@TestMempool{mempool} ->
     fmap conjoin $ forM actions $ \action -> do
       txsInMempool <-
         map prjTx . snapshotTxs
@@ -1149,18 +1152,6 @@ prop_Mempool_idx_consistency (Actions actions) =
  where
   expectedAssignment = expectedTicketAssignment actions
 
-  emptyTestSetup =
-    TestSetup
-      { testLedgerCfg = testLedgerConfigNoSizeLimits
-      , testLedgerState = testInitLedger
-      , testInitialTxs = []
-      , testMempoolCapOverride =
-          MempoolCapacityBytesOverride $
-            ByteSize32 $
-              1024 * 1024 * 1024
-              -- There's no way this test will need more than a gibibyte.
-      }
-
   lastOfMempoolRemoved txsInMempool = \case
     AddTxs _ -> False
     RemoveTxs txs -> last txsInMempool `elem` txs
@@ -1176,6 +1167,39 @@ prop_Mempool_idx_consistency (Actions actions) =
               <> show expAsgn
           )
           False
+
+-- | After each action, the Mempool's Leios index ('getLeiosTxIndex') holds
+-- exactly the transactions in its snapshot, each by the hash of its bytes.
+-- Removing transactions revalidates the rest, so this also covers revalidation.
+prop_Mempool_leiosTxIndex_consistency :: Actions -> Property
+prop_Mempool_leiosTxIndex_consistency (Actions actions) =
+  withTestMempool emptyTestSetupNoSizeLimits $ \testMempool@TestMempool{mempool} ->
+    fmap conjoin $ forM actions $ \action -> do
+      actionProp <- executeAction testMempool action
+      MkLeiosMempoolTxs indexed _ <- atomically (getLeiosTxIndex mempool)
+      txs <- map prjTx . snapshotTxs <$> atomically (getSnapshot mempool)
+      let expected =
+            Map.fromList
+              [ (hashLeiosTx (MkLeiosTx (byteArrayToByteString bytes)), bytes)
+              | tx <- map txForgetValidated txs
+              , Just (_, bytes) <- [txLeiosMemoizedHashAndBytes tx]
+              ]
+      return $ actionProp .&&. indexed === expected
+
+-- | An empty Mempool over the initial ledger, with room for whatever the
+-- actions add.
+emptyTestSetupNoSizeLimits :: TestSetup
+emptyTestSetupNoSizeLimits =
+  TestSetup
+    { testLedgerCfg = testLedgerConfigNoSizeLimits
+    , testLedgerState = testInitLedger
+    , testInitialTxs = []
+    , testMempoolCapOverride =
+        MempoolCapacityBytesOverride $
+          ByteSize32 $
+            1024 * 1024 * 1024
+            -- There's no way this test will need more than a gibibyte.
+    }
 
 {-------------------------------------------------------------------------------
   TicketAssignment & Actions
