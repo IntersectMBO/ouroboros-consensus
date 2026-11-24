@@ -11,6 +11,7 @@ import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
 import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.Show ()
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
+import qualified Test.Consensus.Cardano.SupportsLeios
 import qualified Test.Consensus.Cardano.SupportsSanityCheck
 import qualified Test.Consensus.Cardano.Translation (forecastTests, tests)
 import qualified Test.Consensus.Cardano.TxId (tests)
@@ -44,6 +45,7 @@ tests =
           , Test.Consensus.Cardano.Serialisation.tests
           ]
     , Test.Consensus.Cardano.SupportedNetworkProtocolVersion.tests
+    , Test.Consensus.Cardano.SupportsLeios.tests
     , Test.Consensus.Cardano.SupportsSanityCheck.tests
     , Test.ThreadNet.AllegraMary.tests
     , Test.ThreadNet.Cardano.tests

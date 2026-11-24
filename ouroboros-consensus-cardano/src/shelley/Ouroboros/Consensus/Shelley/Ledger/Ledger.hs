@@ -104,7 +104,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
-import Control.Monad (forM)
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString.Lazy as Lazy
@@ -663,6 +662,41 @@ instance ShelleyCompatible proto era => BlockSupportsLeios (ShelleyBlock proto e
       Nothing -> pure . Left $ DecoderErrorCustom "EndorserBlock" "an era without Leios"
       Just dict -> applyEraEndorserBlock dict cfg readTables serialised st
 
+  -- Only an era with a 'LeiosEraDict' has endorser blocks.
+  inlineEndorserBlockTxs serialised blk =
+    case getLeiosEraDict (Proxy @era) of
+      Nothing -> Left $ DecoderErrorCustom "EndorserBlock" "an era without Leios"
+      Just dict -> inlineEraEndorserBlockTxs dict serialised blk
+
+-- | 'inlineEndorserBlockTxs' in an era with endorser blocks.
+inlineEraEndorserBlockTxs ::
+  forall proto era.
+  ShelleyCompatible proto era =>
+  LeiosEraDict era ->
+  SerialisedEndorserBlock ->
+  ShelleyBlock proto era ->
+  Either DecoderError (ShelleyBlock proto era)
+inlineEraEndorserBlockTxs dict@LeiosEraDict (MkSerialisedEndorserBlock _ txsBytes) blk = do
+  txs <- decodeEbTxs dict txsBytes
+  pure
+    blk
+      { shelleyBlockRaw =
+          SL.Block hdr (body & Core.txSeqBlockBodyL .~ StrictSeq.fromList txs)
+      }
+ where
+  SL.Block hdr body = shelleyBlockRaw blk
+
+-- | Decode the transactions of an endorser block, in an era with endorser
+-- blocks.
+decodeEbTxs ::
+  forall era.
+  Era era =>
+  LeiosEraDict era ->
+  [LeiosTx] ->
+  Either DecoderError [Core.Tx Core.TopTx era]
+decodeEbTxs LeiosEraDict = traverse $ \(MkLeiosTx bytes) ->
+  decodeFullAnnotator (Core.eraProtVerLow @era) "Tx" decCBOR (Lazy.fromStrict bytes)
+
 -- | 'applyEndorserBlock' in an era with endorser blocks.
 applyEraEndorserBlock ::
   forall m proto era.
@@ -673,7 +707,7 @@ applyEraEndorserBlock ::
   SerialisedEndorserBlock ->
   LedgerState (ShelleyBlock proto era) EmptyMK ->
   m (Either DecoderError (LedgerState (ShelleyBlock proto era) DiffMK))
-applyEraEndorserBlock LeiosEraDict cfg readTables serialised st =
+applyEraEndorserBlock dict@LeiosEraDict cfg readTables serialised st =
   case goDecode serialised of
     Left err -> pure $ Left err
     Right eb -> do
@@ -682,8 +716,7 @@ applyEraEndorserBlock LeiosEraDict cfg readTables serialised st =
  where
   goDecode (MkSerialisedEndorserBlock (Serialised ebBytes) txsBytes) = do
     references <- decodeFullAnnotator (Core.eraProtVerLow @era) "EndorserBlock" decCBOR ebBytes
-    txs <- forM txsBytes $ \(MkLeiosTx bytes) ->
-      decodeFullAnnotator (Core.eraProtVerLow @era) "Tx" decCBOR (Lazy.fromStrict bytes)
+    txs <- decodeEbTxs dict txsBytes
     pure $
       mkBasicEndorserBlock
         & referencesEndorserBlockL .~ references
