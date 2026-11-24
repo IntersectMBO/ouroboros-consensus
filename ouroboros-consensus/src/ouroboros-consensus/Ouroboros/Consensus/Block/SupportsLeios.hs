@@ -40,6 +40,19 @@ class BlockSupportsLeios blk where
     LedgerState blk EmptyMK ->
     m (Either DecoderError (LedgerState blk DiffMK))
 
+  -- | Put the transactions of an endorser block into the body of the block
+  -- that certifies it. This is the form node-to-client ChainSync sends.
+  --
+  -- The header stays the same, so its body hash doesn't match the body.
+  -- The transactions are decoded in the era of the block: an endorser block
+  -- is always certified in the same era it was announced in.
+  --
+  -- By default this returns 'Left', which suits block types that have no
+  -- endorser blocks.
+  inlineEndorserBlockTxs :: SerialisedEndorserBlock -> blk -> Either DecoderError blk
+  inlineEndorserBlockTxs _serialised _blk =
+    Left $ DecoderErrorCustom "EndorserBlock" "this block type has no endorser blocks"
+
 -- | Read the values of the given keys from the ledger tables of a state.
 --
 -- Reading lives in @m@ because the tables may be on disk. It yields the
