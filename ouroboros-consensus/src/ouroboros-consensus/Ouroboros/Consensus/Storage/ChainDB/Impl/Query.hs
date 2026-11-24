@@ -101,9 +101,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API
-  ( PerasCertTicketNo
-  )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
   )
@@ -377,8 +374,8 @@ getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
 
 getPerasCertsAfter ::
   ChainDbEnv m blk ->
-  PerasCertTicketNo ->
-  STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+  PerasRoundNo ->
+  STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
 getPerasCertsAfter CDB{..} = PerasCertDB.getCertsAfter cdbPerasCertDB
 
 getPerasCertIds ::
