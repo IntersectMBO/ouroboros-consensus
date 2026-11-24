@@ -27,13 +27,11 @@ import Ouroboros.Consensus.Peras.Weight
   )
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
-  , WithBoostedBlockStatus (..)
-  , forgetBoostedBlockStatus
   )
 
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
-  , latestCertSeen :: Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk)))
+  , latestCertSeen :: Maybe (WithArrivalTime (ValidatedPerasCert blk))
   , open :: Bool
   }
   deriving Generic
@@ -62,11 +60,11 @@ addCert model@Model{certs, latestCertSeen} cert
   latestCertSeen' =
     case latestCertSeen of
       Nothing ->
-        Just (CertBoostingBlockInVolatileDB cert)
+        Just cert
       Just prev
         | getPerasCertRound cert
-            > getPerasCertRound (forgetBoostedBlockStatus prev) ->
-            Just (CertBoostingBlockInVolatileDB cert)
+            > getPerasCertRound prev ->
+            Just cert
         | otherwise ->
             Just prev
 
@@ -91,24 +89,16 @@ getWeightSnapshot Model{certs} =
 
 getLatestCertSeen ::
   Model blk ->
-  Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk)))
+  Maybe (WithArrivalTime (ValidatedPerasCert blk))
 getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
 garbageCollect ::
   IsPerasCert (PerasCert blk) blk =>
   SlotNo -> Model blk -> Model blk
-garbageCollect slotNo model@Model{certs, latestCertSeen} =
+garbageCollect slotNo model@Model{certs} =
   model
     { certs = Set.filter keepCert certs
-    , latestCertSeen = updateIfBoostingGarbageCollectedBlock <$> latestCertSeen
     }
  where
   keepCert cert = pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
-
-  updateIfBoostingGarbageCollectedBlock cert
-    | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))
-        < NotOrigin slotNo =
-        CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
-    | otherwise =
-        cert
