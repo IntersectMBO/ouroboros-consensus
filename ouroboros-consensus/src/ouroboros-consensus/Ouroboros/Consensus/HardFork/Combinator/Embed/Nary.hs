@@ -50,14 +50,14 @@ import Ouroboros.Consensus.HeaderValidation
   , genesisHeaderState
   )
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended
-  ( ExtLedgerState (..)
-  , initPerasEpochContextResolver
-  )
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver (..)
+  , initPerasEpochContextResolverFromUntickedState
+  )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -350,7 +350,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   targetEraPerasState =
     PerasState
       { perasEpochContextResolver =
-          initPerasEpochContextResolver
+          initPerasEpochContextResolverFromUntickedState
             (configLedger cfg)
             (forgetLedgerTables targetEraLedgerState)
             targetEraHeaderState
