@@ -30,6 +30,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ExnUndecodableEndorserBlock)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteDbError (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
@@ -71,6 +72,7 @@ consensusRethrowPolicy pb =
     <> mkRethrowPolicy (\_ctx (_ :: DbMarkerError) -> shutdownNode)
     <> mkRethrowPolicy (\_ctx (_ :: DbLocked) -> shutdownNode)
     <> mkRethrowPolicy (\_ctx (_ :: ChainDbFailure blk) -> shutdownNode)
+    <> mkRethrowPolicy (\_ctx (_ :: ExnUndecodableEndorserBlock) -> shutdownNode)
     <> mkRethrowPolicy
       ( \_ctx (e :: VolatileDBError blk) ->
           case e of
