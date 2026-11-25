@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   ( -- * Internal state
     InternalState (..)
   , ValidatedTxWithDiffs (..)
+  , initInternalState
   , isMempoolSize
 
     -- * Mempool environment
@@ -27,7 +28,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Validation
   , RevalidateTxsResult (..)
-  , computeSnapshot
   , revalidateTxsFor
   , revalidateTxsFor'
   , validateNewTransaction
@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Conversions
   , snapshotFromIS
-  , snapshotFromValidTxs
+  , snapshotFromTxSeq
 
     -- * Ticking a ledger state
   , tickLedgerState
@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
+import Ouroboros.Consensus.Util.TimeBoundedLoop (DoneType, StepCount)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 {-------------------------------------------------------------------------------
@@ -425,8 +426,9 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 revalidateTxsFor ::
   forall m blk.
   (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  -- | The forker to read the transactions' inputs from.
-  ReadOnlyForker m LedgerState blk ->
+  -- | Read the values for the given keys at the base ledger state (e.g.
+  -- 'roforkerReadTables' of a forker at that state).
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -438,11 +440,11 @@ revalidateTxsFor ::
   Word64 ->
   [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
-revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTickets =
+revalidateTxsFor readTables capacityOverride cfg slot st lastTicketNo removalGen txTickets =
   -- A from-scratch revalidation is just 'revalidateTxsFor'' onto an empty candidate
   -- at this base: no prior txs, ledger = @st@. Sharing the one implementation
   -- keeps the two byte-identical by construction.
-  revalidateTxsFor' frk capacityOverride cfg slot emptyResult lastTicketNo txTickets
+  revalidateTxsFor' readTables capacityOverride cfg slot emptyResult lastTicketNo txTickets
  where
   -- Seed the empty candidate with the real 'lastTicketNo' (not zero): each
   -- reapplied tx keeps its own 'TicketNo' (carried in its 'TxTicket'), and
@@ -460,16 +462,17 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
 -- candidate.
 --
 -- @deltaTxTickets@ are the txs added since the candidate was revalidated, in
--- ascending ticket order. Their inputs are read from @frk@ here rather than by
--- the caller — the keys to read are derived from the txs anyway. Seeding the
--- delta from the candidate's post-reapply ledger ('isLedgerState') lets a sync
--- shrink its work off the lock and hold the lock only for a small final delta
--- ('implSyncWithLedger').
+-- ascending ticket order. Their inputs are read via @readTables@ here rather
+-- than by the caller — the keys to read are derived from the txs anyway.
+-- Seeding the delta from the candidate's post-reapply ledger ('isLedgerState')
+-- lets a sync shrink its work off the lock and hold the lock only for a small
+-- final delta ('implSyncWithLedger').
 revalidateTxsFor' ::
   forall m blk.
   (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  -- | The forker to read the delta txs' inputs from.
-  ReadOnlyForker m LedgerState blk ->
+  -- | Read the values for the given keys at the base ledger state (e.g.
+  -- 'roforkerReadTables' of a forker at that state).
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -484,10 +487,10 @@ revalidateTxsFor' ::
   -- | The delta txs, in ascending 'TicketNo' order.
   [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
-revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand removedSoFar) lastTicketNo deltaTxTickets = do
+revalidateTxsFor' readTables capacityOverride cfg slot (RevalidateTxsResult cand removedSoFar) lastTicketNo deltaTxTickets = do
   let deltaTxs = map wrap deltaTxTickets
       deltaKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) deltaTxs
-  deltaValues <- roforkerReadTables frk deltaKeys
+  deltaValues <- readTables deltaKeys
   let
     -- Seed the delta reapplication from @cand@'s post-reapply ledger state, so
     -- a delta tx spending one of @cand@'s outputs sees it. This is exactly the
@@ -529,35 +532,6 @@ data RevalidateTxsResult blk
   -- ^ The previously valid transactions that were now invalid
   }
 
--- | Compute snapshot is largely the same as revalidate the transactions
--- but we ignore the diffs.
-computeSnapshot ::
-  forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  LedgerConfig blk ->
-  SlotNo ->
-  -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
-  -- | The tables with all the inputs for the transactions
-  LedgerTables blk ValuesMK ->
-  [TxTicket (MempoolMeasure blk) (Validated (GenTx blk))] ->
-  MempoolSnapshot blk
-computeSnapshot cfg slot st values txTickets =
-  let inputTxs = map wrap txTickets
-      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
-   in snapshotFromValidTxs
-        ( map unwrap $
-            validatedTxs $
-              reapplyTxs @blk @Discard cfg slot inputTxs $
-                applyMempoolDiffs values inputKeys st
-        )
-        (castPoint $ getTip st)
-        slot
- where
-  fst3 (x, _, _) = x
-  wrap = (\(TxTicket tx tk tz) -> (tx, (), (tk, tz)))
-  unwrap = (\(tx, (), (tk, tz)) -> (TxTicket tx tk tz))
-
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
@@ -574,55 +548,26 @@ snapshotFromIS ::
   MempoolSnapshot blk
 snapshotFromIS is =
   snapshotFromTxSeq
-    validatedTx
     (isTxs is)
     (isTxIds is)
     (isTip is)
     (isSlotNo is)
 
--- | Create a Mempool Snapshot from a list of validated transactions.
---
--- Unlike 'snapshotFromIS' this has to build the transaction sequence and the
--- set of transaction ids, so it is @O(n)@ in the number of transactions and
--- computes the txid of every one of them. Only use it when there is no internal
--- state to take those from, for example after revalidating transactions in
--- 'computeSnapshot'.
-snapshotFromValidTxs ::
-  forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  [TxTicket (MempoolMeasure blk) (Validated (GenTx blk))] ->
-  Point blk ->
-  SlotNo ->
-  MempoolSnapshot blk
-snapshotFromValidTxs validTxs =
-  let (txs, txIds) =
-        Foldable.foldl'
-          ( \(accTxs, accTxIds) tx ->
-              ( accTxs TxSeq.:> tx
-              , Set.insert (txId (txForgetValidated (txTicketTx tx))) accTxIds
-              )
-          )
-          (TxSeq.Empty, Set.empty)
-          validTxs
-   in snapshotFromTxSeq id txs txIds
-
 -- | Create a Mempool Snapshot from an already built transaction sequence and
 -- the ids of the transactions in it.
 --
--- The sequence is generic in its element so that callers holding something
--- richer than a validated transaction (like the internal state, which keeps
--- the diffs alongside) can pass their sequence as it is instead of rebuilding
--- it; @prj@ projects the validated transaction out of an element.
+-- The id set is taken as an argument (rather than rebuilt from the sequence)
+-- so that callers that maintain it incrementally.
 snapshotFromTxSeq ::
-  forall blk tx.
+  forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  (tx -> Validated (GenTx blk)) ->
-  TxSeq (MempoolMeasure blk) tx ->
+  TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
+  -- | The ids of the transactions in the sequence (see 'isTxIds').
   Set (GenTxId blk) ->
   Point blk ->
   SlotNo ->
   MempoolSnapshot blk
-snapshotFromTxSeq prj txs txIds tipPoint slot =
+snapshotFromTxSeq txs txIds tipPoint slot =
   MempoolSnapshot
     { snapshotTxs = implSnapshotGetTxs
     , snapshotTxsAfter = implSnapshotGetTxsAfter
@@ -643,7 +588,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter =
-    (\x -> [(prj a, b, mmTxMeasure c) | (a, b, c) <- x])
+    (\x -> [(validatedTx a, b, mmTxMeasure c) | (a, b, c) <- x])
       . TxSeq.toTuples
       . snd
       . TxSeq.splitAfterTicketNo txs
@@ -668,12 +613,12 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
         txs
         blockLimit
     (inEb, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
-    txSeqToList = map (prj . TxSeq.txTicketTx) . TxSeq.toList
+    txSeqToList = map (validatedTx . TxSeq.txTicketTx) . TxSeq.toList
 
   implSnapshotGetTx ::
     TicketNo ->
     Maybe (Validated (GenTx blk))
-  implSnapshotGetTx = fmap prj . (txs `TxSeq.lookupByTicketNo`)
+  implSnapshotGetTx = fmap validatedTx . (txs `TxSeq.lookupByTicketNo`)
 
   implSnapshotHasTx ::
     GenTxId blk ->
@@ -744,6 +689,24 @@ data TraceEventMempool blk
   | -- | A sync is not needed, as the point at the tip of the LedgerDB and the
     -- point at the mempool are the same.
     TraceMempoolSyncNotNeeded (Point blk)
+  | -- | Emitted after computing a mempool snapshot for forging
+    -- ('Ouroboros.Consensus.Mempool.Query.implGetSnapshotFor').
+    TraceGetSnapshotFor
+      -- | The time limit for reapplying the mempool's transactions against
+      -- the requested ledger state, in seconds ('DiffTime').
+      DiffTime
+      -- | The slot the snapshot is for.
+      SlotNo
+      -- | Hash of the ledger state the snapshot is taken at.
+      (ChainHash blk)
+      -- | How long computing the snapshot took, in seconds ('DiffTime').
+      DiffTime
+      -- | 'Nothing' when the cached mempool state was reused; otherwise the
+      -- number of reapplication steps performed and whether reapplication
+      -- processed every transaction ('EndReached') or hit the time limit
+      -- ('TimeoutReached') — in the latter case the snapshot holds only a
+      -- prefix of the mempool's transactions.
+      (Maybe (StepCount, DoneType))
   | -- | We will try to add a transaction.
     TraceMempoolAttemptingAdd (GenTx blk)
   | -- | When performing a re-sync we will read the LedgerDB tip twice. This

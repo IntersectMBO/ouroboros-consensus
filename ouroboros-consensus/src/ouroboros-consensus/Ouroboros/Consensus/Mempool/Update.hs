@@ -487,7 +487,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
       frkr <- readMVar forker
       RevalidateTxsResult is' removed <-
         revalidateTxsFor
-          frkr
+          (roforkerReadTables frkr)
           capacityOverride
           cfg
           (isSlotNo is)
@@ -582,7 +582,7 @@ implSyncWithLedger projectResult mpEnv =
             -- mempool against the new tip.
             seed <-
               revalidateTxsFor
-                frk
+                (roforkerReadTables frk)
                 capacityOverride
                 cfg
                 slot
@@ -644,7 +644,15 @@ implSyncWithLedger projectResult mpEnv =
           let deltaTickets = deltaAfter cand isNow
           if length deltaTickets > syncDeltaCap && iterN < syncMaxIters
             then do
-              next <- revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isNow) deltaTickets
+              next <-
+                revalidateTxsFor'
+                  (roforkerReadTables frk)
+                  capacityOverride
+                  cfg
+                  slot
+                  acc
+                  (isLastTicketNo isNow)
+                  deltaTickets
               go next (iterN + 1)
             else
               -- Delta is small enough (or out of iterations); commit under the lock.
@@ -669,7 +677,14 @@ implSyncWithLedger projectResult mpEnv =
                       -- delta (the cap plus stragglers that landed while acquiring it).
                       let resTickets = deltaAfter cand isLocked
                       RevalidateTxsResult isFinal removed <-
-                        revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isLocked) resTickets
+                        revalidateTxsFor'
+                          (roforkerReadTables frk)
+                          capacityOverride
+                          cfg
+                          slot
+                          acc
+                          (isLastTicketNo isLocked)
+                          resTickets
                       unless (null removed) $
                         traceWith trcr $
                           TraceMempoolRemoveTxs
