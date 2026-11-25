@@ -106,6 +106,7 @@ import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Generics.SOP (All, Top)
 import Ouroboros.Consensus.Block
@@ -297,48 +298,41 @@ maxActualRollback k m =
 --
 -- This is the longest of the given two chains:
 --
--- 1. The current chain with the longest suffix of weight at most @k@ dropped.
+-- 1. The current chain with the longest suffix of length at most @k@ dropped.
 -- 2. The chain formed by the blocks in 'immutableDbChain', i.e., the
 --    \"ImmutableDB\". We need to take this case in consideration because the
 --    VolatileDB might have been wiped.
 --
--- We need this because we do not allow rolling back more than weight @k@, but
+-- We need this because we do not allow rolling back more than length @k@, but
 -- the background thread copying blocks from the VolatileDB to the ImmutableDB
 -- might not have caught up yet. This means we cannot use the tip of the
 -- ImmutableDB to know the most recent \"immutable\" block.
 immutableChain ::
   forall blk.
-  ( HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
   SecurityParam ->
   Model blk ->
   Chain blk
 immutableChain k m =
   maxBy
-    -- As one of the two chains is a prefix of the other, Peras weight doesn't
-    -- matter here.
     Chain.length
-    (dropAtMostWeight (maxRollbackWeight k) (currentChain m))
+    (dropAtMostLength (unNonZero $ maxRollbacks k) (currentChain m))
     (immutableDbChain m)
  where
   maxBy f a b
     | f a >= f b = a
     | otherwise = b
 
-  weights = perasWeights m
-
-  -- Drop the longest suffix with at most the given weight.
-  dropAtMostWeight :: PerasWeight -> Chain blk -> Chain blk
-  dropAtMostWeight budget = go mempty
+  -- Drop the longest suffix with at most the given length.
+  dropAtMostLength :: Word64 -> Chain blk -> Chain blk
+  dropAtMostLength budget = go 0
    where
     go w = \case
       Genesis -> Genesis
-      c@(c' :> b)
+      c@(c' :> _block)
         | w' <= budget -> go w' c'
         | otherwise -> c
        where
-        w' = w <> PerasWeight 1 <> weightBoostOfPoint weights (blockPoint b)
+        w' = w + 1
 
 -- | Return the volatile suffix of the current chain.
 --
@@ -352,7 +346,6 @@ immutableChain k m =
 volatileChain ::
   ( HasHeader a
   , HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
   ) =>
   SecurityParam ->
   -- | Provided since 'AnchoredFragment' is not a functor
@@ -378,9 +371,7 @@ volatileChain k f m =
 -- because the background thread copying blocks to the ImmutableDB might not
 -- have caught up.
 immutableBlockNo ::
-  ( HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
+  HasHeader blk =>
   SecurityParam -> Model blk -> WithOrigin BlockNo
 immutableBlockNo k = Chain.headBlockNo . immutableChain k
 
@@ -390,9 +381,7 @@ immutableBlockNo k = Chain.headBlockNo . immutableChain k
 -- This is used for garbage collection of the VolatileDB, which is done in
 -- terms of slot numbers, not in terms of block numbers.
 immutableSlotNo ::
-  ( HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
+  HasHeader blk =>
   SecurityParam ->
   Model blk ->
   WithOrigin SlotNo
@@ -1159,9 +1148,7 @@ between k from to m = do
 -- tip).
 garbageCollectable ::
   forall blk.
-  ( HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
+  HasHeader blk =>
   SecurityParam -> Model blk -> blk -> Bool
 garbageCollectable secParam m b =
   -- Note: we don't use the block number but the slot number, as the
@@ -1177,9 +1164,7 @@ garbageCollectable secParam m b =
 -- case from a block that was never added to the model in the first place.
 garbageCollectablePoint ::
   forall blk.
-  ( HasHeader blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
+  HasHeader blk =>
   SecurityParam -> Model blk -> RealPoint blk -> Bool
 garbageCollectablePoint secParam m pt
   | Just blk <- getBlock (realPointHash pt) m =
@@ -1192,9 +1177,7 @@ garbageCollectablePoint secParam m pt
 -- garbage collected it.
 garbageCollectableIteratorNext ::
   forall blk.
-  ( ModelSupportsBlock blk
-  , IsPerasCert (PerasCert blk) blk
-  ) =>
+  ModelSupportsBlock blk =>
   SecurityParam -> Model blk -> IteratorId -> Bool
 garbageCollectableIteratorNext secParam m itId =
   case fst (iteratorNext itId GetBlock m) of
