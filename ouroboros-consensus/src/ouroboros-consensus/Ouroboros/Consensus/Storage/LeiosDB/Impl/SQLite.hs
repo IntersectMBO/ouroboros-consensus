@@ -2,6 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Queued writes and maintenance use separate owned connections. Receipt
+-- confirmation excludes partition-boundary publication and truncation;
+-- copying a promotion does not hold that confirmation mutex.
+-- Rationale:
+-- @docs/fetch-policy/leiosfetch-improved.md#durable-confirmation-and-garbage-collection@.
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
@@ -22,11 +27,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVarIO
   , writeTVar
   )
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Exception
   ( throwIO
   , toException
   )
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , try
@@ -44,7 +50,6 @@ import Control.ResourceRegistry
   )
 import Control.Tracer (Tracer, traceWith)
 import Data.IORef (newIORef, readIORef, writeIORef)
-import qualified Data.Set as Set
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Stack
 import Ouroboros.Consensus.Leios.Types (LeiosPoint (..))
@@ -119,6 +124,10 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
   -- the immutable partition's only writer
   (promoterKey, promoterVar) <-
     allocate registry (\_ -> openPromoter volLeiosDbPath immLeiosDbPath) closePromoter
+  -- Confirmation excludes boundary publication/truncation, not bulk copying.
+  -- Maintenance takes promoterVar before confirmationVar; the writer takes only
+  -- confirmationVar, using its own connections to prove committed presence.
+  confirmationVar <- newMVar ()
   -- the volatile partition writer thread
   writeQueue <-
     startWriter
@@ -126,6 +135,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       tracer
       statsVar
       promotedSlotVar
+      confirmationVar
       volLeiosDbPath
       immLeiosDbPath
   pure
@@ -134,8 +144,10 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       , openReader = implOpenReader statsVar promotedSlotVar
       , openWriter = implOpenWriter writeQueue
       , garbageCollect = sqlGarbageCollect writeQueue
-      , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer statsVar promoterVar promotedSlotVar
-      , leiosDbTruncateImmutable = sqlTruncateImmutable tracer statsVar promoterVar promotedSlotVar
+      , leiosDbPromoteToImmutable =
+          sqlPromoteToImmutable tracer statsVar promoterVar confirmationVar promotedSlotVar
+      , leiosDbTruncateImmutable =
+          sqlTruncateImmutable tracer statsVar promoterVar confirmationVar promotedSlotVar
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
@@ -161,8 +173,8 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       Right promise -> await promise
 
   implOpenReader statsVar promotedSlotVar = do
-    volDb <- openRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     let conn = mkConn tracer statsVar promotedSlotVar volDb immDb
     pure
       LeiosDbReader
@@ -234,10 +246,11 @@ startWriter ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   StrictTVar IO SlotNo ->
+  MVar () ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
+startWriter registry tracer statsVar promotedSlotVar confirmationVar volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
@@ -271,11 +284,18 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
               pure Stop
             WriteEbBody point eb fills held resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills held
+              unless promoted $ void $ sqlInsertEbBody conn point eb fills held
+              -- Commit precedes proof. Only boundary publication/truncation
+              -- shares this mutex, so confirmation and the next queued job do
+              -- not wait for ownership of the maintenance connection.
+              receipt <- withMVar confirmationVar $ \_ -> sqlConfirmBody conn point
+              resolve receipt
               pure Continue
             WriteTxs point txs resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure () else sqlInsertTxs conn point txs
+              unless promoted $ void $ sqlInsertTxs conn point txs
+              receipt <- withMVar confirmationVar $ \_ -> sqlConfirmTxs conn point txs
+              resolve receipt
               pure Continue
             Flush resolve -> do
               resolve ()

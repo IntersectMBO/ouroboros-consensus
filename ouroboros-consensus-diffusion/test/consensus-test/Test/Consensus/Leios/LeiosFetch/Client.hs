@@ -8,6 +8,7 @@ module Test.Consensus.Leios.LeiosFetch.Client (tests) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadAsync (withAsync)
+import Control.Monad.Class.MonadThrow (finally)
 import Control.Monad.Class.MonadTime.SI (DiffTime, Time (..), getMonotonicTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
@@ -17,7 +18,8 @@ import Network.TypedProtocol.Codec (AnyMessage (..), PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
-  ( SomeLeiosFetchJob (..)
+  ( LeiosFetchJobActions (..)
+  , SomeLeiosFetchJob (..)
   , leiosFetchClientPeerPipelined
   , toLeiosFetchClientPeerPipelined
   )
@@ -49,10 +51,16 @@ tests =
     , testCase
         "the client, once told to stop, ignores the replies still outstanding, then sends MsgDone"
         $ let run = runSimOrThrow (runClient 10 (const 10) stopWhileTwoOutstanding)
-           in (sentRequests run, handled run, sentDone run)
-                @?= ([(Time 0, 1), (Time 0, 2)], [], [Time 20])
+           in (sentRequests run, handled run, cleaned run, sentDone run)
+                @?= ([(Time 0, 1), (Time 0, 2)], [], [1, 2], [Time 20])
+    , testCase "stop wins over an available job in the same transaction" $
+        let run = runSimOrThrow (runClient 10 (const 0) stopWithWork)
+         in (sentRequests run, handled run, cleaned run) @?= ([], [], [])
     ]
  where
+  stopWithWork queue stop = atomically $ do
+    writeTVar queue [1]
+    writeTVar stop True
   sendSecondLater queue stop = do
     atomically $ writeTVar queue [1]
     threadDelay 1
@@ -81,6 +89,8 @@ data Run = MkRun
   -- ^ when it sent each block request
   , sentDone :: [Time]
   -- ^ when it sent 'MsgDone'
+  , cleaned :: [Int]
+  -- ^ requests whose handler cleanup ran, including ignored drain replies
   , handled :: [Int]
   -- ^ the replies it handed to their jobs
   }
@@ -97,12 +107,14 @@ runClient depth delayFor script = do
   queue <- newTVarIO []
   stop <- newTVarIO False
   handledVar <- newTVarIO []
+  cleanedVar <- newTVarIO []
   events <- newTVarIO []
   let tracer = mkTracer $ \(role, event) -> do
         now <- getMonotonicTime
         atomically $ modifyTVar events ((now, role, event) :)
       job i =
         MkSomeLeiosFetchJob
+          (LeiosFetchJobActions (pure True) (pure ()) (\action -> action `finally` atomically (modifyTVar cleanedVar (i :))))
           (MsgLeiosBlockRequest (N i))
           (\(MsgLeiosBlock (N j)) -> atomically $ modifyTVar handledVar (j :))
       awaitStop = readTVar stop >>= check
@@ -120,12 +132,14 @@ runClient depth delayFor script = do
         (server delayFor)
   traced <- reverse <$> readTVarIO events
   replies <- reverse <$> readTVarIO handledVar
+  cleanups <- reverse <$> readTVarIO cleanedVar
   pure
     MkRun
       { sentRequests =
           [(t, i) | (t, Client, TraceSendMsg (AnyMessage (MsgLeiosBlockRequest (N i)))) <- traced]
       , sentDone = [t | (t, Client, TraceSendMsg (AnyMessage MsgDone)) <- traced]
       , handled = replies
+      , cleaned = cleanups
       }
 
 -- | Replies to each block request after the given delay, one at a time.

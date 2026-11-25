@@ -42,12 +42,14 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API
-  ( LeiosDbHandle (..)
+  ( BodyWriteReceipt (..)
+  , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
+  , TxWriteReceipt (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (LeiosDbWriteException)
@@ -241,20 +243,20 @@ imInsertEbBody ::
   EndorserBlock ->
   LocalFills ->
   Map TxOffset ByteString ->
-  m (Set TxOffset)
+  m BodyWriteReceipt
 imInsertEbBody stateVar point eb fills held = do
   when (null refs) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   atomically $ do
     s <- readTVar stateVar
     if isPromoted s point
-      then pure Set.empty
+      then pure $ maybe BodyUnavailable (BodyPresent . Map.keysSet . rowTxs) (rowAt s point)
       else do
         let row = Map.findWithDefault newRow point (imVolatile s)
             toWrite = (given `Map.union` filled s) `Map.withoutKeys` Map.keysSet (rowTxs row)
             row' = row{rowTxs = rowTxs row <> toWrite}
         writeTVar stateVar s{imVolatile = Map.insert point row' (imVolatile s)}
-        pure (Map.keysSet (rowTxs row'))
+        pure (BodyPresent (Map.keysSet (rowTxs row')))
  where
   -- Mirrors the SQLite backend: a fill lands only on an offset the body
   -- declares, at its declared size, from the source's volatile row holding
@@ -288,23 +290,27 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   LeiosPoint ->
   Map TxOffset ByteString ->
-  m ()
+  m TxWriteReceipt
 imInsertTxs stateVar point offBytes = atomically $ do
   s <- readTVar stateVar
   -- Mirrors the SQLite backend's in-place fill: a tx only lands at an offset
   -- the body declared at the point, at the declared size.
-  case guard (not (isPromoted s point)) *> Map.lookup point (imVolatile s) of
-    Nothing -> pure ()
+  case rowAt s point of
+    Nothing -> pure (TxWriteReceipt Set.empty Set.empty False)
     Just row -> do
       let inBody = Map.intersectionWith (,) offBytes (rowTxSizes row)
           sized (bytes, size) = fromIntegral (BS.length bytes) == size
-          accepted = Map.filter sized inBody
-      unless (Map.null accepted) $
+          (accepted, missized) = Map.partition sized inBody
+      unless (isPromoted s point || Map.null accepted) $
         writeTVar
           stateVar
           s
             { imVolatile = Map.insert point row{rowTxs = Map.union (fst <$> accepted) (rowTxs row)} (imVolatile s)
             }
+      let confirmed
+            | isPromoted s point = Map.keysSet accepted `Set.intersection` Map.keysSet (rowTxs row)
+            | otherwise = Map.keysSet accepted
+      pure (TxWriteReceipt confirmed (Map.keysSet missized) True)
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': each point no older
 -- than the given slot whose closure is complete where its reads go

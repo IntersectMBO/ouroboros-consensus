@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+## Unreleased
+
+- Bound ordinary LeiosFetch jobs and per-peer outstanding work; use connection RTT
+  observations, FIFO-aware soft deadlines and aged source penalties for progressive
+  recovery without wire changes.
+- Reuse confirmed database and matching mempool transactions before network fetch.
+  Keep accepted receipt callbacks alive across peer removal and require positive
+  write confirmation before reporting acquisition.
+- Add ordinary fetch configuration, detached production diagnostics and compact
+  confirmed acquisition summaries. See `docs/fetch-policy/leiosfetch-improved.md`.
+
 <a id='changelog-0.28.0.0'></a>
 ## 0.28.0.0 -- 2025-09-29
 

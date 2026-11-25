@@ -37,6 +37,8 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeAgeLimits
   , withNodeCommittee
   , withNodeForecastingOnly
+  , withNodeObservingClaims
+  , withNodeOverObservingClaims
   , withNodeOver
   , withNodeOverDBs
   , withNodeOverDBsAfterUncleanShutdown
@@ -97,7 +99,11 @@ import Ouroboros.Consensus.HeaderValidation (certRbInfo)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions, newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
-import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
+import Ouroboros.Consensus.Leios.NewValidClaims
+  ( NewLeiosValidClaims (..)
+  , ignoreNewLeiosValidClaim
+  , mkNewLeiosValidClaims
+  )
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement, LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (BytesSize)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -106,6 +112,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel (withLeiosFetchWorkers)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , defaultLeiosAnnouncementAgeLimits
@@ -117,6 +124,7 @@ import Ouroboros.Consensus.Node
   , mkNodeToNodeInitiatorResponderVersions
   , nodeKernelArgsEnforceInvariants
   , openChainDB
+  , splitNodeKernelRngs
   , stdVersionDataNTN
   )
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
@@ -134,7 +142,9 @@ import Ouroboros.Consensus.Node.Tracers (Tracers, nullTracers)
 import Ouroboros.Consensus.NodeKernel
   ( NodeKernel
   , NodeKernelArgs (..)
+  , getLeiosFetchKernel
   , initNodeKernel
+  , newNodeLeiosTxCache
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -142,6 +152,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noP
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
 import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle, newLeiosDBInMemory)
+import Ouroboros.Consensus.Storage.LeiosDB.Cache (withCacheRetirement)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -316,18 +327,35 @@ withNodeUnderTest ::
   LeiosDbHandle (IOSim s) ->
   (NodeUnderTest (IOSim s) -> IOSim s a) ->
   IOSim s a
-withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
-  -- Genesis is off, as it is by default, but some tests enable ChainSync
-  -- jumping ('nodeConfigCsj').
+withNodeUnderTest = withNodeUnderTestObservingClaims ignoreNewLeiosValidClaim
+
+-- The observer is part of the fixture's real ChainDB callback transaction,
+-- after publication and the independent observation map. A retry therefore
+-- rolls all three back; no production synchronization point is introduced.
+withNodeUnderTestObservingClaims ::
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  NodeUnderTestConfig ->
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  LeiosDbHandle (IOSim s) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeUnderTestObservingClaims observe cfg tracers nodeDBs rawLeiosDB body = do
+  let seeds = configSeeds cfg
+      (_, _, leiosFetchRoot, _) = splitNodeKernelRngs (seedKeepAliveAndPeerSharing seeds)
+  leiosTxCache <- newNodeLeiosTxCache leiosFetchRoot
+  let leiosDB = withCacheRetirement leiosTxCache rawLeiosDB
+  -- What a node with Genesis disabled, the default, runs with, but for
+  -- ChainSync jumping, which the test chooses.
   let genesisConfig = disableGenesisConfig{gcCSJConfig = nodeConfigCsj cfg}
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs genesisConfig
-  let seeds = configSeeds cfg
   leiosAcquisitions <- newLeiosAcquisitions
   newLeiosValidClaims <- mkNewLeiosValidClaims
   validClaimsSinceStart <- newTVarIO Map.empty
   let onNewLeiosValidClaim claim ann = do
         modifyTVar validClaimsSinceStart (Map.insert claim ann)
         recordNewLeiosValidClaim newLeiosValidClaims claim ann
+        observe claim ann
   -- The ChainDB and the node each get their own resource registry. The node's
   -- registry is nested inside the ChainDB's, and the body runs inside both. So
   -- on the way out, the body finishes first, then the node's threads stop, and
@@ -373,6 +401,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
               leiosDB
+              leiosTxCache
               leiosAcquisitions
               (consumeNewLeiosValidClaims newLeiosValidClaims)
               -- How long the node stays caught up at least, which does not
@@ -416,24 +445,25 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 (const encodePeerAddr)
                 (const decodePeerAddr)
         connectedPeers <- newTVarIO Set.empty
-        body
-          NodeUnderTest
-            { nodeChainDB = chainDB
-            , nodeTopLevelConfig = topLevelConfigOf cfg
-            , nodeKernel = kernel
-            , nodeApps = apps
-            , nodeVersions =
-                mkNodeToNodeInitiatorResponderVersions
-                  (featureFlags kernelArgs)
-                  (miniProtocolParameters kernelArgs)
-                  nodeVersionData
-                  (supportedNodeToNodeVersions (Proxy @Blk))
-                  apps
-            , nodeSeeds = seeds
-            , nodeLeiosAcquisitions = leiosAcquisitions
-            , nodeNewLeiosValidClaims = readTVar validClaimsSinceStart
-            , nodeConnectedPeers = connectedPeers
-            }
+        withLeiosFetchWorkers (getLeiosFetchKernel kernel) $
+          body
+            NodeUnderTest
+              { nodeChainDB = chainDB
+              , nodeTopLevelConfig = topLevelConfigOf cfg
+              , nodeKernel = kernel
+              , nodeApps = apps
+              , nodeVersions =
+                  mkNodeToNodeInitiatorResponderVersions
+                    (featureFlags kernelArgs)
+                    (miniProtocolParameters kernelArgs)
+                    nodeVersionData
+                    (supportedNodeToNodeVersions (Proxy @Blk))
+                    apps
+              , nodeSeeds = seeds
+              , nodeLeiosAcquisitions = leiosAcquisitions
+              , nodeNewLeiosValidClaims = readTVar validClaimsSinceStart
+              , nodeConnectedPeers = connectedPeers
+              }
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
@@ -460,6 +490,32 @@ withNodeForecastingOnly range body = do
   leiosDB <- newLeiosDBInMemory
   withNodeUnderTest
     (forecastingOnly testCommittee testQuorumStakeThreshold range)
+    nullTracers
+    nodeDBs
+    leiosDB
+    body
+
+-- | 'withNode', observing each actual new-claim publication transaction.
+-- The observer must not consume the stream used by the node's focuser.
+withNodeObservingClaims ::
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeObservingClaims observe body = do
+  leiosDB <- newLeiosDBInMemory
+  withNodeOverObservingClaims leiosDB observe body
+
+-- | 'withNodeOver' with the same transaction observer as 'withNodeObservingClaims'.
+withNodeOverObservingClaims ::
+  LeiosDbHandle (IOSim s) ->
+  (LeiosClaim -> LeiosAnnouncement -> STM (IOSim s) ()) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeOverObservingClaims leiosDB observe body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTestObservingClaims
+    observe
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
     nullTracers
     nodeDBs
     leiosDB

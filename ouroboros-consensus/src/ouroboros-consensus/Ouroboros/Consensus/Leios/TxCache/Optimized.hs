@@ -28,6 +28,7 @@ import Control.Monad (foldM, void, when)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Bits (bit, complement, testBit, unsafeShiftL, unsafeShiftR, (.&.), (.|.))
 import qualified Data.ByteString.Short as SBS
+import Data.Foldable (foldl')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.List (find)
@@ -117,6 +118,18 @@ newHashTableLeiosTxCache nshift k0 k1 = do
             pure (st', (evPoints, w))
       , insertBodyAndFoldl' = \point b nil snoc ->
           MVar.modifyMVarMasked stateVar $ \st -> insertBodyLocked ht st point b nil snoc
+      , classifyTxs = \point txs ->
+          MVar.withMVar stateVar $ \st ->
+            if Map.notMember point (hsPoints st)
+              then pure $! foldl' (\acc (_txh, size) -> acc <> bucketTxArrival TxEvicted size) mempty txs
+              else foldM
+                ( \ !acc (txh, size) -> do
+                    held <- HT.lookup ht (toKey txh)
+                    let prior = case held of Nothing -> TxWasAbsent; Just _ -> TxWasHeld
+                    pure $! acc <> bucketTxArrival prior size
+                )
+                mempty
+                txs
       , insertLandedTxs = \point landed ->
           MVar.modifyMVarMasked stateVar $ \st -> case Map.lookup point (hsPoints st) of
             Nothing -> do

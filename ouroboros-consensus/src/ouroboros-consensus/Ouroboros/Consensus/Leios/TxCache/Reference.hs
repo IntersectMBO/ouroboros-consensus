@@ -38,11 +38,13 @@ module Ouroboros.Consensus.Leios.TxCache.Reference
   , evictOlderThanFoldl'
   , insertBodyAndFoldl'
   , insertLandedTx
+  , classifyTxs
   , lookupTx
   , lookupTxLocation
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Data.Foldable (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
@@ -52,8 +54,10 @@ import Ouroboros.Consensus.Leios.TxCache.API
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
   , TxState (..)
+  , bucketTxArrival
   , maxLeiosPointCount
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (FetchArrivalBytes)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , LeiosPoint (..)
@@ -61,6 +65,18 @@ import Ouroboros.Consensus.Leios.Types
   , TxLocation (..)
   , TxOffset
   )
+
+-- | Classify each payload occurrence from the same immutable index. This
+-- reads point retention without updating youngest references or locations.
+classifyTxs :: LeiosPoint -> [(TxHash, BytesSize)] -> LeiosTxCacheIndex a v b -> FetchArrivalBytes
+classifyTxs point txs idx = foldl' step mempty txs
+ where
+  retained = Map.member point (pointState idx)
+  step !acc (txh, size) = acc <> bucketTxArrival (prior txh) size
+  prior txh
+    | not retained = TxEvicted
+    | Map.member txh (txState idx) = TxWasHeld
+    | otherwise = TxWasAbsent
 
 -- | The index.
 data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex

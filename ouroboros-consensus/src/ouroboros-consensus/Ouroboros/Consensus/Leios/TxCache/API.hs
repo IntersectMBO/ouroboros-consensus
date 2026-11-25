@@ -149,6 +149,16 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- fill. The fold lets the caller build what it needs without a list of every
   -- referenced tx in between. It is a strict left fold: it evaluates each
   -- accumulator, the final one included, to WHNF before it returns.
+  , classifyTxs :: LeiosPoint -> [(TxHash, BytesSize)] -> m FetchArrivalBytes
+  -- ^ Classify selected payload at one read-only snapshot, before writer
+  -- admission. An unretained point is evicted; otherwise an absent tx is
+  -- needed and a held tx is extra. Count every occurrence, including repeated
+  -- hashes, without changing state or locations. Return strict detached byte
+  -- counters; the result is not storage confirmation.
+  --
+  -- Point retention and tx lookup share this operation's lock. No cache
+  -- snapshot or lookup closure escapes into the handler's pending work.
+  -- See @docs/fetch-policy/leiosfetch-improved.md#local-materialization-and-confirmation@.
   , insertLandedTxs :: LeiosPoint -> [LandedTx a v] -> m FetchArrivalBytes
   -- ^ Record that the given point now holds these txs, each the one its body
   -- lists at the tx's offset, with its state. Call this once the write lands.

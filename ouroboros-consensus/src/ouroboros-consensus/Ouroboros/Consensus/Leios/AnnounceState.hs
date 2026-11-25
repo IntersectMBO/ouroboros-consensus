@@ -85,12 +85,11 @@ data WhetherEquivocationProof = EquivocationProof | NotEquivocationProof
 -- An announcement signed by a revoked operational certificate is neither, and
 -- one of an election already pruned, while it was validated, is not new.
 --
--- Once this accepts an announcement, no copy of it is new again, from any
--- peer. So a caller that acts on a new announcement received from a peer
--- rather than from the forge must commit to doing so within this same
--- transaction: if it acted afterwards, and its thread died in between, as when
--- its peer disconnects, the announcement would stay accepted but never be
--- acted on, and nothing would act on it later.
+-- Once accepted, no copy is new again. Compose acceptance with bounded
+-- node-owned bookkeeping admission in the same STM transaction; a caller's
+-- cancellation must not leave seen state without the work it requires.
+-- Slow processing runs under the node's supervised worker/receipt lifetime,
+-- outside this transaction and without an uninterruptible storage wait.
 onValidAnnouncement ::
   (IOLike m, HasHeader (Header blk)) =>
   AnnounceState m blk ->
