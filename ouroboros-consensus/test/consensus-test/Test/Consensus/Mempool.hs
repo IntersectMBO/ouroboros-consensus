@@ -1179,11 +1179,11 @@ prop_Mempool_leiosTxIndex_consistency (Actions actions) =
       txs <- map prjTx . snapshotTxs <$> atomically (getSnapshot mempool)
       let expected =
             Set.fromList
-              [ltmvHash view | Just view <- map (leiosTxMempoolView . txForgetValidated) txs]
+              [txHash | Just txHash <- map (txLeiosHash . txForgetValidated) txs]
       return $
         actionProp
           .&&. Map.keysSet indexed === expected
-          .&&. conjoin [ltmvHash view === txHash | (txHash, view) <- Map.toList indexed]
+          .&&. conjoin [txLeiosHash tx === Just txHash | (txHash, tx) <- Map.toList indexed]
 
 -- | An empty Mempool over the initial ledger, with room for whatever the
 -- actions add.

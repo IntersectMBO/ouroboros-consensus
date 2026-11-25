@@ -465,8 +465,9 @@ instance LedgerSupportsMempool BlockA where
   getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
-  leiosTxMempoolView = nothingLeiosTxMempoolView
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  txLeiosHash = nothingTxLeiosHash
+  txLeiosBytes = nothingTxLeiosBytes
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits BlockA where
   type TxMeasurePhase1 BlockA = IgnoringOverflow ByteSize32
@@ -594,6 +595,8 @@ instance BlockSupportsMetrics BlockA where
 
 instance BlockSupportsLeios BlockA where
   blockLeiosCert = defaultBlockLeiosCert
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 deriving via
   SelectViewDiffusionPipelining BlockA
@@ -652,7 +655,7 @@ instance SingleEraBlock BlockA where
         (boundEpoch eraStart)
 
 instance HasTxs BlockA where
-  extractTxs = blkA_body
+  extractAsMempoolTxs = blkA_body
 
 {-------------------------------------------------------------------------------
   Condense

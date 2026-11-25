@@ -41,8 +41,8 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
 import Ouroboros.Consensus.Shelley.Eras
   ( LeiosEraDict (..)
-  , LeiosEraTx (..)
   , ShelleyBasedEra (getLeiosEraDict)
+  , eraTxLeiosBytes
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -108,13 +108,13 @@ forgeShelleyBlock
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
         Just LeiosEraDict ->
-          forgeLeiosEb validatedUnder . fmap (leiosTxMempoolViewBytes . leiosEraTxMempoolView . extractTx)
+          forgeLeiosEb validatedUnder . fmap (eraTxLeiosBytes . extractTx)
             <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 
     -- The mempool validated the transactions against this very state.
     validatedUnder =
-      toVersionWord16 . pvMajor $
+      pvMajor $
         getPParams (tickedShelleyLedgerState fbCurrentTickedLedgerState) ^. SL.ppProtocolVersionL
 
     -- TODO Forging does not yet certify endorser blocks.

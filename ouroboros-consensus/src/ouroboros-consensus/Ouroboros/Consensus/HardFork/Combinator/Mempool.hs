@@ -304,17 +304,23 @@ instance
     f idx (FlipTickedLedgerState tlst) =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
-  leiosTxMempoolView =
+  txLeiosHash =
     hcollapse
-      . hcmap proxySingle (K . leiosTxMempoolView)
+      . hcmap proxySingle (K . txLeiosHash)
       . getOneEraGenTx
       . getHardForkGenTx
 
-  tickedLedgerMajorProtocolVersionWord16 (TickedHardForkLedgerState _transition hardForkState) =
+  txLeiosBytes =
+    hcollapse
+      . hcmap proxySingle (K . txLeiosBytes)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
+  tickedLedgerMajorProtocolVersion (TickedHardForkLedgerState _transition hardForkState) =
     hcollapse $
       hcmap
         proxySingle
-        (\(FlipTickedLedgerState tlst) -> K (tickedLedgerMajorProtocolVersionWord16 tlst))
+        (\(FlipTickedLedgerState tlst) -> K (tickedLedgerMajorProtocolVersion tlst))
         hardForkState
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
@@ -596,7 +602,7 @@ instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
 -------------------------------------------------------------------------------}
 
 instance All HasTxs xs => HasTxs (HardForkBlock xs) where
-  extractTxs =
+  extractAsMempoolTxs =
     hcollapse
       . hcimap (Proxy @HasTxs) aux
       . getOneEraBlock
@@ -607,7 +613,7 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
       Index xs blk ->
       I blk ->
       K [GenTx (HardForkBlock xs)] blk
-    aux index = K . map (injectNS' (Proxy @GenTx) index) . extractTxs . unI
+    aux index = K . map (injectNS' (Proxy @GenTx) index) . extractAsMempoolTxs . unI
 
 {-------------------------------------------------------------------------------
   Auxiliary

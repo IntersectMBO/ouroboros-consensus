@@ -44,7 +44,6 @@ import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.MempoolPayload as CC
 import qualified Cardano.Chain.UTxO as Utxo
 import qualified Cardano.Chain.Update as Update
-import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
@@ -143,13 +142,11 @@ instance LedgerSupportsMempool ByronBlock where
   getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
-  leiosTxMempoolView = nothingLeiosTxMempoolView
-  tickedLedgerMajorProtocolVersionWord16 =
-    MkVersionWord16
-      . Update.pvMajor
-      . UPI.adoptedProtocolVersion
-      . CC.cvsUpdateState
-      . tickedByronLedgerState
+  txLeiosHash = nothingTxLeiosHash
+  txLeiosBytes = nothingTxLeiosBytes
+
+  -- Byron has no endorser blocks.
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits ByronBlock where
   type TxMeasurePhase1 ByronBlock = IgnoringOverflow ByteSize32
@@ -234,7 +231,7 @@ instance HasRawTxId (TxId (GenTx ByronBlock)) where
   getRawTxId = toRawTxIdHash
 
 instance HasTxs ByronBlock where
-  extractTxs blk = case byronBlockRaw blk of
+  extractAsMempoolTxs blk = case byronBlockRaw blk of
     -- EBBs don't contain transactions
     CC.ABOBBoundary _ebb -> []
     CC.ABOBBlock regularBlk ->
@@ -406,4 +403,4 @@ decodeByronApplyTxError = fromByronCBOR
 
 -- | Count all (generalized) transactions in the block
 countByronGenTxs :: ByronBlock -> Word64
-countByronGenTxs = fromIntegral . length . extractTxs
+countByronGenTxs = fromIntegral . length . extractAsMempoolTxs

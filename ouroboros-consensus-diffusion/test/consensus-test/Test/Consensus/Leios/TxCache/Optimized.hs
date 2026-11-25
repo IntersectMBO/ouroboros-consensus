@@ -15,6 +15,7 @@
 module Test.Consensus.Leios.TxCache.Optimized (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
+import Cardano.Ledger.Binary.Version (Version, allVersions)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, takeMVar, tryPutMVar, yield)
 import Control.Monad (void)
@@ -24,7 +25,6 @@ import qualified Data.List as List
 import Data.Maybe.Strict (StrictMaybe, isSJust)
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
-import Ouroboros.Consensus.Ledger.SupportsMempool (VersionWord16 (..))
 import Ouroboros.Consensus.Leios.TxCache
   ( LandedTx (..)
   , LeiosTxCache (..)
@@ -58,7 +58,6 @@ import Test.Tasty.QuickCheck
   ( Gen
   , Property
   , QuickCheckTests (..)
-  , arbitraryBoundedIntegral
   , chooseInt
   , elements
   , forAll
@@ -90,7 +89,7 @@ tests =
         $ killedInsertLeaks >>= (@?= 0)
     ]
 
-type H = LeiosTxCache IO () VersionWord16 TestBody
+type H = LeiosTxCache IO () Version TestBody
 
 -- | A body carrying its tx hashes.
 newtype TestBody = TestBody [TxHash]
@@ -116,7 +115,7 @@ data Op
     OpBody !Word64 !Word8 ![Word8]
   | -- | Land these txs, each the one EB @e@'s body lists at its offset, at the
     -- EB's point at a slot.
-    OpLand !Word64 !Word8 ![(TxOffset, Word8, TxState () VersionWord16)]
+    OpLand !Word64 !Word8 ![(TxOffset, Word8, TxState () Version)]
   | OpEvict !Word64
   deriving Show
 
@@ -153,7 +152,7 @@ applyOp h = \case
 szOf :: Word8 -> BytesSize
 szOf t = 1 + fromIntegral t
 
-sweepLookup :: H -> [Word8] -> IO [StrictMaybe (TxState () VersionWord16)]
+sweepLookup :: H -> [Word8] -> IO [StrictMaybe (TxState () Version)]
 sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 
 -- | Observe each tx's location the way production does -- through a
@@ -197,10 +196,10 @@ genOps txDomain = do
   genTx = fromIntegral <$> chooseInt (0, txDomain - 1)
   gen :: Num a => Int -> Int -> Gen a
   gen lo hi = fromIntegral <$> chooseInt (lo, hi)
-  -- Versions spanning all 16 bits.
+  -- Every version the ledger can represent.
   landing (off, t) =
     (,,) off t
-      <$> oneof [pure (TxInserted ()), TxValidated . MkVersionWord16 <$> arbitraryBoundedIntegral]
+      <$> oneof [pure (TxInserted ()), TxValidated <$> elements allVersions]
 
 -- | Both handles, fed these ops, observe the same of each, and agree on a final
 -- sweep of every tx's state and location.

@@ -125,10 +125,9 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isLeiosTxs :: !(Map TxHash LeiosTxMempoolView)
-  -- ^ What Leios needs to know about the transactions in 'isTxs' that an
-  -- endorser block can reference, by the hash it references them by
-  -- ('ltmvHash').
+  , isLeiosTxs :: !(Map TxHash (GenTx blk))
+  -- ^ The transactions in 'isTxs' that an endorser block can reference, by the
+  -- hash it references them by ('txLeiosHash').
   --
   -- INVARIANT: always in sync with the transactions in 'isTxs'.
   , isTxKeys :: !(LedgerTables blk KeysMK)
@@ -190,7 +189,8 @@ data InternalState blk = IS
   deriving Generic
 
 deriving instance
-  ( NoThunks (Validated (GenTx blk))
+  ( NoThunks (GenTx blk)
+  , NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
   , NoThunks (TxIn blk)
@@ -413,8 +413,8 @@ validateNewTransaction cfg wti tx txsz origValues st is =
               isLeiosTxs =
                 maybe
                   isLeiosTxs
-                  (\view -> Map.insert (ltmvHash view) view isLeiosTxs)
-                  (leiosTxMempoolView (txForgetValidated vtx))
+                  (\txHash -> Map.insert txHash (txForgetValidated vtx) isLeiosTxs)
+                  (txLeiosHash (txForgetValidated vtx))
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -528,9 +528,9 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
           isLeiosTxs =
             isLeiosTxs cand
               <> Map.fromList
-                [ (ltmvHash view, view)
+                [ (txHash, txForgetValidated tx)
                 | (tx, _, _) <- validDelta
-                , Just view <- [leiosTxMempoolView (txForgetValidated tx)]
+                , Just txHash <- [txLeiosHash (txForgetValidated tx)]
                 ]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , isTxValues =

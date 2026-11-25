@@ -106,6 +106,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Leios.Protocol (CertRbInfo)
+import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision
   , PerasCertInclusionView
@@ -1090,6 +1091,9 @@ data ChainDbFailure blk
     --
     -- Thrown when we are not sure in which DB the block /should/ have been.
     ChainDbMissingBlock (RealPoint blk)
+  | -- | An endorser block that a block on the chain certifies is missing from
+    -- the LeiosDB, or some of its transactions are
+    ChainDbMissingEndorserBlock LeiosPoint
 
 deriving instance StandardHash blk => Show (ChainDbFailure blk)
 
@@ -1097,6 +1101,7 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbFailure blk) wher
   displayException = \case
     LgrDbFailure fse -> fsError fse
     ChainDbMissingBlock{} -> corruption
+    ChainDbMissingEndorserBlock{} -> corruption
    where
     corruption =
       "The database got corrupted, full validation will be enabled for the next startup"

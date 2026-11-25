@@ -1144,6 +1144,8 @@ deriving via
 
 instance BlockSupportsLeios (TestBlockWith ptype) where
   blockLeiosCert = defaultBlockLeiosCert
+  ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
+  applyEndorserBlock = defaultApplyEndorserBlock
 
 -----
 

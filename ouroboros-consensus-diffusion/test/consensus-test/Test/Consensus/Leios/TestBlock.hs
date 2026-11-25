@@ -128,7 +128,13 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Protocol
-import Ouroboros.Consensus.Leios.Types (BytesSize, EndorserBlockHash)
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , EndorserBlockHash
+  , LeiosPoint (..)
+  , decodeLeiosPoint
+  , encodeLeiosPoint
+  )
 import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -438,11 +444,17 @@ instance BlockSupportsProtocol LeiosTestBlock where
   Ledger
 -------------------------------------------------------------------------------}
 
-newtype instance LedgerState LeiosTestBlock mk = LeiosTestLedger
+data instance LedgerState LeiosTestBlock mk = LeiosTestLedger
   { ltlsTip :: Point LeiosTestBlock
+  , ltlsAnnouncement :: Maybe LeiosPoint
+  -- ^ The endorser block the tip announced, as a ledger records it.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise)
+
+instance Serialise LeiosPoint where
+  encode = encodeLeiosPoint
+  decode = decodeLeiosPoint
 
 newtype instance Ticked LedgerState LeiosTestBlock mk = TickedLeiosTestLedger
   { getTickedLeiosTestLedger :: LedgerState LeiosTestBlock mk
@@ -531,14 +543,14 @@ leiosTestInitExtLedger cfg =
     , perasState = initPerasState cfg ledgerState headerState
     }
  where
-  ledgerState = LeiosTestLedger GenesisPoint
+  ledgerState = LeiosTestLedger GenesisPoint Nothing
   headerState = genesisHeaderState (LeiosTestChainDepState SNothing)
 
 type instance TxIn LeiosTestBlock = Void
 type instance TxOut LeiosTestBlock = Void
 
 instance LedgerTablesAreTrivial LedgerState LeiosTestBlock where
-  convertMapKind (LeiosTestLedger tip) = LeiosTestLedger tip
+  convertMapKind (LeiosTestLedger tip ann) = LeiosTestLedger tip ann
 instance LedgerTablesAreTrivial (Ticked LedgerState) LeiosTestBlock where
   convertMapKind (TickedLeiosTestLedger x) = TickedLeiosTestLedger $ convertMapKind x
 deriving via
@@ -586,7 +598,12 @@ instance ApplyBlock LedgerState LeiosTestBlock where
       | blockPrevHash blk /= pointHash ltlsTip =
           throwError $ LeiosTestInvalidHash (pointHash ltlsTip) (blockPrevHash blk)
       | otherwise =
-          pure $ pureLedgerResult $ trackingToDiffs $ LeiosTestLedger (blockPoint blk)
+          pure $
+            pureLedgerResult $
+              trackingToDiffs $
+                LeiosTestLedger
+                  (blockPoint blk)
+                  ((\(ebHash, _size) -> MkLeiosPoint (blockSlot blk) ebHash) <$> lthAnnouncement (ltbHeader blk))
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -857,8 +874,9 @@ instance LedgerSupportsMempool LeiosTestBlock where
   txForgetValidated = forgetValidatedLeiosTestGenTx
   getTransactionKeySets _tx = emptyLedgerTables
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
-  leiosTxMempoolView = nothingLeiosTxMempoolView
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  txLeiosHash = nothingTxLeiosHash
+  txLeiosBytes = nothingTxLeiosBytes
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits LeiosTestBlock where
   type TxMeasurePhase1 LeiosTestBlock = IgnoringOverflow ByteSize32
@@ -923,6 +941,12 @@ instance BlockSupportsLeios LeiosTestBlock where
   blockLeiosCert (LeiosTestBlock hdr) = case lthLeiosCert hdr of
     NoLeiosTestCert -> Nothing
     HasLeiosTestCert cert -> Just cert
+
+  ledgerAnnouncedLeiosPoint = ltlsAnnouncement
+
+  -- The ledger has no transactions, so an endorser block applies nothing,
+  -- whatever transactions it references.
+  applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

@@ -15,8 +15,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , GenTx
   , LedgerSupportsMempool (..)
-  , LeiosTxMempoolView (..)
-  , leiosTxMempoolViewBytes
   )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -31,10 +29,11 @@ import Ouroboros.Consensus.Leios.Types
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Eras (LeiosEraTx (..))
+import Ouroboros.Consensus.Shelley.Eras (eraTxLeiosBytes)
 import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx, txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
+import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
@@ -59,7 +58,7 @@ tests =
         "a forged endorser block references a Dijkstra transaction by its hashAnnotated"
         (withNumTests 10 prop_dijkstraEbTxHashIsLedgerHash)
     , testProperty
-        "the hash in a Dijkstra transaction's leiosTxMempoolView is that of its bytes"
+        "a Dijkstra transaction's txLeiosHash is that of its txLeiosBytes"
         (withNumTests 10 prop_dijkstraTxLeiosHashOfBytes)
     ]
 
@@ -155,43 +154,42 @@ prop_referencesCapacityFloorsAtZero =
       , (1, chooseEnum (maxFraming + 1, maxBound))
       ]
 
--- | The length of the 'ltmvBytes' of a Dijkstra transaction
+-- | The length of the 'eraTxLeiosBytes' of a Dijkstra transaction
 -- never exceeds its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra'
 -- reserves for the reference.
 --
--- The ledger computes 'sizeTxF' from one encoding and 'ltmvBytes'
+-- The ledger computes 'sizeTxF' from one encoding and 'eraTxLeiosBytes'
 -- uses another, so a ledger change can make the two disagree.
 prop_dijkstraEbTxSizeBounded :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))
+  ebTxSize = BS.length (eraTxLeiosBytes tx)
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
 
 -- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
--- 'ltmvBytes'. The Dijkstra ledger defines this reference as the
+-- 'eraTxLeiosBytes'. The Dijkstra ledger defines this reference as the
 -- transaction's 'hashAnnotated', which is the hash of its 'originalBytes'.
 -- Thus a node can check fetched bytes against the reference without decoding
--- them. Fails if 'ltmvBytes' returns other bytes, for example the
+-- them. Fails if 'eraTxLeiosBytes' returns other bytes, for example the
 -- 'EncCBOR' encoding, which drops the @is_valid@ flag.
 prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
   map
     fst
     ( endorserBlockReferences
-        (endorserBlockFromTxBytes (pure (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))))
+        (endorserBlockFromTxBytes (pure (eraTxLeiosBytes tx)))
     )
     === [extractHash (hashAnnotated tx)]
 
--- | A Dijkstra transaction's 'leiosTxMempoolView' gives the hash of the bytes it
--- gives, the hash by which an endorser block references the transaction. The
--- mempool indexes its transactions by that hash, which the view reads from the
--- ledger's memo rather than hashing the bytes.
+-- | A Dijkstra transaction's 'txLeiosHash' is the hash of its 'txLeiosBytes',
+-- the hash by which an endorser block references the transaction. The mempool
+-- indexes its transactions by that hash, which reads the ledger's memo rather
+-- than hashing the bytes.
 prop_dijkstraTxLeiosHashOfBytes :: Tx TopTx DijkstraEra -> Property
-prop_dijkstraTxLeiosHashOfBytes tx = case leiosTxMempoolView genTx of
-  Nothing -> counterexample "no leiosTxMempoolView for a Dijkstra transaction" False
-  Just view -> ltmvHash view === hashLeiosTx (MkLeiosTx (leiosTxMempoolViewBytes view))
+prop_dijkstraTxLeiosHashOfBytes tx =
+  txLeiosHash genTx === (hashLeiosTx . MkLeiosTx <$> txLeiosBytes genTx)
  where
   genTx :: GenTx StandardDijkstraBlock
-  genTx = mkShelleyTx tx
+  genTx = mkTestShelleyTx tx

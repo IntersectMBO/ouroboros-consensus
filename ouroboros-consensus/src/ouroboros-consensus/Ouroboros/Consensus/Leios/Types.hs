@@ -54,6 +54,7 @@ module Ouroboros.Consensus.Leios.Types
   , forgedEbTxs
   , forgedEbTxsProtVer
   , forgeLeiosEb
+  , SerialisedEndorserBlock (..)
   , endorserBlockHash
   , endorserBlockReferences
   , encodeEndorserBlock
@@ -96,10 +97,8 @@ import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
   , DecoderError (..)
-  , EncCBOR (..)
   , Version
   , decodeFullAnnotator
-  , toPlainEncoding
   )
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Ledger.Core (Era, eraProtVerLow)
@@ -140,7 +139,7 @@ import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (toShortRawHash), HeaderHash)
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..), VersionWord16)
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Network.Block (Serialised (..))
 
@@ -290,23 +289,23 @@ type BytesSize = Word32
 --
 -- A compatibility layer over the ledger's 'Ledger.EbReferences': consensus
 -- sees only this module's functions, never the ledger's representation.
-newtype EndorserBlock = MkEndorserBlock Ledger.EbReferences
+--
+-- Fixing the era to 'DijkstraEra' is fine: There is only one format right now
+-- and that was introduced in Dijkstra. Should a future era switch to a
+-- different format, we will abstract over the respective formats and will be
+-- able to tell which era we are in when decoding the EndorserBlock from the
+-- wire or from disk.
+newtype EndorserBlock = MkEndorserBlock (Ledger.EbReferences DijkstraEra)
   deriving stock Generic
   deriving newtype (Eq, Show, NFData, NoThunks)
 
 instance ShowProxy EndorserBlock where showProxy _ = "EndorserBlock"
 
--- | The protocol version endorser blocks are encoded at.
---
--- NOTE: We do not intend to use endorser blocks across eras, encoded or not.
-endorserBlockVersion :: Version
-endorserBlockVersion = eraProtVerLow @DijkstraEra
-
 -- | An endorser block naming these transactions, in this order.
 mkEndorserBlock :: [(TxHash, BytesSize)] -> EndorserBlock
 mkEndorserBlock =
   MkEndorserBlock
-    . Ledger.mkEbReferences endorserBlockVersion
+    . Ledger.EbReferences
     . IsList.fromList
     . map (\(txHash, txSize) -> (unsafeMakeSafeHash txHash, txSize))
 
@@ -337,7 +336,7 @@ data TxLocation = MkTxLocation !LeiosPoint !TxOffset
 -- keeping alive what they were computed from.
 data LeiosMempoolTxs a = MkLeiosMempoolTxs
   { lmtByHash :: !(Map TxHash a)
-  , lmtValidatedUnder :: !VersionWord16
+  , lmtValidatedUnder :: !Version
   }
 
 -- | An endorser block that this node forged, with the bytes of its
@@ -348,7 +347,7 @@ data ForgedEndorserBlock = ForgedEndorserBlock
   , forgedEbTxs :: !(NonEmpty ByteString)
   -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
   -- same order.
-  , forgedEbTxsProtVer :: !VersionWord16
+  , forgedEbTxsProtVer :: !Version
   -- ^ The major protocol version the forge validated those transactions under.
   }
   deriving stock (Show, Eq)
@@ -356,13 +355,24 @@ data ForgedEndorserBlock = ForgedEndorserBlock
 -- | The endorser block that references the given transactions, in the given
 -- order, validated under this major protocol version. The reference to a
 -- transaction holds the Blake2b-256 hash and the length of its bytes.
-forgeLeiosEb :: VersionWord16 -> NonEmpty ByteString -> ForgedEndorserBlock
+forgeLeiosEb :: Version -> NonEmpty ByteString -> ForgedEndorserBlock
 forgeLeiosEb protVer txBytes =
   ForgedEndorserBlock
     { forgedEbBody = endorserBlockFromTxBytes txBytes
     , forgedEbTxs = txBytes
     , forgedEbTxsProtVer = protVer
     }
+
+-- | An endorser block as the LeiosDB stores it: the bytes of its endorsement
+-- and of the transactions that names, in order.
+--
+-- TODO: This name is deliberate with the intention rename the `EndorserBlock`
+-- (`Serialised` or not) as the "Endorsement". The endorsement + its transaction
+-- (closure) becomes then the EndorserBlock.
+data SerialisedEndorserBlock = MkSerialisedEndorserBlock
+  { serialisedEndorsement :: !(Serialised EndorserBlock)
+  , serialisedTransactions :: ![LeiosTx]
+  }
 
 -- | The hash ranking blocks announce for the endorser block: that of its
 -- encoding.
@@ -371,10 +381,8 @@ endorserBlockHash (MkEndorserBlock references) = extractHash $ hashAnnotated ref
 
 -- | The transactions an endorser block names, in order.
 endorserBlockReferences :: EndorserBlock -> [(TxHash, BytesSize)]
-endorserBlockReferences (MkEndorserBlock references) =
-  map (\(txHash, txSize) -> (extractHash txHash, txSize))
-    . IsList.toList
-    $ Ledger.getEbReferences references
+endorserBlockReferences (MkEndorserBlock (Ledger.EbReferences references)) =
+  map (\(txHash, txSize) -> (extractHash txHash, txSize)) $ IsList.toList references
 
 -- | The bytes one reference occupies for a transaction of the given size: the
 -- hash and the size, exactly as 'encodeEndorserBlock' writes them.
@@ -398,7 +406,7 @@ sizeEndorserBlockReference (ByteSize32 txSize) =
 -- encoding changes, both must change with it.
 encodeEndorserBlock :: EndorserBlock -> Encoding
 encodeEndorserBlock (MkEndorserBlock references) =
-  toPlainEncoding endorserBlockVersion $ encCBOR references
+  toCBOR references
 
 -- | The bytes 'encodeEndorserBlock' writes: those the endorser block was
 -- received in, or the ledger's encoding of one this node built. They are what

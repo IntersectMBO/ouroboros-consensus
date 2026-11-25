@@ -116,7 +116,6 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.Unthunkable (Unthunkable (..))
 import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
 
@@ -251,7 +250,7 @@ matchesSimpleHeader SimpleHeader{..} SimpleBlock{..} =
   SimpleStdHeader{..} = simpleHeaderStd
 
 countSimpleGenTxs :: SimpleBlock c ext -> Word64
-countSimpleGenTxs = fromIntegral . length . extractTxs
+countSimpleGenTxs = fromIntegral . length . extractAsMempoolTxs
 
 {-------------------------------------------------------------------------------
   HasHeader instance for SimpleHeader
@@ -631,16 +630,11 @@ instance
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
-  -- Every mock tx has a Leios view, so that the Mempool tests cover the
+  -- Every mock tx has a Leios hash, so that the Mempool tests cover the
   -- Mempool's index of the txs an endorser block can reference.
-  leiosTxMempoolView tx =
-    Just
-      MkLeiosTxMempoolView
-        { ltmvHash = hashLeiosTx (MkLeiosTx (Lazy.toStrict (serialise tx)))
-        , ltmvInput = MkUnthunkable tx
-        , ltmvBytes = \(MkUnthunkable t) -> Lazy.toStrict (serialise t)
-        }
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  txLeiosHash tx = hashLeiosTx . MkLeiosTx <$> txLeiosBytes tx
+  txLeiosBytes = Just . Lazy.toStrict . serialise
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
@@ -695,7 +689,7 @@ instance (Typeable p, Typeable c) => NoThunks (Validated (GenTx (SimpleBlock p c
   showTypeOf _ = show $ typeRep (Proxy @(Validated (GenTx (SimpleBlock p c))))
 
 instance HasTxs (SimpleBlock c ext) where
-  extractTxs = map mkSimpleGenTx . simpleTxs . simpleBody
+  extractAsMempoolTxs = map mkSimpleGenTx . simpleTxs . simpleBody
 
 instance Mock.HasMockTxs (GenTx (SimpleBlock p c)) where
   getMockTxs = Mock.getMockTxs . simpleGenTx

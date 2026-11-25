@@ -184,8 +184,9 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
-  leiosTxMempoolView = Ledger.nothingLeiosTxMempoolView
-  tickedLedgerMajorProtocolVersionWord16 = Ledger.fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  txLeiosHash = Ledger.nothingTxLeiosHash
+  txLeiosBytes = Ledger.nothingTxLeiosBytes
+  tickedLedgerMajorProtocolVersion = Ledger.fixedTickedLedgerMajorProtocolVersion minBound
 
 type instance Ledger.ApplyTxErr TestBlock = ()
 
