@@ -38,12 +38,13 @@ module Test.ThreadNet.Network
   , TestOutput (..)
   ) where
 
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
 import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
   , ResponderContext (..)
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -1064,7 +1065,8 @@ runThreadNetwork
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
           (psRng, rng''') = splitGen rng''
-          (lfRng, chainSyncRng) = splitGen rng'''
+          (lfRng, rng'''') = splitGen rng'''
+          (ttRng, chainSyncRng) = splitGen rng''''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1093,7 +1095,9 @@ runThreadNetwork
               , nextNewLeiosValidClaims = consumeNewLeiosValidClaims newLeiosValidClaims
               , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
-              , miniProtocolParameters = defaultMiniProtocolParameters
+              , txTierRng = ttRng
+              , miniProtocolParameters =
+                  mkDefaultMiniProtocolParameters txLogicVersion defaultNodeTxSubmissionConfig
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1

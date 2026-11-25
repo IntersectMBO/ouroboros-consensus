@@ -11,6 +11,7 @@
 -- | Implement ChainSync and BlockFetch servers on top of just the immutable DB.
 module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
 
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
 import Cardano.Network.NodeToNode
   ( NodeToNodeVersionData (..)
   , Versions (..)
@@ -167,7 +168,11 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     mkMiniProtocol miniProtocolStart miniProtocolNum limits proto =
       MiniProtocol
         { miniProtocolNum
-        , miniProtocolLimits = limits N2N.defaultMiniProtocolParameters
+        , miniProtocolLimits =
+            limits version $
+              N2N.mkDefaultMiniProtocolParameters
+                N2N.TxSubmissionLogicV1
+                defaultNodeTxSubmissionConfig
         , miniProtocolRun = ResponderProtocolOnly proto
         , miniProtocolStart
         }

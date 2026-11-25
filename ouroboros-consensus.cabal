@@ -206,6 +206,7 @@ library
     Ouroboros.Consensus.Leios.AnnounceState
     Ouroboros.Consensus.Leios.Cert
     Ouroboros.Consensus.Leios.ClosureValidation
+    Ouroboros.Consensus.Leios.FreshBytes
     Ouroboros.Consensus.Leios.NewValidClaims
     Ouroboros.Consensus.Leios.NotifyLog
     Ouroboros.Consensus.Leios.Protocol
@@ -838,6 +839,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.Summary
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
+    Test.Consensus.Leios.FreshBytes
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
@@ -2067,6 +2069,7 @@ test-suite cardano-test
   other-modules:
     Test.Consensus.Cardano.Capacity
     Test.Consensus.Cardano.DiffusionPipelining
+    Test.Consensus.Cardano.FreshMax
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.LeiosCertifiable

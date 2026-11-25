@@ -402,6 +402,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               Nothing
               -- The forge view's lead time.
               1
+              defaultTxSubmissionLogicVersion
               NoTxSubmissionInitDelay
         kernel <- initNodeKernel kernelArgs
         peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration

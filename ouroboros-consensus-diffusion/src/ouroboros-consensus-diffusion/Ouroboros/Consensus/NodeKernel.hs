@@ -29,8 +29,11 @@ import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
-  ( ConnectionId
+  ( ConnectionId (..)
   , MiniProtocolParameters (..)
+  , NodeToNodeVersion
+  , mkNodeTxDecisionPolicy
+  , txSubmissionConfigForVersion
   )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
@@ -41,6 +44,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
+import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -56,18 +60,21 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe)
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Forecast (forecastAt, forecastFor)
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
 import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisition (..)
   , LeiosAcquisitions (..)
@@ -78,6 +85,14 @@ import Ouroboros.Consensus.Leios.AnnounceState
   , onValidAnnouncement
   )
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.FreshBytes
+  ( FreshBytes
+  , addAdopted
+  , freshMaxBytesFromView
+  , maxBlockBodyBytes
+  , newFreshBytes
+  , newestFirst
+  )
 import Ouroboros.Consensus.Leios.NotifyLog
   ( NotifyLog
   , leiosOfferRelay
@@ -86,7 +101,7 @@ import Ouroboros.Consensus.Leios.NotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
-  , LeiosLedgerView
+  , LeiosLedgerView (..)
   , LeiosProtocol (..)
   )
 import Ouroboros.Consensus.Leios.TxCache (defaultLeiosTxCacheShift, newHashTableLeiosTxCache)
@@ -133,6 +148,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Kernel
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( LeiosAnnouncementAgeLimits
   , ValidAnnouncement (..)
+  , maxAnnouncementAgeSend
   , validHeaderAnnouncement
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
@@ -184,7 +200,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent (..)
   )
 import Ouroboros.Network.PeerSelection.Governor.Types
-  ( PublicPeerSelectionState
+  ( PublicPeerSelectionState (..)
   )
 import Ouroboros.Network.PeerSharing
   ( PeerSharingAPI
@@ -194,12 +210,16 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_MAX_PEERS
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
+import Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 import Ouroboros.Network.TxSubmission.Inbound.V1
   ( TxSubmissionInitDelay
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
+import Ouroboros.Network.TxSubmission.Inbound.V2
+  ( TxDecisionPolicy
+  , TxSubmissionConfig
+  )
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( PeerTxRegistry
   , SharedTxStateVar
@@ -285,6 +305,17 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ What the node relays to its downstream peers over LeiosNotify.
   , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
+  , getTxSubmissionConfig :: NodeToNodeVersion -> TxSubmissionConfig
+  -- ^ The tx-submission configuration of a connection, by its negotiated
+  -- version.
+  , getFreshBytes :: FreshBytes m
+  -- ^ The bytes the chain has freshly announced (see
+  -- 'Ouroboros.Consensus.Leios.FreshBytes'), read by diffusion's egress credit.
+  , getFreshMaxBytes :: STM m Int
+  -- ^ The most bytes one announcement can carry under the parameters one
+  -- slot past the tip ('freshMaxBytesOf'): sizes diffusion's egress credit
+  -- buckets. Read from a variable the kernel keeps current, since diffusion
+  -- asks at every charge.
   }
 
 -- | Arguments required when initializing a node
@@ -328,6 +359,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txTierRng :: StdGen
+  -- ^ Seeds the inbound tx-submission registry: the coin that draws which
+  -- inbound peers are polled for txids at full speed, and the peers' jitter.
+  -- An independent split of the node generator, like 'peerSharingRng'.
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -362,12 +397,14 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
+    , txTierRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     , systemTime
     , forgeViewLeadTime
+    , blockFetchSize
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -452,7 +489,15 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
-    peerTxRegistry <- newPeerTxRegistry
+    txDecisionPolicy <- either throwIO pure (mkNodeTxDecisionPolicy miniProtocolParameters)
+    -- fast by standing: a local root, as the governor's public state says,
+    -- asked by the counters thread once a sweep and by each joining peer
+    peerTxRegistry <-
+      newPeerTxRegistry
+        txTierRng
+        ( (\pss -> (`Set.member` localRootAddrs pss) . remoteAddress)
+            <$> StrictSTM.readTVar publicPeerSelectionStateVar
+        )
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
@@ -609,12 +654,60 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
-          (txDecisionPolicy miniProtocolParameters)
+          txDecisionPolicy
+          (txSubmissionConfigForVersion maxBound miniProtocolParameters)
           (txCountersTracer tracers)
           (txLogicTracer tracers)
           txCountersVar
           sharedTxStateVar
           peerTxRegistry
+
+    -- Each newly adopted block refills the egress credit by its size and the
+    -- size of the endorser block its header announces, once and while fresh
+    -- (see 'Ouroboros.Consensus.Leios.FreshBytes'), by the slot onset chain
+    -- selection already attached to its header. Starts at the tip, so a
+    -- restart refills nothing.
+    freshBytes <-
+      newFreshBytes (maxAnnouncementAgeSend leiosAnnouncementAgeLimits) . AF.headSlot
+        =<< atomically (ChainDB.getCurrentChain chainDB)
+    void $
+      forkLinkedWatcher registry "NodeKernel.freshBytes" $
+        Watcher
+          { wFingerprint = AF.headPoint
+          , wInitial = Nothing
+          , wReader = ChainDB.getCurrentChainWithTime chainDB
+          , wNotify = \chain -> do
+              now <- systemTimeCurrent systemTime
+              let ebBytes hdr =
+                    maybe 0 (fromIntegral . announcementEbSize) $
+                      getLeiosAnnouncement
+                        (Proxy @(BlockProtocol blk))
+                        (validateView (configBlock cfg) hdr)
+                  aged HeaderWithTime{hwtHeader = hdr, hwtSlotRelativeTime = onset} =
+                    ( blockSlot hdr
+                    , now `diffRelTime` onset
+                    , fromIntegral (getSizeInBytes (blockFetchSize hdr)) + ebBytes hdr
+                    )
+              void $ atomically $ addAdopted freshBytes (map aged (newestFirst chain))
+          }
+
+    -- The most one announcement can carry follows the ledger: a parameter
+    -- change arrives with a block, so it is recomputed when the ledger's tip
+    -- moves, not at each of diffusion's reads.
+    freshMaxBytesVar <-
+      newTVarIO . freshMaxBytesOf (configLedger cfg) . ledgerState
+        =<< atomically (ChainDB.getCurrentLedger chainDB)
+    void $
+      forkLinkedWatcher registry "NodeKernel.freshMaxBytes" $
+        Watcher
+          { wFingerprint = ledgerTipPoint . ledgerState
+          , wInitial = Nothing
+          , wReader = ChainDB.getCurrentLedger chainDB
+          , wNotify = \ledger ->
+              atomically $
+                writeTVar freshMaxBytesVar $
+                  freshMaxBytesOf (configLedger cfg) (ledgerState ledger)
+          }
 
     return
       NodeKernel
@@ -638,12 +731,15 @@ initNodeKernel
         , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
-        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getTxDecisionPolicy = txDecisionPolicy
+        , getTxSubmissionConfig = (`txSubmissionConfigForVersion` miniProtocolParameters)
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState
         , getLeiosNotifyLog = leiosNotifyLog
         , getLeiosFetchKernel = leiosFetchKernel
+        , getFreshBytes = freshBytes
+        , getFreshMaxBytes = readTVar freshMaxBytesVar
         }
    where
     blockForgingController ::
@@ -1089,3 +1185,20 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
+
+-- | 'freshMaxBytesFromView' under the parameters one slot past the ledger's
+-- tip; the block body alone when the view cannot be forecast. A function of
+-- the ledger state alone, so the kernel recomputes it only when that changes.
+freshMaxBytesOf ::
+  forall blk mk.
+  LedgerSupportsProtocol blk =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  Int
+freshMaxBytesOf cfg st =
+  case runExcept (forecastFor forecast slot) of
+    Right lv -> freshMaxBytesFromView (Proxy @(BlockProtocol blk)) lv
+    Left _ -> maxBlockBodyBytes
+ where
+  forecast = ledgerViewForecastAt cfg st
+  slot = withOrigin (SlotNo 0) succ (forecastAt forecast)

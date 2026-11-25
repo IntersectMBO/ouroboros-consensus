@@ -78,11 +78,10 @@ import Cardano.Network.NodeToClient
 import Cardano.Network.NodeToNode
   ( DiffusionMode (..)
   , ExceptionInHandler (..)
-  , MiniProtocolParameters
+  , MiniProtocolParameters (..)
   , NodeToNodeVersionData (..)
   , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
@@ -119,6 +118,7 @@ import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisitions (..), newLeiosAcquisitions)
 import Ouroboros.Consensus.Leios.Cert (LeiosClaim)
+import Ouroboros.Consensus.Leios.FreshBytes (readFreshBytes)
 import Ouroboros.Consensus.Leios.NewValidClaims (NewLeiosValidClaims (..), mkNewLeiosValidClaims)
 import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -645,6 +645,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
                   rnForgeViewLeadTime
+                  rnTxSubmissionLogicVersion
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -686,6 +687,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                    , Cardano.Diffusion.freshBytes = readFreshBytes (getFreshBytes nodeKernel)
+                    , Cardano.Diffusion.freshMaxBytes = getFreshMaxBytes nodeKernel
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
@@ -1056,6 +1059,7 @@ mkNodeKernelArgs ::
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
   DiffTime ->
+  TxSubmissionLogicVersion ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -1083,10 +1087,17 @@ mkNodeKernelArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
   forgeViewLeadTime
+  txLogicVersion
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, lfRng) = splitGen rng'
+          (psRng, rng'') = splitGen rng'
+          (lfRng, rng''') = splitGen rng''
+          (ttRng, _) = splitGen rng'''
+          miniProtocolParameters =
+            mkDefaultMiniProtocolParameters
+              txLogicVersion
+              Diffusion.defaultNodeTxSubmissionConfig
       return
         NodeKernelArgs
           { tracers
@@ -1106,8 +1117,9 @@ mkNodeKernelArgs
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
           , forgeViewLeadTime
-          , miniProtocolParameters = defaultMiniProtocolParameters
-          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , miniProtocolParameters
+          , blockFetchConfiguration =
+              Diffusion.mkDefaultBlockFetchConfiguration miniProtocolParameters bfcSalt
           , gsmArgs =
               GsmNodeKernelArgs
                 { gsmAntiThunderingHerd
@@ -1122,6 +1134,7 @@ mkNodeKernelArgs
           , nextNewLeiosValidClaims
           , leiosFetchRng = lfRng
           , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
+          , txTierRng = ttRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
@@ -1144,7 +1157,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
             blockFetchPipeliningMax =
               min
                 (blockFetchPipeliningMax miniProtocolParameters)
-                (blockFetchPipeliningMax defaultMiniProtocolParameters)
+                (blockFetchPipeliningMax defaultParameters)
           }
     , blockFetchConfiguration =
         blockFetchConfiguration
@@ -1157,6 +1170,10 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
     }
  where
   NodeKernelArgs{..} = nodeKernelArgs
+  defaultParameters =
+    mkDefaultMiniProtocolParameters
+      (txSubmissionLogicVersion miniProtocolParameters)
+      (nodeTxSubmissionConfig miniProtocolParameters)
 
 {-------------------------------------------------------------------------------
   Arguments for use in the real node

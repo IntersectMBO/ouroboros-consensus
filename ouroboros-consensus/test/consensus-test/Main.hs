@@ -12,6 +12,7 @@ import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
 import qualified Test.Consensus.HeaderValidation (tests)
 import qualified Test.Consensus.Ledger.Tables.Diff (tests)
+import qualified Test.Consensus.Leios.FreshBytes (tests)
 import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
@@ -57,6 +58,7 @@ tests =
         , Test.Consensus.Committee.TestCrypto.tests
         ]
     , Test.Consensus.HeaderValidation.tests
+    , testGroup "Leios" [Test.Consensus.Leios.FreshBytes.tests]
     , Test.Consensus.MiniProtocol.BlockFetch.Client.tests
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
     , Test.Consensus.MiniProtocol.ChainSync.Client.tests

@@ -11,7 +11,12 @@ module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 import Cardano.Crypto.DSIGN.Class (signDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId (..), LeiosSigningKey)
-import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
+import Cardano.Network.NodeToNode
+  ( MiniProtocolParameters
+  , TxSubmissionLogicVersion (..)
+  , mkDefaultMiniProtocolParameters
+  )
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadAsync
@@ -700,3 +705,9 @@ nodeRunsLeiosNotify ntnVersion = withNode $ \node ->
   versionData = nodeVersionData ntnVersion
   runsLeiosNotify bundle = case withHot bundle of
     WithHot protocols -> leiosNotifyMiniProtocolNum `elem` map miniProtocolNum protocols
+
+-- | The node's default mini-protocol parameters, with the tx-submission logic
+-- the Leios testnet runs.
+defaultMiniProtocolParameters :: MiniProtocolParameters
+defaultMiniProtocolParameters =
+  mkDefaultMiniProtocolParameters TxSubmissionLogicV1 defaultNodeTxSubmissionConfig

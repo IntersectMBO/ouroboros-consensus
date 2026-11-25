@@ -45,6 +45,18 @@ constraints:
 
 -- master past PR #695: proofs of possession use the IETF BLS_POP_ DST and the BLS
 -- DSTs take no signing context, as in the Leios prototype nodes.
+-- ouroboros-network karknu/leios.main: the egress scheduler and the bounded
+-- tx-submission sweep, with version 16 read as the Leios testnet reads it
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: e7579e4315530b3420cb8a7c728c3f1d5b81a5fc
+  --sha256: sha256-jaSmhpueLsXLdY/3Qry2BUmnwgMKQTv8pqKruWcP7bc=
+  subdir:
+    network-mux
+    ouroboros-network
+    cardano-diffusion
+
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-base

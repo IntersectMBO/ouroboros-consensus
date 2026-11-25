@@ -3,6 +3,7 @@ module Main (main) where
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
 import qualified Test.Consensus.Cardano.Capacity (tests)
 import qualified Test.Consensus.Cardano.DiffusionPipelining
+import qualified Test.Consensus.Cardano.FreshMax
 import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.LeiosCertifiable
@@ -48,6 +49,7 @@ tests =
     , Test.Consensus.Cardano.SupportedNetworkProtocolVersion.tests
     , Test.Consensus.Cardano.SupportsSanityCheck.tests
     , Test.Consensus.Cardano.LeiosCertifiable.tests
+    , Test.Consensus.Cardano.FreshMax.tests
     , Test.ThreadNet.AllegraMary.tests
     , Test.ThreadNet.Cardano.tests
     , Test.ThreadNet.Leios.tests
