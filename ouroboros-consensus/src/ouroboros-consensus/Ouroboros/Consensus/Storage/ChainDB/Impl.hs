@@ -326,6 +326,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbAcquiredEbs = varAcquiredEbs
             , cdbLeiosValidClaims = varLeiosValidClaims
             , cdbOnNewLeiosValidClaim = Args.cdbsOnNewLeiosValidClaim cdbSpecificArgs
+            , cdbDelaySnapshots = Args.cdbsDelaySnapshots cdbSpecificArgs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env

@@ -14,13 +14,18 @@ module Ouroboros.Consensus.Node.GSM
   , GsmNodeKernelArgs (..)
   , GsmState (..)
   , GsmView (..)
+  , HasBeenCaughtUp
   , MarkerFileView (..)
   , WrapDurationUntilTooOld (..)
 
     -- * Auxiliaries
   , TraceGsmEvent (..)
+  , awaitHasBeenCaughtUp
   , gsmStateToLedgerJudgement
+  , hasBeenCaughtUp
   , initializationGsmState
+  , newHasBeenCaughtUp
+  , recordGsmState
 
     -- * Constructors
   , realDurationUntilTooOld
@@ -41,6 +46,7 @@ import Control.Monad.Class.MonadSTM
   , atomically
   , check
   , orElse
+  , retry
   )
 import Control.Monad.Class.MonadThrow (MonadThrow)
 import Control.Monad.Class.MonadTimer (threadDelay)
@@ -562,4 +568,38 @@ data GsmNodeKernelArgs m blk = GsmNodeKernelArgs
   , gsmMarkerFileView :: MarkerFileView m
   , gsmMinCaughtUpDuration :: NominalDiffTime
   -- ^ See 'minCaughtUpDuration'
+  , gsmHasBeenCaughtUp :: HasBeenCaughtUp m
+  -- ^ Where the NodeKernel records every 'GsmState' it enters
   }
+
+{-------------------------------------------------------------------------------
+  Whether the node has been caught up
+-------------------------------------------------------------------------------}
+
+-- | Whether the GSM has been in 'CaughtUp' at any point since the node started.
+--
+-- Unlike the 'GsmState', this does not go back once the node is caught up: a
+-- node that loses its peers, or is eclipsed, leaves 'CaughtUp' but has still
+-- been caught up.
+--
+-- It is not known until the NodeKernel has determined the initial 'GsmState'
+-- (see 'initializationGsmState'), which happens after the ChainDB was opened;
+-- 'awaitHasBeenCaughtUp' blocks until then.
+newtype HasBeenCaughtUp m = HasBeenCaughtUp (StrictTVar m (Maybe Bool))
+
+newHasBeenCaughtUp :: MonadSTM m => m (HasBeenCaughtUp m)
+newHasBeenCaughtUp = HasBeenCaughtUp <$> StrictSTM.newTVarIO Nothing
+
+-- | Record that the GSM is in the given state.
+recordGsmState :: MonadSTM m => HasBeenCaughtUp m -> GsmState -> STM m ()
+recordGsmState (HasBeenCaughtUp var) gsmState =
+  StrictSTM.modifyTVar var $ \wasCaughtUp ->
+    Just $! wasCaughtUp == Just True || gsmState == CaughtUp
+
+-- | Whether the node has been caught up, or 'Nothing' if that is not known yet.
+hasBeenCaughtUp :: MonadSTM m => HasBeenCaughtUp m -> STM m (Maybe Bool)
+hasBeenCaughtUp (HasBeenCaughtUp var) = StrictSTM.readTVar var
+
+-- | Whether the node has been caught up, blocking until that is known.
+awaitHasBeenCaughtUp :: MonadSTM m => HasBeenCaughtUp m -> STM m Bool
+awaitHasBeenCaughtUp var = hasBeenCaughtUp var >>= maybe retry pure

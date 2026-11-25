@@ -112,7 +112,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node
-  ( mkNodeKernelArgs
+  ( delaySnapshotsOnceCaughtUp
+  , mkNodeKernelArgs
   , mkNodeToNodeApps
   , mkNodeToNodeInitiatorResponderVersions
   , nodeKernelArgsEnforceInvariants
@@ -322,6 +323,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
   let genesisConfig = disableGenesisConfig{gcCSJConfig = nodeConfigCsj cfg}
   (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs genesisConfig
   let seeds = configSeeds cfg
+  hasBeenCaughtUp <- GSM.newHasBeenCaughtUp
   leiosAcquisitions <- newLeiosAcquisitions
   newLeiosValidClaims <- mkNewLeiosValidClaims
   validClaimsSinceStart <- newTVarIO Map.empty
@@ -349,6 +351,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
             ChainDB.defaultArgs
             ( (if nodeConfigLastShutDownWasClean cfg then id else ChainDB.ensureValidateAll)
                 . updateChainDbArgs
+                . delaySnapshotsOnceCaughtUp hasBeenCaughtUp
             )
       )
       ChainDB.closeDB
@@ -395,6 +398,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                     CSJDisabled -> True
                     CSJEnabled{} -> False
                 }
+              hasBeenCaughtUp
               (pure DontUseBootstrapPeers)
               publicPeerSelectionStateVar
               genesisArgs
