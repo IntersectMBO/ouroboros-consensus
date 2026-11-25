@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Shelley.Eras
     -- * Shelley-based era
   , ConwayEraGovDict (..)
   , LeiosEraDict (..)
+  , LeiosEraTx (..)
   , ShelleyBasedEra (..)
 
     -- * Convenience functions
@@ -68,7 +69,8 @@ import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( WhetherToIntervene (..)
+  ( LeiosTxMempoolView (..)
+  , WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
@@ -77,6 +79,7 @@ import Ouroboros.Consensus.Peras.Params
   , pattern NoPerasEnabled
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Ouroboros.Consensus.Util.Unthunkable (Unthunkable (..))
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -155,7 +158,23 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict :: (LeiosEraTx era, DijkstraEraBlockBody era) => LeiosEraDict era
+
+-- | What Leios needs of an era's transactions.
+class LeiosEraTx era where
+  -- | Forging an endorser block and taking transactions from the mempool both
+  -- use this, so a forged endorser block references the very bytes the node
+  -- offers.
+  leiosEraTxMempoolView :: Core.Tx TopTx era -> LeiosTxMempoolView
+
+-- | The ledger memoizes 'hashAnnotated'.
+instance LeiosEraTx DijkstraEra where
+  leiosEraTxMempoolView tx =
+    MkLeiosTxMempoolView
+      { ltmvHash = extractHash (hashAnnotated tx)
+      , ltmvInput = MkUnthunkable tx
+      , ltmvBytes = \(MkUnthunkable t) -> originalBytes t
+      }
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =

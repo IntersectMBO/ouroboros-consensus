@@ -104,6 +104,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosTx (..), hashLeiosTx)
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
@@ -115,6 +116,7 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Util.Unthunkable (Unthunkable (..))
 import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
 
@@ -628,6 +630,17 @@ instance
     LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
+
+  -- Every mock tx has a Leios view, so that the Mempool tests cover the
+  -- Mempool's index of the txs an endorser block can reference.
+  leiosTxMempoolView tx =
+    Just
+      MkLeiosTxMempoolView
+        { ltmvHash = hashLeiosTx (MkLeiosTx (Lazy.toStrict (serialise tx)))
+        , ltmvInput = MkUnthunkable tx
+        , ltmvBytes = \(MkUnthunkable t) -> Lazy.toStrict (serialise t)
+        }
+  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32

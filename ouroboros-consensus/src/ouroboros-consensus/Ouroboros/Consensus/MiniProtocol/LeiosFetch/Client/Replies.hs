@@ -22,12 +22,14 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlock
   , processLeiosBlockTxs
   , acquireForgedEb
+  , noMempoolTxsAndVersion0
   ) where
 
 import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (fold, for_, toList)
@@ -67,6 +69,7 @@ import Ouroboros.Consensus.Leios.Types
   , EndorserBlockHash
   , ForgedEndorserBlock (..)
   , LeiosEbByteSizes (..)
+  , LeiosMempoolTxs (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , Serialised (..)
@@ -101,6 +104,8 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosFetch.Jobs as Jobs
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( FetchArrivalBytes
+  , LeiosBlockTxSources (..)
+  , LeiosTxCacheInsertBodySummary
   , TraceLeiosFetchClientEvent (..)
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -112,7 +117,6 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFills
   , Promise (..)
-  , awaitAll
   )
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
@@ -148,6 +152,9 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcSystemTime :: !(SystemTime m)
   -- ^ For reporting how long after its point's slot began an endorser block,
   -- or its transactions, were acquired.
+  , lfcMempoolTxs :: !(Set TxHash -> m (LeiosMempoolTxs ByteString))
+  -- ^ For the subset of these txs the node's Mempool currently holds, their
+  -- bytes; and the major protocol version the Mempool validated them all under.
   , lfcTracer :: !(Tracer m (TraceLeiosFetchClientEvent peer))
   }
 
@@ -256,6 +263,9 @@ nextLeiosFetchJob ctx peer reqsVar =
 --
 -- The hash is checked before the bytes are decoded. They decode at Dijkstra's
 -- ledger version, the only era with endorser blocks.
+--
+-- The body is written with those of its transactions the node holds locally
+-- ('writeBodyWithLocalTxs'), so it fetches only the rest.
 processLeiosBlock ::
   forall peer m.
   (Ord peer, IOLike m) =>
@@ -293,9 +303,9 @@ processLeiosBlock ctx peer req bytes = do
           -- Register the body's transactions in the tx cache, and read where
           -- some recent point holds any of them, so that the body
           -- write copies those rather than us fetching them again.
-          (_summary, fills) <-
+          (summary, fills) <-
             insertBodyAndFoldl' lfcTxCache point (packEndorserBlock eb) Map.empty snocLocated
-          pure (cleaned, BodyToWrite eb fills)
+          pure (cleaned, BodyToWrite eb fills summary)
   void $ tryPutMVar lfcReady ()
   case disposition of
     BodyTooBig exn -> do
@@ -303,11 +313,11 @@ processLeiosBlock ctx peer req bytes = do
         TraceLeiosFetchClientBlockArrived peer point (fetchArrivalInvalid ebBytesSize)
       throwIO exn
     BodyDiscarded arrival -> traceWith lfcTracer $ TraceLeiosFetchClientBlockArrived peer point arrival
-    BodyToWrite eb localFills -> do
+    BodyToWrite eb localFills summary -> do
       -- Settled only once the write lands, since the settle needs the offsets
       -- the point then holds. The client takes no other reply from this peer
       -- meanwhile.
-      heldOffs <- await =<< writeEbBody lfcWriter point eb localFills
+      heldOffs <- writeBodyWithLocalTxs ctx point eb localFills summary
       settleBody ctx peer point eb heldOffs
   -- Checked last, so that the body is still taken: throwing it away would let
   -- a peer deny us an endorser block just by lowballing its own offer.
@@ -319,7 +329,6 @@ processLeiosBlock ctx peer req bytes = do
     { lfcOutstanding
     , lfcReady
     , lfcTxCache
-    , lfcWriter
     , lfcTracer
     } = ctx
 
@@ -346,7 +355,8 @@ data BodyDisposition
   | -- | No longer wanted, its bytes classified so.
     BodyDiscarded !FetchArrivalBytes
   | -- | Wanted, so written, with these fills, and traced once that settles.
-    BodyToWrite !EndorserBlock !LocalFills
+    -- Also the LeiosTxCache's summary of taking it in, if it did.
+    BodyToWrite !EndorserBlock !LocalFills !(Maybe LeiosTxCacheInsertBodySummary)
 
 -- | Record the body as acquired at its point, now that its write has settled
 -- and holds the txs at these offsets,
@@ -421,17 +431,97 @@ settleBody ctx peer point eb heldOffs = do
   arrived bucket =
     TraceLeiosFetchClientBlockArrived peer point (bucket (encodeEndorserBlockSize eb))
 
+-- | Write the body at this point together with the txs it references that the
+-- node holds locally, so that it fetches none of them: txs the LeiosDB holds at
+-- other points (the 'LocalFills'), and txs its mempool holds.
+--
+-- A tx the mempool holds is written from there rather than filled, which is
+-- better in every way: the mempool validated it under a recent major protocol
+-- version, which the LeiosTxCache then records, and its bytes are already in
+-- memory, whereas 'writeEbBody' would have to copy a fill's bytes from another
+-- point, which might have been garbage-collected already.
+--
+-- The mempool's txs go to 'writeEbBody' alongside the fills, rather than to
+-- 'writeTxs', which is for txs that have passed the MsgLeiosBlockTxs commitment
+-- check. Like a fill, a tx from the mempool has not been checked against this
+-- body: it might not have the length the body declares for it, for example.
+-- 'writeEbBody' writes it, as it writes a fill, only at the size the body
+-- declares.
+--
+-- Returns, once the write lands, the offsets at which the point then holds its
+-- txs.
+--
+-- It traces where the txs come from, along with the LeiosTxCache's summary of
+-- taking the body in, if it did.
+writeBodyWithLocalTxs ::
+  IOLike m =>
+  LeiosFetchClientContext m peer ->
+  LeiosPoint ->
+  EndorserBlock ->
+  LocalFills ->
+  Maybe LeiosTxCacheInsertBodySummary ->
+  m (Set TxOffset)
+writeBodyWithLocalTxs ctx point eb localFills summary = do
+  MkLeiosMempoolTxs inMempool protVer <- lfcMempoolTxs (Set.fromList (map fst refs))
+  let fromMempool =
+        [ (off, txHash, bytes)
+        | (off, (txHash, _size)) <- zip [0 ..] refs
+        , Just bytes <- [Map.lookup txHash inMempool]
+        ]
+      mempoolOffs = Set.fromList [off | (off, _, _) <- fromMempool]
+      fills = localFills `Map.withoutKeys` mempoolOffs
+  traceWith lfcTracer $
+    TraceLeiosFetchClientBlockTxSources
+      point
+      MkLeiosBlockTxSources
+        { btsLocalFills = length fills
+        , btsMempool = length fromMempool
+        , btsRemaining = length refs - length fills - length fromMempool
+        }
+      summary
+  heldOffs <-
+    await
+      =<< writeEbBody
+        lfcWriter
+        point
+        eb
+        fills
+        (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- fromMempool])
+  -- After the write, so that the LeiosTxCache holds a tx only once the LeiosDB
+  -- holds it (even though that's not fundamentally required). 'settleBody'
+  -- lands the rest of what the point holds.
+  _ <-
+    insertLandedTxs
+      lfcTxCache
+      point
+      [ MkLandedTx off txHash (fromIntegral (BS.length bytes)) (TxValidated protVer)
+      | (off, txHash, bytes) <- fromMempool
+      , Set.member off heldOffs
+      ]
+  pure heldOffs
+ where
+  MkLeiosFetchClientContext{lfcMempoolTxs, lfcTxCache, lfcWriter, lfcTracer} = ctx
+  refs = endorserBlockReferences eb
+
+-- | 'lfcMempoolTxs' for a node that takes no txs from a mempool: none, with
+-- version 0, which therefore describes no tx.
+noMempoolTxsAndVersion0 :: Applicative m => Set TxHash -> m (LeiosMempoolTxs ByteString)
+noMempoolTxsAndVersion0 _ = pure (MkLeiosMempoolTxs Map.empty minBound)
+
 -- | Acquire an endorser block the node's own forge produced in this election,
 -- as one that arrived with no peer: take its body into the LeiosTxCache, write
--- it and all its txs, and once both writes land, record those txs in the
--- LeiosTxCache as validated, hold it with no job left ('holdForgedEb') and
+-- it together with all its txs, and once the write lands, record those txs in
+-- the LeiosTxCache as validated, hold it with no job left ('holdForgedEb') and
 -- emit the acquisitions not yet emitted at its point.
 --
--- Its bytes are not checked: the forge built the body from these very txs. No
--- tx is filled from another point, since all of them are written.
+-- Its txs go to 'writeEbBody' with the body, as the mempool's txs do in
+-- 'writeBodyWithLocalTxs', since they have not passed the MsgLeiosBlockTxs
+-- commitment check that 'writeTxs' is for. Their bytes are not checked: the
+-- forge built the body from these very txs. No tx is filled from another
+-- point, since all of them are written.
 --
--- So 'AcquiredEb', and with it the node's offer of the body, waits for the txs
--- write as well as the body's.
+-- So 'AcquiredEb', and with it the node's offer of the body, waits for the write
+-- of the txs as well as the body.
 acquireForgedEb ::
   IOLike m =>
   LeiosFetchClientContext m peer ->
@@ -440,13 +530,11 @@ acquireForgedEb ::
   m ()
 acquireForgedEb ctx elId forged = do
   _ <- insertBody lfcTxCache point (packEndorserBlock eb)
-  bodyWritten <- writeEbBody lfcWriter point eb mempty
-  txsWritten <- writeTxs lfcWriter point (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
-  awaitAll [void bodyWritten, txsWritten]
+  written <-
+    writeEbBody lfcWriter point eb mempty (Map.fromList (zip [0 ..] (toList (forgedEbTxs forged))))
+  _ <- await written
   -- The write of these txs has landed at this point: record them, as fill
-  -- sources for later endorser blocks referencing the same txs. The point
-  -- holds them all: the forge built the body from these very txs, so none is
-  -- of another size than it declares.
+  -- sources for later endorser blocks referencing the same txs.
   _ <-
     insertLandedTxs
       lfcTxCache
@@ -549,7 +637,7 @@ processLeiosBlockTxs ctx peer req@(MkLeiosBlockTxsRequest point jobs) txs = do
     =<< writeTxs lfcWriter point (Map.fromList [(off, bytes) | (off, _txHash, bytes) <- toIngest])
   -- After the write, so that the LeiosTxCache holds a tx only once the LeiosDB
   -- holds it, and can offer it as a fill source for later endorser blocks
-  -- referencing the same txs.
+  -- referencing the same txs (even though that's not fundamentally required).
   arrival <-
     insertLandedTxs
       lfcTxCache

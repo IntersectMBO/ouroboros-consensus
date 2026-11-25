@@ -304,6 +304,19 @@ instance
     f idx (FlipTickedLedgerState tlst) =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
+  leiosTxMempoolView =
+    hcollapse
+      . hcmap proxySingle (K . leiosTxMempoolView)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
+  tickedLedgerMajorProtocolVersionWord16 (TickedHardForkLedgerState _transition hardForkState) =
+    hcollapse $
+      hcmap
+        proxySingle
+        (\(FlipTickedLedgerState tlst) -> K (tickedLedgerMajorProtocolVersionWord16 tlst))
+        hardForkState
+
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasurePhase1 (HardForkBlock xs) = HardForkTxMeasurePhase1 xs
   type TxMeasurePhase2 (HardForkBlock xs) = HardForkTxMeasurePhase2 xs
