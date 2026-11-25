@@ -177,7 +177,17 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     results <-
       mapM
         ( \bf ->
-            withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf (\_ _ _ -> pure ()) currentSlot
+            withEarlyExit $
+              forge
+                nullTracer
+                nullTracer
+                cfg
+                chainDB
+                mempool
+                bf
+                (\_ -> pure Nothing)
+                (\_ _ _ -> pure ())
+                currentSlot
         )
         blockForging
     pure $ any isJust results
