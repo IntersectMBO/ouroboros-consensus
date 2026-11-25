@@ -25,6 +25,7 @@
 -- ouroboros-consensus; ouroboros-consensus-cardano should just be "glue code".
 module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (..)
+  , GenTxInBlock (..)
   , SL.ApplyTxError (..)
   , TxId (..)
   , DijkstraEbMeasure (..)
@@ -96,7 +97,6 @@ import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
-import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState (esSnapshotsL, nesEsL)
@@ -142,6 +142,15 @@ import Ouroboros.Network.Tx (HasRawTxId (..))
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(SL.MempoolTx era)
   deriving stock Generic
+
+newtype instance GenTxInBlock (ShelleyBlock proto era) = ShelleyTxInBlock (Tx TopTx era)
+  deriving stock Generic
+
+deriving instance ShelleyBasedEra era => Eq (GenTxInBlock (ShelleyBlock proto era))
+
+deriving instance ShelleyBasedEra era => Show (GenTxInBlock (ShelleyBlock proto era))
+
+deriving newtype instance ShelleyBasedEra era => NoThunks (GenTxInBlock (ShelleyBlock proto era))
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
 
@@ -288,14 +297,16 @@ instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era)
   getRawTxId = toRawTxIdHash
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
-  extractAsMempoolTxs =
-    map (mkShelleyTx . UnsafeMkMempoolTx)
+  extractTxs =
+    map ShelleyTxInBlock
       . blockBodyToTxList
       . SL.blockBody
       . shelleyBlockRaw
    where
     blockBodyToTxList :: BlockBody era -> [Tx TopTx era]
     blockBodyToTxList blockBody = toList $ blockBody ^. txSeqBlockBodyL
+
+  txInBlockToMempoolTx (ShelleyTxInBlock tx) = mkShelleyTx (eraTxInBlockToMempoolTx tx)
 
 {-------------------------------------------------------------------------------
   Serialisation

@@ -53,7 +53,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   )
 import Ouroboros.Consensus.HardFork.Combinator.State (Current (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (extractAsMempoolTxs)
+import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -228,7 +228,7 @@ prop_simple_cardano_convergence
     pga =
       PropGeneralArgs
         { pgaBlockProperty = const $ property True
-        , pgaCountTxs = fromIntegral . length . extractAsMempoolTxs
+        , pgaCountTxs = fromIntegral . length . extractTxs
         , pgaExpectedCannotForge = noExpectedCannotForges
         , pgaFirstBlockNo = 1
         , pgaFixedMaxForkLength = Just maxForkLength

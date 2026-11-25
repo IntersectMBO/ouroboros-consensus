@@ -170,6 +170,7 @@ deriving via IsomorphicUnary NP CodecConfig instance Isomorphic CodecConfig
 deriving via IsomorphicUnary NP StorageConfig instance Isomorphic StorageConfig
 
 deriving via IsomorphicUnary NS GenTx instance Isomorphic GenTx
+deriving via IsomorphicUnary NS GenTxInBlock instance Isomorphic GenTxInBlock
 deriving via IsomorphicUnary NS Header instance Isomorphic Header
 deriving via IsomorphicUnary NS I instance Isomorphic I
 deriving via IsomorphicUnary NS WrapCannotForge instance Isomorphic WrapCannotForge

@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   ( isHardForkNodeToNodeEnabled
   )
-import Ouroboros.Consensus.Ledger.SupportsMempool (extractAsMempoolTxs)
+import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -208,7 +208,7 @@ prop_simple_allegraAlonzo_convergence
     pga =
       PropGeneralArgs
         { pgaBlockProperty = const $ property True
-        , pgaCountTxs = fromIntegral . length . extractAsMempoolTxs
+        , pgaCountTxs = fromIntegral . length . extractTxs
         , pgaExpectedCannotForge = noExpectedCannotForges
         , pgaFirstBlockNo = 0
         , pgaFixedMaxForkLength = Just maxForkLength

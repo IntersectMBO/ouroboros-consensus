@@ -13,6 +13,7 @@
 module Ouroboros.Consensus.Byron.Ledger.Mempool
   ( -- * Mempool integration
     GenTx (..)
+  , GenTxInBlock (..)
   , TxId (..)
   , Validated (..)
 
@@ -106,6 +107,10 @@ data instance GenTx ByronBlock
   deriving NoThunks via InspectHeapNamed "GenTx ByronBlock" (GenTx ByronBlock)
 
 instance ShowProxy (GenTx ByronBlock)
+
+-- Byron uses the same payloads in blocks and submissions.
+newtype instance GenTxInBlock ByronBlock = ByronTxInBlock (GenTx ByronBlock)
+  deriving (Eq, Show)
 
 newtype instance Validated (GenTx ByronBlock) = ValidatedByronTx
   { forgetValidatedByronTx :: GenTx ByronBlock
@@ -229,11 +234,11 @@ instance HasRawTxId (TxId (GenTx ByronBlock)) where
   getRawTxId = toRawTxIdHash
 
 instance HasTxs ByronBlock where
-  extractAsMempoolTxs blk = case byronBlockRaw blk of
+  extractTxs blk = case byronBlockRaw blk of
     -- EBBs don't contain transactions
     CC.ABOBBoundary _ebb -> []
     CC.ABOBBlock regularBlk ->
-      fromMempoolPayload
+      ByronTxInBlock . fromMempoolPayload
         <$> maybeToList proposal <> votes <> dlgs <> txs
      where
       body = CC.blockBody regularBlk
@@ -242,6 +247,8 @@ instance HasTxs ByronBlock where
       proposal = CC.MempoolUpdateProposal <$> Update.payloadProposal (CC.bodyUpdatePayload body)
       votes = CC.MempoolUpdateVote <$> Update.payloadVotes (CC.bodyUpdatePayload body)
       dlgs = CC.MempoolDlg <$> Delegation.getPayload (CC.bodyDlgPayload body)
+
+  txInBlockToMempoolTx (ByronTxInBlock tx) = tx
 
 {-------------------------------------------------------------------------------
   Conversion to and from 'AMempoolPayload'
@@ -401,4 +408,4 @@ decodeByronApplyTxError = fromByronCBOR
 
 -- | Count all (generalized) transactions in the block
 countByronGenTxs :: ByronBlock -> Word64
-countByronGenTxs = fromIntegral . length . extractAsMempoolTxs
+countByronGenTxs = fromIntegral . length . extractTxs
