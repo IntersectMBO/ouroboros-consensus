@@ -43,6 +43,7 @@ module Ouroboros.Consensus.Protocol.Praos
   , PraosCannotForge (..)
   , PraosFields (..)
   , PraosIsLeader (..)
+  , PolyPraosCanBeLeader (..)
   , PraosParams (..)
   , PraosToSign (..)
   , SerialisePraosState
@@ -215,7 +216,7 @@ instance PraosCrypto c => PerasProtocol (Praos c) where
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PolyPraosState (Praos c)
   type IsLeader (Praos c) = PraosIsLeader c
-  type CanBeLeader (Praos c) = PraosCanBeLeader c
+  type CanBeLeader (Praos c) = PolyPraosCanBeLeader (Praos c) c
   type TiebreakerView (Praos c) = PraosTiebreakerView c
   type LedgerView (Praos c) = Views.PolyPraosLedgerView (Praos c)
   type ValidationErr (Praos c) = PolyPraosValidationErr (Praos c) c
