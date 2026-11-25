@@ -1723,6 +1723,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Query
     Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
+    Ouroboros.Consensus.Shelley.Leios
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
