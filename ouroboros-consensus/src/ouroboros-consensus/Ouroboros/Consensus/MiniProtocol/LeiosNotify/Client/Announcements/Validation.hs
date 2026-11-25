@@ -390,6 +390,13 @@ data ValidAnnouncement blk = MkValidAnnouncement
   -- ^ The ledger's bounds on the announced endorser block, as of the
   -- announcement's slot: what a receiving node holds an offer at its point to.
   }
+  deriving stock Generic
+
+deriving anyclass instance NoThunks (Header blk) => NoThunks (ValidAnnouncement blk)
+
+-- | The same announcement, whenever it arrived.
+instance HasHeader (Header blk) => Eq (ValidAnnouncement blk) where
+  a == b = announcingHeader a == announcingHeader b
 
 -- | How old an announcement may be, by the wall-clock onset of its slot.
 --
