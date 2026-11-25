@@ -68,6 +68,7 @@ import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolLimits (..)
+  , DirectionalLimits (..)
   , MiniProtocolWithExpandedCtx
   , RunMiniProtocolWithExpandedCtx
   , StartOnDemandOrEagerly (..)
@@ -165,7 +166,7 @@ leiosFetchMiniProtocol run =
   MiniProtocol
     { miniProtocolNum = leiosFetchMiniProtocolNum
     , miniProtocolStart = StartOnDemand
-    , miniProtocolLimits = leiosFetchProtocolLimits
+    , miniProtocolLimits = undefined
     , miniProtocolRun = run
     }
 

@@ -262,7 +262,7 @@ leiosNotifyMiniProtocol run =
   MiniProtocol
     { miniProtocolNum = leiosNotifyMiniProtocolNum
     , miniProtocolStart = StartOnDemand
-    , miniProtocolLimits = leiosNotifyProtocolLimits
+    , miniProtocolLimits = undefined
     , miniProtocolRun = run
     }
 

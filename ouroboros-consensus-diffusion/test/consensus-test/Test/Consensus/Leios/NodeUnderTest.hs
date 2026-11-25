@@ -404,6 +404,7 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
               genesisArgs
               DiffusionPipeliningOn
               Nothing
+              defaultTxSubmissionLogicVersion
               NoTxSubmissionInitDelay
         kernel <- initNodeKernel kernelArgs
         peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
@@ -413,7 +414,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 NTN.nullTracers
                 defaultChainSyncIdleTimeout
                 genesisConfig
-                defaultTxSubmissionLogicVersion
                 kernelArgs
                 kernel
                 peerMetrics
