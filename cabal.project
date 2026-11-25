@@ -20,6 +20,17 @@ index-state:
 
 packages: .
 
+-- Points to `ouroboros-network` `main` after https://github.com/IntersectMBO/ouroboros-network/pull/5431
+source-repository-package
+  type: git
+  location: https://github.com/intersectmbo/ouroboros-network.git
+  tag: bcfb5f8ec851a8b16c1d453d7df4ac0b8166065d
+  --sha256: sha256-2QJjSQKz4dGAYRrQLTTNSEQXNGOhCVNKKYZ0gcoWQDo=
+  subdir:
+    ouroboros-network
+    cardano-diffusion
+    network-mux
+
 -- We want to always build the test-suites and benchmarks
 tests: True
 benchmarks: True
