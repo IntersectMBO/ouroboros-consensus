@@ -35,7 +35,7 @@ import Ouroboros.Consensus.Shelley.Eras (LeiosEraTx (..))
 import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
-import Test.Consensus.Shelley.MempoolTx (mkTestShelleyTx)
+import Test.Consensus.Shelley.MempoolTx (mkTestMempoolTx, mkTestShelleyTx)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
@@ -167,7 +167,7 @@ prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))
+  ebTxSize = BS.length (leiosTxMempoolViewBytes (leiosEraTxMempoolView (mkTestMempoolTx tx)))
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
 
 -- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
@@ -181,7 +181,9 @@ prop_dijkstraEbTxHashIsLedgerHash tx =
   map
     fst
     ( endorserBlockReferences
-        (endorserBlockFromTxBytes (pure (leiosTxMempoolViewBytes (leiosEraTxMempoolView tx))))
+        ( endorserBlockFromTxBytes
+            (pure (leiosTxMempoolViewBytes (leiosEraTxMempoolView (mkTestMempoolTx tx))))
+        )
     )
     === [extractHash (hashAnnotated tx)]
 

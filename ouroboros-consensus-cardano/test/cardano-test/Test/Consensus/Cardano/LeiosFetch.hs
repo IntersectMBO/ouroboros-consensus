@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Consensus.Shelley.Eras (LeiosEraTx (..))
 import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraTx)
+import Test.Consensus.Shelley.MempoolTx (mkTestMempoolTx)
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Serialisation.CDDL (cddlTest, isCDDLCDisabled)
@@ -95,7 +96,7 @@ prop_nodeCodecMatchesCDDL =
   -- spliced into an array, as the bls_key of the pool registrations, here and
   -- in the sub-transactions, although they match the CDDL.
   tx =
-    MkLeiosTx . leiosTxMempoolViewBytes . leiosEraTxMempoolView $
+    MkLeiosTx . leiosTxMempoolViewBytes . leiosEraTxMempoolView . mkTestMempoolTx $
       exampleDijkstraTx
         & bodyTxL . certsTxBodyL .~ mempty
         & bodyTxL . subTransactionsTxBodyL .~ mempty

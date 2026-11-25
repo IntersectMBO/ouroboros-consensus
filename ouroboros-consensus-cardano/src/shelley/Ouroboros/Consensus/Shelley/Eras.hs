@@ -167,16 +167,18 @@ class LeiosEraTx era where
   -- | Forging an endorser block and taking transactions from the mempool both
   -- use this, so a forged endorser block references the very bytes the node
   -- offers.
-  leiosEraTxMempoolView :: Core.Tx TopTx era -> LeiosTxMempoolView
+  leiosEraTxMempoolView :: SL.MempoolTx era -> LeiosTxMempoolView
 
 -- | The ledger memoizes 'hashAnnotated'.
 instance LeiosEraTx DijkstraEra where
-  leiosEraTxMempoolView tx =
+  leiosEraTxMempoolView mempoolTx =
     MkLeiosTxMempoolView
       { ltmvHash = extractHash (hashAnnotated tx)
       , ltmvInput = MkUnthunkable tx
       , ltmvBytes = \(MkUnthunkable t) -> originalBytes t
       }
+   where
+    tx = SL.unwrapMempoolTx mempoolTx
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
@@ -301,8 +303,9 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
       `catchError` handler
   pure (mempoolState', vtx)
  where
-  -- A corrected flag makes it a transaction the mempool cannot receive, so
-  -- it is applied as a plain transaction rather than a 'MempoolTx'.
+  -- 'SL.applyTxWithFullValidation' does not correct validity flags. Apply the
+  -- corrected full transaction directly: Dijkstra's mempool decoder cannot
+  -- produce a transaction marked 'L.Phase2Invalid'.
   applyWithFullValidation =
     liftEither . SL.internalApplyTxWithValidation ValidateAll globals ledgerEnv mempoolState
 

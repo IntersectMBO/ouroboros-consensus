@@ -18,7 +18,12 @@ import qualified Cardano.Ledger.Core as SL
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
-import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
+import qualified Cardano.Ledger.Shelley.API as SL
+  ( Block (..)
+  , MempoolTx
+  , extractValidatedTx
+  , getValidatedMempoolTx
+  )
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
 import Data.Foldable (asum)
@@ -108,7 +113,8 @@ forgeShelleyBlock
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
         Just LeiosEraDict ->
-          forgeLeiosEb validatedUnder . fmap (leiosTxMempoolViewBytes . leiosEraTxMempoolView . extractTx)
+          forgeLeiosEb validatedUnder
+            . fmap (leiosTxMempoolViewBytes . leiosEraTxMempoolView . extractMempoolTx)
             <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 
@@ -135,6 +141,9 @@ forgeShelleyBlock
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx Core.TopTx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractValidatedTx vtx
+
+    extractMempoolTx :: Validated (GenTx (ShelleyBlock proto era)) -> SL.MempoolTx era
+    extractMempoolTx (ShelleyValidatedTx _txid vtx) = SL.getValidatedMempoolTx vtx
 
     prevHash :: SL.PrevHash
     prevHash =

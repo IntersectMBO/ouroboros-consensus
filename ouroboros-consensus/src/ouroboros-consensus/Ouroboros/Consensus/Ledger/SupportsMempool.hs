@@ -85,6 +85,11 @@ import Ouroboros.Network.SizeInBytes as Network
 -- The mempool (and, accordingly, blocks) consist of "generalized
 -- transactions"; this could be "proper" transactions (transferring funds) but
 -- also other kinds of things such as update proposals, delegations, etc.
+--
+-- This is the representation used for mempool admission and transaction
+-- submission. 'Validated' is a separate data family: its instance for a
+-- 'GenTx' may retain information needed for block inclusion that the submission
+-- encoding omits, such as a producer-corrected phase-2 validity flag.
 type GenTx :: Type -> Type
 data family GenTx blk
 

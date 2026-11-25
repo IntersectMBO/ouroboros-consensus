@@ -13,7 +13,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -242,7 +241,7 @@ instance
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
   leiosTxMempoolView (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
-    Just LeiosEraDict -> Just (leiosEraTxMempoolView (SL.unwrapMempoolTx tx))
+    Just LeiosEraDict -> Just (leiosEraTxMempoolView tx)
     Nothing -> Nothing
 
   tickedLedgerMajorProtocolVersionWord16 st =
@@ -452,11 +451,12 @@ txInBlockSize ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
-txInBlockSize st (ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
+txInBlockSize st (ShelleyTx _txid tx) =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
     Just $ IgnoringOverflow $ ByteSize32 $ txByteSizeWithOverhead tx'
  where
+  tx' = SL.unwrapMempoolTx tx
   txsz = tx' ^. sizeTxF
 
   pparams = getPParams $ tickedShelleyLedgerState st
@@ -666,9 +666,10 @@ txMeasureAlonzo ::
   TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
-txMeasureAlonzo st tx@(ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
+txMeasureAlonzo st tx@(ShelleyTx _txid mempoolTx) =
   AlonzoMeasure <$> txInBlockSize st tx <*> exunits
  where
+  tx' = SL.unwrapMempoolTx mempoolTx
   txsz = getTotalExUnits tx'
 
   pparams = getPParams $ tickedShelleyLedgerState st
@@ -786,9 +787,10 @@ txMeasureRefScripts ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) RefScriptSize
-txMeasureRefScripts st (ShelleyTx _txid (SL.unwrapMempoolTx -> tx')) =
+txMeasureRefScripts st (ShelleyTx _txid tx) =
   RefScriptSize <$> refScriptBytes
  where
+  tx' = SL.unwrapMempoolTx tx
   ValuesMK utxo = getLedgerTables $ projectLedgerTables st
   txsz = SL.txNonDistinctRefScriptsSize (SL.UTxO $ coerceMapKeys utxo) tx' :: Int
 
