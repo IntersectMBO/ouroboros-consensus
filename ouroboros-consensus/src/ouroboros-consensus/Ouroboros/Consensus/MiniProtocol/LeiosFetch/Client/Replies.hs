@@ -25,7 +25,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ) where
 
 import Cardano.Ledger.Binary (DecoderError)
-import Cardano.Ledger.Binary.Version (Version)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
@@ -51,6 +50,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   , diffRelTime
   )
+import Ouroboros.Consensus.Ledger.SupportsMempool (VersionWord16)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LandedTx (..)
@@ -137,7 +137,7 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcOutstanding :: !(StrictMVar m (LeiosOutstanding peer))
   , lfcReady :: !(StrictMVar m ())
   -- ^ Filled by anything that might unblock a new fetch decision.
-  , lfcTxCache :: !(LeiosTxCache m () Version PackedEndorserBlock)
+  , lfcTxCache :: !(LeiosTxCache m () VersionWord16 PackedEndorserBlock)
   -- ^ Records each validated tx with the major protocol version it was
   -- validated under. The Mempool and LeiosVoting validate a tx only under the
   -- current major version, so a recorded validation still holds exactly when
