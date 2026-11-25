@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -49,7 +50,12 @@ module Test.Consensus.Leios.TestBlock
 
     -- * Ledger
   , LedgerState (..)
+  , inapplicableEbTx
+  , invalidEbTx
+  , invalidEbTxError
   , LeiosTestBlockError (..)
+  , LeiosTestInvalidEb (..)
+  , LeiosTestTxRejected (..)
   , LeiosTestLedgerConfig (..)
   , leiosTestInitExtLedger
 
@@ -63,9 +69,16 @@ module Test.Consensus.Leios.TestBlock
   , singleNodeLeiosTestConfig
   ) where
 
-import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Cardano.Binary
+  ( DecoderError (DecoderErrorCustom)
+  , decodeMaybe
+  , encodeMaybe
+  , enforceSize
+  , fromCBOR
+  , toCBOR
+  )
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.Leios (LeiosCert)
+import Cardano.Crypto.Leios (LeiosCert, LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
 import Cardano.Ledger.Binary
   ( DecCBOR (..)
@@ -75,6 +88,7 @@ import Cardano.Ledger.Binary
   , toPlainDecoder
   , toPlainEncoding
   )
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR.Dec
@@ -83,11 +97,14 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), serialise)
 import Control.Monad (guard, replicateM, replicateM_, when)
 import Control.Monad.Except (Except, throwError)
+import Data.Bifunctor (first)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
+import Data.List (zip4)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -96,6 +113,7 @@ import qualified Data.Measure as Measure
 import Data.String (fromString)
 import Data.Time.Clock (UTCTime (..))
 import Data.Time.Clock.System (systemEpochDay)
+import Data.Traversable (for)
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -132,8 +150,12 @@ import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlockHash
   , LeiosPoint (..)
+  , LeiosTx (..)
+  , SerialisedEndorserBlock (..)
   , decodeLeiosPoint
+  , deserialiseEndorserBlock
   , encodeLeiosPoint
+  , endorserBlockReferences
   )
 import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -381,15 +403,16 @@ data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
 instance ConsensusProtocol LeiosTestProtocol where
   type ChainDepState LeiosTestProtocol = LeiosTestChainDepState
   type IsLeader LeiosTestProtocol = ()
-  type CanBeLeader LeiosTestProtocol = ()
+  type CanBeLeader LeiosTestProtocol = [LeiosSigningKey]
   type LedgerView LeiosTestProtocol = LeiosLedgerView
   type ValidationErr LeiosTestProtocol = LeiosTestInvalidHeader
   type ValidateView LeiosTestProtocol = Header LeiosTestBlock
 
   protocolSecurityParam = ltpcSecurityParam
 
-  -- Every node leads in every slot; the test itself decides what gets minted.
-  checkIsLeader _ _ _ _ = Just ()
+  -- A node with BLS keys only votes; one without leads in every slot. Either
+  -- way, the test itself decides what gets minted.
+  checkIsLeader _ keys _ _ = if null keys then Just () else Nothing
 
   tickChainDepState _ _ _ = TickedLeiosTestChainDepState
 
@@ -416,6 +439,7 @@ instance LeiosProtocol LeiosTestProtocol where
   getContainsLeiosCert _proxy hdr = case lthLeiosCert hdr of
     NoLeiosTestCert -> False
     HasLeiosTestCert{} -> True
+  getLeiosKeys _proxy = id
   validateLeiosAnnouncement _cfg hdr _slot _st = do
     checkValidity hdr
     pure $ case lthCounter hdr of
@@ -962,6 +986,57 @@ instance BlockSupportsLeios LeiosTestBlock where
   -- The ledger has no transactions, so an endorser block applies nothing,
   -- whatever transactions it references.
   applyEndorserBlock _cfg _readTables _serialised = pure . Right . convertMapKind
+
+  -- A transaction applies, bar 'inapplicableEbTx', and changes nothing. An
+  -- endorser block holds up to 1000 bytes of them.
+  validateEndorserBlock _cfg _readTables lookupTxCache recordTxCache eb _st =
+    first InvalidEndorserBlock <$> case decoded of
+      Left reason -> pure $ Left reason
+      Right (txHashes, txs) -> do
+        before <- lookupTxCache minBound txHashes
+        go 0 (MkValidationSummary 0 0) (zip4 [0 ..] txHashes before txs)
+   where
+    MkSerialisedEndorserBlock{serialisedEndorsement, serialisedTransactions} = eb
+
+    decoded = do
+      references <-
+        either (Left . LeiosTestEbUndecodable) (Right . endorserBlockReferences) $
+          deserialiseEndorserBlock (Proxy @DijkstraEra) serialisedEndorsement
+      when (length references /= length serialisedTransactions) $ Left LeiosTestEbMissingTxs
+      txs <- for serialisedTransactions $ \(MkLeiosTx bytes) ->
+        if bytes == invalidEbTx then Left (LeiosTestEbUndecodable invalidEbTxError) else Right bytes
+      pure (map fst references, txs)
+
+    go _ summary [] = pure $ Right summary
+    go taken summary ((off, txHash, validatedBefore, tx) : rest)
+      | taken' > 1000 = pure $ Left LeiosTestEbOverCapacity
+      | tx == inapplicableEbTx = pure . Left $ LeiosTestEbTxRejected LeiosTestTxRejected
+      | validatedBefore = go taken' summary{summaryReapplied = summaryReapplied summary + 1} rest
+      | otherwise = do
+          recordTxCache minBound off txHash
+          go taken' summary{summaryValidated = summaryValidated summary + 1} rest
+     where
+      taken' = taken + BS.length tx
+
+-- | Why an endorser block of 'LeiosTestBlock' is not one to vote for.
+data LeiosTestInvalidEb
+  = LeiosTestEbUndecodable !DecoderError
+  | LeiosTestEbMissingTxs
+  | LeiosTestEbOverCapacity
+  | LeiosTestEbTxRejected !LeiosTestTxRejected
+  deriving (Eq, Show)
+
+-- | The bytes of the one endorsed transaction that does not decode.
+invalidEbTx :: BS.ByteString
+invalidEbTx = "invalid"
+
+-- | Why 'invalidEbTx' does not decode.
+invalidEbTxError :: DecoderError
+invalidEbTxError = DecoderErrorCustom "endorsed transaction" "invalid"
+
+-- | The bytes of the one endorsed transaction that does not apply.
+inapplicableEbTx :: BS.ByteString
+inapplicableEbTx = "inapplicable"
 
 instance BlockSupportsSanityCheck LeiosTestBlock where
   configAllSecurityParams = pure . configSecurityParam

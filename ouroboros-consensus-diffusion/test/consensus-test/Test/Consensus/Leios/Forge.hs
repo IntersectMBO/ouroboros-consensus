@@ -277,7 +277,7 @@ certForging :: BlockForging (IOSim s) LeiosTestBlock
 certForging =
   BlockForging
     { forgeLabel = "certForging"
-    , canBeLeader = ()
+    , canBeLeader = []
     , updateForgeState = \_ _ _ -> pure $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> Right ()
     , forgeBlock = \ForgeBlockArgs{fbCurrentSlotNo, fbCurrentTickedLedgerState, fbLeiosCert} -> do
@@ -820,7 +820,7 @@ ebForging :: BlockForging (IOSim s) LeiosTestBlock
 ebForging =
   BlockForging
     { forgeLabel = "ebForging"
-    , canBeLeader = ()
+    , canBeLeader = []
     , updateForgeState = \_ _ _ -> pure $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> Right ()
     , forgeBlock = \ForgeBlockArgs{fbCurrentSlotNo, fbCurrentTickedLedgerState} -> do
