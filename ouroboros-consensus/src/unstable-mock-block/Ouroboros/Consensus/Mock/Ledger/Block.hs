@@ -116,7 +116,6 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.Unthunkable (Unthunkable (..))
 import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
 
@@ -631,15 +630,10 @@ instance
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
-  -- Every mock tx has a Leios view, so that the Mempool tests cover the
+  -- Every mock tx has a Leios hash, so that the Mempool tests cover the
   -- Mempool's index of the txs an endorser block can reference.
-  leiosTxMempoolView tx =
-    Just
-      MkLeiosTxMempoolView
-        { ltmvHash = hashLeiosTx (MkLeiosTx (Lazy.toStrict (serialise tx)))
-        , ltmvInput = MkUnthunkable tx
-        , ltmvBytes = \(MkUnthunkable t) -> Lazy.toStrict (serialise t)
-        }
+  txLeiosHash tx = hashLeiosTx . MkLeiosTx <$> txLeiosBytes tx
+  txLeiosBytes = Just . Lazy.toStrict . serialise
   tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
 
 instance TxLimits (SimpleBlock c ext) where

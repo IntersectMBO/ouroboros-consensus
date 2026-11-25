@@ -213,7 +213,7 @@ perTxOverhead = 4
 -- | The byte size that the mempool measures for a transaction.
 --
 -- For the sake of our forge, it must be at least the length of the
--- transaction's Leios bytes ('ltmvBytes'): the forge fills an endorser block by
+-- transaction's Leios bytes ('eraTxLeiosBytes'): the forge fills an endorser block by
 -- this size, so longer bytes could make the block too big.
 txByteSizeWithOverhead :: L.EraTx era => Tx TopTx era -> Word32
 txByteSizeWithOverhead tx = tx ^. sizeTxF + perTxOverhead
@@ -239,8 +239,12 @@ instance
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
 
-  leiosTxMempoolView (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
-    Just LeiosEraDict -> Just (leiosEraTxMempoolView tx)
+  txLeiosHash (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
+    Just LeiosEraDict -> Just (eraTxLeiosHash tx)
+    Nothing -> Nothing
+
+  txLeiosBytes (ShelleyTx _txid tx) = case getLeiosEraDict (Proxy @era) of
+    Just LeiosEraDict -> Just (eraTxLeiosBytes tx)
     Nothing -> Nothing
 
   tickedLedgerMajorProtocolVersionWord16 st =

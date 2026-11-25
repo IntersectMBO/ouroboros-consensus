@@ -20,7 +20,8 @@ module Ouroboros.Consensus.Shelley.Eras
     -- * Shelley-based era
   , ConwayEraGovDict (..)
   , LeiosEraDict (..)
-  , LeiosEraTx (..)
+  , eraTxLeiosBytes
+  , eraTxLeiosHash
   , ShelleyBasedEra (..)
 
     -- * Convenience functions
@@ -62,16 +63,14 @@ import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
+import Data.ByteString (ByteString)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( LeiosTxMempoolView (..)
-  , WhetherToIntervene (..)
-  )
+import Ouroboros.Consensus.Ledger.SupportsMempool (WhetherToIntervene (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
   , PerasRoundLength
@@ -79,7 +78,6 @@ import Ouroboros.Consensus.Peras.Params
   , pattern NoPerasEnabled
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
-import Ouroboros.Consensus.Util.Unthunkable (Unthunkable (..))
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -158,23 +156,26 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (LeiosEraTx era, DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict ::
+    ( SafeToHash (Core.Tx TopTx era)
+    , HashAnnotated (Core.Tx TopTx era) EraIndependentTx
+    , DijkstraEraBlockBody era
+    ) =>
+    LeiosEraDict era
 
--- | What Leios needs of an era's transactions.
-class LeiosEraTx era where
-  -- | Forging an endorser block and taking transactions from the mempool both
-  -- use this, so a forged endorser block references the very bytes the node
-  -- offers.
-  leiosEraTxMempoolView :: Core.Tx TopTx era -> LeiosTxMempoolView
+-- | A transaction's bytes as Leios sends and stores them. Forging an endorser
+-- block and taking transactions from the mempool both use these, so a forged
+-- endorser block references the very bytes the node offers.
+eraTxLeiosBytes :: SafeToHash (Core.Tx TopTx era) => Core.Tx TopTx era -> ByteString
+eraTxLeiosBytes = originalBytes
 
--- | The ledger memoizes 'hashAnnotated'.
-instance LeiosEraTx DijkstraEra where
-  leiosEraTxMempoolView tx =
-    MkLeiosTxMempoolView
-      { ltmvHash = extractHash (hashAnnotated tx)
-      , ltmvInput = MkUnthunkable tx
-      , ltmvBytes = \(MkUnthunkable t) -> originalBytes t
-      }
+-- | The hash of 'eraTxLeiosBytes', by which an endorser block references a
+-- transaction. The ledger memoizes 'hashAnnotated'.
+eraTxLeiosHash ::
+  HashAnnotated (Core.Tx TopTx era) EraIndependentTx =>
+  Core.Tx TopTx era ->
+  Hash HASH EraIndependentTx
+eraTxLeiosHash = extractHash . hashAnnotated
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =

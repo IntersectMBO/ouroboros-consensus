@@ -784,7 +784,7 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
 -- endorser block references them; and the major protocol version the Mempool
 -- validated them all under.
 leiosTxsInMempool ::
-  IOLike m =>
+  (IOLike m, LedgerSupportsMempool blk) =>
   Mempool m blk ->
   Set TxHash ->
   m (LeiosMempoolTxs ByteString)
@@ -792,7 +792,7 @@ leiosTxsInMempool mempool hashes = do
   MkLeiosMempoolTxs indexed protVer <- atomically $ getLeiosTxIndex mempool
   -- Built here, so that the peer's thread computes each tx's bytes.
   pure $!
-    MkLeiosMempoolTxs (Map.map leiosTxMempoolViewBytes (Map.restrictKeys indexed hashes)) protVer
+    MkLeiosMempoolTxs (Map.mapMaybe txLeiosBytes (Map.restrictKeys indexed hashes)) protVer
 
 {-------------------------------------------------------------------------------
   Leios pruning

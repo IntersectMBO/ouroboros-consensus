@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , ByteSize32 (..)
   , WhatToDoWithTxDiffs (..)
   , InputTxDiffs
-  , LeiosTxMempoolView (..)
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -45,8 +44,8 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , WhetherToIntervene (..)
   , fixedTickedLedgerMajorProtocolVersionWord16
   , nothingMkMempoolApplyTxError
-  , leiosTxMempoolViewBytes
-  , nothingLeiosTxMempoolView
+  , nothingTxLeiosBytes
+  , nothingTxLeiosHash
   , toVersionWord16
   ) where
 
@@ -77,7 +76,6 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
-import Ouroboros.Consensus.Util.Unthunkable (Unthunkable)
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -272,9 +270,18 @@ class
     Text ->
     Maybe (ApplyTxErr blk)
 
-  -- | What Leios needs to know about this transaction. 'Nothing' when the
-  -- transaction's era has no endorser blocks.
-  leiosTxMempoolView :: GenTx blk -> Maybe LeiosTxMempoolView
+  -- | The hash by which an endorser block references this transaction.
+  -- 'Nothing' when the transaction's era has no endorser blocks.
+  --
+  -- The mempool asks for it every time it revalidates the transaction, so it
+  -- must be cheap after the first time, for example by reading a hash the
+  -- ledger memoizes.
+  txLeiosHash :: GenTx blk -> Maybe (Hash HASH EraIndependentTx)
+
+  -- | The transaction's bytes as Leios sends and stores them, of which
+  -- 'txLeiosHash' is the hash. 'Nothing' when the transaction's era has no
+  -- endorser blocks.
+  txLeiosBytes :: GenTx blk -> Maybe ByteString
 
   -- | The major protocol version under which this ledger state validates
   -- transactions.
@@ -293,36 +300,13 @@ class
 nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
 
--- | Value of 'leiosTxMempoolView' for a block type without endorser blocks
-nothingLeiosTxMempoolView :: GenTx blk -> Maybe LeiosTxMempoolView
-nothingLeiosTxMempoolView _ = Nothing
+-- | Value of 'txLeiosHash' for a block type without endorser blocks
+nothingTxLeiosHash :: GenTx blk -> Maybe (Hash HASH EraIndependentTx)
+nothingTxLeiosHash _ = Nothing
 
--- | What Leios needs the Mempool to know about its txs in eras with Leios.
-data LeiosTxMempoolView = forall i. MkLeiosTxMempoolView
-  { ltmvHash :: !(Hash HASH EraIndependentTx)
-  -- ^ The hash of 'ltmvBytes', by which an endorser block references the
-  -- transaction. The mempool builds the view every time it revalidates the
-  -- transaction, so computing this hash must be cheap after the first time,
-  -- for example by reading a hash the ledger memoizes.
-  , ltmvInput :: !(Unthunkable i)
-  -- ^ What 'ltmvBytes' computes the bytes from.
-  , ltmvBytes :: !(Unthunkable i -> ByteString)
-  -- ^ The transaction's bytes as Leios sends and stores them. An endorser
-  -- block references the transaction by their hash and length. They are
-  -- computed afresh at each use ('leiosTxMempoolViewBytes'), and nothing
-  -- retains them.
-  }
-
--- | The mempool's index holds views, and their fields are strict. The input is
--- the transaction the mempool holds anyway, whose thunks it checks there.
-deriving via
-  OnlyCheckWhnfNamed "LeiosTxMempoolView" LeiosTxMempoolView
-  instance
-    NoThunks LeiosTxMempoolView
-
--- | The transaction's bytes ('ltmvBytes'), computed afresh.
-leiosTxMempoolViewBytes :: LeiosTxMempoolView -> ByteString
-leiosTxMempoolViewBytes (MkLeiosTxMempoolView _ input bytes) = bytes input
+-- | Value of 'txLeiosBytes' for a block type without endorser blocks
+nothingTxLeiosBytes :: GenTx blk -> Maybe ByteString
+nothingTxLeiosBytes _ = Nothing
 
 -- | Value of 'tickedLedgerMajorProtocolVersionWord16' for a block type whose ledger never changes
 -- its protocol version from the given one

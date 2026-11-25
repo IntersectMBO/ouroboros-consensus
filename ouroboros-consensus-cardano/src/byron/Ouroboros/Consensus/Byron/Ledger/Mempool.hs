@@ -143,7 +143,8 @@ instance LedgerSupportsMempool ByronBlock where
   getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
-  leiosTxMempoolView = nothingLeiosTxMempoolView
+  txLeiosHash = nothingTxLeiosHash
+  txLeiosBytes = nothingTxLeiosBytes
   tickedLedgerMajorProtocolVersionWord16 =
     MkVersionWord16
       . Update.pvMajor

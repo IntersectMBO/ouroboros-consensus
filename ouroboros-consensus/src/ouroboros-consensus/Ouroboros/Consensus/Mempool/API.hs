@@ -214,10 +214,10 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , getLeiosTxIndex :: STM m (LeiosMempoolTxs LeiosTxMempoolView)
-  -- ^ What Leios needs to know about the transactions in the mempool that an
-  -- endorser block can reference, by the hash it references them by
-  -- ('ltmvHash'), and the major protocol version they were all validated under
+  , getLeiosTxIndex :: STM m (LeiosMempoolTxs (GenTx blk))
+  -- ^ The transactions in the mempool that an endorser block can reference, by
+  -- the hash it references them by ('txLeiosHash'), and the major protocol
+  -- version they were all validated under
   -- ('tickedLedgerMajorProtocolVersionWord16').
   , testTryAddTx ::
       DiffTime ->
