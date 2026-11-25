@@ -59,6 +59,7 @@ data NodeDBs db = NodeDBs
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
   , nodeDBsGsm :: db
+  , nodeDBsPerasCert :: db
   }
   deriving (Functor, Foldable, Traversable)
 
@@ -67,6 +68,7 @@ emptyNodeDBs =
   atomically $
     NodeDBs
       <$> newTMVar Mock.empty
+      <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
@@ -144,6 +146,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
           { pcdbaTracer = nullTracer
+          , pcdbaCodecConfig = configCodec mcdbTopLevelConfig
+          , pcdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasCert mcdbNodeDBs)
           }
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs

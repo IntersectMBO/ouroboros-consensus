@@ -239,7 +239,7 @@ preOpenChainDB mode db =
   doesDirectoryExist db >>= bool create checkMode
  where
   checkIsDB ls = Set.fromList ls `Set.isSubsetOf` chainDBDirs
-  chainDBDirs = Set.fromList ["immutable", "ledger", "volatile", "gsm"]
+  chainDBDirs = Set.fromList ["immutable", "ledger", "volatile", "gsm", "perascert"]
   loc = "preOpenChainDB: '" ++ db ++ "'"
   create = createDirectoryIfMissing True db
   checkMode = do

@@ -41,6 +41,9 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import System.FS.Sim.STM (simHasFS')
 import Test.Ouroboros.Storage.Orphans ()
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
 import Test.QuickCheck hiding (Some (..))
@@ -48,7 +51,7 @@ import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (Some (..))
-import Test.Util.TestBlock (TestBlock, TestHash (..))
+import Test.Util.TestBlock (CodecConfig (TestBlockCodecConfig), TestBlock, TestHash (..))
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -167,7 +170,11 @@ instance HasVariables (Action Model a) where
 instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
   perform _ action _ = case action of
     OpenDB -> do
-      perasCertDB <- lift $ PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs nullTracer)
+      hasFS <- lift $ simHasFS' MockFS.empty
+      perasCertDB <-
+        lift $
+          PerasCertDB.createDB $
+            PerasCertDB.PerasCertDbArgs nullTracer TestBlockCodecConfig (SomeHasFS hasFS)
       put perasCertDB
     AddCert cert -> do
       perasCertDB <- get

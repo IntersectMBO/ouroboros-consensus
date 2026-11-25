@@ -30,6 +30,9 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( genProtocolConstants
   , prop_smoke_object_diffusion
@@ -48,13 +51,14 @@ tests =
     ]
 
 newCertDB ::
-  ( IOLike m
-  , BlockSupportsPeras blk
-  ) =>
-  [WithArrivalTime (ValidatedPerasCert blk)] ->
-  m (PerasCertDB m blk)
+  IOLike m =>
+  [WithArrivalTime (ValidatedPerasCert TestBlock)] ->
+  m (PerasCertDB m TestBlock)
 newCertDB certs = do
-  db <- PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
+  hasFS <- simHasFS' MockFS.empty
+  db <-
+    PerasCertDB.createDB
+      (PerasCertDB.PerasCertDbArgs @Identity nullTracer TestBlockCodecConfig (SomeHasFS hasFS))
   mapM_
     ( \cert -> do
         result <- join $ atomically $ PerasCertDB.addCert db cert
