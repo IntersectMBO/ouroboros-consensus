@@ -11,7 +11,13 @@ module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
 import Cardano.Crypto.Hash (Hash (UnsafeHash), hashToBytes)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Cardano.Network.NodeToNode (chainSyncMiniProtocolNum, defaultMiniProtocolParameters)
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
+import Cardano.Network.NodeToNode
+  ( MiniProtocolParameters
+  , TxSubmissionLogicVersion (..)
+  , chainSyncMiniProtocolNum
+  , mkDefaultMiniProtocolParameters
+  )
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -1769,3 +1775,9 @@ nodeLeiosFetchServer ::
 nodeLeiosFetchServer conn =
   maybe (throwIO $ userError "the node does not run a LeiosFetch server") pure $
     Map.lookup leiosFetchMiniProtocolNum (connNodeResponders conn)
+
+-- | The node's default mini-protocol parameters, with the tx-submission logic
+-- the Leios testnet runs.
+defaultMiniProtocolParameters :: MiniProtocolParameters
+defaultMiniProtocolParameters =
+  mkDefaultMiniProtocolParameters TxSubmissionLogicV1 defaultNodeTxSubmissionConfig

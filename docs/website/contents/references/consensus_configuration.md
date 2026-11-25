@@ -110,7 +110,7 @@ which `llrnCustomiseNodeKernelArgs` can override:
 | Value | Default | Meaning |
 |---|---|---|
 | `blockFetchConfiguration` | `defaultBlockFetchConfiguration` from `ouroboros-network` (seeded with `llrnBfcSalt`) | BlockFetch decision-logic parameters. The node only exposes the two concurrency overrides (`srnBfcMaxConcurrency*`); the remaining defaults are owned by `ouroboros-network`. |
-| `miniProtocolParameters` | `defaultMiniProtocolParameters` from `ouroboros-network` | Pipelining depths and other mini-protocol limits. |
+| `miniProtocolParameters` | `mkDefaultMiniProtocolParameters` from `ouroboros-network`, for `rnTxSubmissionLogicVersion` | Pipelining depths, tx-submission settings and other mini-protocol limits. |
 | `mempoolCapacityOverride` | `NoMempoolCapacityBytesOverride` | See [Mempool](#mempool). |
 | `getDiffusionPipeliningSupport` | `DiffusionPipeliningOn` | Whether diffusion pipelining is enabled. |
 
@@ -357,7 +357,8 @@ semantics and defaults are owned elsewhere:
   `StdRunNodeArgs`.
 - **Mini-protocol parameters** (`MiniProtocolParameters`, e.g.
   `blockFetchPipeliningMax`): defaults from `ouroboros-network`'s
-  `defaultMiniProtocolParameters`; Consensus clamps customisations to
+  `mkDefaultMiniProtocolParameters`, with the node's tx-submission logic
+  version (`rnTxSubmissionLogicVersion`); Consensus clamps customisations to
   protocol-safe values (`nodeKernelArgsEnforceInvariants`).
 - **ChainSync idle timeout** (`srnChainSyncIdleTimeout`): default defined in
   `Cardano.Network.Diffusion.Configuration`.

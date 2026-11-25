@@ -78,11 +78,10 @@ import Cardano.Network.NodeToClient
 import Cardano.Network.NodeToNode
   ( DiffusionMode (..)
   , ExceptionInHandler (..)
-  , MiniProtocolParameters
+  , MiniProtocolParameters (..)
   , NodeToNodeVersionData (..)
   , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
@@ -617,8 +616,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                       Nothing -> HistoricityCheck.noCheck
                       Just historicityCutoff ->
                         HistoricityCheck.mkCheck systemTime getGsmState historicityCutoff
-              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
-                mkNodeKernelArgs
+              fmap
+                ( withTxSubmissionLogicVersion rnTxSubmissionLogicVersion
+                    . nodeKernelArgsEnforceInvariants
+                    . llrnCustomiseNodeKernelArgs
+                )
+                $ mkNodeKernelArgs
                   registry
                   llrnBfcSalt
                   gsmAntiThunderingHerd
@@ -642,6 +645,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnTxSubmissionLogicVersion
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -1052,6 +1056,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionLogicVersion ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -1078,10 +1083,15 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
+  txLogicVersion
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
           (psRng, lfRng) = splitGen rng'
+          miniProtocolParameters =
+            mkDefaultMiniProtocolParameters
+              txLogicVersion
+              Diffusion.defaultNodeTxSubmissionConfig
       return
         NodeKernelArgs
           { tracers
@@ -1100,8 +1110,9 @@ mkNodeKernelArgs
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
-          , miniProtocolParameters = defaultMiniProtocolParameters
-          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , miniProtocolParameters
+          , blockFetchConfiguration =
+              Diffusion.mkDefaultBlockFetchConfiguration miniProtocolParameters bfcSalt
           , gsmArgs =
               GsmNodeKernelArgs
                 { gsmAntiThunderingHerd
@@ -1122,6 +1133,20 @@ mkNodeKernelArgs
           , txSubmissionInitDelay
           }
 
+-- | Run tx-submission with the node's 'TxSubmissionLogicVersion': it selects
+-- the decision policy and each connection's 'TxSubmissionConfig'. Applied
+-- after 'llrnCustomiseNodeKernelArgs', so that a customisation cannot make the
+-- 'MiniProtocolParameters' disagree with the inbound logic the node runs.
+withTxSubmissionLogicVersion ::
+  TxSubmissionLogicVersion ->
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  NodeKernelArgs m addrNTN addrNTC blk
+withTxSubmissionLogicVersion logicVersion nodeKernelArgs =
+  nodeKernelArgs
+    { miniProtocolParameters =
+        (miniProtocolParameters nodeKernelArgs){txSubmissionLogicVersion = logicVersion}
+    }
+
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some
 -- values. This function makes sure we don't exceed those limits and that the
@@ -1138,7 +1163,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
             blockFetchPipeliningMax =
               min
                 (blockFetchPipeliningMax miniProtocolParameters)
-                (blockFetchPipeliningMax defaultMiniProtocolParameters)
+                (blockFetchPipeliningMax defaultParameters)
           }
     , blockFetchConfiguration =
         blockFetchConfiguration
@@ -1151,6 +1176,10 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
     }
  where
   NodeKernelArgs{..} = nodeKernelArgs
+  defaultParameters =
+    mkDefaultMiniProtocolParameters
+      (txSubmissionLogicVersion miniProtocolParameters)
+      (nodeTxSubmissionConfig miniProtocolParameters)
 
 {-------------------------------------------------------------------------------
   Arguments for use in the real node
