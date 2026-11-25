@@ -32,6 +32,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
+import Data.Foldable (toList)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
 import qualified Data.Strict.Either as Strict
@@ -55,7 +56,6 @@ import Ouroboros.Consensus.Protocol.PolyPraos
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( HasMaxMajorProtVer (..)
-  , PraosCanBeLeader
   , PraosProtocolSupportsNode (..)
   , PraosTiebreakerView
   , ShelleyProtocolHeader
@@ -159,6 +159,7 @@ instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
   getLeiosAnnouncement _proxy = getLeiosAnnouncementPolyPraos
   getContainsLeiosCert _proxy = getContainsLeiosCertPolyPraos
   getCertifiableLeiosAnnouncement _proxy = getCertifiableLeiosAnnouncementPolyPraos
+  getLeiosKeys _proxy = foldMap toList . polyPraosCanBeLeaderBLSKey
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
   leiosAnnouncementToCertify (LeiosConfig (PraosConfig _prms ei)) slot st =
@@ -172,7 +173,7 @@ instance LeiosCrypto c => PerasProtocol (Praos2 c) where
 instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
   type ChainDepState (Praos2 c) = PolyPraosState (Praos2 c)
   type IsLeader (Praos2 c) = PraosIsLeader c
-  type CanBeLeader (Praos2 c) = PraosCanBeLeader c
+  type CanBeLeader (Praos2 c) = PolyPraosCanBeLeader (Praos2 c) c
   type TiebreakerView (Praos2 c) = PraosTiebreakerView c
   type LedgerView (Praos2 c) = Views.PolyPraosLedgerView (Praos2 c)
   type ValidationErr (Praos2 c) = PolyPraosValidationErr (Praos2 c) c

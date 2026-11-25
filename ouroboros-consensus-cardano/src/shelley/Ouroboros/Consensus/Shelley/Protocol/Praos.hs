@@ -35,7 +35,6 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( MaxMajorProtVer (MaxMajorProtVer)
-  , PraosCanBeLeader
   )
 import Ouroboros.Consensus.Protocol.Praos.Views
 import Ouroboros.Consensus.Protocol.Praos2
@@ -144,7 +143,7 @@ verifyHeaderIntegrityPolyPraos slotsPerKESPeriod hv =
 mkHeaderPolyPraos ::
   (Crypto c, KES.Signable (KES c) body, Monad m) =>
   HotKey c m ->
-  PraosCanBeLeader c ->
+  PolyPraosCanBeLeader proto c ->
   PraosIsLeader c ->
   SlotNo ->
   BlockNo ->
@@ -158,7 +157,8 @@ mkHeaderPolyPraos ::
   (body -> KES.SignedKES (KES c) body -> hdr) ->
   m hdr
 mkHeaderPolyPraos hk cbl il slotNo blockNo prevHash bbHash sz protVer extend mkHdr = do
-  PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
+  PraosFields{praosSignature, praosToSign} <-
+    forgePraosFields hk (polyPraosCanBeLeaderPraos cbl) il mkBhBodyBytes
   pure $ mkHdr praosToSign praosSignature
  where
   mkBhBodyBytes
