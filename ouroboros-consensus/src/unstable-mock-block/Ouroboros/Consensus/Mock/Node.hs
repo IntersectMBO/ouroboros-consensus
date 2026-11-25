@@ -57,6 +57,7 @@ instance BlockSupportsLeios (SimpleBlock c ext) where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  validateEndorserBlock = defaultValidateEndorserBlock
 
 deriving via
   SelectViewDiffusionPipelining (SimpleBlock c ext)
