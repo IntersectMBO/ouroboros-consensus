@@ -169,13 +169,13 @@ shelleyEraParams genesis proxyEra =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = getShelleyEraPerasRoundLength proxyEra
+    , eraPerasParams = (perasBlockMaxSlots,) <$> getShelleyEraPerasRoundLength proxyEra
     }
  where
-  stabilityWindow =
-    SL.computeStabilityWindow
-      (unNonZero $ SL.sgSecurityParam genesis)
-      (SL.sgActiveSlotCoeff genesis)
+  k = SL.sgSecurityParam genesis
+  f = SL.sgActiveSlotCoeff genesis
+  stabilityWindow = SL.computeStabilityWindow (unNonZero k) f
+  perasBlockMaxSlots = mkPerasBlockMaxSlots (SecurityParam k) f
 
 -- | Separate variant of 'shelleyEraParams' to be used for a Shelley-only chain.
 shelleyEraParamsNeverHardForks ::
@@ -188,13 +188,13 @@ shelleyEraParamsNeverHardForks genesis perasRoundLength =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = perasRoundLength
+    , eraPerasParams = (perasBlockMaxSlots,) <$> perasRoundLength
     }
  where
-  stabilityWindow =
-    SL.computeStabilityWindow
-      (unNonZero $ SL.sgSecurityParam genesis)
-      (SL.sgActiveSlotCoeff genesis)
+  k = SL.sgSecurityParam genesis
+  f = SL.sgActiveSlotCoeff genesis
+  stabilityWindow = SL.computeStabilityWindow (unNonZero k) f
+  perasBlockMaxSlots = mkPerasBlockMaxSlots (SecurityParam k) f
 
 mkShelleyLedgerConfig ::
   SL.ShelleyGenesis ->

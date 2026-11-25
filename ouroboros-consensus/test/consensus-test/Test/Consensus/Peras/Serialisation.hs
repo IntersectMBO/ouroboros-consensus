@@ -13,8 +13,7 @@ import Data.Word (Word64)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Params
-  ( PerasBlockMaxSlots (..)
-  , PerasBlockMinSlots (..)
+  ( PerasBlockMinSlots (..)
   , PerasBootstrapStatus (..)
   , PerasCertArrivalThreshold (..)
   , PerasCertMaxRounds (..)
@@ -114,7 +113,6 @@ genPerasParams = do
   ignoranceRounds <- PerasIgnoranceRounds <$> genWord64
   cooldownRounds <- PerasCooldownRounds <$> genWord64
   blockMinSlots <- PerasBlockMinSlots <$> genWord64
-  blockMaxSlots <- PerasBlockMaxSlots <$> genWord64
   certMaxRounds <- PerasCertMaxRounds <$> genWord64
   certArrivalThreshold <- PerasCertArrivalThreshold <$> genWord64
   weight <- PerasWeight <$> genWord64
@@ -131,7 +129,6 @@ genPerasParams = do
       { perasIgnoranceRounds = ignoranceRounds
       , perasCooldownRounds = cooldownRounds
       , perasBlockMinSlots = blockMinSlots
-      , perasBlockMaxSlots = blockMaxSlots
       , perasCertMaxRounds = certMaxRounds
       , perasCertArrivalThreshold = certArrivalThreshold
       , perasWeight = weight

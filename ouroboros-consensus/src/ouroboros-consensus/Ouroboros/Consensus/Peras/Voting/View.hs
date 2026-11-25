@@ -132,6 +132,19 @@ perasRoundStart roundNo = PerasQry $ do
     Right (PerasEnabled (slotNo, _)) ->
       return slotNo
 
+perasBlockMaxSlots ::
+  PerasRoundNo ->
+  PerasQry xs (PerasBlockMaxSlots)
+perasBlockMaxSlots roundNo = PerasQry $ do
+  summary <- ask
+  case HF.runQuery (HF.perasRoundNoToEraPerasParams roundNo) summary of
+    Left pastHorizon ->
+      throwError (PerasQryExceptionPastHorizon (show pastHorizon))
+    Right NoPerasEnabled ->
+      throwError PerasQryExceptionPerasDisabled
+    Right (PerasEnabled (blockMaxSlots, _)) ->
+      return blockMaxSlots
+
 -- | Chain prefix leading to the candidate block.
 --
 -- This corresponds to the last block /before/ the candidate slot horizon,
@@ -144,13 +157,14 @@ perasRoundStart roundNo = PerasQry $ do
 perasChainAtCandidateBlock ::
   GetHeader blk =>
   PerasBlockMinSlots ->
-  PerasBlockMaxSlots ->
   PerasRoundNo ->
   AnchoredFragment (Header blk) ->
   PerasQry xs (PerasCandidate (AnchoredFragment (Header blk)))
-perasChainAtCandidateBlock blockMinSlots blockMaxSlots currRoundNo currChain = do
+perasChainAtCandidateBlock blockMinSlots currRoundNo currChain = do
   -- Slot number at the start of the current round
   currRoundStart <- perasRoundStart currRoundNo
+  -- Maximum age for a block to be voted on
+  blockMaxSlots <- perasBlockMaxSlots currRoundNo
   -- Minimum number of slots to consider before the candidate block
   let _L = SlotNo (unPerasBlockMinSlots blockMinSlots)
   -- Maximum number of slots after which the candidate block is considered too old
