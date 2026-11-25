@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | The announcements the node has accepted, from whichever peer.
@@ -11,7 +12,9 @@
 -- an announcement is new, and only then relays it.
 module Ouroboros.Consensus.Leios.AnnounceState
   ( AnnounceState (ageLimits)
+  , acceptedAnnouncementAge
   , hasAnnouncement
+  , isEquivocated
   , newAnnounceState
   , onValidAnnouncement
   , WhetherNewAnnouncement (..)
@@ -20,10 +23,21 @@ module Ouroboros.Consensus.Leios.AnnounceState
   ) where
 
 import Control.Monad (when)
+import Data.List (find)
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
+import Data.Time (NominalDiffTime)
 import Data.Void (Void)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, HasHeader, Header, SlotNo)
+import Ouroboros.Consensus.Block
+  ( ConvertRawHash
+  , GetHeader
+  , HasHeader
+  , Header
+  , RealPoint (..)
+  , SlotNo
+  , headerHash
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (addRelTime)
 import Ouroboros.Consensus.Leios.NotifyLog
   ( Notification (..)
@@ -31,7 +45,11 @@ import Ouroboros.Consensus.Leios.NotifyLog
   , appendNotifyLog
   )
 import Ouroboros.Consensus.Leios.Protocol (OCINStaleness (FreshOCIN))
-import Ouroboros.Consensus.Leios.Types (ElectionId (electionSlot), RankingBlockHash)
+import Ouroboros.Consensus.Leios.Types
+  ( ElectionId (electionSlot)
+  , RankingBlockHash
+  , toRankingBlockHash
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncingHeader (..)
@@ -52,7 +70,7 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | The node's announcements, per election, and the log it relays them in.
 data AnnounceState m blk = MkAnnounceState
-  { announced :: !(StrictTVar m (Announcements.State (AnnouncingHeader blk)))
+  { announced :: !(StrictTVar m (Announcements.State (ValidAnnouncement blk)))
   , prunedTo :: !(StrictTVar m SlotNo)
   -- ^ every election before this slot is forgotten, and ignored
   , relayLog :: !(NotifyLog m blk)
@@ -102,7 +120,7 @@ onValidAnnouncement st valid = do
     then pure NotNewAnnouncement
     else do
       seen <- readTVar announced
-      case Announcements.insert @_ @Void electionId announcingHeader seen of
+      case Announcements.insert @_ @Void electionId valid seen of
         Left _repeatedOrThird -> pure NotNewAnnouncement
         Right seen' -> do
           writeTVar announced seen'
@@ -138,7 +156,39 @@ hasAnnouncement ::
   RankingBlockHash ->
   STM m Bool
 hasAnnouncement st slot rbHash =
-  any ((== rbHash) . announcingRbHash) . Announcements.inSlot slot <$> readTVar (announced st)
+  any ((== rbHash) . announcingRbHash . announcingHeader) <$> acceptedInSlot st slot
+
+-- | Whether the node accepted the announcement of this announcing block, and
+-- another announcement of the same election.
+isEquivocated ::
+  forall m blk.
+  (IOLike m, ConvertRawHash blk, GetHeader blk) =>
+  AnnounceState m blk ->
+  RealPoint blk ->
+  STM m Bool
+isEquivocated st (RealPoint slot hash) = do
+  inSlot <- map announcingHeader <$> acceptedInSlot st slot
+  pure $ case filter ((== rbHash) . announcingRbHash) inSlot of
+    anc : _ ->
+      any (\other -> ancElectionId other == ancElectionId anc && announcingRbHash other /= rbHash) inSlot
+    [] -> False
+ where
+  rbHash = toRankingBlockHash (Proxy @blk) hash
+
+-- | How long after its election slot began the node accepted the announcement
+-- of this announcing block, if it did.
+acceptedAnnouncementAge ::
+  (IOLike m, HasHeader (Header blk)) =>
+  AnnounceState m blk ->
+  RealPoint blk ->
+  STM m (Maybe NominalDiffTime)
+acceptedAnnouncementAge st (RealPoint slot hash) =
+  fmap announcementAge . find ((== hash) . headerHash . ancHeader . announcingHeader)
+    <$> acceptedInSlot st slot
+
+-- | The announcements the node accepted in elections of the given slot.
+acceptedInSlot :: IOLike m => AnnounceState m blk -> SlotNo -> STM m [ValidAnnouncement blk]
+acceptedInSlot st slot = Announcements.inSlot slot <$> readTVar (announced st)
 
 -- | Forget every election before the given slot, which is the immutable tip's.
 pruneAnnounceState ::
