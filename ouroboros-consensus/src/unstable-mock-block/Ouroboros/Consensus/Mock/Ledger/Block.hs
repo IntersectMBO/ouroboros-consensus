@@ -634,7 +634,7 @@ instance
   -- Mempool's index of the txs an endorser block can reference.
   txLeiosHash tx = hashLeiosTx . MkLeiosTx <$> txLeiosBytes tx
   txLeiosBytes = Just . Lazy.toStrict . serialise
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32

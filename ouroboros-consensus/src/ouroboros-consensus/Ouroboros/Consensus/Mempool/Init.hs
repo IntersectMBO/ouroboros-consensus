@@ -122,7 +122,7 @@ mkMempool mpEnv =
         pure $!
           MkLeiosMempoolTxs
             (isLeiosTxs is)
-            (tickedLedgerMajorProtocolVersionWord16 (isLedgerState is))
+            (tickedLedgerMajorProtocolVersion (isLedgerState is))
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }

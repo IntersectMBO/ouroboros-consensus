@@ -44,7 +44,6 @@ import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.MempoolPayload as CC
 import qualified Cardano.Chain.UTxO as Utxo
 import qualified Cardano.Chain.Update as Update
-import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
@@ -145,12 +144,9 @@ instance LedgerSupportsMempool ByronBlock where
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
   txLeiosHash = nothingTxLeiosHash
   txLeiosBytes = nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 =
-    MkVersionWord16
-      . Update.pvMajor
-      . UPI.adoptedProtocolVersion
-      . CC.cvsUpdateState
-      . tickedByronLedgerState
+
+  -- Byron has no endorser blocks.
+  tickedLedgerMajorProtocolVersion = fixedTickedLedgerMajorProtocolVersion minBound
 
 instance TxLimits ByronBlock where
   type TxMeasurePhase1 ByronBlock = IgnoringOverflow ByteSize32

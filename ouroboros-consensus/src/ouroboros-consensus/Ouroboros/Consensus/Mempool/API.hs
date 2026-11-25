@@ -218,7 +218,7 @@ data Mempool m blk = Mempool
   -- ^ The transactions in the mempool that an endorser block can reference, by
   -- the hash it references them by ('txLeiosHash'), and the major protocol
   -- version they were all validated under
-  -- ('tickedLedgerMajorProtocolVersionWord16').
+  -- ('tickedLedgerMajorProtocolVersion').
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->
