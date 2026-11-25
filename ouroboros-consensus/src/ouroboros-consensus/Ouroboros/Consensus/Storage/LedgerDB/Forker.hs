@@ -87,7 +87,11 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , leiosLedgerViewAtTip
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffForKeysOnTables, prependDiffs)
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( applyDiffForKeysOnTables
+  , emptyLedgerTables
+  , prependDiffsOnTables
+  )
 import Ouroboros.Consensus.Leios.Types (LeiosPoint, SerialisedEndorserBlock)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
@@ -505,14 +509,33 @@ applyBlock evs cfg ap fo doResolveBlock doResolveEb = case ap of
     m (Either (AnnLedgerError l blk) (l blk DiffMK))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
-    (vs, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (forkerReadTables fo) blk l
-    fmap finish <$> f vs
+    (vs, ebDiffs) <- applyCertifiedEndorserBlock cfg doResolveEb (forkerReadTables fo) blk l
+    fmap (prependDiffsOnTables ebDiffs) <$> f vs
 
--- | Prepare to apply a block on a state.
+-- | Prepare the predecessor's state for applying a ranking block.
+-- If that block contains a Leios certificate, resolve and apply the announced
+-- endorser block before ticking for the certifying block:
 --
--- A block containing a Leios certificate applies after the endorser block it
--- certifies, which applies on the state its predecessor left, and whose
--- differences come first.
+-- @
+-- predecessor RB state S
+--          | apply its announced EB
+--          v
+--       S_EB, D_EB          <- this function returns here
+--          | tick and apply the certifying RB
+--          v
+--       S_next, D_RB
+--          | prepend D_EB to D_RB
+--          | record the state and combined diffs in LedgerDB
+--          v
+-- one LedgerDB entry for the certifying RB
+-- @
+--
+-- The returned state has the certifying block's table values loaded from the
+-- predecessor's tables, with the EB's changes overlaid. The caller must
+-- prepend the separately returned EB differences to the certifying block's
+-- differences, then record the resulting state and combined differences as
+-- one LedgerDB entry for the ranking block. When no EB applies, the returned
+-- EB differences are empty.
 applyCertifiedEndorserBlock ::
   (ApplyBlock l blk, BlockSupportsLeios blk, l ~ ExtLedgerState, MonadThrow m) =>
   LedgerCfg l blk ->
@@ -523,14 +546,14 @@ applyCertifiedEndorserBlock ::
   m
     ( -- The resulting ledger state with values loaded for blk.
       l blk ValuesMK
-    , -- Prepends the diffs of the endorser block once we have applied the blk.
-      l blk DiffMK -> l blk DiffMK
+    , -- Earlier table differences to prepend after applying blk.
+      LedgerTables blk DiffMK
     )
 applyCertifiedEndorserBlock cfg doResolveEb readTables blk st =
   case ledgerAnnouncedLeiosPoint (ledgerState st) <* blockLeiosCert blk of
     Nothing -> do
       values <- readTables keys
-      pure (st `withLedgerTables` values, id)
+      pure (st `withLedgerTables` values, emptyLedgerTables)
     Just point -> do
       serialised <- doResolveEb point
       ebDiffs <-
@@ -538,7 +561,7 @@ applyCertifiedEndorserBlock cfg doResolveEb readTables blk st =
           >>= either (throwIO . ExnUndecodableEndorserBlock point) pure
       let ebSt = st{ledgerState = ebDiffs}
       values <- readTables keys
-      pure (applyDiffForKeysOnTables values keys ebSt, prependDiffs ebSt)
+      pure (applyDiffForKeysOnTables values keys ebSt, projectLedgerTables ebSt)
  where
   keys = getBlockKeySets blk
 
@@ -638,12 +661,12 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- | Load the endorser block a block certifies, at the point its predecessor
 -- announced it.
 --
--- Like 'ResolveBlock', the endorser block must exist, or data corruption must have
--- happened.
+-- Like 'ResolveBlock', the dependency must exist; missing data violates the
+-- ChainDB's storage invariant.
 type ResolveEndorserBlock m = LeiosPoint -> m SerialisedEndorserBlock
 
--- | An endorser block a block certifies does not decode, so
--- data corruption must have happened.
+-- | The stored body or a transaction in the closure of a certified endorser
+-- block could not be decoded.
 data ExnUndecodableEndorserBlock = ExnUndecodableEndorserBlock LeiosPoint DecoderError
   deriving Show
   deriving anyclass Exception

@@ -22,16 +22,15 @@ class BlockSupportsLeios blk where
   -- endorser block its predecessor announced.
   blockLeiosCert :: blk -> Maybe LeiosCert
 
-  -- | The endorser block the tip of the ledger state announced, if any, as the
-  -- ledger records it to check a certificate against.
+  -- | The endorser block announced by the ranking block at the tip of the
+  -- ledger state, if any.
   ledgerAnnouncedLeiosPoint :: LedgerState blk mk -> Maybe LeiosPoint
 
   -- | Apply the endorser block the tip of the ledger state announced, without
   -- validating its transactions: the certificate of the next block vouches
   -- for them.
   --
-  -- The endorser block decodes in the era of the state, as certification never
-  -- crosses eras.
+  -- Decode the endorser block in the era of the slot in which it was announced.
   applyEndorserBlock ::
     Monad m =>
     LedgerConfig blk ->
@@ -42,8 +41,7 @@ class BlockSupportsLeios blk where
 
 -- | Read the values of the given keys from the ledger tables of a state.
 --
--- Reading lives in @m@ because the tables may be on disk. It yields the
--- values of those keys that exist in the tables.
+-- Reading lives in @m@ because the tables may be on disk.
 type ReadLedgerTables m blk = LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)
 
 -- | 'blockLeiosCert' for a block type that never contains a Leios certificate.

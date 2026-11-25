@@ -447,7 +447,7 @@ instance BlockSupportsProtocol LeiosTestBlock where
 data instance LedgerState LeiosTestBlock mk = LeiosTestLedger
   { ltlsTip :: Point LeiosTestBlock
   , ltlsAnnouncement :: Maybe LeiosPoint
-  -- ^ The endorser block the tip announced, as a ledger records it.
+  -- ^ The announcement for 'ledgerAnnouncedLeiosPoint'.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NoThunks, Serialise)

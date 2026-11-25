@@ -48,6 +48,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils (prependDiffsOnTables)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -239,7 +240,7 @@ mkInternals ldb h snapManager =
           ldb
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
-              (st'', finish) <-
+              (st'', ebDiffs) <-
                 applyCertifiedEndorserBlock
                   (ledgerDbCfg $ ldbCfg env)
                   (ldbResolveEndorserBlock env)
@@ -247,7 +248,7 @@ mkInternals ldb h snapManager =
                   blk
                   st
               let st' =
-                    finish $
+                    prependDiffsOnTables ebDiffs $
                       tickThenReapply
                         (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                         (ledgerDbCfg $ ldbCfg env)

@@ -110,7 +110,7 @@ tests =
     [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
     , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
     , testProperty
-        "the announced endorser block applies its transactions"
+        "applying an endorser block applies the transactions of its closure"
         prop_appliesEndorserBlock
     ]
 
@@ -119,8 +119,8 @@ prop_announcesEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
     forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
       let ebTxs = take numEbTxs distinctTxs
-      (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode ebTxs
-      pure $ case forgedEb of
+      (_, ForgeBlockResult blk mbForgedEb) <- forgeWith coreNode ebTxs
+      pure $ case mbForgedEb of
         Nothing -> counterexample "no endorser block" False
         Just forged ->
           let eb = forgedEbBody forged
@@ -142,8 +142,8 @@ prop_announcesEb =
 prop_noEb :: Property
 prop_noEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
-    (_, ForgeBlockResult blk forgedEb) <- forgeWith coreNode []
-    pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
+    (_, ForgeBlockResult blk mbForgedEb) <- forgeWith coreNode []
+    pure $ (announcement blk, isJust mbForgedEb) === (SNothing, False)
 
 prop_appliesEndorserBlock :: Property
 prop_appliesEndorserBlock =
@@ -194,6 +194,10 @@ withExampleOutput (ShelleyTx _ tx) =
 
 -- | The example ledger state, recording that the block in the given slot
 -- announced this endorser block.
+--
+-- This direct EB-application test does not validate a certificate against the
+-- announcing header, so its header hash can be a fixed placeholder. It does
+-- not exercise application of the announcing or certifying ranking block.
 announcedIn ::
   SlotNo ->
   EbReferencesAnnouncement ->

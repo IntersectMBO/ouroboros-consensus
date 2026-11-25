@@ -259,8 +259,8 @@ reapplyBlock ::
   m (StateRef m l blk)
 reapplyBlock evs cfg doResolveEb b db = do
   let StateRef st tbs = currentHandle db
-  (vals, finish) <- applyCertifiedEndorserBlock cfg doResolveEb (read tbs st) b st
-  let st' = finish $ tickThenReapply evs cfg b vals
+  (vals, ebDiffs) <- applyCertifiedEndorserBlock cfg doResolveEb (read tbs st) b st
+  let st' = prependDiffsOnTables ebDiffs $ tickThenReapply evs cfg b vals
       newst = forgetLedgerTables st'
 
   newtbs <- duplicateWithDiffs tbs st st'

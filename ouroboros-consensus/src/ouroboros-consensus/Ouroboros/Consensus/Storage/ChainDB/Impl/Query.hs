@@ -564,10 +564,11 @@ getAnyKnownBlock ::
 getAnyKnownBlock immutableDB volatileDB =
   getAnyKnownBlockComponent immutableDB volatileDB GetBlock
 
--- | The endorser block a block on the chain certifies, which must be stored
--- whole.
+-- | Load the body and complete transaction closure of the endorser block
+-- certified by a ranking block on the chain.
 --
--- If it does not, this indicates disk failure.
+-- A missing body or transaction violates the ChainDB's storage invariant and
+-- may indicate storage corruption or an implementation bug.
 getKnownEndorserBlock ::
   forall blk m.
   (IOLike m, HasHeader blk) =>

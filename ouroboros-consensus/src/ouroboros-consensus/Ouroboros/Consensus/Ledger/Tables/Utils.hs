@@ -30,6 +30,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils
 
     -- ** Combining diffs
   , prependDiffs
+  , prependDiffsOnTables
   , rawPrependDiffs
 
     -- * Operations on 'TrackingMK'
@@ -135,20 +136,19 @@ rawPrependDiffs ::
   DiffMK k v
 rawPrependDiffs (DiffMK d1) (DiffMK d2) = DiffMK (d1 <> d2)
 
--- | Prepend diffs from the first ledger state to the diffs from the second
--- ledger state. Returns ledger tables.
-prependDiffs' ::
-  ( HasLedgerTables l blk
-  , HasLedgerTables l' blk
-  ) =>
-  l blk DiffMK -> l' blk DiffMK -> LedgerTables blk DiffMK
-prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
-
 -- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
 prependDiffs ::
   (HasLedgerTables l blk, HasLedgerTables l' blk) =>
   l blk DiffMK -> l' blk DiffMK -> l' blk DiffMK
-prependDiffs l1 l2 = ltwith l2 $ prependDiffs' l1 l2
+prependDiffs l1 l2 = prependDiffsOnTables (ltprj l1) l2
+
+-- | Prepend earlier table differences to a ledger state's differences,
+-- retaining the state's in-memory part.
+prependDiffsOnTables ::
+  HasLedgerTables l blk =>
+  LedgerTables blk DiffMK -> l blk DiffMK -> l blk DiffMK
+prependDiffsOnTables earlier st =
+  ltwith st $ ltliftA2 rawPrependDiffs earlier (ltprj st)
 
 --
 -- Apply diffs
