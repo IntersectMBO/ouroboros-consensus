@@ -79,7 +79,6 @@ import Cardano.Network.NodeToNode
   , NodeToNodeVersionData (..)
   , RemoteAddress
   , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
@@ -601,6 +600,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnTxSubmissionLogicVersion
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -701,7 +701,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       (gcChainSyncLoPBucketConfig llrnGenesisConfig)
       (gcCSJConfig llrnGenesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
@@ -932,6 +932,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionLogicVersion ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -956,6 +957,7 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
+  txSubmissionLogicVersion
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
@@ -975,7 +977,7 @@ mkNodeKernelArgs
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
-          , miniProtocolParameters = defaultMiniProtocolParameters
+          , miniProtocolParameters = Diffusion.defaultMiniProtocolParameters
           , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
           , gsmArgs =
               GsmNodeKernelArgs
@@ -991,6 +993,7 @@ mkNodeKernelArgs
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
+          , txSubmissionLogicVersion
           , txSubmissionInitDelay
           }
 
@@ -1010,7 +1013,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
             blockFetchPipeliningMax =
               min
                 (blockFetchPipeliningMax miniProtocolParameters)
-                (blockFetchPipeliningMax defaultMiniProtocolParameters)
+                (blockFetchPipeliningMax Diffusion.defaultMiniProtocolParameters)
           }
     , blockFetchConfiguration =
         blockFetchConfiguration
