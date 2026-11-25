@@ -6,6 +6,18 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.5.0.0'></a>
+## 5.5.0.0 -- 2026-11-25
+
+### Breaking
+
+- Move the transaction-submission logic version argument from
+  `Ouroboros.Consensus.Network.NodeToNode.mkHandlers` to `Ouroboros.Consensus.Node.mkNodeKernelArgs`.
+  Callers that construct `NodeKernelArgs` directly set its `txSubmissionLogicVersion` field.
+
+- Bump `ouroboros-network` to `^>=2.1`, `cardano-diffusion` to `^>=1.4` and
+  `network-mux` to `^>=1.1`.
+
 <a id='changelog-5.4.0.1'></a>
 ## 5.4.0.1 -- 2026-11-16
 
