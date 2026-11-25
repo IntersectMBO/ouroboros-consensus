@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , LeiosTxMempoolView (..)
   , ConvertRawTxId (..)
   , GenTx
+  , GenTxInBlock
   , GenTxId
   , HasByteSize (..)
   , HasTxId (..)
@@ -44,6 +45,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , VersionWord16 (..)
   , WhetherToIntervene (..)
   , fixedTickedLedgerMajorProtocolVersionWord16
+  , extractAsMempoolTxs
   , nothingMkMempoolApplyTxError
   , leiosTxMempoolViewBytes
   , nothingLeiosTxMempoolView
@@ -92,6 +94,15 @@ import Ouroboros.Network.SizeInBytes as Network
 -- encoding omits, such as a producer-corrected phase-2 validity flag.
 type GenTx :: Type -> Type
 data family GenTx blk
+
+-- | A full generalized transaction as it appears in a block.
+--
+-- This keeps the block representation, including a producer's phase-2 validity
+-- flag. Converting to 'GenTx' selects submission semantics, which may discard
+-- such information. This type does not assert that the transaction or its
+-- containing block has been validated.
+type GenTxInBlock :: Type -> Type
+data family GenTxInBlock blk
 
 -- | Updating the ledger with a single transaction may result in a different
 -- error type as when updating it with a block
@@ -406,14 +417,24 @@ class HasTxId tx => ConvertRawTxId tx where
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)
 
--- | Collect all transactions from a block as the mempool would have received
--- them.
+-- | Collect full transactions from a block, with an explicit conversion for
+-- tooling that wants to resubmit them to the mempool.
 --
 -- This is used for tooling only. We don't require it as part of RunNode
 -- (and cannot, because we cannot give an instance for the dual ledger).
 class HasTxs blk where
   -- | Return the transactions part of the given block in no particular order.
-  extractAsMempoolTxs :: blk -> [GenTx blk]
+  extractTxs :: blk -> [GenTxInBlock blk]
+
+  -- | Convert a full transaction to a fresh mempool submission. This may discard
+  -- block-only information: in Dijkstra the claimed phase-2 validity becomes
+  -- @Phase2Valid@, as when decoding a new submission.
+  txInBlockToMempoolTx :: GenTxInBlock blk -> GenTx blk
+
+-- | Extract transactions for resubmission, using the same representation as a
+-- fresh submission rather than retaining block-only information.
+extractAsMempoolTxs :: HasTxs blk => blk -> [GenTx blk]
+extractAsMempoolTxs = map txInBlockToMempoolTx . extractTxs
 
 {-------------------------------------------------------------------------------
   Tx sizes

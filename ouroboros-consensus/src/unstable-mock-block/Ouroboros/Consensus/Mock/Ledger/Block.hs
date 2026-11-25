@@ -54,6 +54,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block
 
     -- * 'ApplyTx' (mempool support)
   , GenTx (..)
+  , GenTxInBlock (..)
   , TxId (..)
   , Validated (..)
   , genTxSize
@@ -251,7 +252,7 @@ matchesSimpleHeader SimpleHeader{..} SimpleBlock{..} =
   SimpleStdHeader{..} = simpleHeaderStd
 
 countSimpleGenTxs :: SimpleBlock c ext -> Word64
-countSimpleGenTxs = fromIntegral . length . extractAsMempoolTxs
+countSimpleGenTxs = fromIntegral . length . extractTxs
 
 {-------------------------------------------------------------------------------
   HasHeader instance for SimpleHeader
@@ -694,8 +695,12 @@ instance (Typeable p, Typeable c) => NoThunks (GenTx (SimpleBlock p c)) where
 instance (Typeable p, Typeable c) => NoThunks (Validated (GenTx (SimpleBlock p c))) where
   showTypeOf _ = show $ typeRep (Proxy @(Validated (GenTx (SimpleBlock p c))))
 
+newtype instance GenTxInBlock (SimpleBlock c ext) = SimpleTxInBlock Mock.Tx
+  deriving (Eq, Show)
+
 instance HasTxs (SimpleBlock c ext) where
-  extractAsMempoolTxs = map mkSimpleGenTx . simpleTxs . simpleBody
+  extractTxs = map SimpleTxInBlock . simpleTxs . simpleBody
+  txInBlockToMempoolTx (SimpleTxInBlock tx) = mkSimpleGenTx tx
 
 instance Mock.HasMockTxs (GenTx (SimpleBlock p c)) where
   getMockTxs = Mock.getMockTxs . simpleGenTx

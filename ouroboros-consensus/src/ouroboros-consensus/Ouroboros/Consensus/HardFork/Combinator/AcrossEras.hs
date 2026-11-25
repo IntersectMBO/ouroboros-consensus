@@ -39,6 +39,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraForgeStateUpdateError (..)
   , OneEraGenTx (..)
   , OneEraGenTxId (..)
+  , OneEraGenTxInBlock (..)
   , OneEraHash (..)
   , OneEraHeader (..)
   , OneEraIsLeader (..)
@@ -201,6 +202,7 @@ newtype OneEraForgeStateInfo xs = OneEraForgeStateInfo {getOneEraForgeStateInfo 
 newtype OneEraForgeStateUpdateError xs = OneEraForgeStateUpdateError {getOneEraForgeStateUpdateError :: NS WrapForgeStateUpdateError xs}
 newtype OneEraGenTx xs = OneEraGenTx {getOneEraGenTx :: NS GenTx xs}
 newtype OneEraGenTxId xs = OneEraGenTxId {getOneEraGenTxId :: NS WrapGenTxId xs}
+newtype OneEraGenTxInBlock xs = OneEraGenTxInBlock {getOneEraGenTxInBlock :: NS GenTxInBlock xs}
 newtype OneEraHeader xs = OneEraHeader {getOneEraHeader :: NS Header xs}
 newtype OneEraIsLeader xs = OneEraIsLeader {getOneEraIsLeader :: NS WrapIsLeader xs}
 newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS WrapLedgerErr xs}

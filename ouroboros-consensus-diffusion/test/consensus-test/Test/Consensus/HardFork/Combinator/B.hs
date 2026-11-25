@@ -26,6 +26,7 @@ module Test.Consensus.HardFork.Combinator.B
   , CodecConfig (..)
   , ConsensusConfig (..)
   , GenTx (..)
+  , GenTxInBlock (..)
   , Header (..)
   , LedgerState (..)
   , LedgerTables (..)
@@ -504,8 +505,11 @@ instance SingleEraBlock BlockB where
   singleEraInfo _ = SingleEraInfo "B"
   singleEraTransition = \_ _ _ _ -> Nothing
 
+data instance GenTxInBlock BlockB
+
 instance HasTxs BlockB where
-  extractAsMempoolTxs = const []
+  extractTxs = const []
+  txInBlockToMempoolTx = \case {}
 
 {-------------------------------------------------------------------------------
   Condense

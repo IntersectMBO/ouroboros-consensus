@@ -60,6 +60,7 @@ import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
   )
 import Cardano.Ledger.Mary (MaryEra)
+import Cardano.Ledger.MempoolTx.Internal (MempoolTx (UnsafeMkMempoolTx))
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -151,6 +152,14 @@ class
   -- | The 'LeiosEraDict' of the era, if the era supports Leios.
   getLeiosEraDict :: proxy era -> Maybe (LeiosEraDict era)
 
+  -- | Construct a fresh submission from a full transaction. The ledger does
+  -- not expose this conversion, so the internal constructor is confined here.
+  -- Earlier eras have identical block and submission transaction formats.
+  --
+  -- For 'DijkstraEra', set the phase-2 validity flag to 'L.Phase2Valid' to
+  -- ensure the invariant of @'SL.MempoolTx' 'DijkstraEra'@.
+  eraTxInBlockToMempoolTx :: Core.Tx TopTx era -> SL.MempoolTx era
+
   mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
 
@@ -231,6 +240,8 @@ defaultGetLeiosEraDict _ = Nothing
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
+
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   getLeiosEraDict = defaultGetLeiosEraDict
@@ -239,6 +250,8 @@ instance ShelleyBasedEra ShelleyEra where
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
+
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
@@ -249,6 +262,8 @@ instance ShelleyBasedEra AllegraEra where
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
+
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   getLeiosEraDict = defaultGetLeiosEraDict
@@ -257,6 +272,8 @@ instance ShelleyBasedEra MaryEra where
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
+
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
@@ -267,6 +284,8 @@ instance ShelleyBasedEra AlonzoEra where
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
+
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   getLeiosEraDict = defaultGetLeiosEraDict
@@ -275,6 +294,8 @@ instance ShelleyBasedEra BabbageEra where
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
+
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
@@ -285,6 +306,8 @@ instance ShelleyBasedEra ConwayEra where
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
+
+  eraTxInBlockToMempoolTx = UnsafeMkMempoolTx . (Core.isPhase2ValidTxL .~ L.Phase2Valid)
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 

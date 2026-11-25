@@ -14,6 +14,7 @@ import Ouroboros.Consensus.HardFork.Combinator.AcrossEras as X
   , OneEraBlock (..)
   , OneEraGenTx (..)
   , OneEraGenTxId (..)
+  , OneEraGenTxInBlock (..)
   , OneEraHash (..)
   , OneEraHeader (..)
   , OneEraTipInfo (..)

@@ -32,6 +32,7 @@ module Test.Consensus.HardFork.Combinator.A
   , CodecConfig (..)
   , ConsensusConfig (..)
   , GenTx (..)
+  , GenTxInBlock (..)
   , Header (..)
   , LedgerState (..)
   , LedgerTables (..)
@@ -653,8 +654,11 @@ instance SingleEraBlock BlockA where
         (History.countSlots s (boundSlot eraStart) `div` unEpochSize eraEpochSize)
         (boundEpoch eraStart)
 
+newtype instance GenTxInBlock BlockA = TxInBlockA (GenTx BlockA)
+
 instance HasTxs BlockA where
-  extractAsMempoolTxs = blkA_body
+  extractTxs = fmap TxInBlockA . blkA_body
+  txInBlockToMempoolTx (TxInBlockA tx) = tx
 
 {-------------------------------------------------------------------------------
   Condense

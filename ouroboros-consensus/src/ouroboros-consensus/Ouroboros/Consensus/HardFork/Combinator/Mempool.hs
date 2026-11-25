@@ -16,6 +16,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Mempool
   ( GenTx (..)
+  , GenTxInBlock (..)
   , HardForkApplyTxErr (..)
   , TxId (..)
   , Validated (..)
@@ -83,6 +84,11 @@ newtype instance GenTx (HardForkBlock xs) = HardForkGenTx
   }
   deriving (Eq, Generic, Show)
   deriving anyclass NoThunks
+
+-- | Full transactions retain the era of the block they were extracted from.
+newtype instance GenTxInBlock (HardForkBlock xs) = HardForkGenTxInBlock
+  { getHardForkGenTxInBlock :: OneEraGenTxInBlock xs
+  }
 
 newtype instance Validated (GenTx (HardForkBlock xs)) = HardForkValidatedGenTx
   { getHardForkValidatedGenTx :: OneEraValidatedGenTx xs
@@ -596,7 +602,7 @@ instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
 -------------------------------------------------------------------------------}
 
 instance All HasTxs xs => HasTxs (HardForkBlock xs) where
-  extractAsMempoolTxs =
+  extractTxs =
     hcollapse
       . hcimap (Proxy @HasTxs) aux
       . getOneEraBlock
@@ -606,8 +612,15 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
       HasTxs blk =>
       Index xs blk ->
       I blk ->
-      K [GenTx (HardForkBlock xs)] blk
-    aux index = K . map (injectNS' (Proxy @GenTx) index) . extractAsMempoolTxs . unI
+      K [GenTxInBlock (HardForkBlock xs)] blk
+    aux index = K . map (HardForkGenTxInBlock . OneEraGenTxInBlock . injectNS index) . extractTxs . unI
+
+  txInBlockToMempoolTx =
+    HardForkGenTx
+      . OneEraGenTx
+      . hcmap (Proxy @HasTxs) txInBlockToMempoolTx
+      . getOneEraGenTxInBlock
+      . getHardForkGenTxInBlock
 
 {-------------------------------------------------------------------------------
   Auxiliary
