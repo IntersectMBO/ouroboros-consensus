@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Node.DbMarker (DbMarkerError)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDbFailure (..))
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ExnUndecodableEndorserBlock)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import System.FS.API.Types (FsError (..), FsErrorType (..))
@@ -113,6 +114,8 @@ toExitReason pb e
       case e' of
         LgrDbFailure fe -> fsError fe
         _ -> DatabaseCorruption
+  | Just (_ :: ExnUndecodableEndorserBlock) <- fromException e =
+      DatabaseCorruption
   | Just (e' :: VolatileDBError blk) <- fromException e =
       case e' of
         VolatileDB.UnexpectedFailure uf -> volatileDbUnexpectedFailure uf
