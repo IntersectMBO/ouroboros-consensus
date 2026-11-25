@@ -1349,9 +1349,10 @@ test-suite protocol-test
     base,
     cardano-crypto-class,
     cardano-ledger-core:{cardano-ledger-core, testlib},
-    cardano-protocol-tpraos,
+    cardano-protocol:{cardano-protocol, testlib},
     cardano-slotting,
     containers,
+    mtl,
     ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
     serialise,
@@ -1392,6 +1393,7 @@ library diffusion
     base,
     bytestring,
     cardano-base,
+    cardano-crypto-leios,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
     cardano-strict-containers,
@@ -2053,6 +2055,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.LeiosCertifiable
     Test.Consensus.Cardano.LeiosFetch
     Test.Consensus.Cardano.LeiosNotify
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
@@ -2106,6 +2109,7 @@ test-suite cardano-test
     QuickCheck,
     sop-core,
     sop-extras,
+    strict,
     strict-sop-core,
     tasty,
     tasty-hunit,

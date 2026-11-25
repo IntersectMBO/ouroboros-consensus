@@ -1,9 +1,10 @@
 -- | A Leios committee of four equal seats that needs half the weight, and the
--- certificates its seats make.
+-- votes and certificates its seats make.
 module Test.Consensus.Leios.Committee
   ( certOf
   , testCommittee
   , testQuorumStakeThreshold
+  , voteOf
   ) where
 
 import Cardano.Crypto.DSIGN.Class
@@ -29,7 +30,7 @@ import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Vector.Strict as V
 import Data.Word (Word16)
-import Ouroboros.Consensus.Leios.Types (RankingBlockHash)
+import Ouroboros.Consensus.Leios.Types (LeiosVote (..), RankingBlockHash)
 
 signingKeys :: [LeiosSigningKey]
 signingKeys = [genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 i)) | i <- [0 .. 3]]
@@ -52,7 +53,16 @@ certOf rbHash seats =
   either (error . show) id $
     aggregateLeiosCert testCommittee $
       Map.fromList
-        [ (LeiosSeatId seat, signDSIGN leiosSignContext rbHash sk)
-        | (seat, sk) <- zip [0 ..] signingKeys
-        , seat `elem` seats
-        ]
+        [(voteSeatId vote, voteSignature vote) | seat <- seats, let vote = voteOf rbHash seat]
+
+-- | The vote of the given seat for the given announcing block.
+--
+-- TODO: call 'Ouroboros.Consensus.Leios.Voting.signVote' here, once the
+-- branch ch1bo/leios-voting merges and its module exports that function.
+voteOf :: RankingBlockHash -> Word16 -> LeiosVote
+voteOf rbHash seat =
+  MkLeiosVote
+    { voteAnnouncingRbHash = rbHash
+    , voteSeatId = LeiosSeatId seat
+    , voteSignature = signDSIGN leiosSignContext rbHash (signingKeys !! fromIntegral seat)
+    }

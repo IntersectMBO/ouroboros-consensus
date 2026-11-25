@@ -40,6 +40,7 @@ module Test.Consensus.Leios.NodeUnderTest
   , withNodeOver
   , withNodeOverDBs
   , withNodeOverDBsAfterUncleanShutdown
+  , withNodeTracing
   , withNodeUnderTest
   ) where
 
@@ -437,7 +438,22 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
 
 -- | A node whose ledger view forecasts further ahead than any test runs.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode = withNodeForecastingOnly 100000
+withNode = withNodeTracing nullTracers
+
+-- | 'withNode', with these tracers.
+withNodeTracing ::
+  Tracers (IOSim s) (ConnectionId PeerAddr) (ConnectionId ()) Blk ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeTracing tracers body = do
+  nodeDBs <- emptyNodeDBs
+  leiosDB <- newLeiosDBInMemory
+  withNodeUnderTest
+    (forecastingOnly testCommittee testQuorumStakeThreshold 100000)
+    tracers
+    nodeDBs
+    leiosDB
+    body
 
 -- | 'withNode', with ChainSync jumping, of this many slots at a time.
 withJumpingNode :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a

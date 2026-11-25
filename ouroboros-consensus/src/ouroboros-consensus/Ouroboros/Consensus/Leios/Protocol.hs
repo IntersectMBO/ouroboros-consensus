@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | What a consensus protocol says about the Leios announcement a header may
@@ -15,10 +16,13 @@ module Ouroboros.Consensus.Leios.Protocol
   , leiosEbByteSizeBounds
   , CertRbInfo (..)
   , LeiosProtocol (..)
+  , NotCertifiable (..)
   , OCINStaleness (..)
   , defaultGetCertifiableLeiosAnnouncement
+  , WhyNotCertifiable (..)
   , defaultGetContainsLeiosCert
   , defaultGetLeiosLedgerView
+  , defaultLeiosAnnouncementToCertify
   , defaultValidateLeiosAnnouncement
   , defaultGetLeiosAnnouncement
   ) where
@@ -71,6 +75,49 @@ decodeLeiosAnnouncement :: CBOR.Decoder s LeiosAnnouncement
 decodeLeiosAnnouncement =
   decodeRecordNamed (T.pack "LeiosAnnouncement") (const 3) $
     MkLeiosAnnouncement <$> fromCBOR <*> fromCBOR <*> CBOR.decodeWord32
+
+-- | Why the next header may certify no announcement.
+data WhyNotCertifiable
+  = -- | The most recently applied header carried none.
+    NothingAnnounced
+  | -- | It was announced in the previous era, and an endorser block may not be
+    -- certified across an era boundary.
+    AnnouncedInPreviousEra
+  | -- | It was announced in the previous epoch, and an endorser block may not be
+    -- certified across an epoch boundary.
+    --
+    -- (This restriction avoids some engineering complexity that wouldn't be
+    -- worthwhile, since this restriction only loses one EB opportunity per
+    -- epoch.)
+    AnnouncedInPreviousEpoch
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | Keeps the more specific reason: 'NothingAnnounced', then
+-- 'AnnouncedInPreviousEra', then 'AnnouncedInPreviousEpoch'.
+--
+-- An era boundary is also an epoch boundary, and either may be crossed first,
+-- so neither may trample the other's more specific reason.
+instance Semigroup WhyNotCertifiable where
+  (<>) = minBy specificityRank
+   where
+    minBy f a b = if f a > f b then b else a
+
+    specificityRank = \case
+      NothingAnnounced -> 0 :: Word -- most specific
+      AnnouncedInPreviousEra -> 1
+      AnnouncedInPreviousEpoch -> 2 -- least specific
+
+-- | Why a header at a given slot may not certify an endorser block.
+data NotCertifiable
+  = -- | Its predecessor's state holds no announcement it may certify.
+    NoCertifiableAnnouncement !WhyNotCertifiable
+  | -- | The announcement, voting and diffusion periods have not all elapsed
+    -- since the announcement.
+    TooYoung
+      !SlotNo -- Slot of the announcing block
+      !SlotNo -- Earliest slot in which a header may certify
+  deriving stock (Eq, Show)
 
 -- | The Leios parameters a ledger view carries.
 --
@@ -152,6 +199,19 @@ class ConsensusProtocol p => LeiosProtocol p where
     Ticked (ChainDepState p) ->
     Except (ValidationErr p) OCINStaleness
 
+  -- | The announcement a header at this slot may certify, or why it may
+  -- certify none, given its predecessor's chain-dependent state ticked to
+  -- that slot.
+  --
+  -- The protocol's header validation rejects a header that contains a Leios
+  -- certificate exactly when this gives 'Left', so a forger that asks first
+  -- never forges a header that its own validation rejects.
+  leiosAnnouncementToCertify ::
+    ConsensusConfig p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Either NotCertifiable LeiosAnnouncement
+
   -- | The Leios parameters this ledger view carries, or 'Nothing' if the
   -- protocol has no Leios.
   getLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
@@ -180,6 +240,15 @@ defaultValidateLeiosAnnouncement ::
   Ticked (ChainDepState p) ->
   Except (ValidationErr p) OCINStaleness
 defaultValidateLeiosAnnouncement _cfg _view _slot _st = pure FreshOCIN
+
+-- | 'leiosAnnouncementToCertify' for a protocol whose headers never announce, so that
+-- no header may certify.
+defaultLeiosAnnouncementToCertify ::
+  ConsensusConfig p ->
+  SlotNo ->
+  Ticked (ChainDepState p) ->
+  Either NotCertifiable LeiosAnnouncement
+defaultLeiosAnnouncementToCertify _cfg _slot _st = Left $ NoCertifiableAnnouncement NothingAnnounced
 
 -- | 'getLeiosLedgerView' for a protocol that has no Leios.
 defaultGetLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView

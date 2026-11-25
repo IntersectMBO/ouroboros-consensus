@@ -62,6 +62,7 @@ instance
   getContainsLeiosCert _proxy = getContainsLeiosCert (Proxy @p)
   getCertifiableLeiosAnnouncement _proxy = getCertifiableLeiosAnnouncement (Proxy @p)
   validateLeiosAnnouncement = validateLeiosAnnouncement . mcsConfigP
+  leiosAnnouncementToCertify = leiosAnnouncementToCertify . mcsConfigP
   getLeiosLedgerView _proxy = getLeiosLedgerView (Proxy @p)
 
 instance ConsensusProtocol p => NoThunks (ConsensusConfig (ModChainSel p t))

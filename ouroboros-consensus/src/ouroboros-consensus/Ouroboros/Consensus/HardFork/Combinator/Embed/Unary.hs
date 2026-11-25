@@ -503,6 +503,7 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbTxs
              , fbEbTxs
              , fbIsLeader
+             , fbLeiosCert
              } ->
               fmap (project' (Proxy @(I blk)))
                 <$> forgeBlock
@@ -516,6 +517,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
                     , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
                     , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    , fbLeiosCert
                     }
       }
    where
@@ -567,6 +569,7 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbTxs
              , fbEbTxs
              , fbIsLeader
+             , fbLeiosCert
              } ->
               fmap (inject' (Proxy @(I blk)))
                 <$> forgeBlock
@@ -580,6 +583,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
                     , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
                     , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    , fbLeiosCert
                     }
       }
    where
