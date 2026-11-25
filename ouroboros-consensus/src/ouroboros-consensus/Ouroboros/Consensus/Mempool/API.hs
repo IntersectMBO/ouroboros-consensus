@@ -191,6 +191,12 @@ data Mempool m blk = Mempool
   --
   -- This does not update the state of the mempool.
   --
+  -- NOTE: reapplying the mempool's transactions against the given ledger
+  -- state happens in steps under a time limit, so the snapshot may contain
+  -- only a /prefix/ of the mempool's transactions — the ones that were
+  -- reapplied before the time limit ran out (see
+  -- 'Ouroboros.Consensus.Mempool.Query.implGetSnapshotFor').
+  --
   -- The arguments:
   --
   -- - The current slot in which we want the snapshot

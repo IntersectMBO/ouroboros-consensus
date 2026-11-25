@@ -15,6 +15,7 @@ import qualified Test.Consensus.Ledger.Tables.Diff (tests)
 import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
+import qualified Test.Consensus.Mempool.Query (tests)
 import qualified Test.Consensus.Mempool.StateMachine (tests)
 import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
@@ -69,6 +70,7 @@ tests =
         [ Test.Consensus.Mempool.tests
         , Test.Consensus.Mempool.Capacity.tests
         , Test.Consensus.Mempool.Fairness.tests
+        , Test.Consensus.Mempool.Query.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
     , testGroup

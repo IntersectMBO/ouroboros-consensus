@@ -8,6 +8,7 @@ module Ouroboros.Consensus.Mempool.Query
 
     -- * Time-capped reapplication
   , revalidateUntilTimeout
+  , snapshotTxsPerStep
   ) where
 
 import Control.Tracer (traceWith)
