@@ -185,7 +185,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
   txLeiosBytes = Ledger.nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 = Ledger.fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion = Ledger.nothingTickedLedgerLeiosVersion
 
 type instance Ledger.ApplyTxErr TestBlock = ()
 

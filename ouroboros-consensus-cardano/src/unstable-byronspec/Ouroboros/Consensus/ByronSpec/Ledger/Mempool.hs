@@ -61,7 +61,7 @@ instance LedgerSupportsMempool ByronSpecBlock where
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
   txLeiosBytes = nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion = nothingTickedLedgerLeiosVersion
 
 instance TxLimits ByronSpecBlock where
   type TxMeasurePhase1 ByronSpecBlock = IgnoringOverflow ByteSize32

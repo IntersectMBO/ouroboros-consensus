@@ -243,9 +243,9 @@ instance
     Just LeiosEraDict -> Just (SL.originalBytes tx)
     Nothing -> Nothing
 
-  tickedLedgerMajorProtocolVersionWord16 st =
-    toVersionWord16 . L.pvMajor $
-      getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
+  tickedLedgerLeiosVersion st = case getLeiosEraDict (Proxy @era) of
+    Just LeiosEraDict -> Just $ L.pvMajor $ getPParams (tickedShelleyLedgerState st) ^. ppProtocolVersionL
+    Nothing -> Nothing
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)

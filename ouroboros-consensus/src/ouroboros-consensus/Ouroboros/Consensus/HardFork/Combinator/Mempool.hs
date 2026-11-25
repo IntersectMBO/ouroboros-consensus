@@ -310,11 +310,11 @@ instance
       . getOneEraGenTx
       . getHardForkGenTx
 
-  tickedLedgerMajorProtocolVersionWord16 (TickedHardForkLedgerState _transition hardForkState) =
+  tickedLedgerLeiosVersion (TickedHardForkLedgerState _transition hardForkState) =
     hcollapse $
       hcmap
         proxySingle
-        (\(FlipTickedLedgerState tlst) -> K (tickedLedgerMajorProtocolVersionWord16 tlst))
+        (\(FlipTickedLedgerState tlst) -> K (tickedLedgerLeiosVersion tlst))
         hardForkState
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where

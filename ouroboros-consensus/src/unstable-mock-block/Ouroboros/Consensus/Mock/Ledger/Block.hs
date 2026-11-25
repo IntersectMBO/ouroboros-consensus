@@ -632,7 +632,7 @@ instance
   -- Every mock tx has a Leios view, so that the Mempool tests cover the
   -- Mempool's index of the txs an endorser block can reference.
   txLeiosBytes = Just . Lazy.toStrict . serialise
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion _ = Just minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32

@@ -22,10 +22,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , processLeiosBlock
   , processLeiosBlockTxs
   , acquireForgedEb
-  , noMempoolTxsAndVersion0
+  , noMempoolTxs
   ) where
 
-import Cardano.Ledger.Binary (DecoderError)
+import Cardano.Ledger.Binary (DecoderError, Version)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
 import Control.Tracer (Tracer, traceWith)
@@ -52,7 +52,6 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , SystemTime (..)
   , diffRelTime
   )
-import Ouroboros.Consensus.Ledger.SupportsMempool (VersionWord16)
 import Ouroboros.Consensus.Leios.Acquisitions (LeiosAcquisition (..))
 import Ouroboros.Consensus.Leios.TxCache.API
   ( LandedTx (..)
@@ -141,7 +140,7 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcOutstanding :: !(StrictMVar m (LeiosOutstanding peer))
   , lfcReady :: !(StrictMVar m ())
   -- ^ Filled by anything that might unblock a new fetch decision.
-  , lfcTxCache :: !(LeiosTxCache m () VersionWord16 PackedEndorserBlock)
+  , lfcTxCache :: !(LeiosTxCache m () Version PackedEndorserBlock)
   -- ^ Records each validated tx with the major protocol version it was
   -- validated under. The Mempool and LeiosVoting validate a tx only under the
   -- current major version, so a recorded validation still holds exactly when
@@ -152,9 +151,10 @@ data LeiosFetchClientContext m peer = MkLeiosFetchClientContext
   , lfcSystemTime :: !(SystemTime m)
   -- ^ For reporting how long after its point's slot began an endorser block,
   -- or its transactions, were acquired.
-  , lfcMempoolTxs :: !(Set TxHash -> m (LeiosMempoolTxs ByteString))
+  , lfcMempoolTxs :: !(Set TxHash -> m (Maybe (LeiosMempoolTxs ByteString)))
   -- ^ For the subset of these txs the node's Mempool currently holds, their
   -- bytes; and the major protocol version the Mempool validated them all under.
+  -- 'Nothing' when it holds none an endorser block can reference.
   , lfcTracer :: !(Tracer m (TraceLeiosFetchClientEvent peer))
   }
 
@@ -462,11 +462,12 @@ writeBodyWithLocalTxs ::
   Maybe LeiosTxCacheInsertBodySummary ->
   m (Set TxOffset)
 writeBodyWithLocalTxs ctx point eb localFills summary = do
-  MkLeiosMempoolTxs inMempool protVer <- lfcMempoolTxs (Set.fromList (map fst refs))
+  mempoolTxs <- lfcMempoolTxs (Set.fromList (map fst refs))
   let fromMempool =
         [ (off, txHash, bytes)
-        | (off, (txHash, _size)) <- zip [0 ..] refs
-        , Just bytes <- [Map.lookup txHash inMempool]
+        | Just MkLeiosMempoolTxs{lmtByHash} <- [mempoolTxs]
+        , (off, (txHash, _size)) <- zip [0 ..] refs
+        , Just bytes <- [Map.lookup txHash lmtByHash]
         ]
       mempoolOffs = Set.fromList [off | (off, _, _) <- fromMempool]
       fills = localFills `Map.withoutKeys` mempoolOffs
@@ -494,8 +495,9 @@ writeBodyWithLocalTxs ctx point eb localFills summary = do
     insertLandedTxs
       lfcTxCache
       point
-      [ MkLandedTx off txHash (fromIntegral (BS.length bytes)) (TxValidated protVer)
-      | (off, txHash, bytes) <- fromMempool
+      [ MkLandedTx off txHash (fromIntegral (BS.length bytes)) (TxValidated lmtValidatedUnder)
+      | Just MkLeiosMempoolTxs{lmtValidatedUnder} <- [mempoolTxs]
+      , (off, txHash, bytes) <- fromMempool
       , Set.member off heldOffs
       ]
   pure heldOffs
@@ -503,10 +505,9 @@ writeBodyWithLocalTxs ctx point eb localFills summary = do
   MkLeiosFetchClientContext{lfcMempoolTxs, lfcTxCache, lfcWriter, lfcTracer} = ctx
   refs = endorserBlockReferences eb
 
--- | 'lfcMempoolTxs' for a node that takes no txs from a mempool: none, with
--- version 0, which therefore describes no tx.
-noMempoolTxsAndVersion0 :: Applicative m => Set TxHash -> m (LeiosMempoolTxs ByteString)
-noMempoolTxsAndVersion0 _ = pure (MkLeiosMempoolTxs Map.empty minBound)
+-- | 'lfcMempoolTxs' for a node that takes no txs from a mempool.
+noMempoolTxs :: Applicative m => Set TxHash -> m (Maybe (LeiosMempoolTxs ByteString))
+noMempoolTxs _ = pure Nothing
 
 -- | Acquire an endorser block the node's own forge produced in this election,
 -- as one that arrived with no peer: take its body into the LeiosTxCache, write

@@ -316,7 +316,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
   txLeiosBytes = Ledger.nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 = Ledger.fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion = Ledger.nothingTickedLedgerLeiosVersion
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

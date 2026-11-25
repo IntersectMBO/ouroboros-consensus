@@ -858,7 +858,7 @@ instance LedgerSupportsMempool LeiosTestBlock where
   getTransactionKeySets _tx = emptyLedgerTables
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
   txLeiosBytes = nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion = nothingTickedLedgerLeiosVersion
 
 instance TxLimits LeiosTestBlock where
   type TxMeasurePhase1 LeiosTestBlock = IgnoringOverflow ByteSize32

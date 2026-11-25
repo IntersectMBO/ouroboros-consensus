@@ -218,22 +218,26 @@ leiosTxHash = maybeToStrictMaybe . fmap (hashLeiosTx . MkLeiosTx) . txLeiosBytes
 
 -- | \( O(n) \). The bytes of the transactions in the Mempool with these hashes
 -- that an endorser block can reference, and the major protocol version they
--- were all validated under. It scans the hashes the Mempool memoized, and takes
--- the bytes of only the transactions it finds.
+-- were all validated under; 'Nothing' in an era without endorser blocks. It
+-- scans the hashes the Mempool memoized, and takes the bytes of only the
+-- transactions it finds.
 leiosTxsByHash ::
   LedgerSupportsMempool blk =>
-  InternalState blk -> Set TxHash -> LeiosMempoolTxs ByteString
+  InternalState blk -> Set TxHash -> Maybe (LeiosMempoolTxs ByteString)
 leiosTxsByHash is hashes =
-  MkLeiosMempoolTxs
-    { lmtByHash =
-        Map.fromList
-          [ (txHash, bytes)
-          | TxTicket (ValidatedTxWithDiffs vtx _ (SJust txHash)) _ _ <- TxSeq.toList (isTxs is)
-          , txHash `Set.member` hashes
-          , Just bytes <- [txLeiosBytes (txForgetValidated vtx)]
-          ]
-    , lmtValidatedUnder = tickedLedgerMajorProtocolVersionWord16 (isLedgerState is)
-    }
+  validatedUnder <$> tickedLedgerLeiosVersion (isLedgerState is)
+ where
+  validatedUnder version =
+    MkLeiosMempoolTxs
+      { lmtByHash =
+          Map.fromList
+            [ (txHash, bytes)
+            | TxTicket (ValidatedTxWithDiffs vtx _ (SJust txHash)) _ _ <- TxSeq.toList (isTxs is)
+            , txHash `Set.member` hashes
+            , Just bytes <- [txLeiosBytes (txForgetValidated vtx)]
+            ]
+      , lmtValidatedUnder = version
+      }
 
 initInternalState ::
   LedgerSupportsMempool blk =>

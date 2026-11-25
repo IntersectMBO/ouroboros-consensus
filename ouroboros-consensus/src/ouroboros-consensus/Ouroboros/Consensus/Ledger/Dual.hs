@@ -752,7 +752,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
 
   txLeiosBytes = txLeiosBytes . dualGenTxMain
 
-  tickedLedgerMajorProtocolVersionWord16 = tickedLedgerMajorProtocolVersionWord16 . tickedDualLedgerStateMain
+  tickedLedgerLeiosVersion = tickedLedgerLeiosVersion . tickedDualLedgerStateMain
 
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasurePhase1 (DualBlock m a) = TxMeasurePhase1 m

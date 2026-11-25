@@ -70,7 +70,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   , JobMismatch (..)
   , LeiosFetchClientContext (..)
   , acquireForgedEb
-  , noMempoolTxsAndVersion0
+  , noMempoolTxs
   , processLeiosBlock
   , processLeiosBlockTxs
   )
@@ -249,7 +249,7 @@ newContextGated point gate = do
         , lfcWriter = writer
         , lfcNotify = modifyTVar notes . (:) . note
         , lfcSystemTime = SystemTime (pure (RelativeTime 0)) (pure ())
-        , lfcMempoolTxs = noMempoolTxsAndVersion0
+        , lfcMempoolTxs = noMempoolTxs
         , lfcTracer = nullTracer
         }
     , notes
@@ -302,7 +302,7 @@ test_acquisitions = do
 withMempool :: [LeiosTx] -> LeiosFetchClientContext IO Int -> LeiosFetchClientContext IO Int
 withMempool held ctx =
   ctx
-    { lfcMempoolTxs = \hashes -> pure (MkLeiosMempoolTxs (Map.restrictKeys inMempool hashes) minBound)
+    { lfcMempoolTxs = \hashes -> pure (Just (MkLeiosMempoolTxs (Map.restrictKeys inMempool hashes) minBound))
     }
  where
   inMempool = Map.fromList [(hashLeiosTx tx, leiosTxBytes tx) | tx <- held]

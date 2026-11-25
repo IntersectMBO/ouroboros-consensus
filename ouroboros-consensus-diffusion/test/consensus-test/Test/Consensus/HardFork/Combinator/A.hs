@@ -466,7 +466,7 @@ instance LedgerSupportsMempool BlockA where
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
   txLeiosBytes = nothingTxLeiosBytes
-  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
+  tickedLedgerLeiosVersion = nothingTickedLedgerLeiosVersion
 
 instance TxLimits BlockA where
   type TxMeasurePhase1 BlockA = IgnoringOverflow ByteSize32

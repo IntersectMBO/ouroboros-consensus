@@ -1182,8 +1182,8 @@ prop_Mempool_leiosTxIndex_consistency (Actions actions) =
               | tx <- map txForgetValidated txs
               , Just bytes <- [txLeiosBytes tx]
               ]
-      MkLeiosMempoolTxs found _ <- atomically (getLeiosTxs mempool (Map.keysSet expected))
-      return $ actionProp .&&. found === expected
+      found <- atomically (getLeiosTxs mempool (Map.keysSet expected))
+      return $ actionProp .&&. fmap lmtByHash found === Just expected
 
 -- | An empty Mempool over the initial ledger, with room for whatever the
 -- actions add.

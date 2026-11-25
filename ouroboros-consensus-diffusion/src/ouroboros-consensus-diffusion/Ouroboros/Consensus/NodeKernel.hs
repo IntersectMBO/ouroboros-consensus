@@ -782,16 +782,16 @@ forkBlockForging IS{..} onForgedEb (MkBlockForging blockForgingM) =
 
 -- | For the subset of these txs the Mempool currently holds, their bytes as an
 -- endorser block references them; and the major protocol version the Mempool
--- validated them all under.
+-- validated them all under; 'Nothing' in an era without endorser blocks.
 leiosTxsInMempool ::
   IOLike m =>
   Mempool m blk ->
   Set TxHash ->
-  m (LeiosMempoolTxs ByteString)
+  m (Maybe (LeiosMempoolTxs ByteString))
 leiosTxsInMempool mempool hashes = do
-  txs <- atomically $ getLeiosTxs mempool hashes
+  mTxs <- atomically $ getLeiosTxs mempool hashes
   -- Forced here, so that the peer's thread scans the mempool's txs.
-  pure $! txs
+  forM mTxs $ \txs -> pure $! txs
 
 {-------------------------------------------------------------------------------
   Leios pruning

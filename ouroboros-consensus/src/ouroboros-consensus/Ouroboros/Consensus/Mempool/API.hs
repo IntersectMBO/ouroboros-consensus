@@ -216,12 +216,12 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , getLeiosTxs :: Set TxHash -> STM m (LeiosMempoolTxs ByteString)
+  , getLeiosTxs :: Set TxHash -> STM m (Maybe (LeiosMempoolTxs ByteString))
   -- ^ The bytes of the transactions in the mempool with these hashes that an
   -- endorser block can reference, by the hash it references them by
   -- ('hashLeiosTx'), and the major protocol version they were all validated
-  -- under
-  -- ('tickedLedgerMajorProtocolVersionWord16').
+  -- under ('tickedLedgerLeiosVersion'). 'Nothing' in an era without
+  -- endorser blocks.
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->

@@ -40,15 +40,13 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxEbMeasureByteSize (..)
   , TrivialTxMeasurePhase2 (..)
   , Validated
-  , VersionWord16 (..)
   , WhetherToIntervene (..)
-  , fixedTickedLedgerMajorProtocolVersionWord16
   , nothingMkMempoolApplyTxError
+  , nothingTickedLedgerLeiosVersion
   , nothingTxLeiosBytes
-  , toVersionWord16
   ) where
 
-import Cardano.Ledger.Binary.Version (MaxVersion, Version, getVersion64)
+import Cardano.Ledger.Binary.Version (Version)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
@@ -60,19 +58,15 @@ import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure, zero)
 import qualified Data.Measure as M
-import Data.Proxy (Proxy (..))
 import Data.Text (Text)
-import Data.Type.Ord (type (<))
-import Data.Word (Word16, Word32)
+import Data.Word (Word32)
 import GHC.Generics
 import GHC.Stack (HasCallStack)
-import GHC.TypeNats (type (^))
 import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -273,16 +267,9 @@ class
   txLeiosBytes :: GenTx blk -> Maybe ByteString
 
   -- | The major protocol version under which this ledger state validates
-  -- transactions.
-  --
-  -- This is total, so 'VersionWord16' holds every era's major protocol
-  -- version: no part of the Cardano codebase supports one of @2 ^ 16@ or more,
-  -- nor would it be reasonable to. Only Leios uses it so far, and only for eras
-  -- with endorser blocks. If fewer bits would ever benefit Leios, this could
-  -- become partial, for example excluding Byron, whose major protocol version
-  -- is a 'Word16'. Nothing motivates that yet, since the LeiosTxCache's hash
-  -- table has bits to spare.
-  tickedLedgerMajorProtocolVersionWord16 :: TickedLedgerState blk mk -> VersionWord16
+  -- transactions, as Leios records it for the transactions of an endorser
+  -- block. 'Nothing' in an era without endorser blocks.
+  tickedLedgerLeiosVersion :: TickedLedgerState blk mk -> Maybe Version
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
@@ -293,11 +280,10 @@ nothingMkMempoolApplyTxError _ _ = Nothing
 nothingTxLeiosBytes :: GenTx blk -> Maybe ByteString
 nothingTxLeiosBytes _ = Nothing
 
--- | Value of 'tickedLedgerMajorProtocolVersionWord16' for a block type whose ledger never changes
--- its protocol version from the given one
-fixedTickedLedgerMajorProtocolVersionWord16 ::
-  VersionWord16 -> TickedLedgerState blk mk -> VersionWord16
-fixedTickedLedgerMajorProtocolVersionWord16 protVer _ = protVer
+-- | Value of 'tickedLedgerLeiosVersion' for a block type without
+-- endorser blocks
+nothingTickedLedgerLeiosVersion :: TickedLedgerState blk mk -> Maybe Version
+nothingTickedLedgerLeiosVersion _ = Nothing
 
 data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult
@@ -308,21 +294,6 @@ data ReapplyTxsResult extra blk wtd
   -- which txs were received
   , resultingState :: !(TickedLedgerState blk EmptyMK)
   }
-
--- | A major protocol version, in few enough bits to pack. Every 'Word16' is
--- one, so decoding a version that the LeiosTxCache's hash table
--- ("Ouroboros.Consensus.Leios.TxCache.Optimized") packs is total.
--- 'toVersionWord16' converts any 'Version' the ledger can represent.
-newtype VersionWord16 = MkVersionWord16 Word16
-  deriving stock (Eq, Ord, Show)
-  deriving newtype (Bounded, NoThunks)
-
--- | This typechecks only while the ledger's 'MaxVersion' is below @2 ^ 16@, so
--- it is total.
-toVersionWord16 :: Version -> VersionWord16
-toVersionWord16 = MkVersionWord16 . fromIntegral . getVersion64
- where
-  _ = keepRedundantConstraint (Proxy @(MaxVersion < 2 ^ 16))
 
 -- | A generalized transaction, 'GenTx', identifier.
 type TxId :: Type -> Type
