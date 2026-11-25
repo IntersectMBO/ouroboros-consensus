@@ -11,8 +11,8 @@
 -- instances, but defining them there would be too confusing.
 module Ouroboros.Consensus.Mock.Node.Peras () where
 
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , VoidPerasCert
@@ -27,25 +27,27 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
-import Ouroboros.Consensus.Protocol.Abstract
-  ( ChainDepState
-  , ChainDepStateSupportsPeras
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   )
-import Ouroboros.Consensus.Ticked (Ticked)
 
 instance
   ( SimpleCrypto c
   , Typeable ext
-  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (SimpleBlock c ext)))
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (SimpleBlock c ext))))
   ) =>
   StateSupportsPerasEpochContext (SimpleBlock c ext)
   where
   type MaybeEraIndexedEpochToPerasRoundInfo (SimpleBlock c ext) = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  getPerasPoolDistrFromLedger _ = dummyPoolDistr
+  getPerasPoolDistrFromTickedLedger _ = dummyPoolDistr
+  getPerasNonceFromHeaderState _ = NeutralNonce
+  getPerasNonceFromTickedHeaderState _ = NeutralNonce
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: SimpleBlock does not support Peras"
+  mkPerasParamsFromLedger _ _ = Left "SimpleBlock does not support Peras"
+  mkPerasParamsFromTickedLedger _ _ = Left "SimpleBlock does not support Peras"
 
 instance
   ( SimpleCrypto c
