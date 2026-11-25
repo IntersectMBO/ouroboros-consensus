@@ -138,7 +138,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
-import Ouroboros.Consensus.Storage.PerasCertDB.API (forgetBoostedBlockStatus)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..))
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -438,7 +437,7 @@ roundNoOfLatestCertSeen ::
   IsPerasCert (PerasCert blk) blk =>
   Model blk -> Maybe PerasRoundNo
 roundNoOfLatestCertSeen m =
-  getPerasCertRound . forgetBoostedBlockStatus
+  getPerasCertRound
     <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
 
 {-------------------------------------------------------------------------------
