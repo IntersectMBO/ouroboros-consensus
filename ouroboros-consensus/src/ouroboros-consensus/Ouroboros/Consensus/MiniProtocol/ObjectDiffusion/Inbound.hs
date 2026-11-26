@@ -28,6 +28,7 @@ import Control.Monad.Class.MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Data (Typeable)
 import Data.Foldable as Foldable (foldl', toList)
+import Data.Functor (($>))
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
@@ -41,10 +42,9 @@ import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundStateView (odisvIdling)
+  ( ObjectDiffusionInboundStateView (odisvSetNextOutstandingObjectId, odisvSignalCaughtUp)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -71,6 +71,12 @@ data TraceObjectDiffusionInbound objectId object
   | -- | The server's bounded wait expired without new object IDs, returning
     -- agency to the client.
     TraceObjectDiffusionInboundServerIdle
+  | -- | The next object in the peer's FIFO cannot be requested until local
+    -- validation state advances.
+    TraceObjectDiffusionInboundBlocked objectId
+  | -- | Local validation state advanced far enough to resume at the blocked
+    -- object.
+    TraceObjectDiffusionInboundUnblocked objectId
   | TraceObjectDiffusionInboundStartedIdling
   | TraceObjectDiffusionInboundStoppedIdling
   deriving (Eq, Show)
@@ -119,8 +125,8 @@ data InboundSt objectId object = InboundSt
   , canRequestNext :: !(Set objectId)
   -- ^ The objectIds that we can request. These are a subset of the
   -- 'outstandingFifo' that we have not yet requested or not have in the pool
-  -- already. This is not ordered to illustrate the fact that we can
-  -- request objects out of order.
+  -- already. The set itself is unordered, so the scheduler projects it back
+  -- onto the FIFO before selecting a requestable prefix.
   , pendingObjects :: !(Map objectId (Maybe object))
   -- ^ Objects we have successfully downloaded (or decided intentionally to
   -- skip download) but have not yet added to the objectPool or acknowledged.
@@ -138,6 +144,33 @@ data InboundSt objectId object = InboundSt
 
 initialInboundSt :: InboundSt objectId object
 initialInboundSt = InboundSt 0 Seq.empty Set.empty Map.empty 0
+
+-- | The result of scanning the unrequested entries of the 'outstandingFifo' in
+-- FIFO order: the longest prefix of object IDs that can currently be
+-- requested, together with the object ID (if any) that stopped the scan.
+data RequestablePrefix objectId = RequestablePrefix
+  { selectedObjectIds :: ![objectId]
+  -- ^ The object IDs to request next, in FIFO order, truncated to at most
+  -- @maxNumObjectsToReq@ entries. May be empty.
+  , blockedAtObjectId :: !(Maybe objectId)
+  -- ^ The first unrequested object ID in the FIFO that is not yet requestable
+  -- because local validation state has not advanced far enough
+  -- ('ObjectIdTooNew'). 'Nothing' if the scan reached the end of the FIFO
+  -- without being blocked. When this is 'Just', we must not request more IDs
+  -- from the peer, since a later FIFO entry is already known to be blocked.
+  }
+
+-- | The outcome of 'selectObjectsToRequest', which inspects the unrequested
+-- entries of the 'outstandingFifo' in FIFO order.
+data RequestSelection objectId
+  = -- | No unrequested object ID was too old; this is the 'RequestablePrefix'
+    -- found, which may be empty and may end at a blocked object ID.
+    RequestSelection !(RequestablePrefix objectId)
+  | -- | The given object ID is too old to be requested (it was either too old
+    -- when advertised, or became so while we waited). This is not a protocol
+    -- violation: the caller must skip its download (see 'skipTooOldObject')
+    -- and select again.
+    RequestSelectionTooOld !objectId
 
 objectDiffusionInbound ::
   forall objectId object m.
@@ -157,7 +190,7 @@ objectDiffusionInbound ::
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
-  ObjectDiffusionInboundStateView m ->
+  ObjectDiffusionInboundStateView objectId m ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
@@ -169,9 +202,94 @@ objectDiffusionInbound
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
-    canRequestMoreObjects :: InboundSt k object -> Bool
-    canRequestMoreObjects !st =
-      not (Set.null (canRequestNext st))
+    -- set the 'outstandingFifo' in an 'InboundSt' to an extension of the
+    -- current 'outstandingFifo'. structure updates of `outstandingFifo` into
+    -- first enqueuing at the rear and then dequeuing at the front. use
+    -- `setOutstandingFifoExtension` for the former and
+    -- `setOutstandingFifoSuffix` for the latter. do not set `outstandingFifo`
+    -- directly, via record update for example.
+    setOutstandingFifoExtension ::
+      StrictSeq objectId -> InboundSt objectId object -> InboundSt objectId object
+    setOutstandingFifoExtension outstandingFifo !st = st{outstandingFifo = outstandingFifo}
+
+    -- set the 'outstandingFifo' in an 'InboundSt' to a suffix of the current
+    -- 'outstandingFifo' and publish the next outstanding object id. structure
+    -- updates of `outstandingFifo` into first enqueuing at the rear and then
+    -- dequeuing at the front. use `setOutstandingFifoExtension` for the former
+    -- and `setOutstandingFifoSuffix` for the latter. do not set
+    -- `outstandingFifo` directly, via record update for example.
+    setOutstandingFifoSuffix ::
+      StrictSeq objectId -> InboundSt objectId object -> m (InboundSt objectId object)
+    setOutstandingFifoSuffix outstandingFifoNew !st@(InboundSt{outstandingFifo = outstandingFifoOld}) =
+      ( case (outstandingFifoNew, outstandingFifoOld) of
+          (nextOutstandingObjectId Seq.:<| _, _) -> odisvSetNextOutstandingObjectId stateView nextOutstandingObjectId
+          (Seq.Empty, _ Seq.:|> nextOutstandingObjectId) -> odisvSetNextOutstandingObjectId stateView nextOutstandingObjectId
+          -- this function is never called with the current 'outstandingFifo' empty as far as i know.
+          (Seq.Empty, Seq.Empty) -> assert False (pure ())
+      )
+        $> st{outstandingFifo = outstandingFifoNew}
+
+    -- Scans the unrequested IDs of the 'outstandingFifo' in FIFO order and
+    -- classifies each one using the pool's 'opwObjectIdRequestability':
+    --
+    -- - 'ObjectIdRequestable': add it to the requestable prefix and continue.
+    --
+    -- - 'ObjectIdTooNew': stop scanning and return the prefix gathered so far,
+    --   recording this ID as the one we are blocked at.
+    --
+    -- - 'ObjectIdTooOld': short-circuit the whole selection with
+    --   'RequestSelectionTooOld', discarding any prefix gathered so far. The
+    --   callers ('go' and 'waitForRequestableObject') react by calling
+    --   'skipTooOldObject', which marks the object as skipped (so it is
+    --   pre-acknowledged without being downloaded), acknowledges any
+    --   now-complete FIFO prefix, and updates 'InboundSt' accordingly. They then
+    --   resume the normal logic ('go') with that updated state, which re-runs
+    --   this selection. Handling a too old ID before anything else is what
+    --   guarantees we never request it, and that earlier requestable IDs are
+    --   re-selected from the updated state rather than from a stale one.
+    selectObjectsToRequest ::
+      InboundSt objectId object ->
+      STM m (RequestSelection objectId)
+    selectObjectsToRequest !st = do
+      objectIdRequestability <- opwObjectIdRequestability
+      let unrequestedInFifo =
+            filter
+              (`Set.member` canRequestNext st)
+              (toList (outstandingFifo st))
+          finish requestablePrefix blockedId =
+            RequestSelection $
+              RequestablePrefix
+                { selectedObjectIds =
+                    take
+                      (fromIntegral maxNumObjectsToReq)
+                      (reverse requestablePrefix)
+                , blockedAtObjectId = blockedId
+                }
+          select requestablePrefix = \case
+            [] -> finish requestablePrefix Nothing
+            objectId : objectIds -> case objectIdRequestability objectId of
+              -- Abort the scan: the caller must skip this object and update its
+              -- state before any further selection is attempted.
+              ObjectIdTooOld -> RequestSelectionTooOld objectId
+              ObjectIdRequestable -> select (objectId : requestablePrefix) objectIds
+              -- Everything before this ID is still requestable; stop here.
+              ObjectIdTooNew -> finish requestablePrefix (Just objectId)
+      pure $ select [] unrequestedInFifo
+
+    -- An ID may already be too old when advertised, or become so while we
+    -- wait for a validation context. Neither is a protocol violation. Skip its
+    -- download, but acknowledge it only when all earlier FIFO entries are done.
+    skipTooOldObject :: InboundSt objectId object -> objectId -> m (InboundSt objectId object)
+    skipTooOldObject !st objectId =
+      let pendingObjects' = Map.insert objectId Nothing (pendingObjects st)
+          (objectIdsToAck, outstandingFifo') =
+            Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
+       in setOutstandingFifoSuffix outstandingFifo' $
+            st
+              { canRequestNext = Set.delete objectId (canRequestNext st)
+              , pendingObjects = Foldable.foldl' (flip Map.delete) pendingObjects' objectIdsToAck
+              , numToAckOnNextReq = numToAckOnNextReq st + fromIntegral (Seq.length objectIdsToAck)
+              }
 
     -- Computes how many new IDs we can request so that receiving all of them
     -- won't make 'outstandingFifo' exceed 'maxFifoLength'.
@@ -192,8 +310,8 @@ objectDiffusionInbound
       InboundSt objectId object ->
       (objectId -> Bool) ->
       [objectId] ->
-      InboundSt objectId object
-    preAcknowledge !st _ collectedIds | null collectedIds = st
+      m (InboundSt objectId object)
+    preAcknowledge !st _ collectedIds | null collectedIds = pure $! st
     preAcknowledge !st poolHasObject collectedIds =
       let
         -- Divide the collected IDs in two parts: those that are already in the
@@ -232,18 +350,16 @@ objectDiffusionInbound
             (flip Map.delete)
             pendingObjects'
             objectIdsToAck
-
-        !st' =
-          st
+       in
+        setOutstandingFifoSuffix outstandingFifo''
+          . setOutstandingFifoExtension outstandingFifo'
+          $ st
             { canRequestNext = canRequestNext st <> Set.fromList notYetObtained
             , pendingObjects = pendingObjects''
-            , outstandingFifo = outstandingFifo''
             , numToAckOnNextReq =
                 numToAckOnNextReq st
                   + fromIntegral (Seq.length objectIdsToAck)
             }
-       in
-        st'
 
     go ::
       forall (n :: N).
@@ -260,60 +376,90 @@ objectDiffusionInbound
         Terminate ->
           pure $! terminateAfterDrain n
         -- Otherwise, we can continue the protocol normally.
-        _continue -> case n of
-          -- We didn't pipeline any requests, so there are no replies in flight
-          -- (nothing to collect)
-          Zero -> do
-            if canRequestMoreObjects st
-              then do
-                -- There are no replies in flight, but we do know some more objects
-                -- we can ask for, so lets ask for them and more objectIds in a
-                -- pipelined way.
-                traceWith tracer $
-                  TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
-                pure $! checkState st & goReqObjectsAndObjectIdsPipelined Zero
-              else do
-                -- There's no replies in flight, and we have no more objects we can
-                -- ask for so the only remaining thing to do is to ask for more
-                -- objectIds.
-                -- Since this is the only thing to do now, and as per the protocol
-                -- requirements, we make this a blocking call.
-                traceWith tracer $
-                  TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
-                pure $! checkState st & goReqObjectIdsBlocking
+        _continue -> do
+          requestSelection <- atomically $ selectObjectsToRequest st
+          case (requestSelection, n) of
+            (RequestSelectionTooOld objectId, _) -> do
+              !st' <- skipTooOldObject st objectId
+              pure $! checkState st' & go n
+            -- We didn't pipeline any requests, so there are no replies in flight
+            -- (nothing to collect).
+            (RequestSelection requestablePrefix, Zero)
+              | not $ null $ selectedObjectIds $ requestablePrefix -> do
+                  -- Do not request more IDs when we already know that a later
+                  -- entry in the FIFO is blocked.
+                  traceWith tracer $
+                    TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
+                  pure $!
+                    checkState st
+                      & if blockedAtObjectId requestablePrefix == Nothing
+                        then goReqObjectsAndObjectIdsPipelined Zero requestablePrefix
+                        else goReqObjectsPipelined Zero requestablePrefix
+              | otherwise -> do
+                  traceWith tracer $
+                    TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
+                  case blockedAtObjectId requestablePrefix of
+                    Just blockedId ->
+                      waitForRequestableObject blockedId st
+                    Nothing ->
+                      -- There are no replies in flight and no more objects to
+                      -- request, so request more IDs in a blocking call.
+                      pure $! checkState st & goReqObjectIdsBlocking
+            -- We have pipelined some requests, so there are replies in flight.
+            (RequestSelection requestablePrefix, Succ n')
+              | not $ null $ selectedObjectIds $ requestablePrefix -> do
+                  -- Eagerly collect available replies, but keep requesting the
+                  -- available object prefix rather than blocking on those replies.
+                  traceWith tracer $
+                    TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
+                  let next =
+                        if blockedAtObjectId requestablePrefix == Nothing
+                          then goReqObjectsAndObjectIdsPipelined (Succ n') requestablePrefix
+                          else goReqObjectsPipelined (Succ n') requestablePrefix
+                  pure $!
+                    CollectPipelined
+                      (Just (checkState st & next))
+                      (\collected -> checkState st & goCollect n' collected)
+              | otherwise -> do
+                  traceWith tracer $
+                    TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
+                  -- Do not pipeline more ID requests here: doing so could fill
+                  -- the pipeline without bound. Collecting also drains replies
+                  -- before waiting at a locally blocked object ID.
+                  pure $!
+                    CollectPipelined
+                      Nothing
+                      (\collected -> checkState st & goCollect n' collected)
 
-          -- We have pipelined some requests, so there are some replies in flight.
-          Succ n' ->
-            if canRequestMoreObjects st
-              then do
-                -- We have replies in flight and we should eagerly collect them if
-                -- available, but there are objects to request too so we
-                -- should *not* block waiting for replies.
-                -- So we ask for new objects and objectIds in a pipelined way.
-                traceWith tracer $
-                  TraceObjectDiffusionInboundCanRequestMoreObjects (natToInt n)
-                pure $!
-                  CollectPipelined
-                    (Just (checkState st & goReqObjectsAndObjectIdsPipelined (Succ n')))
-                    (\collected -> checkState st & goCollect n' collected)
-              else do
-                traceWith tracer $
-                  TraceObjectDiffusionInboundCannotRequestMoreObjects (natToInt n)
-                -- In this case we can theoretically only collect replies or request
-                -- new object IDs.
-                --
-                -- But it's important not to pipeline more requests for objectIds now
-                -- because if we did, then immediately after sending the request (but
-                -- having not yet received a response to either this or the other
-                -- pipelined requests), we would directly re-enter this code path,
-                -- resulting us in filling the pipeline with an unbounded number of
-                -- requests.
-                --
-                -- So we instead block until we collect a reply.
-                pure $!
-                  CollectPipelined
-                    Nothing
-                    (\collected -> checkState st & goCollect n' collected)
+    waitForRequestableObject ::
+      objectId ->
+      InboundSt objectId object ->
+      m (InboundStIdle 'Z objectId object m ())
+    waitForRequestableObject blockedId !st = do
+      traceWith tracer $ TraceObjectDiffusionInboundBlocked blockedId
+      mRequestSelection <-
+        timeoutWithControlMessage controlMessageSTM $ do
+          requestSelection <- selectObjectsToRequest st
+          case requestSelection of
+            RequestSelectionTooOld{} -> pure requestSelection
+            RequestSelection (RequestablePrefix selectedObjectIds _) -> do
+              check $ not (null selectedObjectIds)
+              pure requestSelection
+      case mRequestSelection of
+        Nothing -> do
+          traceWith tracer $
+            TraceObjectDiffusionInboundRecvControlMessage Terminate
+          pure $! terminateAfterDrain Zero
+        Just (RequestSelectionTooOld objectId) -> do
+          !st' <- skipTooOldObject st objectId
+          pure $! checkState st' & go Zero
+        Just (RequestSelection requestablePrefix) -> do
+          traceWith tracer $ TraceObjectDiffusionInboundUnblocked blockedId
+          pure $!
+            checkState st
+              & if blockedAtObjectId requestablePrefix == Nothing
+                then goReqObjectsAndObjectIdsPipelined Zero requestablePrefix
+                else goReqObjectsPipelined Zero requestablePrefix
 
     goCollect ::
       forall (n :: N).
@@ -360,7 +506,7 @@ objectDiffusionInbound
         -- request.
         let !st' = st{numIdsInFlight = numIdsInFlight st - numIdsRequested}
         poolHasObject <- atomically $ opwHasObject
-        let !st'' = preAcknowledge st' poolHasObject collectedIds
+        !st'' <- preAcknowledge st' poolHasObject collectedIds
         pure $! checkState st'' & go n
       CollectObjects requestedIds collectedObjects -> WithEffect $ do
         let requestedIdsSet = Set.fromList requestedIds
@@ -387,48 +533,38 @@ objectDiffusionInbound
                 (pendingObjects st)
                 collectedObjects
 
+        (_successfullyAdded, needRetrying) <- opwAddObjects $ catMaybes $ toList $ pendingObjects' -- at this point, we might want to replace `pendingObjects :: Map objectId (Maybe object)` with `pendingObjects :: Map objectId object` and `skipObjects :: Set objectId` to avoid the `catMaybes` call here.
+
+        let
             -- We then find the longest prefix of 'outstandingFifo' for which we have
             -- all the corresponding IDs in 'pendingObjects'.
             -- We remove this prefix from 'outstandingFifo'.
             (objectIdsToAck, outstandingFifo') =
               Seq.spanl (`Map.member` pendingObjects') (outstandingFifo st)
 
-            -- And also remove these entries from 'pendingObjects'.
-            --
-            -- Note that unlike in TX-Submission, we made sure the outstanding FIFO
-            -- couldn't have duplicate IDs, so we don't have to worry about re-adding
-            -- the duplicate IDs to 'pendingObjects' for future acknowledgment.
-            pendingObjects'' =
-              Foldable.foldl'
-                (flip Map.delete)
-                pendingObjects'
-                objectIdsToAck
+            outstandingFifoSet = Set.fromList (toList outstandingFifo') -- unfortunate
+            objectIdsToAckSet = Set.fromList (toList objectIdsToAck) -- unfortunate
+            processPendingObject objectId o
+              | objectId `Set.member` needRetrying = Just o
+              | objectId `Set.member` objectIdsToAckSet = Nothing
+              | Just _ <- o, objectId `Set.notMember` outstandingFifoSet = Nothing
+              | otherwise = Just Nothing
+            pendingObjects'' = Map.mapMaybeWithKey processPendingObject pendingObjects'
 
-            -- These are the objects we need to submit to the object pool
-            --
-            -- Note that objects are submitted in the same order as the order of
-            -- announcement, for consistency with TX-Submission, and for
-            -- simplicity of implementation/acknowledgment. However this is not
-            -- a strict requirement of the protocol, so we could consider
-            -- changing this in the future if we wanted to (e.g. for
-            -- optimizations reasons).
-            objectsToAck =
-              catMaybes $
-                (((Map.!) pendingObjects') <$> toList objectIdsToAck)
-
-        opwAddObjects objectsToAck
         traceWith tracer $
           TraceObjectDiffusionInboundAddedObjects
-            (NumObjectsProcessed (fromIntegral $ length objectsToAck))
+            (NumObjectsProcessed (fromIntegral $ length objectIdsToAck))
 
-        let !st' =
-              st
+        !st' <-
+          setOutstandingFifoSuffix
+            outstandingFifo'
+            ( st
                 { pendingObjects = pendingObjects''
-                , outstandingFifo = outstandingFifo'
                 , numToAckOnNextReq =
                     numToAckOnNextReq st
                       + fromIntegral (Seq.length objectIdsToAck)
                 }
+            )
         pure $! checkState st' & go n
 
     goReqObjectIdsBlocking ::
@@ -453,14 +589,13 @@ objectDiffusionInbound
               (numToAckOnNextReq st)
               numIdsToRequest
               ( do
-                  Idling.idlingStart (odisvIdling stateView)
+                  odisvSignalCaughtUp stateView
                   traceWith tracer TraceObjectDiffusionInboundStartedIdling
               )
               ( \neCollectedIds ->
                   WithEffect $ do
                     -- The server supplied new object IDs, so the client is no
                     -- longer known to be caught up with this server.
-                    Idling.idlingStop (odisvIdling stateView)
                     traceWith tracer TraceObjectDiffusionInboundStoppedIdling
                     pure $
                       checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
@@ -478,19 +613,38 @@ objectDiffusionInbound
                       & go Zero
               )
 
+    goReqObjectsPipelined ::
+      forall (n :: N).
+      Nat n ->
+      RequestablePrefix objectId ->
+      InboundSt objectId object ->
+      InboundStIdle n objectId object m ()
+    goReqObjectsPipelined n requestSelection !st =
+      let toRequest = selectedObjectIds requestSelection
+          !st' =
+            st
+              { canRequestNext =
+                  foldl' (flip Set.delete) (canRequestNext st) toRequest
+              }
+       in SendMsgRequestObjectsPipelined
+            toRequest
+            (checkState st' & go (Succ n))
+
     goReqObjectsAndObjectIdsPipelined ::
       forall (n :: N).
       Nat n ->
+      RequestablePrefix objectId ->
       InboundSt objectId object ->
       InboundStIdle n objectId object m ()
-    goReqObjectsAndObjectIdsPipelined n !st =
-      -- TODO: This implementation is deliberately naive, we pick in an
-      -- arbitrary order. We may want to revisit this later.
-      let (toRequest, canRequestNext') =
-            Set.splitAt (fromIntegral maxNumObjectsToReq) (canRequestNext st)
-          !st' = st{canRequestNext = canRequestNext'}
+    goReqObjectsAndObjectIdsPipelined n requestSelection !st =
+      let toRequest = selectedObjectIds requestSelection
+          !st' =
+            st
+              { canRequestNext =
+                  foldl' (flip Set.delete) (canRequestNext st) toRequest
+              }
        in SendMsgRequestObjectsPipelined
-            (toList toRequest)
+            toRequest
             (checkState st' & goReqObjectIdsPipelined (Succ n))
 
     goReqObjectIdsPipelined ::

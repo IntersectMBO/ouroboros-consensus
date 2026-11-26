@@ -25,6 +25,7 @@ import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke (te
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
 import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
 import qualified Test.Consensus.Peras.Cert.V1 (tests)
+import qualified Test.Consensus.Peras.Context (tests)
 import qualified Test.Consensus.Peras.Serialisation (tests)
 import qualified Test.Consensus.Peras.Voting.Adapter (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
@@ -74,6 +75,7 @@ tests =
         "Peras"
         [ Test.Consensus.Peras.Cert.Inclusion.tests
         , Test.Consensus.Peras.Cert.V1.tests
+        , Test.Consensus.Peras.Context.tests
         , Test.Consensus.Peras.Voting.Adapter.tests
         , Test.Consensus.Peras.Voting.Rules.tests
         , Test.Consensus.Peras.Voting.V1.tests

@@ -7,7 +7,7 @@
 
 -- | Consistency checks over the 'MetaTrace' instances.
 --
--- These need no trace values: everything here is derived from 'allNamespaces'
+-- The namespace checks need no trace values: they are derived from 'allNamespaces'
 -- and the namespace-indexed methods. That makes them cheap enough to run over
 -- every traced type. What they check is that every namespace in
 -- 'allNamespaces' is well formed: it is non-empty and unique, and it has a
@@ -21,7 +21,7 @@
 -- called, so a constructor whose namespace is missing from 'allNamespaces',
 -- or a typo that appears in both places, still passes. Catching that needs
 -- trace values, and these types have neither 'Arbitrary' nor 'Enum'
--- instances.
+-- instances. Object Diffusion also has a focused value-based check below.
 module Test.Consensus.Tracing.MetaTrace (tests) where
 
 import Cardano.Logging
@@ -29,7 +29,7 @@ import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime)
-import Ouroboros.Consensus.Block (Header)
+import Ouroboros.Consensus.Block (Header, PerasRoundNo (..))
 import Ouroboros.Consensus.Block.SupportsSanityCheck (SanityCheckIssue)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Util (TraceBlockchainTimeEvent)
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock)
@@ -45,6 +45,10 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   )
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent
+  )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+  ( NumObjectsProcessed (..)
+  , TraceObjectDiffusionInbound (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
   ( TracePerasCertDiffusionInbound
@@ -72,6 +76,7 @@ import Ouroboros.Consensus.Tracing
 import Ouroboros.Network.Block (Tip)
 import qualified Ouroboros.Network.BlockFetch.ClientState as BlockFetch
 import Ouroboros.Network.BlockFetch.Decision.Trace (TraceDecisionEvent)
+import Ouroboros.Network.ControlMessage (ControlMessage (Continue))
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -130,6 +135,7 @@ tests =
         , metaTrace @(TracePerasCertDiffusionOutbound Blk) "TracePerasCertDiffusionOutbound"
         , metaTrace @(TracePerasVoteDiffusionInbound Blk) "TracePerasVoteDiffusionInbound"
         , metaTrace @(TracePerasVoteDiffusionOutbound Blk) "TracePerasVoteDiffusionOutbound"
+        , objectDiffusionInboundEvents
         ]
     , testGroup
         "leios"
@@ -137,6 +143,34 @@ tests =
         , metaTrace @TraceLeiosFetchServerEvent "TraceLeiosFetchServerEvent"
         , metaTrace @TraceLeiosDb "TraceLeiosDb"
         ]
+    ]
+
+-- | Exercise actual inbound values too: namespace-only checks cannot detect
+-- a missing constructor in either the namespace or machine-format adapter.
+objectDiffusionInboundEvents :: TestTree
+objectDiffusionInboundEvents =
+  testGroup "ObjectDiffusionInboundEvents" $
+    [ testCase (Text.unpack (nsToText ns)) $ do
+        assertBool "namespace is registered" $
+          nsGetComplete ns `elem` map nsGetComplete (allNamespaces @(TracePerasCertDiffusionInbound Blk))
+        assertBool "machine formatting is non-empty" $
+          not (null (forMachine DNormal event))
+    | event <- events
+    , let ns = namespaceFor event
+    ]
+ where
+  events :: [TracePerasCertDiffusionInbound Blk]
+  events =
+    [ TraceObjectDiffusionInboundCollectedObjects 1
+    , TraceObjectDiffusionInboundAddedObjects (NumObjectsProcessed 1)
+    , TraceObjectDiffusionInboundRecvControlMessage Continue
+    , TraceObjectDiffusionInboundCanRequestMoreObjects 1
+    , TraceObjectDiffusionInboundCannotRequestMoreObjects 1
+    , TraceObjectDiffusionInboundServerIdle
+    , TraceObjectDiffusionInboundBlocked (PerasRoundNo 1)
+    , TraceObjectDiffusionInboundUnblocked (PerasRoundNo 1)
+    , TraceObjectDiffusionInboundStartedIdling
+    , TraceObjectDiffusionInboundStoppedIdling
     ]
 
 -- | The checks that must hold for any 'MetaTrace' instance.

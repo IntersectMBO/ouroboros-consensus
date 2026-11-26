@@ -8,6 +8,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
   ( ObjectDiffusionInboundState (..)
+  , NextOutstandingRoundNumber (..)
   , ObjectDiffusionInboundHandle (..)
   , ObjectDiffusionInboundHandleCollection (..)
   , newObjectDiffusionInboundHandleCollection
@@ -16,11 +17,11 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
   )
 where
 
+import Control.Monad (when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header)
-import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (Idling, idlingStart, idlingStop))
+import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header, PerasRoundNo)
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM (STM, atomically)
@@ -31,31 +32,41 @@ import Ouroboros.Consensus.Util.IOLike
   , newTVar
   , newTVarIO
   , readTVar
+  , writeTVar
   )
+
+-- | Certificate progress relative to one peer, for external components to
+-- inspect. This does not describe the node's global synchronization state.
+data NextOutstandingRoundNumber
+  = Uninitialized
+  | NextOutstandingRoundNumber !PerasRoundNo
+  | CaughtUp
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 -- | An ObjectDiffusion inbound client state that's used by other components.
 --
+-- This state is registered for certificate diffusion. The generic client uses
+-- 'ObjectDiffusionInboundStateView', with a no-op view for vote diffusion.
+--
 -- NOTE: 'blk' is not needed for now, but we keep it for future use.
 data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
-  { odIdling :: !Bool
-  -- ^ Whether the client has reached the server's current object-ID front.
+  { nextOutstandingRoundNumber :: !NextOutstandingRoundNumber
+  -- ^ The round at the head of the outstanding certificate FIFO. It remains
+  -- outstanding while being downloaded, validated, or processed by ChainDB,
+  -- including while the client waits for its validation context to advance.
   --
-  -- We use "idling" consistently with ChainSync: it starts when the server
-  -- sends @MsgAwaitReply@ and ends when the server supplies new object IDs. In
-  -- this sense, idling means that the client is caught up with this particular
-  -- server, and contributes to the GSM caught-up decision.
+  -- If the FIFO empties before the server confirms its front, retain the last
+  -- reported round as a conservative lower bound. 'CaughtUp' is established
+  -- only by @MsgAwaitReply@ after all outstanding processing has completed,
+  -- and persists across @MsgServerIdle@ until new IDs arrive. 'Uninitialized'
+  -- means that no round or server-front information is available yet.
   --
-  -- This is distinct from the Object Diffusion protocol state @StIdle@. After
-  -- @MsgAwaitReply@ the protocol is in @StObjectIds (StObjectIdsBlocking
-  -- StMustReply)@, where the server has agency. Moreover, after
-  -- @MsgServerIdle@ returns the protocol to @StIdle@, this flag deliberately
-  -- remains 'True' until the server supplies new object IDs. However, if the
-  -- protocol transitions to @StIdle@ via @MsgReplyObjectIds@, then this flag is
-  -- set to 'False'. So in the @StIdle@ state, this flag can be either 'True' or
-  -- 'False'. So the protocol state does not even functionally determine this
-  -- flag, which is why this flag is needed.
+  -- 'CaughtUp' is also the certificate client's idling indication for the GSM.
+  -- This is distinct from the protocol state @StIdle@: that state can follow
+  -- either @MsgServerIdle@ (still caught up) or @MsgReplyObjectIds@ (not caught up).
   }
-  deriving stock Generic
+  deriving stock (Eq, Show, Generic)
 
 deriving anyclass instance
   ( HasHeader blk
@@ -66,7 +77,7 @@ deriving anyclass instance
 initObjectDiffusionInboundState :: ObjectDiffusionInboundState blk
 initObjectDiffusionInboundState =
   ObjectDiffusionInboundState
-    { odIdling = False
+    { nextOutstandingRoundNumber = Uninitialized
     }
 
 -- | An interface to an ObjectDiffusion inbound client that's used by other components.
@@ -110,10 +121,15 @@ newObjectDiffusionInboundHandleCollection = do
 
 -- | Interface for the ObjectDiffusion client to its state allocated by
 -- 'bracketObjectDiffusionInbound'.
-data ObjectDiffusionInboundStateView m = ObjectDiffusionInboundStateView
-  { odisvIdling :: !(Idling m)
-  -- ^ Actions that record whether the client has reached the server's current
-  -- object-ID front. See 'odIdling'.
+data ObjectDiffusionInboundStateView objectId m = ObjectDiffusionInboundStateView
+  { odisvSignalCaughtUp :: !(m ())
+  -- ^ Record that the client has reached the server's current
+  -- object-ID front. See 'nextOutstandingRoundNumber'.
+  , odisvSetNextOutstandingObjectId :: !(objectId -> m ())
+  -- ^ Record the first outstanding ID, before downloading or processing it.
+  -- Certificate diffusion maps this to 'nextOutstandingRoundNumber'. This
+  -- only publishes state for readers; it does not notify a governor or trigger
+  -- chain selection.
   }
   deriving stock Generic
 
@@ -122,20 +138,26 @@ bracketObjectDiffusionInbound ::
   (IOLike m, HasHeader blk, NoThunks (Header blk)) =>
   ObjectDiffusionInboundHandleCollection peer m blk ->
   peer ->
-  (ObjectDiffusionInboundStateView m -> m a) ->
+  (ObjectDiffusionInboundStateView PerasRoundNo m -> m a) ->
   m a
 bracketObjectDiffusionInbound handles peer body = do
   odiState <- newTVarIO initObjectDiffusionInboundState
   bracket_ (acquireContext odiState) releaseContext
     . body
     $ ObjectDiffusionInboundStateView
-      { odisvIdling =
-          Idling
-            { idlingStart = atomically $ modifyTVar odiState $ \s -> s{odIdling = True}
-            , idlingStop = atomically $ modifyTVar odiState $ \s -> s{odIdling = False}
-            }
+      { odisvSignalCaughtUp =
+          updateState odiState $ \s ->
+            s{nextOutstandingRoundNumber = CaughtUp}
+      , odisvSetNextOutstandingObjectId = \roundNo ->
+          updateState odiState $ \s ->
+            s{nextOutstandingRoundNumber = NextOutstandingRoundNumber roundNo}
       }
  where
+  updateState var f = atomically $ do
+    old <- readTVar var
+    let new = f old
+    when (new /= old) $ writeTVar var new
+
   acquireContext odiState =
     atomically
       . odihcAddHandle handles peer

@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
@@ -12,10 +14,10 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makeTestPerasCertPoolWriterFromCertDB
   ) where
 
-import Data.Foldable (traverse_)
-import Data.Map (Map)
+import Data.Map (Map, findWithDefault)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import qualified Data.Tuple as Tuple
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasCert (..)
@@ -28,14 +30,20 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-  ( ObjectPoolReader (..)
+  ( ObjectIdRequestability (..)
+  , ObjectPoolReader (..)
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolverHandle
+  ( PerasEpochContextResolverHandle (..)
+  , perasEpochContextResolverBounds
   , verifyPerasCertWithHandle
   )
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( AddPerasCertChainSelOutcome (PerasCertNotProcessedClosing, PerasCertProcessed)
+  , AddPerasCertResult (AddedPerasCertToDB, PerasCertAlreadyInDB)
+  , ChainDB
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
@@ -116,19 +124,40 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     { opwObjectId = getPerasCertRound
     , opwAddObjects = \certs -> do
         now <- systemTimeCurrent systemTime
-        atomically $ do
+        addCertResults <- atomically $ do
           alreadyInDb <- PerasCertDB.getCertIds perasCertDB
-          let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
-          validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
+          objectIdRequestability <- perasCertRequestability resolverHandle
+          -- The context may have advanced since these certificates were
+          -- requested. Certificates that became too old need no validation
+          -- or insertion, and receiving them must not penalize the peer.
+          -- We also ignore certs that have been already added to the DB.
+          let needsProcessing cert =
+                let roundNo = getPerasCertRound cert
+                 in Set.notMember roundNo alreadyInDb && objectIdRequestability roundNo /= ObjectIdTooOld
+          validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
           -- Some certs are invalid => reject the whole batch
           --
           -- NOTE: we could combine the two 'traverse' operations into one in
           -- which case any validated cert would be immediately added no matter
           -- what is the validity of the other certs in the batch.
-          traverse_ (PerasCertDB.addCert perasCertDB . WithArrivalTime now) validatedCerts
+          traverse
+            (\c -> (,) (getPerasCertRound c) <$> PerasCertDB.addCert perasCertDB (WithArrivalTime now c))
+            validatedCerts
+        fmap (,Set.empty)
+          -- m (Set PerasRoundNo)
+          . fmap Set.fromList
+          -- m [PerasRoundNo]
+          . (fmap . fmap) fst
+          -- m [(PerasRoundNo, AddPerasCertResult)]
+          . fmap (filter $ \case (_, AddedPerasCertToDB) -> True; (_, PerasCertAlreadyInDB) -> False)
+          -- m [(PerasRoundNo, AddPerasCertResult)]
+          . (traverse . traverse) id
+          -- [(PerasRoundNo, m AddPerasCertResult)]
+          $ addCertResults
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
+    , opwObjectIdRequestability = perasCertRequestability resolverHandle
     }
 
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
@@ -148,15 +177,67 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
             now <- systemTimeCurrent systemTime
             validatedCerts <- atomically $ do
               alreadyInDb <- ChainDB.getPerasCertIds chainDB
-              let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
-              traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
-            -- Some certs are invalid => reject the whole batch
-            --
-            -- NOTE: we could combine the two 'traverse' operations into one in
-            -- which case any validated cert would be immediately added no
-            -- matter what is the validity of the other certs in the batch.
-            traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
+              objectIdRequestability <- perasCertRequestability resolverHandle
+              -- The context may have advanced since these certificates were
+              -- requested. Certificates that became too old need no validation
+              -- or insertion, and receiving them must not penalize the peer.
+              -- We also ignore certs that have been already added to the DB.
+              let needsProcessing cert =
+                    let roundNo = getPerasCertRound cert
+                     in Set.notMember roundNo alreadyInDb && objectIdRequestability roundNo /= ObjectIdTooOld
+              -- Some certs are invalid => reject the whole batch
+              --
+              -- NOTE: we could combine the two 'traverse' operations into one in
+              -- which case any validated cert would be immediately added no
+              -- matter what is the validity of the other certs in the batch.
+              traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
+            fmap
+              ( \m ->
+                  ( findWithDefault Set.empty (PerasCertProcessed AddedPerasCertToDB) m
+                  , findWithDefault Set.empty PerasCertNotProcessedClosing m
+                  )
+              )
+              -- m (Map AddPerasCertChainSelOutcome (Set PerasRoundNo))
+              . fmap (Map.fromListWith (<>))
+              -- m [(AddPerasCertChainSelOutcome, Set PerasRoundNo)]
+              . (fmap . fmap . fmap) Set.singleton
+              -- m [(AddPerasCertChainSelOutcome, PerasRoundNo)]
+              . (fmap . fmap) Tuple.swap
+              -- m [(PerasRoundNo, AddPerasCertChainSelOutcome)]
+              --
+              -- Publication of the next outstanding round must not get ahead
+              -- of the certificates' effects in ChainDB. Enqueue the whole batch
+              -- before waiting, preserving batching in the chain-selection queue.
+              . ((=<<) . traverse . traverse) ChainDB.waitPerasCertProcessed
+              -- m [(PerasRoundNo, AddPerasCertPromise m)]
+              . traverse
+                (\c -> (,) (getPerasCertRound c) <$> ChainDB.addPerasCertAsync chainDB (WithArrivalTime now c))
+              -- m [ValidatedPerasCert blk]
+              $ validatedCerts
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds
+        , opwObjectIdRequestability = perasCertRequestability resolverHandle
         }
+
+-- | Classify certificate IDs against the epoch-context window. Certificates
+-- within the window can be requested, while certificates ahead of the window
+-- must wait until the ledger catches up.
+--
+-- Certificates below the lower bound are obsolete locally. The inbound client
+-- skips and acknowledges them without penalizing the peer, whose validation
+-- window need not coincide with ours.
+perasCertRequestability ::
+  MonadSTM m =>
+  PerasEpochContextResolverHandle m blk ->
+  STM m (PerasRoundNo -> ObjectIdRequestability)
+perasCertRequestability resolverHandle = do
+  resolver <- getPerasEpochContextResolver resolverHandle
+  let (lowerBound, upperBound) = perasEpochContextResolverBounds resolver
+  pure $ \roundNo ->
+    if roundNo < lowerBound
+      then ObjectIdTooOld
+      else
+        if roundNo < upperBound
+          then ObjectIdRequestable
+          else ObjectIdTooNew
