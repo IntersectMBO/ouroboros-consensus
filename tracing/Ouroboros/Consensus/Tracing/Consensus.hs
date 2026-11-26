@@ -104,6 +104,7 @@ import Ouroboros.Consensus.Tracing.Formatting ()
 import Ouroboros.Consensus.Tracing.KESInfo (HasKESInfo (..))
 import Ouroboros.Consensus.Tracing.Render
 import Ouroboros.Consensus.Util.Enclose
+import Ouroboros.Consensus.Util.TimeBoundedLoop (DoneType (EndReached, TimeoutReached))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Block hiding (blockPrevHash)
@@ -1250,6 +1251,22 @@ instance
     mconcat
       [ "kind" .= String "TraceMempoolTipMovedBetweenSTMBlocks"
       ]
+  forMachine _dtal (TraceGetSnapshotFor timeLimit slotNo stHash duration mbStepsDone) =
+    mconcat $
+      [ "kind" .= String "TraceGetSnapshotFor"
+      , "timeLimit" .= timeLimit
+      , "slot" .= toJSON (unSlotNo slotNo)
+      , "ledgerState" .= String (renderChainHash @blk (renderHeaderHash (Proxy @blk)) stHash)
+      , "duration" .= duration
+      ]
+        <> case mbStepsDone of
+          Nothing ->
+            ["cached" .= True]
+          Just (steps, done) ->
+            [ "cached" .= False
+            , "steps" .= steps
+            , "done" .= String (Text.pack (show done))
+            ]
   forMachine _dtal (TraceMempoolCapacityChanged capBefore capAfter) =
     mconcat
       [ "kind" .= String "TraceMempoolCapacityChanged"
@@ -1283,6 +1300,20 @@ instance
         , CounterM txsSyncDurationTotalCounterName (Just (fromIntegral durationMs))
         ]
   asMetrics (TraceMempoolSynced RisingEdge) = []
+  asMetrics (TraceGetSnapshotFor _timeLimit _slot _stHash duration mbStepsDone) =
+    let durationMs = round (1000 * duration) :: Integer
+     in case mbStepsDone of
+          Nothing ->
+            [ IntM "mempoolGetSnapshotForLastDuration" durationMs
+            , CounterM "mempoolGetSnapshotForCacheHitCount" Nothing
+            ]
+          Just (stepCount, doneType) ->
+            [ IntM "mempoolGetSnapshotForLastDuration" durationMs
+            , IntM "mempoolGetSnapshotForLastStepCount" (fromIntegral stepCount)
+            , case doneType of
+                TimeoutReached -> CounterM "mempoolGetSnapshotForTimeoutReachedCount" Nothing
+                EndReached -> CounterM "mempoolGetSnapshotForEndReachedCount" Nothing
+            ]
   asMetrics TraceMempoolSyncNotNeeded{} = []
   asMetrics TraceMempoolAttemptingAdd{} = []
   asMetrics TraceMempoolTipMovedBetweenSTMBlocks{} = []
@@ -1322,6 +1353,7 @@ instance MetaTrace (TraceEventMempool blk) where
   namespaceFor TraceMempoolRemoveTxs{} = Namespace [] ["RemoveTxs"]
   namespaceFor TraceMempoolManuallyRemovedTxs{} = Namespace [] ["ManuallyRemovedTxs"]
   namespaceFor TraceMempoolSynced{} = Namespace [] ["Synced"]
+  namespaceFor TraceGetSnapshotFor{} = Namespace [] ["GetSnapshotFor"]
   namespaceFor TraceMempoolSyncNotNeeded{} = Namespace [] ["SyncNotNeeded"]
   namespaceFor TraceMempoolAttemptingAdd{} = Namespace [] ["AttemptAdd"]
   namespaceFor TraceMempoolTipMovedBetweenSTMBlocks{} = Namespace [] ["TipMovedBetweenSTMBlocks"]
@@ -1331,6 +1363,7 @@ instance MetaTrace (TraceEventMempool blk) where
   severityFor (Namespace _ ["RejectedTx"]) _ = Just Info
   severityFor (Namespace _ ["RemoveTxs"]) _ = Just Info
   severityFor (Namespace _ ["Synced"]) _ = Just Debug
+  severityFor (Namespace _ ["GetSnapshotFor"]) _ = Just Debug
   severityFor (Namespace _ ["ManuallyRemovedTxs"]) _ = Just Warning
   severityFor (Namespace _ ["SyncNotNeeded"]) _ = Just Debug
   severityFor (Namespace _ ["AttemptAdd"]) _ = Just Debug
@@ -1363,6 +1396,25 @@ instance MetaTrace (TraceEventMempool blk) where
       , "Cumulative time spent syncing the mempool in ms after block adoption"
       )
     ]
+  metricsDocFor (Namespace _ ["GetSnapshotFor"]) =
+    [ ("mempoolGetSnapshotForLastDuration", "Latest time to compute a mempool snapshot for forging in ms")
+    ,
+      ( "mempoolGetSnapshotForCacheHitCount"
+      , "Number of mempool snapshots served from the cached mempool state"
+      )
+    ,
+      ( "mempoolGetSnapshotForLastStepCount"
+      , "Number of reapplication steps of the latest mempool snapshot that was not served from the cache"
+      )
+    ,
+      ( "mempoolGetSnapshotForEndReachedCount"
+      , "Number of computed mempool snapshots that reapplied every transaction within the time limit"
+      )
+    ,
+      ( "mempoolGetSnapshotForTimeoutReachedCount"
+      , "Number of computed mempool snapshots cut short by the time limit, holding only a prefix of the mempool"
+      )
+    ]
   metricsDocFor _ = []
 
   documentFor (Namespace _ ["AddedTx"]) =
@@ -1390,6 +1442,15 @@ instance MetaTrace (TraceEventMempool blk) where
   documentFor (Namespace _ ["Synced"]) =
     Just
       "The mempool and the LedgerDB are syncing or in sync depending on the argument on the trace."
+  documentFor (Namespace _ ["GetSnapshotFor"]) =
+    Just $
+      mconcat
+        [ "A mempool snapshot for forging has been computed, either reusing"
+        , " the cached mempool state or by reapplying the mempool's"
+        , " transactions under a time limit. When the time limit cut the"
+        , " reapplication short, the forged block draws from a prefix of the"
+        , " mempool."
+        ]
   documentFor (Namespace _ ["AttemptAdd"]) =
     Just
       "Mempool is about to try to validate and add a transaction."
@@ -1407,6 +1468,7 @@ instance MetaTrace (TraceEventMempool blk) where
     , Namespace [] ["RemoveTxs"]
     , Namespace [] ["ManuallyRemovedTxs"]
     , Namespace [] ["Synced"]
+    , Namespace [] ["GetSnapshotFor"]
     , Namespace [] ["SyncNotNeeded"]
     , Namespace [] ["AttemptAdd"]
     , Namespace [] ["TipMovedBetweenSTMBlocks"]
