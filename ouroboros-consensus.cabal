@@ -2060,6 +2060,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.Serialisation
     Test.Consensus.Cardano.Show
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
+    Test.Consensus.Cardano.SupportsLeios
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation
     Test.Consensus.Cardano.TxId

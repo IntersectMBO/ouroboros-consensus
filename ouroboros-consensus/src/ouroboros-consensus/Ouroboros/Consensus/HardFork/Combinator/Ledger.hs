@@ -366,6 +366,10 @@ instance
           serialised
           st'
 
+  inlineEndorserBlockTxs serialised (HardForkBlock (OneEraBlock blk)) =
+    fmap (HardForkBlock . OneEraBlock) . hsequence' $
+      hcmap proxySingle (Comp . fmap I . inlineEndorserBlockTxs serialised . unI) blk
+
 {-------------------------------------------------------------------------------
   UpdateLedger
 -------------------------------------------------------------------------------}
