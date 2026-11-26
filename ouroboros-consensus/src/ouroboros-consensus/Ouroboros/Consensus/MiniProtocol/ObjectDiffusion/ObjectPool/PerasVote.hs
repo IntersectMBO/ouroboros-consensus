@@ -157,6 +157,7 @@ makeTestPerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
     , opwHasObject = do
         voteIds <- PerasVoteDB.getVoteIds perasVoteDB
         pure $ \voteId -> Set.member voteId voteIds
+    -- TODO: same requestability logic as for `PerasCert`. https://github.com/tweag/cardano-peras/issues/357
     , opwObjectIdRequestability = pure $ const ObjectIdRequestable
     }
 
@@ -209,5 +210,6 @@ makePerasVotePoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             voteIds <- ChainDB.getPerasVoteIds chainDB
             pure $ \voteId -> Set.member voteId voteIds
+        -- TODO: same requestability logic as for `PerasCert`. https://github.com/tweag/cardano-peras/issues/357
         , opwObjectIdRequestability = pure $ const ObjectIdRequestable
         }
