@@ -789,10 +789,9 @@ leiosTxsInMempool ::
   Set TxHash ->
   m (LeiosMempoolTxs ByteString)
 leiosTxsInMempool mempool hashes = do
-  MkLeiosMempoolTxs indexed protVer <- atomically $ getLeiosTxIndex mempool
-  -- Built here, so that the peer's thread computes each tx's bytes.
-  pure $!
-    MkLeiosMempoolTxs (Map.map leiosTxMempoolViewBytes (Map.restrictKeys indexed hashes)) protVer
+  txs <- atomically $ getLeiosTxs mempool hashes
+  -- Forced here, so that the peer's thread scans the mempool's txs.
+  pure $! txs
 
 {-------------------------------------------------------------------------------
   Leios pruning

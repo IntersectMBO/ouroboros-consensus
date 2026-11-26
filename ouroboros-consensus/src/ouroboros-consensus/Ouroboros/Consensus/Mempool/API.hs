@@ -44,16 +44,18 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
+import Data.ByteString (ByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Measure (Measure)
 import qualified Data.Measure
+import Data.Set (Set)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs)
+import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs, TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
@@ -214,10 +216,11 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
-  , getLeiosTxIndex :: STM m (LeiosMempoolTxs LeiosTxMempoolView)
-  -- ^ What Leios needs to know about the transactions in the mempool that an
+  , getLeiosTxs :: Set TxHash -> STM m (LeiosMempoolTxs ByteString)
+  -- ^ The bytes of the transactions in the mempool with these hashes that an
   -- endorser block can reference, by the hash it references them by
-  -- ('ltmvHash'), and the major protocol version they were all validated under
+  -- ('hashLeiosTx'), and the major protocol version they were all validated
+  -- under
   -- ('tickedLedgerMajorProtocolVersionWord16').
   , testTryAddTx ::
       DiffTime ->

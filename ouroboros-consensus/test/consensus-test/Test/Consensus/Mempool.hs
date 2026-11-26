@@ -51,7 +51,7 @@ import Data.Word
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs (..))
+import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs (..), LeiosTx (..), hashLeiosTx)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..), MempoolMeasure (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
@@ -1167,23 +1167,23 @@ prop_Mempool_idx_consistency (Actions actions) =
           )
           False
 
--- | After each action, the Mempool's Leios index ('getLeiosTxIndex') holds
--- the view of exactly the transactions in its snapshot, each by its hash.
+-- | After each action, the Mempool finds ('getLeiosTxs') exactly the
+-- transactions in its snapshot, each by its hash.
 -- Removing transactions revalidates the rest, so this also covers revalidation.
 prop_Mempool_leiosTxIndex_consistency :: Actions -> Property
 prop_Mempool_leiosTxIndex_consistency (Actions actions) =
   withTestMempool emptyTestSetupNoSizeLimits $ \testMempool@TestMempool{mempool} ->
     fmap conjoin $ forM actions $ \action -> do
       actionProp <- executeAction testMempool action
-      MkLeiosMempoolTxs indexed _ <- atomically (getLeiosTxIndex mempool)
       txs <- map prjTx . snapshotTxs <$> atomically (getSnapshot mempool)
       let expected =
-            Set.fromList
-              [ltmvHash view | Just view <- map (leiosTxMempoolView . txForgetValidated) txs]
-      return $
-        actionProp
-          .&&. Map.keysSet indexed === expected
-          .&&. conjoin [ltmvHash view === txHash | (txHash, view) <- Map.toList indexed]
+            Map.fromList
+              [ (hashLeiosTx (MkLeiosTx bytes), bytes)
+              | tx <- map txForgetValidated txs
+              , Just bytes <- [txLeiosBytes tx]
+              ]
+      MkLeiosMempoolTxs found _ <- atomically (getLeiosTxs mempool (Map.keysSet expected))
+      return $ actionProp .&&. found === expected
 
 -- | An empty Mempool over the initial ledger, with room for whatever the
 -- actions add.

@@ -396,7 +396,7 @@ instance LedgerSupportsMempool BlockB where
   getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
-  leiosTxMempoolView = nothingLeiosTxMempoolView
+  txLeiosBytes = nothingTxLeiosBytes
   tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
 
 instance TxLimits BlockB where

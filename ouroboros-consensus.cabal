@@ -402,7 +402,6 @@ library
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
-    Ouroboros.Consensus.Util.Unthunkable
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:

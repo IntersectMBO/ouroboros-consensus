@@ -304,9 +304,9 @@ instance
     f idx (FlipTickedLedgerState tlst) =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
-  leiosTxMempoolView =
+  txLeiosBytes =
     hcollapse
-      . hcmap proxySingle (K . leiosTxMempoolView)
+      . hcmap proxySingle (K . txLeiosBytes)
       . getOneEraGenTx
       . getHardForkGenTx
 

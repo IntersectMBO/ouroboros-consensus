@@ -15,7 +15,6 @@ import Data.Functor.Identity (runIdentity)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs (..))
 import Ouroboros.Consensus.Mempool.API (Mempool (..), MempoolTimeoutConfig)
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
@@ -117,12 +116,11 @@ mkMempool mpEnv =
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
-    , getLeiosTxIndex = do
+    , getLeiosTxs = \hashes -> do
         is <- readTMVar istate
-        pure $!
-          MkLeiosMempoolTxs
-            (isLeiosTxs is)
-            (tickedLedgerMajorProtocolVersionWord16 (isLedgerState is))
+        -- Lazy, so that the caller scans the transactions outside the STM
+        -- transaction.
+        pure (leiosTxsByHash is hashes)
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }

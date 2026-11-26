@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
     InternalState (..)
   , ValidatedTxWithDiffs (..)
   , isMempoolSize
+  , leiosTxsByHash
 
     -- * Mempool environment
   , MempoolEnv (..)
@@ -51,11 +52,12 @@ import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
+import Data.ByteString (ByteString)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -70,7 +72,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Leios.Types (TxHash)
+import Ouroboros.Consensus.Leios.Types (LeiosMempoolTxs (..), LeiosTx (..), TxHash, hashLeiosTx)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -96,6 +98,9 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
   , validatedTxDiffs :: !(LedgerTables blk DiffMK)
+  , validatedTxLeiosHash :: !(StrictMaybe TxHash)
+  -- ^ The hash by which an endorser block references the transaction
+  -- ('leiosTxHash'), computed once when the Mempool admits it.
   }
   deriving Generic
 
@@ -125,12 +130,6 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isLeiosTxs :: !(Map TxHash LeiosTxMempoolView)
-  -- ^ What Leios needs to know about the transactions in 'isTxs' that an
-  -- endorser block can reference, by the hash it references them by
-  -- ('ltmvHash').
-  --
-  -- INVARIANT: always in sync with the transactions in 'isTxs'.
   , isTxKeys :: !(LedgerTables blk KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
@@ -212,6 +211,30 @@ isMempoolSize is =
     , msNumBytes = txMeasureByteSize $ mmTxMeasure $ TxSeq.toSize $ isTxs is
     }
 
+-- | The hash by which an endorser block references this transaction: that of
+-- its 'txLeiosBytes'.
+leiosTxHash :: LedgerSupportsMempool blk => GenTx blk -> StrictMaybe TxHash
+leiosTxHash = maybeToStrictMaybe . fmap (hashLeiosTx . MkLeiosTx) . txLeiosBytes
+
+-- | \( O(n) \). The bytes of the transactions in the Mempool with these hashes
+-- that an endorser block can reference, and the major protocol version they
+-- were all validated under. It scans the hashes the Mempool memoized, and takes
+-- the bytes of only the transactions it finds.
+leiosTxsByHash ::
+  LedgerSupportsMempool blk =>
+  InternalState blk -> Set TxHash -> LeiosMempoolTxs ByteString
+leiosTxsByHash is hashes =
+  MkLeiosMempoolTxs
+    { lmtByHash =
+        Map.fromList
+          [ (txHash, bytes)
+          | TxTicket (ValidatedTxWithDiffs vtx _ (SJust txHash)) _ _ <- TxSeq.toList (isTxs is)
+          , txHash `Set.member` hashes
+          , Just bytes <- [txLeiosBytes (txForgetValidated vtx)]
+          ]
+    , lmtValidatedUnder = tickedLedgerMajorProtocolVersionWord16 (isLedgerState is)
+    }
+
 initInternalState ::
   LedgerSupportsMempool blk =>
   MempoolCapacityBytesOverride ->
@@ -225,7 +248,6 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
-    , isLeiosTxs = Map.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
@@ -402,19 +424,14 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             { isTxs =
                 isTxs
                   :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
+                    -- Hash the tx the mempool keeps: 'applyTx' may have
+                    -- translated the tx that arrived into the ledger's era.
+                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') (leiosTxHash (txForgetValidated vtx)))
                     nextTicketNo
                     (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
-            , -- Hash the tx the mempool keeps: 'applyTx' may have translated the
-              -- tx that arrived into the ledger's era.
-              isLeiosTxs =
-                maybe
-                  isLeiosTxs
-                  (\view -> Map.insert (ltmvHash view) view isLeiosTxs)
-                  (leiosTxMempoolView (txForgetValidated vtx))
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -423,7 +440,6 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   IS
     { isTxs
     , isTxIds
-    , isLeiosTxs
     , isTxKeys
     , isTxValues
     , isLedgerState
@@ -523,15 +539,6 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
       cand
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
-        , -- Revalidation may have translated a tx into the ledger's era, so each
-          -- tx gives its own Leios hash rather than its ticket carrying one.
-          isLeiosTxs =
-            isLeiosTxs cand
-              <> Map.fromList
-                [ (ltmvHash view, view)
-                | (tx, _, _) <- validDelta
-                , Just view <- [leiosTxMempoolView (txForgetValidated tx)]
-                ]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , isTxValues =
             ltliftA2 unionValues (isTxValues cand) (ltliftA2 restrictValuesMK deltaValues survivorKeys)
@@ -543,8 +550,9 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
  where
-  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
-  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  -- Each tx keeps the Leios hash it was admitted with.
+  wrap = \(TxTicket (ValidatedTxWithDiffs tx df h) tk tz) -> (tx, df, (tk, tz, h))
+  unwrap = \(tx, df, (tk, tz, h)) -> TxTicket (ValidatedTxWithDiffs tx df h) tk tz
   fst3 (x, _, _) = x
   snd3 (_, x, _) = x
 

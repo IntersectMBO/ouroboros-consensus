@@ -17,7 +17,7 @@ import qualified Cardano.Ledger.Core as SL
   , ppProtocolVersionL
   , txSeqBlockBodyL
   )
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (originalBytes, unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
@@ -41,7 +41,6 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
 import Ouroboros.Consensus.Shelley.Eras
   ( LeiosEraDict (..)
-  , LeiosEraTx (..)
   , ShelleyBasedEra (getLeiosEraDict)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -108,7 +107,7 @@ forgeShelleyBlock
     forgedEb =
       pureLeiosOnly @proto $ case getLeiosEraDict (Proxy @era) of
         Just LeiosEraDict ->
-          forgeLeiosEb validatedUnder . fmap (leiosTxMempoolViewBytes . leiosEraTxMempoolView . extractTx)
+          forgeLeiosEb validatedUnder . fmap (originalBytes . extractTx)
             <$> nonEmpty fbEbTxs
         Nothing -> error "forgeShelleyBlock: a protocol with Leios needs an era with a LeiosEraDict"
 

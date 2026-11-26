@@ -7,6 +7,7 @@ module Test.Consensus.Cardano.LeiosFetch (tests) where
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (bodyTxL, certsTxBodyL)
 import Cardano.Ledger.Dijkstra.TxBody (subTransactionsTxBodyL)
+import Cardano.Ledger.Hashes (originalBytes)
 import Codec.CBOR.Read (DeserialiseFailure)
 import Data.ByteString.Lazy (ByteString, toStrict)
 import qualified Data.ByteString.Short as SBS
@@ -16,7 +17,6 @@ import qualified Data.Vector.Strict as V
 import Lens.Micro ((&), (.~))
 import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..))
 import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (leiosTxMempoolViewBytes)
 import Ouroboros.Consensus.Leios.Types
   ( EndorserBlock
   , LeiosPoint (..)
@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Leios.Types
   , serialiseEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
-import Ouroboros.Consensus.Shelley.Eras (LeiosEraTx (..))
 import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraTx)
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -95,7 +94,7 @@ prop_nodeCodecMatchesCDDL =
   -- spliced into an array, as the bls_key of the pool registrations, here and
   -- in the sub-transactions, although they match the CDDL.
   tx =
-    MkLeiosTx . leiosTxMempoolViewBytes . leiosEraTxMempoolView $
+    MkLeiosTx . originalBytes $
       exampleDijkstraTx
         & bodyTxL . certsTxBodyL .~ mempty
         & bodyTxL . subTransactionsTxBodyL .~ mempty
