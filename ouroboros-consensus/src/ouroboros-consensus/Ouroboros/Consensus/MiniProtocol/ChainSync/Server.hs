@@ -2,6 +2,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( Tip
@@ -9,6 +11,11 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncBlocksServer
   , chainSyncHeaderServerFollower
   , chainSyncHeadersServer
+
+    -- * Certified endorser blocks
+  , inlineCertifiedEbTxs
+  , CertRbWithoutEbTxs (..)
+  , CertRbWithoutEbTxsReason (..)
 
     -- * Trace events
   , BlockingType (..)
@@ -18,9 +25,17 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncServerForFollower
   ) where
 
+import Cardano.Ledger.Binary (DecoderError (..))
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
+import qualified Data.ByteString.Lazy as Lazy
+import qualified Data.Text as Text
+import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Types (LeiosPoint)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
   , Follower
@@ -29,6 +44,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , getSerialisedHeaderWithPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveEndorserBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Enclose
   ( Enclosing
@@ -38,7 +54,7 @@ import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block
   ( ChainUpdate (..)
-  , Serialised
+  , Serialised (..)
   , Tip (..)
   )
 import Ouroboros.Network.Protocol.ChainSync.Server
@@ -87,6 +103,81 @@ chainSyncBlocksServer ::
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer tracer chainDB flr =
   chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr
+
+{-------------------------------------------------------------------------------
+  Certified endorser blocks
+-------------------------------------------------------------------------------}
+
+-- | Prepare a stored block for the node-to-client chain sync server.
+--
+-- A block that certifies an endorser block is sent with the endorser block's
+-- transactions in its body. All other blocks are sent as stored.
+--
+-- Throws 'CertRbWithoutEbTxs' if the transactions cannot be added.
+-- A missing endorser block is thrown by the resolver instead,
+-- as 'ChainDB.ChainDbMissingEndorserBlock'.
+inlineCertifiedEbTxs ::
+  forall m blk.
+  ( MonadThrow m
+  , BlockSupportsProtocol blk
+  , BlockSupportsLeios blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
+  ) =>
+  BlockConfig blk ->
+  CodecConfig blk ->
+  ResolveEndorserBlock m ->
+  -- | The endorser block the block before this one announced, if any.
+  Maybe LeiosPoint ->
+  Point blk ->
+  Header blk ->
+  Serialised blk ->
+  m (Serialised blk)
+inlineCertifiedEbTxs bcfg ccfg resolveEb mAnnounced pt hdr stored
+  | not containsCert = pure stored
+  | otherwise = do
+      announced <- maybe (failWith NoAnnouncement) pure mAnnounced
+      blk <- either (failWith . Undecodable) pure (decodeStored stored)
+      eb <- resolveEb announced
+      certRb <- either (failWith . EbTxsNotInlined) pure (inlineEndorserBlockTxs eb blk)
+      pure . Serialised . CBOR.toLazyByteString $ encodeDisk ccfg certRb
+ where
+  containsCert = getContainsLeiosCert (Proxy @(BlockProtocol blk)) (validateView bcfg hdr)
+
+  failWith :: CertRbWithoutEbTxsReason -> m a
+  failWith = throwIO . CertRbWithoutEbTxs pt
+
+  decodeStored :: Serialised blk -> Either DecoderError blk
+  decodeStored (Serialised bytes) =
+    case CBOR.deserialiseFromBytes (decodeDisk ccfg) bytes of
+      Left err -> Left $ DecoderErrorDeserialiseFailure label err
+      Right (trailing, mkBlk)
+        | Lazy.null trailing -> mkBlk bytes
+        | otherwise -> Left $ DecoderErrorLeftover label (Lazy.toStrict trailing)
+   where
+    label = Text.pack "Block"
+
+-- | Thrown by 'inlineCertifiedEbTxs' when it cannot add the endorser block's
+-- transactions to a CertRB. Holds the CertRB's point and the reason.
+data CertRbWithoutEbTxs blk = CertRbWithoutEbTxs
+  { certRbPoint :: !(Point blk)
+  , certRbReason :: !CertRbWithoutEbTxsReason
+  }
+
+deriving instance StandardHash blk => Show (CertRbWithoutEbTxs blk)
+
+instance (StandardHash blk, Typeable blk) => Exception (CertRbWithoutEbTxs blk)
+
+-- | Reason for a 'CertRbWithoutEbTxs'.
+data CertRbWithoutEbTxsReason
+  = -- | No endorser block announcement was given for the CertRB.
+    NoAnnouncement
+  | -- | The stored CertRB does not decode.
+    Undecodable !DecoderError
+  | -- | The endorser block's transactions could not be added to the CertRB
+    -- ('inlineEndorserBlockTxs' failed).
+    EbTxsNotInlined !DecoderError
+  deriving (Show, Eq)
 
 -- | A chain sync server.
 --
