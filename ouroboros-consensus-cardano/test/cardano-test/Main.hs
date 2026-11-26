@@ -7,6 +7,7 @@ import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.LeiosFetch
 import qualified Test.Consensus.Cardano.LeiosNotify
+import qualified Test.Consensus.Cardano.MiniProtocol.ChainSync.Server
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
 import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.Show ()
@@ -51,6 +52,7 @@ tests =
     , Test.ThreadNet.Cardano.tests
     , Test.ThreadNet.MaryAlonzo.tests
     , Test.ThreadNet.ShelleyAllegra.tests
+    , Test.Consensus.Cardano.MiniProtocol.ChainSync.Server.tests
     , Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server.tests
     , Test.Consensus.Cardano.Translation.tests
     , Test.Consensus.Cardano.Translation.forecastTests

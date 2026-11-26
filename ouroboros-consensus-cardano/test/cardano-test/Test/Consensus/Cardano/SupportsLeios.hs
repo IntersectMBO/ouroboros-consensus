@@ -3,7 +3,15 @@
 
 -- | Checks 'inlineEndorserBlockTxs', which node-to-client ChainSync uses to
 -- send a CertRB with the transactions of the EB it certifies.
-module Test.Consensus.Cardano.SupportsLeios (tests) where
+module Test.Consensus.Cardano.SupportsLeios
+  ( tests
+
+    -- * Generators, also used by the ChainSync server tests
+  , genCertRb
+  , genEbTxs
+  , serialisedEb
+  , firstExample
+  ) where
 
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Block as SL
