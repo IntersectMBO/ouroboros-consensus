@@ -178,6 +178,7 @@ data LeiosEraDict era where
     , DijkstraApplyBlock (LeiosLedger.Header StandardCrypto) era
     , DijkstraEraPParams era
     , Show (Dijkstra.EbPredFailure era)
+    , Core.InjectRuleFailure "BBODY" Dijkstra.DijkstraBbodyPredFailure era
     ) =>
     LeiosEraDict era
 

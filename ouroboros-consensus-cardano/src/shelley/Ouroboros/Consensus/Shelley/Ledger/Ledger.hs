@@ -89,6 +89,7 @@ import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra (applyEndorserBlockNoValidation)
 import Cardano.Ledger.Dijkstra.Block.Endorser (EbTransactions (..), EraEndorserBlock (..))
+import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import Cardano.Ledger.Hashes (extractHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
@@ -110,6 +111,7 @@ import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce
 import Data.Functor.Identity
+import qualified Data.List.NonEmpty as NE
 import Data.MemPack
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
@@ -612,8 +614,8 @@ instance
   --    - 'updateChainDepState': executes the @PRTCL@ transition
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
-  applyBlockLedgerResultWithValidation doValidate evs =
-    liftEither ..: applyHelper appBlk
+  applyBlockLedgerResultWithValidation doValidate evs cfg blk st =
+    liftEither $ checkLeiosCertEbApplied blk st *> applyHelper appBlk cfg blk st
    where
     -- Apply the BBODY transition using the ticked state
     appBlk =
@@ -717,6 +719,29 @@ instance Show ShelleyReapplyException where
   show (ShelleyReapplyException err) = "(ShelleyReapplyException " <> show err <> ")"
 
 instance Exception.Exception ShelleyReapplyException
+
+-- | Reject a block with a Leios certificate on a state that has not applied
+-- the endorser block it certifies. The ledger checks this as a BBODY
+-- predicate, which reapplication skips, so a caller that left out the
+-- endorser block would otherwise get a state without it.
+checkLeiosCertEbApplied ::
+  forall proto era mk.
+  ShelleyCompatible proto era =>
+  ShelleyBlock proto era ->
+  Ticked LedgerState (ShelleyBlock proto era) mk ->
+  Either (SL.BlockTransitionError era) ()
+checkLeiosCertEbApplied blk st =
+  case (getLeiosEraDict (Proxy @era), blockLeiosCert blk) of
+    (Just LeiosEraDict, Just _) ->
+      case SL.strictMaybeToMaybe
+        (tickedShelleyLedgerState st ^. SL.nesEsL . SL.esLStateL . SL.lsLastEbAnnouncementL) of
+        Nothing ->
+          Left $ SL.BlockTransitionError $ Core.injectFailure Dijkstra.LeiosCertWithoutEbAnnouncement NE.:| []
+        Just SL.EbAnnouncement{SL.ebIsApplied}
+          | ebIsApplied -> Right ()
+          | otherwise ->
+              Left $ SL.BlockTransitionError $ Core.injectFailure Dijkstra.LeiosCertEbNotApplied NE.:| []
+    _ -> Right ()
 
 applyHelper ::
   forall proto era.
