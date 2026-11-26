@@ -17,7 +17,6 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
-import Control.Monad.Except (runExcept)
 import Data.Bits (shiftL, shiftR, (.|.))
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
@@ -130,9 +129,9 @@ tests =
             decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
               (definite [txsRequestKey, somePoint, indefiniteMap [chunk0]])
               >>= (@?= Just (fst onePoint, oneTxsBitmap))
-        , testCase "rejects a chunk index past the bound" $
+        , testCase "rejects a zero chunk" $
             decodeMsgLeiosBlockTxsRequestViaLeiosFetchCodec
-              (definite [txsRequestKey, somePoint, indefiniteMap [chunk0, chunkPastBound]])
+              (definite [txsRequestKey, somePoint, indefiniteMap [zeroChunk]])
               >>= (@?= Nothing)
         ]
     , testGroup
@@ -449,8 +448,7 @@ decodeViaLeiosFetchCodec stok enc = do
       encodeLeiosTx
       decodeLeiosTx
 
--- | The codec's @maxTxs@: also the txs bitmap's total width, so a chunk
--- index above 0 is past the bound.
+-- | The codec's @maxTxs@.
 codecMaxTxs :: Int
 codecMaxTxs = 2
 
@@ -485,22 +483,17 @@ txsRequestKey = CBOR.encodeWord 3
 somePoint :: CBOR.Encoding
 somePoint = encodeLeiosPoint (fst onePoint)
 
--- | A chunk entry naming the bitmap's second tx. With 'codecMaxTxs' of 2, the
--- bitmap's only chunk is 1 byte wide, its one valid padding-free bit pattern
--- for offset 1 being 0x40.
+-- | A chunk entry naming the bitmap's second tx: one byte suffices.
 chunk0 :: CBOR.Encoding
 chunk0 = CBOR.encodeWord16 0 <> CBOR.encodeBytes (BS.pack [0x40])
 
--- | A chunk entry just past the bitmap's last chunk index: with 'codecMaxTxs'
--- of 2, chunk index 0 is the only valid one, so index 1 is past the bound.
-chunkPastBound :: CBOR.Encoding
-chunkPastBound =
-  CBOR.encodeWord16 1 <> CBOR.encodeBytes (BS.pack [0x40])
+-- | A chunk entry naming no tx.
+zeroChunk :: CBOR.Encoding
+zeroChunk = CBOR.encodeWord16 0 <> CBOR.encodeBytes (BS.pack [0x00])
 
 -- | What 'chunk0' decodes to: the bitmap naming offset 1.
 oneTxsBitmap :: TxsBitmap
-oneTxsBitmap =
-  either error id $ runExcept $ txsBitmapFromTxIndices codecMaxTxs (NEIntSet.singleton 1)
+oneTxsBitmap = txsBitmapFromTxIndices (NEIntSet.singleton 1)
 
 txsKey :: CBOR.Encoding
 txsKey = CBOR.encodeWord 4

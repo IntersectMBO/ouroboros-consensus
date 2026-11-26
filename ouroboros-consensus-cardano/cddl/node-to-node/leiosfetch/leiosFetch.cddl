@@ -27,26 +27,18 @@ eb_hash = base.hash
 ; blocks are not allowed to be used across era boundaries.
 endorser_block = #6.24(bytes .cbor dijkstra.eb_references)
 
-; Chunked sparse bitmap: Chunk index to that chunk's presence bitmap, one
-; bit per tx, the most significant bit naming the chunk's first tx.
+; Chunked sparse bitmap: chunk index to that chunk's presence bitmap, one
+; bit per tx, the most significant bit of the first byte naming the chunk's
+; first tx. Each chunk covers 64 txs, so chunk i names txs [64*i, 64*i + 63].
+; A chunk takes only the bytes up to its last named tx; missing bytes read as
+; zero, so a chunk naming only its first tx is the single byte 0x80.
 ;
-; Bitmap's total width is 17142 bits (maxTxsPerEndorserBlock) and chunk width is 64 bits.
-; This means the last chunk (index 267) has a width of 54 bits + 2 zero padding bits (7 bytes).
-; Eq. (267 chunks x 64 bits) + (1 chunk x 54 bits) = 17142 bits (txs)
-;
-; Chunk indices MUST be:
-; 1. strictly ascending (so also without duplicates),
-; 2. in range from [0,267] (first 0, last 267, inclusive).
-;
-; Chunk bitmaps MUST be:
-; 1. non-zero (must name an index),
-; 2. exactly 8 bytes (64 bit width) if its chunk index is less than 267,
-; 3. exactly 7 bytes (54 bit width + 2 zero padding bits) if its chunk index is equal to 267 (last index).
+; Chunk indices MUST be strictly ascending and chunk bitmaps MUST be non-zero.
 ;
 ; Examples:
-; 1. First chunk naming first 3 transactions [0,2] = 0xe0_00_00_00_00_00_00_00 (0xe0 = 0b1110_0000)
-; 2. Last chunk naming last 54 txs [17088,17141] = 0xff_ff_ff_ff_ff_ff_fc (0xfc = 0b1111_1100)
-txs_bitmap = { + uint .size 2 => bytes .size (7..8) }
+; 1. Chunk 0 naming txs [0,2] = 0xe0 (0b1110_0000)
+; 2. Chunk 267 naming its last 54 txs [17088,17141] = 0xff_ff_ff_ff_ff_ff_fc
+txs_bitmap = { + uint .size 2 => bytes .size (1..8) }
 
 ; The requested transactions, non-empty, since a 'txs_bitmap' names at least one
 ; tx.

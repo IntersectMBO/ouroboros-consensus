@@ -45,7 +45,6 @@ import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
 import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
-import Control.Monad.Except (Except)
 import Data.ByteString.Lazy (ByteString)
 import Data.IntSet.NonEmpty (NEIntSet)
 import Data.Kind (Type)
@@ -148,14 +147,9 @@ type TxsBitmap = SparseBitmap
 txsBitmapChunkWidth :: Int
 txsBitmapChunkWidth = 64
 
--- | @txsBitmapFromTxIndices maxTxs@ names these offsets in a bitmap of total
--- width @maxTxs@: the node's design ceiling on an endorser block's tx count,
--- so the bitmap can never be asked to name an offset no endorser block can
--- have. @maxTxs@ need not be a multiple of 'txsBitmapChunkWidth': the last
--- chunk simply covers whatever width remains, which may be narrower than the
--- others.
-txsBitmapFromTxIndices :: Int -> NEIntSet -> Except String TxsBitmap
-txsBitmapFromTxIndices maxTxs = SparseBitmap.fromIndices txsBitmapChunkWidth maxTxs
+-- | The bitmap naming these offsets.
+txsBitmapFromTxIndices :: NEIntSet -> TxsBitmap
+txsBitmapFromTxIndices = SparseBitmap.fromIndices
 
 txsBitmapToTxIndices :: TxsBitmap -> NEIntSet
 txsBitmapToTxIndices = SparseBitmap.toIndices
@@ -250,9 +244,8 @@ timeLimitsLeiosFetch = ProtocolTimeLimits $ \case
 codecLeiosFetch ::
   forall (point :: Type) (eb :: Type) (tx :: Type) m.
   MonadST m =>
-  -- | The most txs an EB can hold. Bounds both 'MsgLeiosBlockTxs' and the
-  -- txs bitmap's total width; the decoder rejects a larger count, or a
-  -- bitmap chunk index past it, before it allocates.
+  -- | The most txs an EB can hold. The decoder rejects a larger
+  -- 'MsgLeiosBlockTxs' before it allocates.
   Int ->
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
@@ -338,7 +331,7 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
       return $ SomeMessage $ MsgLeiosBlock x
     (SingIdle, 3) -> fields 3 $ do
       p <- decodeP
-      txsBitmap <- decodeTxsBitmap maxTxs
+      txsBitmap <- decodeTxsBitmap
       return $ SomeMessage $ MsgLeiosBlockTxsRequest p txsBitmap
     (SingBlockTxs, 4) -> fields 2 $ do
       txs <- decodeListUpTo "MsgLeiosBlockTxs" maxTxs decodeTx
@@ -412,12 +405,7 @@ codecLeiosFetchId = Codec{encode, decode}
 encodeTxsBitmap :: TxsBitmap -> CBOR.Encoding
 encodeTxsBitmap = SparseBitmap.encodeCbor (CBOR.encodeWord16 . fromIntegral)
 
--- | @decodeTxsBitmap maxTxs@ decodes the wire's 'Data.Word.Word16' chunk
--- indices into a bitmap of @maxTxs@ transaction offsets. The decoder rejects
--- a chunk index past what @maxTxs@ allows before it allocates.
-decodeTxsBitmap :: Int -> CBOR.Decoder s TxsBitmap
-decodeTxsBitmap maxTxs =
-  SparseBitmap.decodeCbor
-    txsBitmapChunkWidth
-    maxTxs
-    (fromIntegral <$> CBOR.decodeWord16)
+-- | Decodes the wire's 'Data.Word.Word16' chunk indices. Whether the offsets
+-- exist is for the server to check against the endorser block it holds.
+decodeTxsBitmap :: CBOR.Decoder s TxsBitmap
+decodeTxsBitmap = SparseBitmap.decodeCbor (fromIntegral <$> CBOR.decodeWord16)

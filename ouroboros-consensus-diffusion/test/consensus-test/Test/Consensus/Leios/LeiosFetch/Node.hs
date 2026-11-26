@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Leios.Types
   , endorserBlockHash
   , endorserBlockReferences
   , hashLeiosTx
-  , maxTxsPerEndorserBlock
   , mkEndorserBlock
   , serialiseEndorserBlock
   , toRankingBlockHash
@@ -1675,9 +1674,7 @@ txsBitmapNaming :: [Int] -> TxsBitmap
 txsBitmapNaming offsets =
   case NEIntSet.nonEmptySet (IntSet.fromList offsets) of
     Nothing -> error "txsBitmapNaming: no offsets"
-    Just set -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock set) of
-      Left err -> error $ "txsBitmapNaming: " <> err
-      Right txsBitmap -> txsBitmap
+    Just set -> txsBitmapFromTxIndices set
 
 {-------------------------------------------------------------------------------
   What the node's LeiosDB holds

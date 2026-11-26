@@ -28,7 +28,6 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
 import Cardano.Ledger.Binary (DecoderError, Version)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
-import Control.Monad.Except (runExcept)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -84,7 +83,6 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , hashSerialisedEndorserBlock
   , leiosEbByteSizes
-  , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -253,13 +251,10 @@ nextLeiosFetchJob ctx peer reqsVar =
        in case mayOffsets of
             Nothing ->
               error "LeiosBlockTxsRequest invariant violated: transaction offsets to request must be non-empty"
-            Just offsets -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock offsets) of
-              Left err ->
-                error $ "LeiosBlockTxsRequest invariant violated: " <> err
-              Right txsBitmap ->
-                MkSomeLeiosFetchJob
-                  (MsgLeiosBlockTxsRequest p txsBitmap)
-                  (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
+            Just offsets ->
+              MkSomeLeiosFetchJob
+                (MsgLeiosBlockTxsRequest p (txsBitmapFromTxIndices offsets))
+                (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
 
 -- | Take in an endorser block that arrived in reply to this request.
 --

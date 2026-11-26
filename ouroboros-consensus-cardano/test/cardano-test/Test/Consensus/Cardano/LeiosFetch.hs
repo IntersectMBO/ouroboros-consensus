@@ -8,7 +8,6 @@ import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (bodyTxL, certsTxBodyL)
 import Cardano.Ledger.Dijkstra.TxBody (subTransactionsTxBodyL)
 import Codec.CBOR.Read (DeserialiseFailure)
-import Control.Monad.Except (runExcept)
 import Data.ByteString.Lazy (ByteString, toStrict)
 import qualified Data.ByteString.Short as SBS
 import qualified Data.IntSet.NonEmpty as NEIntSet
@@ -90,10 +89,7 @@ prop_nodeCodecMatchesCDDL =
     let genOffset = chooseInt (0, maxTxsPerEndorserBlock - 1)
     offset <- genOffset
     offsets <- listOf genOffset
-    either error pure $
-      runExcept $
-        txsBitmapFromTxIndices maxTxsPerEndorserBlock $
-          NEIntSet.fromList (offset NEList.:| offsets)
+    pure $ txsBitmapFromTxIndices $ NEIntSet.fromList (offset NEList.:| offsets)
 
   genEb = serialiseEndorserBlock . mkEndorserBlock <$> listOf1 ((,) <$> genHash <*> arbitrary)
 
