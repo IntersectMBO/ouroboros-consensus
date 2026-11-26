@@ -50,8 +50,8 @@ constraints:
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: e7579e4315530b3420cb8a7c728c3f1d5b81a5fc
-  --sha256: sha256-jaSmhpueLsXLdY/3Qry2BUmnwgMKQTv8pqKruWcP7bc=
+  tag: a89cba684889a27c04f352c135a9f3932d075244
+  --sha256: sha256-iX3v/Sxq0nikFlv9K+jS4uNGrO/9YurVIToNOKXJbH4=
   subdir:
     network-mux
     ouroboros-network
