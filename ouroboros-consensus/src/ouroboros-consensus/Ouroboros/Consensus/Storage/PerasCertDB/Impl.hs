@@ -4,8 +4,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -25,8 +27,7 @@ where
 
 import Cardano.Binary
   ( Decoder
-  , DecoderError
-  , Encoding
+  , DecoderError (..)
   , FromCBOR (..)
   , ToCBOR (..)
   , decodeFullDecoder
@@ -34,10 +35,13 @@ import Cardano.Binary
   , encodeListLen
   , serialize
   )
-import Control.Monad (guard, void, when)
+import qualified Codec.CBOR.Read as CBOR
+import Control.Monad (forM_, guard, unless, void, when)
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Bifunctor
+import qualified Data.ByteString.Lazy as BSL
 import Data.Char (isDigit)
-import Data.Either (rights)
+import Data.Either (partitionEithers)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -45,6 +49,7 @@ import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -56,6 +61,7 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import System.FS.API.Lazy
+import System.FS.CRC (CRC (..), computeCRC)
 import Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
@@ -103,6 +109,8 @@ data TraceEvent blk
       AddPerasCertResult
   | GarbageCollected
       SlotNo
+  | DiscardedCert
+      String
 
 deriving instance
   Show (PerasCert blk) =>
@@ -145,7 +153,7 @@ createDB ::
   Complete PerasCertDbArgs m blk ->
   m (PerasCertDB m blk)
 createDB args = do
-  pcds <- loadPerasCertDbState pcdbCodecConfig pcdbHasFS
+  pcds <- loadPerasCertDbState pcdbTracer pcdbCodecConfig pcdbHasFS
   pcdbState <- newTVarIO (WithFingerprint pcds (Fingerprint 0))
   let env =
         PerasCertDbEnv
@@ -299,6 +307,28 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
   On-disk storage
 -------------------------------------------------------------------------------}
 
+-- | Reason why a certificate file on disk could not be read back into a
+-- @WithArrivalTime (ValidatedPerasCert blk)@.
+--
+-- These are never thrown, but just traced, so the remaining certificates stay
+-- available to syncing nodes.
+data CertFileError
+  = -- | The file could not be opened or read (e.g. it is missing).
+    CertFileReadError FsError
+  | -- | The leading CRC or the certificate payload could not be decoded.
+    CertFileMalformed DecoderError
+  | -- | The payload's CRC does not match the one stored in the file,
+    -- i.e. the file is corrupt (bit rot, a partial write, etc).
+    CertFileChecksumMismatch
+  deriving stock Show
+
+-- | A short human-readable description of a 'CertFileError', for tracing.
+displayCertFileError :: CertFileError -> String
+displayCertFileError = \case
+  CertFileReadError err -> "Read error: " <> show err
+  CertFileMalformed err -> "Malformed: " <> show err
+  CertFileChecksumMismatch -> "CRC mismatch"
+
 -- | Initialize the `PerasCertDbState` with the most recent `maxVolatileCertCount`
 -- certificates stored on disk.
 -- Certificate files that cannot be decoded (e.g. because a write was interrupted)
@@ -308,18 +338,20 @@ loadPerasCertDbState ::
   , IsPerasCert (PerasCert blk) blk
   , DecodeDisk blk (PerasCert blk)
   ) =>
+  Tracer m (TraceEvent blk) ->
   CodecConfig blk ->
   SomeHasFS m ->
   m (PerasCertDbState blk)
-loadPerasCertDbState ccfg (SomeHasFS hasFS) = do
+loadPerasCertDbState tracer ccfg (SomeHasFS hasFS) = do
   createDirectoryIfMissing hasFS True rootDir
   roundNos <-
     Set.fromList . mapMaybe certRoundFromFileName . Set.toList <$> listDirectory hasFS rootDir
-  certs <-
-    rights
+  (errs, certs) <-
+    partitionEithers
       <$> traverse
         (readCertFile ccfg hasFS)
         (take maxVolatileCertCount (Set.toDescList roundNos))
+  forM_ errs $ \err -> traceWith tracer (DiscardedCert $ displayCertFileError err)
   let pcdsCerts = Map.fromList [(getPerasCertRound cert, cert) | cert <- certs]
   pure
     PerasCertDbState
@@ -344,35 +376,68 @@ writeCertFile ::
 writeCertFile PerasCertDbEnv{pcdbHasFS = SomeHasFS hasFS, pcdbCodecConfig} roundNo cert =
   withFile hasFS (certFilePath roundNo) (AppendMode AllowExisting) $ \h -> do
     hTruncate hasFS h 0
-    void $ hPutAll hasFS h $ serialize $ encodeCertFile pcdbCodecConfig cert
+    void $ hPutAll hasFS h $ encodeCertFileBytes pcdbCodecConfig cert
 
 readCertFile ::
   (IOLike m, DecodeDisk blk (PerasCert blk)) =>
   CodecConfig blk ->
   HasFS m h ->
   PerasRoundNo ->
-  m (Either DecoderError (WithArrivalTime (ValidatedPerasCert blk)))
-readCertFile ccfg hasFS roundNo =
-  decodeFullDecoder "PerasCertDB certificate file" (decodeCertFile ccfg)
-    <$> withFile hasFS (certFilePath roundNo) ReadMode (hGetAll hasFS)
+  m (Either CertFileError (WithArrivalTime (ValidatedPerasCert blk)))
+readCertFile ccfg hasFS roundNo = do
+  readResult <- try $ withFile hasFS (certFilePath roundNo) ReadMode (hGetAll hasFS)
+  pure $ case readResult of
+    Left (err :: FsError) -> Left (CertFileReadError err)
+    Right bytes -> decodeCertFileBytes ccfg bytes
 
-encodeCertFile ::
+encodeCertFileBytes ::
   EncodeDisk blk (PerasCert blk) =>
   CodecConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
-  Encoding
-encodeCertFile ccfg (WithArrivalTime arrivalTime cert) =
-  encodeListLen 2
-    <> toCBOR arrivalTime
-    <> encodeDisk ccfg cert
+  BSL.ByteString
+encodeCertFileBytes ccfg (WithArrivalTime arrivalTime cert) =
+  -- The @payload@ is /last/ so that we get it as the inconsumed suffix
+  -- when decoding the leading CRC.
+  crc <> payload
+ where
+  payload =
+    serialize $
+      encodeListLen 2
+        <> toCBOR arrivalTime
+        <> encodeDisk ccfg cert
+  crc = serialize $ toCBOR (getCRC (computeCRC payload))
 
-decodeCertFile ::
+decodeCertFileBytes ::
   DecodeDisk blk (PerasCert blk) =>
   CodecConfig blk ->
-  Decoder s (WithArrivalTime (ValidatedPerasCert blk))
-decodeCertFile ccfg = do
-  decodeListLenOf 2
-  WithArrivalTime <$> fromCBOR <*> decodeDisk ccfg
+  BSL.ByteString ->
+  Either CertFileError (WithArrivalTime (ValidatedPerasCert blk))
+decodeCertFileBytes ccfg fileBytes = do
+  payload <- certFileIntegrityCheck fileBytes
+  first CertFileMalformed $
+    decodeFullDecoder "PerasCertDB certificate file" fileDecoder payload
+ where
+  fileDecoder = do
+    decodeListLenOf 2
+    WithArrivalTime
+      <$> fromCBOR
+      <*> decodeDisk ccfg
+
+certFileIntegrityCheck :: BSL.ByteString -> Either CertFileError BSL.ByteString
+certFileIntegrityCheck fileBytes = do
+  -- Decoding only the leading CRC leaves the inline payload as the unconsumed
+  -- suffix, which is exactly the byte range the CRC was computed over on write.
+  (payload, expectedCRC) <-
+    first (CertFileMalformed . asDeserialiseFailure) $
+      CBOR.deserialiseFromBytes decodeCRC fileBytes
+  unless (getCRC (computeCRC payload) == expectedCRC) $
+    Left CertFileChecksumMismatch
+  Right payload
+ where
+  decodeCRC :: Decoder s Word32
+  decodeCRC = fromCBOR
+  asDeserialiseFailure =
+    DecoderErrorDeserialiseFailure "PerasCertDB certificate file"
 
 rootDir :: FsPath
 rootDir = mkFsPath []
