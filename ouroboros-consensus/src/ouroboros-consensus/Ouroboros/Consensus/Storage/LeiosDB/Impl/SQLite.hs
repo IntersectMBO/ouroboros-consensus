@@ -179,7 +179,7 @@ newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath = do
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           closeWriter = void . await =<< submitJob writeQueue Flush
-        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
+        , writeEbBody = \point eb fills held -> submitJob writeQueue (WriteEbBody point eb fills held)
         , writeTxs = \point txs -> submitJob writeQueue (WriteTxs point txs)
         }
 
@@ -269,9 +269,9 @@ startWriter registry tracer statsVar promotedSlotVar volPath immPath = do
               -- job with the outcome of that close.
               writeIORef shutdownVar (Just resolve)
               pure Stop
-            WriteEbBody point eb fills resolve -> do
+            WriteEbBody point eb fills held resolve -> do
               promoted <- isPromoted point
-              resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills
+              resolve =<< if promoted then pure Set.empty else sqlInsertEbBody conn point eb fills held
               pure Continue
             WriteTxs point txs resolve -> do
               promoted <- isPromoted point

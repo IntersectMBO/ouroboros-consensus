@@ -50,9 +50,12 @@ import Control.Monad.Trans.Except (runExcept)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
+import Data.Array.Byte (ByteArray)
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import Data.Set (Set)
@@ -68,6 +71,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (TxHash)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -123,6 +127,11 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
+  , isLeiosTxs :: !(Map TxHash ByteArray)
+  -- ^ The bytes from 'txLeiosMemoizedHashAndBytes' for txs in the Mempool that
+  -- have them, indexed by their memoized hashes.
+  --
+  -- INVARIANT: always in sync with the transactions in 'isTxs'.
   , isTxKeys :: !(LedgerTables blk KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
@@ -217,6 +226,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
+    , isLeiosTxs = Map.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
@@ -399,6 +409,13 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
+            , -- Use the hash and bytes of the tx the mempool keeps: 'applyTx'
+              -- may have translated the tx that arrived into the ledger's era.
+              isLeiosTxs =
+                maybe
+                  isLeiosTxs
+                  (\(txHash, bytes) -> Map.insert txHash bytes isLeiosTxs)
+                  (txLeiosMemoizedHashAndBytes (txForgetValidated vtx))
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -407,6 +424,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   IS
     { isTxs
     , isTxIds
+    , isLeiosTxs
     , isTxKeys
     , isTxValues
     , isLedgerState
@@ -508,6 +526,15 @@ revalidateTxsFor' readTables capacityOverride cfg slot (RevalidateTxsResult cand
       cand
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
+        , -- Revalidation may have translated a tx into the ledger's era, so
+          -- use its resulting hash and bytes rather than carrying them in its ticket.
+          isLeiosTxs =
+            isLeiosTxs cand
+              <> Map.fromList
+                [ hashAndBytes
+                | (tx, _, _) <- validDelta
+                , Just hashAndBytes <- [txLeiosMemoizedHashAndBytes (txForgetValidated tx)]
+                ]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , isTxValues =
             ltliftA2 unionValues (isTxValues cand) (ltliftA2 restrictValuesMK deltaValues survivorKeys)

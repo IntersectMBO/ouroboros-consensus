@@ -3,6 +3,7 @@
 -- | What the node's LeiosFetch client and server trace.
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   ( TraceLeiosFetchClientEvent (..)
+  , LeiosBlockTxSources (..)
   , LeiosTxCacheInsertBodySummary (..)
   , FetchArrivalBytes (..)
   , fetchArrivalInvalid
@@ -26,6 +27,13 @@ data TraceLeiosFetchClientEvent peer
     -- settled, extra if another reply's write for the point settled first,
     -- and good otherwise. One the node writes is traced once its write settles.
     TraceLeiosFetchClientBlockArrived peer LeiosPoint FetchArrivalBytes
+  | -- | Where the node takes the transactions of the endorser block at this
+    -- point from, decided as it writes the body, and, if the LeiosTxCache took
+    -- the body in, its summary of doing so.
+    TraceLeiosFetchClientBlockTxSources
+      !LeiosPoint
+      !LeiosBlockTxSources
+      !(Maybe LeiosTxCacheInsertBodySummary)
   | -- | Some of an endorser block's transactions arrived from this peer. The
     -- whole reply is invalid if it failed its checks. Otherwise each tx's bytes
     -- are evicted if its point was pruned, or the LeiosTxCache no longer
@@ -41,6 +49,20 @@ data TraceLeiosFetchClientEvent peer
     -- after its point's slot began, if that is known.
     TraceLeiosFetchClientBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
   deriving (Show, Functor)
+
+-- | How many of an endorser block's transactions the node takes from each
+-- source, decided as it writes the body. The fields sum to the transactions the
+-- body references.
+data LeiosBlockTxSources = MkLeiosBlockTxSources
+  { btsLocalFills :: !Int
+  -- ^ copied from other points at which the LeiosDB holds them, unless a point
+  -- no longer holds its tx by the time the write runs
+  , btsMempool :: !Int
+  -- ^ written from the node's mempool
+  , btsRemaining :: !Int
+  -- ^ neither, so fetched from peers unless the point already holds them
+  }
+  deriving Show
 
 -- | Summary of an EB body inserted into the LeiosTxCache, for observability.
 -- The counts nest: @ibsTxsInEb >= ibsAcquired >= ibsValidated@.

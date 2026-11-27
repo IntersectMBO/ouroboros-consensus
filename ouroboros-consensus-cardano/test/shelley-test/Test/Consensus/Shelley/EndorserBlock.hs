@@ -2,29 +2,37 @@
 -- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
+import Cardano.Base.Bytes (byteArrayToByteString)
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Ledger.Core (TopTx, Tx)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Cardano.Ledger.Hashes (extractHash, hashAnnotated)
+import Cardano.Ledger.Hashes (extractHash, hashAnnotated, originalBytes)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import NoThunks.Class (noThunks)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , GenTx
+  , LedgerSupportsMempool (..)
+  )
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , EndorserBlock
+  , LeiosTx (..)
   , TxHash
   , encodeEndorserBlock
   , endorserBlockFromTxBytes
   , endorserBlockReferences
+  , hashLeiosTx
   , mkEndorserBlock
   , referencesCapacity
   , sizeEndorserBlockReference
   )
-import Ouroboros.Consensus.Shelley.Ledger.Forge (serializeTxForLeios)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (txByteSizeWithOverhead)
+import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx, txByteSizeWithOverhead)
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -49,6 +57,9 @@ tests =
     , testProperty
         "a forged endorser block references a Dijkstra transaction by its hashAnnotated"
         (withNumTests 10 prop_dijkstraEbTxHashIsLedgerHash)
+    , testProperty
+        "a Dijkstra transaction's Leios hash and bytes agree and have no thunks"
+        (withNumTests 10 prop_dijkstraTxLeiosMemoizedHashAndBytes)
     ]
 
 genTxHash :: Gen TxHash
@@ -143,27 +154,48 @@ prop_referencesCapacityFloorsAtZero =
       , (1, chooseEnum (maxFraming + 1, maxBound))
       ]
 
--- | The length of the 'serializeTxForLeios' bytes of a Dijkstra transaction
+-- | The length of the 'originalBytes' of a Dijkstra transaction
 -- never exceeds its 'txByteSizeWithOverhead', which 'txEbMeasureDijkstra'
 -- reserves for the reference.
 --
--- The ledger computes 'sizeTxF' from one encoding and 'serializeTxForLeios'
+-- The ledger computes 'sizeTxF' from one encoding and 'originalBytes'
 -- uses another, so a ledger change can make the two disagree.
 prop_dijkstraEbTxSizeBounded :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxSizeBounded tx =
   counterexample ("EB tx size: " <> show ebTxSize <> ", mempool tx size: " <> show mempoolTxSize) $
     ebTxSize <= mempoolTxSize
  where
-  ebTxSize = BS.length (serializeTxForLeios tx)
+  ebTxSize = BS.length (originalBytes tx)
   mempoolTxSize = fromIntegral (txByteSizeWithOverhead tx)
 
 -- | 'endorserBlockFromTxBytes' references a transaction by the hash of its
--- 'serializeTxForLeios' bytes. The Dijkstra ledger defines this reference as the
--- transaction's 'hashAnnotated', which is the hash of its 'originalBytes'.
--- Thus a node can check fetched bytes against the reference without decoding
--- them. Fails if 'serializeTxForLeios' returns other bytes, for example the
--- 'EncCBOR' encoding, which drops the @is_valid@ flag.
+-- 'originalBytes', which the Dijkstra ledger defines as the transaction's
+-- 'hashAnnotated'. Thus a node can check fetched bytes against the reference
+-- without decoding them. Fails for other bytes, for example the encoding of a
+-- 'MempoolTx', which drops the @is_valid@ flag.
 prop_dijkstraEbTxHashIsLedgerHash :: Tx TopTx DijkstraEra -> Property
 prop_dijkstraEbTxHashIsLedgerHash tx =
-  map fst (endorserBlockReferences (endorserBlockFromTxBytes (pure (serializeTxForLeios tx))))
+  map
+    fst
+    ( endorserBlockReferences
+        (endorserBlockFromTxBytes (pure (originalBytes tx)))
+    )
     === [extractHash (hashAnnotated tx)]
+
+-- | A Dijkstra transaction gives the mempool its memoized hash and the bytes
+-- a forged endorser block references. The pair and both fields are evaluated
+-- before the instance returns 'Just'.
+prop_dijkstraTxLeiosMemoizedHashAndBytes :: Tx TopTx DijkstraEra -> Property
+prop_dijkstraTxLeiosMemoizedHashAndBytes tx = case txLeiosMemoizedHashAndBytes genTx of
+  Nothing -> counterexample "no Leios hash and bytes for a Dijkstra transaction" False
+  Just hashAndBytes -> ioProperty $ do
+    thunks <- noThunks [] hashAndBytes
+    let (txHash, bytes) = hashAndBytes
+        encoded = byteArrayToByteString bytes
+    pure $
+      counterexample (show thunks) (property $ null thunks)
+        .&&. txHash === hashLeiosTx (MkLeiosTx encoded)
+        .&&. encoded === originalBytes tx
+ where
+  genTx :: GenTx StandardDijkstraBlock
+  genTx = mkShelleyTx tx

@@ -750,6 +750,10 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     y <- mkMempoolApplyTxError tickedDualLedgerStateAux txt
     Just $ DualGenTxErr x y
 
+  txLeiosMemoizedHashAndBytes = txLeiosMemoizedHashAndBytes . dualGenTxMain
+
+  tickedLedgerMajorProtocolVersionWord16 = tickedLedgerMajorProtocolVersionWord16 . tickedDualLedgerStateMain
+
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasurePhase1 (DualBlock m a) = TxMeasurePhase1 m
   type TxMeasurePhase2 (DualBlock m a) = TxMeasurePhase2 m

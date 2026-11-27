@@ -73,6 +73,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block
   , simpleBlockCapacity
   ) where
 
+import Cardano.Base.Bytes (byteArrayFromByteString)
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash, HashAlgorithm, SHA256, ShortHash)
 import qualified Cardano.Crypto.Hash as Hash
@@ -104,6 +105,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosTx (..), hashLeiosTx)
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
@@ -628,6 +630,13 @@ instance
     LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
+
+  -- Every mock tx has Leios bytes, so that the Mempool tests cover the
+  -- Mempool's index of the txs an endorser block can reference.
+  txLeiosMemoizedHashAndBytes tx =
+    let bytes = Lazy.toStrict (serialise tx)
+     in Just (hashLeiosTx (MkLeiosTx bytes), byteArrayFromByteString bytes)
+  tickedLedgerMajorProtocolVersionWord16 = fixedTickedLedgerMajorProtocolVersionWord16 minBound
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32

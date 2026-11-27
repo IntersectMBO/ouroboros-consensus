@@ -67,9 +67,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( WhetherToIntervene (..)
-  )
+import Ouroboros.Consensus.Ledger.SupportsMempool (WhetherToIntervene (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
   , PerasRoundLength
@@ -155,7 +153,8 @@ data ConwayEraGovDict era where
 -- | What the Leios protocol needs to know about an era. Only an era that
 -- supports Leios has one.
 data LeiosEraDict era where
-  LeiosEraDict :: (SafeToHash (Core.Tx TopTx era), DijkstraEraBlockBody era) => LeiosEraDict era
+  LeiosEraDict ::
+    (HashAnnotated (Core.Tx TopTx era) EraIndependentTx, DijkstraEraBlockBody era) => LeiosEraDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
