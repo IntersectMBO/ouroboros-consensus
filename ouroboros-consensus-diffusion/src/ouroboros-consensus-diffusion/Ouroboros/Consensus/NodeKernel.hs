@@ -87,9 +87,7 @@ import Ouroboros.Consensus.Leios.Types
   ( ForgedEndorserBlock
   , LeiosMempoolTxs (..)
   , LeiosPoint (..)
-  , ProtVerParity
   , TxHash
-  , protVerParity
   , toRankingBlockHash
   )
 import Ouroboros.Consensus.Leios.VoteState (VoteState, getCertificate, newVoteState, pruneVotes)

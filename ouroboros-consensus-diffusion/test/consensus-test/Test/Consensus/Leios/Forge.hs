@@ -153,7 +153,7 @@ chainOf Scenario{announces} =
   announceIf True blk =
     setAnnouncement (endorserBlockHash eb) (encodeEndorserBlockSize eb) blk
    where
-    eb = forgedEbBody (forgeLeiosEb EvenProtVer (txInSlot (blockSlot blk) :| []))
+    eb = forgedEbBody (forgeLeiosEb minBound (txInSlot (blockSlot blk) :| []))
 
 -- | The callback gives the certificate of the announcing block, if the node has
 -- certificates at all.

@@ -18,7 +18,7 @@ import qualified Cardano.Ledger.Core as SL
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (originalBytes, unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
