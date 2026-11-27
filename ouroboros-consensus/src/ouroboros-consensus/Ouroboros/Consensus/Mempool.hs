@@ -8,6 +8,7 @@ module Ouroboros.Consensus.Mempool
     -- ** Transaction adding
   , AddTxOnBehalfOf (..)
   , MempoolAddTxResult (..)
+  , MempoolAdmissionError (..)
   , addLocalTxs
   , addTxs
   , isMempoolTxAdded
@@ -52,6 +53,7 @@ import Ouroboros.Consensus.Mempool.API
   , ForgeLedgerState (..)
   , Mempool (..)
   , MempoolAddTxResult (..)
+  , MempoolAdmissionError (..)
   , MempoolSnapshot (..)
   , MempoolTimeoutConfig (..)
   , SizeInBytes

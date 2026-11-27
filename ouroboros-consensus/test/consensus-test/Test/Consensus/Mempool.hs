@@ -92,6 +92,7 @@ tests =
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
         , testProperty "result of addTxs" prop_Mempool_addTxs_result
+        , testProperty "result of tryAddLocalTx" prop_Mempool_tryAddLocalTx_result
         , testProperty "Invalid transactions are never added" prop_Mempool_InvalidTxsNeverAdded
         , testProperty "removeTxs" prop_Mempool_removeTxs
         , testProperty "removeTxs [..] == forM [..] removeTxs" prop_Mempool_semigroup_removeTxs
@@ -209,6 +210,24 @@ prop_Mempool_addTxs_result setup =
         | res <- result
         ]
           === txs setup
+
+-- | Without contention or capacity pressure, trying local admission preserves
+-- the usual results for valid and invalid transactions.
+prop_Mempool_tryAddLocalTx_result :: TestSetupWithTxs -> Property
+prop_Mempool_tryAddLocalTx_result setup =
+  withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+    results <- traverse (tryAddLocalTx mempool) (allTxs setup)
+    pure $
+      counterexample (ppTxs (txs setup)) $
+        [ fmap
+            ( \res -> case res of
+                MempoolTxAdded vtx _ -> (txForgetValidated vtx, True)
+                MempoolTxRejected tx _ -> (tx, False)
+            )
+            result
+        | result <- results
+        ]
+          === map Right (txs setup)
 
 -- | Test that invalid transactions are never added to the 'Mempool'.
 prop_Mempool_InvalidTxsNeverAdded :: TestSetupWithTxs -> Property
