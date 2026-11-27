@@ -103,8 +103,8 @@ leiosNotifyServerPeerLookahead incr next = do
             NotExcessiveRequests -> pure ()
           pure $ busy quitVar Zero
 
-  -- StBusy with @n@ deferred sends outstanding: hand this reply off to the
-  -- responder and look ahead to the next request (or done) in one step.
+  -- StBusy with @n@ old registered sends: collect at most one completion,
+  -- then register the current reply and look ahead to the next command.
   busy ::
     forall n.
     StrictTVar m WhetherQuitting ->
@@ -116,7 +116,23 @@ leiosNotifyServerPeerLookahead incr next = do
       StBusy
       m
       ()
-  busy quitVar n =
+  busy quitVar n = case n of
+    Zero -> awaitNext quitVar Zero
+    Succ previous ->
+      FlushSender (Just $ awaitNext quitVar n) (awaitNext quitVar previous)
+
+  awaitNext ::
+    forall n.
+    StrictTVar m WhetherQuitting ->
+    Nat n ->
+    Peer
+      (LeiosNotify point announcement vote)
+      AsServer
+      (Lookahead n (FixedSender StBusy StIdle))
+      StBusy
+      m
+      ()
+  awaitNext quitVar n =
     AwaitLookahead ReflClientAgency TheSender $ \case
       MsgQuit -> Effect $ do
         atomically (writeTVar quitVar Quitting)
