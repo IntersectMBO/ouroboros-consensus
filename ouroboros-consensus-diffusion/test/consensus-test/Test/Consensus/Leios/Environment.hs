@@ -221,8 +221,8 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
   let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
       infos = mkMiniProtocolInfos (\_ _ -> Nothing) Outbound Duplex bundle
       codecs = envCodecs node version
-  nodeMux <- Mx.new Mx.nullTracers infos
-  peerMux <- Mx.new Mx.nullTracers infos
+  nodeMux <- Mx.new Mx.nullTracers Nothing infos
+  peerMux <- Mx.new Mx.nullTracers Nothing infos
   withAsync (Mx.run nodeMux nodeBearer) $ \_ ->
     withAsync (Mx.run peerMux peerBearer) $ \_ -> do
       for_ protocols $ \MiniProtocol{miniProtocolNum} ->
@@ -230,7 +230,6 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
           peerMux
           miniProtocolNum
           Mx.ResponderDirection
-          Mx.StartOnDemand
           (peerResponder codecs peerSharingAPI envPeer miniProtocolNum)
       connPeerLeiosNotifyClient <-
         for (epLeiosNotifyClient envPeer) $ \client ->
@@ -238,7 +237,6 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
             peerMux
             leiosNotifyMiniProtocolNum
             Mx.InitiatorDirection
-            Mx.StartEagerly
             (fmap (,Nothing) . client)
       connPeerLeiosFetchClient <-
         for (epLeiosFetchClient envPeer) $ \client ->
@@ -246,10 +244,9 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
             peerMux
             leiosFetchMiniProtocolNum
             Mx.InitiatorDirection
-            Mx.StartEagerly
             (fmap (,Nothing) . client)
       nodeProtocols <-
-        for protocols $ \MiniProtocol{miniProtocolNum, miniProtocolStart, miniProtocolRun} ->
+        for protocols $ \MiniProtocol{miniProtocolNum, miniProtocolRun} ->
           case miniProtocolRun of
             InitiatorAndResponderProtocol initiator responder -> do
               initiatorResult <-
@@ -257,7 +254,6 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
                   nodeMux
                   miniProtocolNum
                   Mx.InitiatorDirection
-                  Mx.StartEagerly
                   ( runMiniProtocolCb
                       initiator
                       ExpandedInitiatorContext
@@ -272,7 +268,6 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
                   nodeMux
                   miniProtocolNum
                   Mx.ResponderDirection
-                  miniProtocolStart
                   (runMiniProtocolCb responder ResponderContext{rcConnectionId = nodeConnId})
               pure ((miniProtocolNum, initiatorResult), (miniProtocolNum, responderResult))
       result <-

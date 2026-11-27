@@ -174,7 +174,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Policy (TxDecisionPolicy, saneTxDecisionPolicy)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( PeerTxRegistry
   , SharedTxStateVar
@@ -185,7 +185,8 @@ import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   , txCountersThreadV2
   )
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
-  ( emptySharedTxState
+  ( TxSubmissionLogicVersion
+  , emptySharedTxState
   )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
@@ -301,6 +302,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txSubmissionLogicVersion :: TxSubmissionLogicVersion
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -338,9 +340,13 @@ initNodeKernel
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
-    , miniProtocolParameters
+    , miniProtocolParameters = MiniProtocolParameters{txDecisionPolicy}
     , systemTime
     } = do
+    unless (saneTxDecisionPolicy txDecisionPolicy) $
+      throwIO $
+        userError ("Invalid transaction submission policy " <> show txDecisionPolicy)
+
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
@@ -560,7 +566,7 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
-          (txDecisionPolicy miniProtocolParameters)
+          txDecisionPolicy
           (txCountersTracer tracers)
           (txLogicTracer tracers)
           txCountersVar
@@ -589,7 +595,7 @@ initNodeKernel
         , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
-        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getTxDecisionPolicy = txDecisionPolicy
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState
