@@ -20,6 +20,9 @@ module Test.Consensus.Committee.TestCrypto
   , genVoteCandidate
   , genKeyPair
 
+    -- * Deterministic helpers
+  , mkDeterministicKeyPair
+
     -- * Smoke test properties
   , prop_SignAndVerifyVote
   , prop_SignAndVerifyAggregateVote
@@ -259,6 +262,29 @@ genKeyPair = do
       . BLS.rawDeserialisePrivateKey @r "TEST"
       . BS.pack
       <$> vectorOf 32 (arbitrary @Word8)
+
+-- * Deterministic helpers
+
+-- | Deterministically derive a key pair from a seed.
+--
+-- Useful to write regression tests relying on specific VRF outputs.
+mkDeterministicKeyPair :: Word8 -> (PrivateKey TestCrypto, PublicKey TestCrypto)
+mkDeterministicKeyPair seed =
+  ( (voteSigningKey, vrfSigningKey)
+  , (BLS.derivePublicKey voteSigningKey, BLS.derivePublicKey vrfSigningKey)
+  )
+ where
+  voteSigningKey = mkPrivateKey @SIGN 0
+  vrfSigningKey = mkPrivateKey @VRF 1
+
+  -- NOTE: the leading byte is kept small so that the resulting (big-endian)
+  -- scalar is always below the order of the BLS12-381 curve.
+  mkPrivateKey :: forall r. Word8 -> BLS.PrivateKey r
+  mkPrivateKey role =
+    fromMaybe (error "Failed to build BLS private key")
+      . BLS.rawDeserialisePrivateKey @r "TEST"
+      . BS.pack
+      $ role : seed : replicate 30 1
 
 -- | Swap two distinct elements in a non-empty list.
 --
