@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | A non-empty, sparse or chunked bitmap.
 --
@@ -28,15 +29,16 @@ import qualified Codec.CBOR.Write as CBOR
 import Control.DeepSeq (NFData (rnf))
 import Control.Monad (foldM, unless, when)
 import Control.Monad.Except (Except, runExcept, throwError)
-import qualified Data.Bitmap as Bitmap
+import qualified Data.Bitmap.Strict.NonEmpty as NEBitmap
 import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap.NonEmpty (NEIntMap)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NEList
 import Data.Primitive.ByteArray (foldrByteArray)
-import Data.Word (Word8)
+import Data.Word (Word16, Word8)
 import qualified Numeric
 
 -- * API
@@ -45,7 +47,7 @@ import qualified Numeric
 -- their zero-based index and are non-zero. Every chunk except the last has
 -- width 'sbChunkWidth', the last chunk has the remaining width.
 data SparseBitmap = SparseBitmap
-  { sbMap :: NEIntMap Bitmap.Bitmap
+  { sbMap :: NEIntMap NEBitmap.NonEmptyBitmap
   , sbChunkWidth :: Int
   , sbTotalWidth :: Int
   }
@@ -64,23 +66,25 @@ fromIndices chunkWidth totalWidth indices = do
   let (first NEList.:| rest) = NEIntSet.toAscList indices
   (firstChunkIndex, firstIndexInChunk) <- chunkPart first
 
+  indicesByChunk <-
+    foldM
+      ( \chunks index -> do
+          (chunkIndex, indexInChunk) <- chunkPart index
+          return $ NEIntMap.insertWith (<>) chunkIndex (NEIntSet.singleton indexInChunk) chunks
+      )
+      (NEIntMap.singleton firstChunkIndex (NEIntSet.singleton firstIndexInChunk))
+      rest
+
   chunks <-
-    NEIntMap.mapWithKey (\chunkIndex -> mkBitmap (chunkWidthFor' chunkIndex))
-      <$> foldM
-        ( \chunks index -> do
-            (chunkIndex, indexInChunk) <- chunkPart index
-            return $ NEIntMap.insertWith (<>) chunkIndex (NEIntSet.singleton indexInChunk) chunks
-        )
-        (NEIntMap.singleton firstChunkIndex (NEIntSet.singleton firstIndexInChunk))
-        rest
+    NEIntMap.traverseWithKey (\chunkIndex -> mkBitmap (chunkWidthFor' chunkIndex)) indicesByChunk
 
   pure $ SparseBitmap chunks chunkWidth totalWidth
  where
-  mkBitmap :: Int -> NEIntSet -> Bitmap.Bitmap
-  mkBitmap width =
-    Bitmap.fromIndices width
-      . NEList.toList
-      . NEIntSet.toAscList
+  mkBitmap :: Int -> NEIntSet -> Except String NEBitmap.NonEmptyBitmap
+  mkBitmap width idxs =
+    case NEBitmap.fromIndices width (fmap fromIntegral (NEIntSet.toAscList idxs) :: NonEmpty Word16) of
+      Nothing -> throwError $ "SparseBitmap: an index is not below the chunk width " <> show width
+      Just bitmap -> pure bitmap
 
   chunkPart :: Int -> Except String (Int, Int)
   chunkPart index
@@ -100,20 +104,11 @@ toIndices SparseBitmap{..} =
     fmap indicesInChunk (NEIntMap.toAscList sbMap)
  where
   indicesInChunk (chunkIndex, bitmap) =
-    NEIntSet.fromDistinctAscList $
-      fmap (sbChunkWidth * chunkIndex +) (nonEmptyIndices chunkIndex bitmap)
-
-  -- TODO(bladyjoker): Enforce this in Bitmap module @Bitmap.toIndices :: Int -> Bitmap -> NEIntSet@.
-  nonEmptyIndices chunkIndex bitmap =
-    case Bitmap.toIndices (chunkWidthFor' chunkIndex) bitmap of
-      index : rest -> index NEList.:| rest
-      [] -> error "SparseBitmap invariant violated: zero bitmap"
-
-  chunkWidthFor' = chunkWidthFor sbChunkWidth sbTotalWidth
+    NEIntSet.map (sbChunkWidth * chunkIndex +) (NEBitmap.toIndices bitmap)
 
 -- | The total number of set bits across all chunks.
 popCount :: SparseBitmap -> Int
-popCount = sum . fmap Bitmap.numSetBits . NEList.toList . NEIntMap.elems . sbMap -- TODO(bladyjoker): numSetBits is only correct to use here because we constructed the well formed, non-zero Bitmap.
+popCount = sum . fmap NEBitmap.numSetBits . NEList.toList . NEIntMap.elems . sbMap
 
 -- | One @index:0x...@ entry per chunk, in ascending chunk-index order.
 pretty :: SparseBitmap -> [String]
@@ -123,7 +118,7 @@ pretty SparseBitmap{..} =
   showChunk (chunkIndex, bitmap) =
     show chunkIndex
       <> ":0x"
-      <> concatMap hex2 (foldrByteArray (:) [] (Bitmap.bitmapBytes bitmap))
+      <> concatMap hex2 (foldrByteArray (:) [] (NEBitmap.bitmapRawByteArray bitmap))
 
   hex2 :: Word8 -> String
   hex2 word =
@@ -139,7 +134,7 @@ encodeCbor :: (Int -> CBOR.Encoding) -> SparseBitmap -> CBOR.Encoding
 encodeCbor encodeIndex SparseBitmap{..} =
   encodeSizedNEIntMap encodeIndex encodeBitmap sbMap
  where
-  encodeBitmap = CBOR.encodeByteArray . Sliced.fromByteArray . Bitmap.bitmapBytes
+  encodeBitmap = CBOR.encodeByteArray . Sliced.fromByteArray . NEBitmap.bitmapRawByteArray
 
 -- | @decodeCbor chunkWidth totalWidth decodeIndex@ decodes a sparse bitmap
 -- from either a definite- or indefinite-length CBOR map. @decodeIndex@
@@ -178,9 +173,7 @@ decodeCbor chunkWidth totalWidth decodeIndex
 
   decodeBitmap chunkIndex = do
     bitmapBytes <- CBOR.decodeByteArray
-    case runExcept . mkValidBitmap (chunkWidthFor' chunkIndex) . Bitmap.Bitmap . CBOR.BA.unBA $ bitmapBytes of
-      Left err -> fail err
-      Right bitmap -> pure bitmap
+    NEBitmap.mkNonEmptyBitmap (chunkWidthFor' chunkIndex) (CBOR.BA.unBA bitmapBytes)
 
   chunkWidthFor' = chunkWidthFor chunkWidth totalWidth
 
@@ -292,37 +285,17 @@ propSparseBitmap sparseBitmap@SparseBitmap{..} = do
   unless (NEIntSet.size (toIndices sparseBitmap) == popCount sparseBitmap) $
     throwError "SparseBitmap: popCount must equal the number of set indices"
  where
-  checkChunk :: (Int, Bitmap.Bitmap) -> Except String ()
-  checkChunk (chunkIndex, bitmap)
+  checkChunk :: (Int, NEBitmap.NonEmptyBitmap) -> Except String ()
+  checkChunk (chunkIndex, _bitmap)
     | chunkIndex < 0 =
         throwError $
           "SparseBitmap: chunk index " <> show chunkIndex <> " must be non-negative"
     | chunkIndex > lastChunkIndex sbChunkWidth sbTotalWidth =
         throwError $
           "SparseBitmap: chunk index " <> show chunkIndex <> " must be below the total width"
-    | not (Bitmap.wellFormed (chunkWidthFor' chunkIndex) bitmap) =
-        throwError $
-          "SparseBitmap: chunk with index " <> show chunkIndex <> " must have a well formed bitmap"
-    | Bitmap.numSetBits bitmap == 0 =
-        throwError $
-          "SparseBitmap: chunk with index " <> show chunkIndex <> " must have a non zero bitmap"
     | otherwise = pure ()
 
-  chunkWidthFor' = chunkWidthFor sbChunkWidth sbTotalWidth
-
 -- * Utilities
-
--- | @mkValidBitmap width bitmap@ validates a @bitmap@ of @width@ before storing it in a 'SparseBitmap'.
---
--- A valid @bitmap@ is well formed given the @width@ and non zero.
--- TODO(bladyjoker): Enforce in 'Bitmap'.
-mkValidBitmap :: Int -> Bitmap.Bitmap -> Except String Bitmap.Bitmap
-mkValidBitmap width bitmap
-  | not (Bitmap.wellFormed width bitmap) =
-      throwError "SparseBitmap: chunk bitmap must be well formed"
-  | Bitmap.numSetBits bitmap == 0 =
-      throwError "SparseBitmap: chunk bitmap must be non-zero"
-  | otherwise = pure bitmap
 
 -- | The width of a valid chunk. The last chunk may be shorter than the other
 -- chunks, because it ends at the final valid absolute index.

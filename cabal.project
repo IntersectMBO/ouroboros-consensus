@@ -82,8 +82,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/gdeest/cardano-base
-  tag: d2ff278b412ba8740886e535bf664bbbc9a7f3f6
-  --sha256: sha256-gUCTKw8KK07clN35KYiqLAiCo02heBE9aYdKAdMERCQ=
+  tag: 3c6dce6c35e3fec18bf4deff4c445b6dcf8a7cf0
+  --sha256: sha256-jSlqLJKeqckrMpkRkZ4C1yoVicRHh2X//yDCLBQVWW8=
   subdir:
     cardano-strict-containers
 

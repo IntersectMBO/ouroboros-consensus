@@ -10,13 +10,15 @@ import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Term as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad.Except (runExcept)
-import qualified Data.Bitmap as Bitmap
+import qualified Data.Bitmap.Strict.NonEmpty as NEBitmap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.IntSet.NonEmpty as NEIntSet
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NEList
+import Data.Word (Word16)
 import qualified Ouroboros.Consensus.Util.SparseBitmap as SparseBitmap
 import Test.QuickCheck (chooseInt, listOf1, oneof, tabulate)
 import Test.Tasty (TestTree, testGroup)
@@ -185,7 +187,7 @@ genInvalidDecodeCborArgs =
       filledEntries = fillMissingEntries 0 entries
       extraEntry =
         ( CBOR.TInt (maxChunks chunkWidth totalWidth)
-        , bitmapTerm (chunkWidthFor chunkWidth totalWidth 0) [0]
+        , oneIndexChunkTerm (chunkWidthFor chunkWidth totalWidth 0)
         )
      in
       ( DecodeCborArgs chunkWidth totalWidth (mkMap (filledEntries <> [extraEntry]))
@@ -209,7 +211,7 @@ genInvalidDecodeCborArgs =
 
     filler chunkIndex =
       ( CBOR.TInt chunkIndex
-      , bitmapTerm (chunkWidthFor chunkWidth totalWidth chunkIndex) [0]
+      , oneIndexChunkTerm (chunkWidthFor chunkWidth totalWidth chunkIndex)
       )
 
   negativeChunkIndex (DecodeCborArgs chunkWidth totalWidth cbor) =
@@ -273,11 +275,19 @@ genInvalidDecodeCborArgs =
 
   malformedBitmap (DecodeCborArgs chunkWidth totalWidth cbor) =
     case mustBeValidCbor cbor of
-      (_label, (chunkIndex, _bitmap) : rest, mkMap) ->
-        ( DecodeCborArgs chunkWidth totalWidth (mkMap ((chunkIndex, CBOR.TBytes BS.empty) : rest))
-        , "SparseBitmap: chunk bitmap must be well formed"
-        , "chunk bitmap must be well formed"
-        )
+      (_label, (CBOR.TInt chunkIndex, _bitmap) : rest, mkMap) ->
+        let
+          width = chunkWidthFor chunkWidth totalWidth chunkIndex
+          expectedBytes = (width + 7) `div` 8
+         in
+          ( DecodeCborArgs chunkWidth totalWidth (mkMap ((CBOR.TInt chunkIndex, CBOR.TBytes BS.empty) : rest))
+          , "NonEmptyBitmap: expected "
+              <> show expectedBytes
+              <> " bytes for "
+              <> show width
+              <> " bits, got 0"
+          , "chunk bitmap must be well formed"
+          )
       _ -> error "must be non empty"
 
   paddingBitsSet = do
@@ -297,7 +307,7 @@ genInvalidDecodeCborArgs =
               , CBOR.TBytes (BS.replicate ((actualLastChunkWidth + 7) `div` 8 - 1) 0 <> BS.singleton 1)
               )
             ]
-      , "SparseBitmap: chunk bitmap must be well formed"
+      , "NonEmptyBitmap: padding bits after bit " <> show (actualLastChunkWidth - 1) <> " are not zero"
       , "final chunk padding bits must be clear"
       )
 
@@ -306,10 +316,10 @@ genInvalidDecodeCborArgs =
       (_label, entries, mkMap) ->
         ( DecodeCborArgs chunkWidth totalWidth $
             mkMap
-              [ (CBOR.TInt chunkIndex, bitmapTerm (chunkWidthFor chunkWidth totalWidth chunkIndex) [])
+              [ (CBOR.TInt chunkIndex, zeroChunkTerm (chunkWidthFor chunkWidth totalWidth chunkIndex))
               | (CBOR.TInt chunkIndex, _bitmap) <- entries
               ]
-        , "SparseBitmap: chunk bitmap must be non-zero"
+        , "NonEmptyBitmap: no bit is set"
         , "chunk bitmap must be non-zero"
         )
 
@@ -359,17 +369,17 @@ genValidDecodeCborArgsFromIndices chunkWidth totalWidth indices = do
     let (chunkIndex, indexInChunk) = index `divMod` chunkWidth
      in (chunkIndex, NEIntSet.singleton indexInChunk)
 
-  mkBitmap width =
-    Bitmap.fromIndices width
-      . NEList.toList
-      . NEIntSet.toAscList
+  mkBitmap width idxs =
+    case NEBitmap.fromIndices width (fmap fromIntegral (NEIntSet.toAscList idxs) :: NonEmpty Word16) of
+      Just bitmap -> bitmap
+      Nothing -> error "genValidDecodeCborArgsFromIndices: generated an out-of-range index"
 
   encodeChunk (chunkIndex, bitmap) =
     ( CBOR.TInt chunkIndex
     , CBOR.TBytes
         . Sliced.toByteString
         . Sliced.fromByteArray
-        $ Bitmap.bitmapBytes bitmap
+        $ NEBitmap.bitmapRawByteArray bitmap
     )
 
 mapLabel :: CBOR.Term -> String
@@ -378,10 +388,18 @@ mapLabel cbor = case cbor of
   CBOR.TMapI _ -> "indefinite map"
   _ -> error "valid CBOR must be a map"
 
-bitmapTerm :: Int -> [Int] -> CBOR.Term
-bitmapTerm width indices =
-  CBOR.TBytes . Sliced.toByteString . Sliced.fromByteArray $
-    Bitmap.bitmapBytes (Bitmap.fromIndices width indices)
+-- | One chunk naming a single index, for filler entries.
+oneIndexChunkTerm :: Int -> CBOR.Term
+oneIndexChunkTerm width =
+  case NEBitmap.fromIndices width (NEList.singleton 0 :: NonEmpty Word16) of
+    Just bitmap -> CBOR.TBytes . Sliced.toByteString . Sliced.fromByteArray $ NEBitmap.bitmapRawByteArray bitmap
+    Nothing -> error "oneIndexChunkTerm: index out of range"
+
+-- | A chunk's all-zero bytes: deliberately invalid, since no real chunk names
+-- nothing. 'NEBitmap.fromIndices' can't build this (it needs a non-empty
+-- 'Foldable1'), so this constructs the bytes directly.
+zeroChunkTerm :: Int -> CBOR.Term
+zeroChunkTerm width = CBOR.TBytes $ BS.replicate ((width + 7) `div` 8) 0
 
 fromIndicesOrError :: FromIndicesArgs -> SparseBitmap.SparseBitmap
 fromIndicesOrError (FromIndicesArgs chunkWidth totalWidth indices) =
