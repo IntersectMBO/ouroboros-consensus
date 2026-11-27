@@ -148,14 +148,21 @@ type TxsBitmap = SparseBitmap
 txsBitmapChunkWidth :: Int
 txsBitmapChunkWidth = 64
 
--- | @txsBitmapFromTxIndices maxTxs@ names these offsets in a bitmap of total
--- width @maxTxs@: the node's design ceiling on an endorser block's tx count,
--- so the bitmap can never be asked to name an offset no endorser block can
--- have. @maxTxs@ need not be a multiple of 'txsBitmapChunkWidth': the last
--- chunk simply covers whatever width remains, which may be narrower than the
--- others.
+-- | @maxTxs@ rounded up to a multiple of 'txsBitmapChunkWidth', so every
+-- chunk -- including the last -- is a full 'txsBitmapChunkWidth' wide, i.e.
+-- exactly 8 bytes on the wire, as CIP-0164 specifies. The handful of offsets
+-- this adds beyond @maxTxs@ are never valid for any endorser block; naming
+-- one only ever gets rejected downstream, the same as any other offset an
+-- endorser block does not have.
+txsBitmapTotalWidth :: Int -> Int
+txsBitmapTotalWidth maxTxs =
+  txsBitmapChunkWidth * ((maxTxs + txsBitmapChunkWidth - 1) `div` txsBitmapChunkWidth)
+
+-- | @txsBitmapFromTxIndices maxTxs@ names these offsets in a bitmap sized off
+-- @maxTxs@: the node's design ceiling on an endorser block's tx count, so the
+-- bitmap can never be asked to name an offset no endorser block can have.
 txsBitmapFromTxIndices :: Int -> NEIntSet -> Except String TxsBitmap
-txsBitmapFromTxIndices maxTxs = SparseBitmap.fromIndices txsBitmapChunkWidth maxTxs
+txsBitmapFromTxIndices maxTxs = SparseBitmap.fromIndices txsBitmapChunkWidth (txsBitmapTotalWidth maxTxs)
 
 txsBitmapToTxIndices :: TxsBitmap -> NEIntSet
 txsBitmapToTxIndices = SparseBitmap.toIndices
@@ -413,11 +420,11 @@ encodeTxsBitmap :: TxsBitmap -> CBOR.Encoding
 encodeTxsBitmap = SparseBitmap.encodeCbor (CBOR.encodeWord16 . fromIntegral)
 
 -- | @decodeTxsBitmap maxTxs@ decodes the wire's 'Data.Word.Word16' chunk
--- indices into a bitmap of @maxTxs@ transaction offsets. The decoder rejects
--- a chunk index past what @maxTxs@ allows before it allocates.
+-- indices into a bitmap sized off @maxTxs@. The decoder rejects a chunk index
+-- past what @maxTxs@ allows before it allocates.
 decodeTxsBitmap :: Int -> CBOR.Decoder s TxsBitmap
 decodeTxsBitmap maxTxs =
   SparseBitmap.decodeCbor
     txsBitmapChunkWidth
-    maxTxs
+    (txsBitmapTotalWidth maxTxs)
     (fromIntegral <$> CBOR.decodeWord16)
