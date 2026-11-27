@@ -362,9 +362,48 @@ instance
       Comp . Comp . fmap (fmap Flip) $
         applyEndorserBlock
           cfg'
-          (fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx)
+          (readTablesOfEra idx readTables)
           serialised
           st'
+
+  validateEndorserBlock ::
+    forall m.
+    Monad m =>
+    LedgerConfig (HardForkBlock xs) ->
+    ReadLedgerTables m (HardForkBlock xs) ->
+    LookupTxCache m ->
+    RecordTxCache m ->
+    SerialisedEndorserBlock ->
+    LedgerState (HardForkBlock xs) EmptyMK ->
+    m (Either InvalidEndorserBlock ValidationSummary)
+  validateEndorserBlock cfg readTables lookupTxCache recordTxCache serialised (HardForkLedgerState st) =
+    hcollapse $ hcizipWith proxySingle validateIn cfgs (State.tip st)
+   where
+    cfgs = distribLedgerConfig (State.epochInfoLedger cfg st) cfg
+
+    validateIn ::
+      SingleEraBlock x =>
+      Index xs x ->
+      WrapLedgerConfig x ->
+      Flip LedgerState EmptyMK x ->
+      K (m (Either InvalidEndorserBlock ValidationSummary)) x
+    validateIn idx (WrapLedgerConfig cfg') (Flip st') =
+      K $
+        validateEndorserBlock
+          cfg'
+          (readTablesOfEra idx readTables)
+          lookupTxCache
+          recordTxCache
+          serialised
+          st'
+
+-- | 'ReadLedgerTables' of one era, through those of the hard fork combinator.
+readTablesOfEra ::
+  (Functor m, HasCanonicalTxIn xs, HasHardForkTxOut xs, SingleEraBlock x) =>
+  Index xs x ->
+  ReadLedgerTables m (HardForkBlock xs) ->
+  ReadLedgerTables m x
+readTablesOfEra idx readTables = fmap (ejectLedgerTables idx) . readTables . injectLedgerTables idx
 
 {-------------------------------------------------------------------------------
   UpdateLedger

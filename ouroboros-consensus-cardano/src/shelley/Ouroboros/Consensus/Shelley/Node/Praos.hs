@@ -17,6 +17,7 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Control.Exception (assert)
+import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus, configLedger)
@@ -26,14 +27,19 @@ import Ouroboros.Consensus.Leios.Types (ForgedEndorserBlock (..), encodeEndorser
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
-  ( Praos
+  ( PolyPraosCanBeLeader (..)
+  , Praos
   , PraosCannotForge
   , PraosParams (..)
   , praosCheckCanForge
   )
-import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader, WhenLeios)
+import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
 import Ouroboros.Consensus.Protocol.Praos.Views (PolyPraosLedgerView (..))
-import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), LeiosOnly (..), Praos2)
+import Ouroboros.Consensus.Protocol.Praos2
+  ( ConsensusConfig (..)
+  , LeiosOnly (..)
+  , Praos2
+  )
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
   , ShelleyCompatible
@@ -89,7 +95,7 @@ basePraosSharedBlockForging ::
   forall m proto c era.
   ( ShelleyCompatible proto era
   , ProtoCrypto proto ~ c
-  , CanBeLeader proto ~ PraosCanBeLeader c
+  , CanBeLeader proto ~ PolyPraosCanBeLeader proto c
   , CannotForgeError proto ~ PraosCannotForge c
   , Applicative (WhenLeios proto)
   , Foldable (WhenLeios proto)
@@ -106,7 +112,8 @@ basePraosSharedBlockForging
   hotKey
   slotToPeriod
   ShelleyLeaderCredentials
-    { shelleyLeaderCredentialsCanBeLeader = canBeLeader
+    { shelleyLeaderCredentialsCanBeLeader
+    , shelleyLeaderCredentialsBLSKey
     , shelleyLeaderCredentialsLabel = label
     } =
     BlockForging
@@ -122,6 +129,13 @@ basePraosSharedBlockForging
       , forgeBlock = forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
       }
+   where
+    canBeLeader =
+      PolyPraosCanBeLeader
+        { polyPraosCanBeLeaderPraos = shelleyLeaderCredentialsCanBeLeader
+        , polyPraosCanBeLeaderBLSKey =
+            pureLeiosOnly @proto (maybeToStrictMaybe shelleyLeaderCredentialsBLSKey)
+        }
 
 -- | As 'praosSharedBlockForging', for 'Praos2'.
 praos2SharedBlockForging ::

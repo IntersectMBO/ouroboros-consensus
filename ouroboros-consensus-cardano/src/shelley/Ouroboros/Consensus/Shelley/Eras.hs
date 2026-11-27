@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -51,6 +52,10 @@ import Cardano.Ledger.Dijkstra
   ( ApplyTxError (DijkstraApplyTxError)
   , DijkstraApplyBlock
   , DijkstraEra
+  )
+import Cardano.Ledger.Dijkstra.Block.Endorser.ReBuilder
+  ( EbReBuilderTxError (..)
+  , EraEndorserBlockReBuilder (..)
   )
 import Cardano.Ledger.Dijkstra.BlockBody (DijkstraEraBlockBody)
 import Cardano.Ledger.Dijkstra.PParams (DijkstraEraPParams)
@@ -180,6 +185,9 @@ data LeiosEraDict era where
     , DijkstraEraPParams era
     , Show (Dijkstra.EbPredFailure era)
     , Core.InjectRuleFailure "BBODY" Dijkstra.DijkstraBbodyPredFailure era
+    , EraEndorserBlockReBuilder era
+    , Eq (EbReBuilderTxError era)
+    , Show (EbReBuilderTxError era)
     ) =>
     LeiosEraDict era
 
@@ -297,6 +305,10 @@ instance ShelleyBasedEra DijkstraEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
+
+-- TODO Drop once the ledger derives these.
+deriving instance Eq (EbReBuilderTxError DijkstraEra)
+deriving instance Show (EbReBuilderTxError DijkstraEra)
 
 applyAlonzoBasedTx ::
   forall era.

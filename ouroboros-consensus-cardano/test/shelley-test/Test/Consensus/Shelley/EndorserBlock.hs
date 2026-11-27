@@ -1,16 +1,21 @@
+{-# LANGUAGE TypeApplications #-}
+
 -- | The sizes the mempool charges for an endorser block agree with
 -- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Ledger.Core (TopTx, Tx)
+import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
+import Cardano.Ledger.Core (TopTx, Tx, eraProtVerLow)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Hashes (extractHash, hashAnnotated, originalBytes)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
+import qualified Data.Text as T
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , GenTx
@@ -57,6 +62,9 @@ tests =
     , testProperty
         "a Dijkstra transaction's Leios bytes are those a forged endorser block references"
         (withNumTests 10 prop_dijkstraTxLeiosBytes)
+    , testProperty
+        "a voter decodes the Dijkstra transaction a forged endorser block references"
+        (withNumTests 10 prop_dijkstraEbTxRoundtrip)
     ]
 
 genTxHash :: Gen TxHash
@@ -186,3 +194,13 @@ prop_dijkstraTxLeiosBytes tx = txLeiosBytes genTx === Just (originalBytes tx)
  where
   genTx :: GenTx StandardDijkstraBlock
   genTx = mkTestShelleyTx tx
+
+-- | A Dijkstra transaction decodes from its 'originalBytes'.
+prop_dijkstraEbTxRoundtrip :: Tx TopTx DijkstraEra -> Property
+prop_dijkstraEbTxRoundtrip tx =
+  decodeFullAnnotator
+    (eraProtVerLow @DijkstraEra)
+    (T.pack "endorsed transaction")
+    decCBOR
+    (BSL.fromStrict (originalBytes tx))
+    === Right tx

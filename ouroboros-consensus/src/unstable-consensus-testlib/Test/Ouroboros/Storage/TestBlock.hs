@@ -931,6 +931,7 @@ instance BlockSupportsLeios TestBlock where
   blockLeiosCert = defaultBlockLeiosCert
   ledgerAnnouncedLeiosPoint = defaultLedgerAnnouncedLeiosPoint
   applyEndorserBlock = defaultApplyEndorserBlock
+  validateEndorserBlock = defaultValidateEndorserBlock
 
 {-------------------------------------------------------------------------------
   Corruption

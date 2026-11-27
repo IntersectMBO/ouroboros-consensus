@@ -16,6 +16,7 @@ import qualified Test.Consensus.Leios.Relay (tests)
 import qualified Test.Consensus.Leios.TxCache (tests)
 import qualified Test.Consensus.Leios.ValidClaims (tests)
 import qualified Test.Consensus.Leios.VoteState (tests)
+import qualified Test.Consensus.Leios.Voting (tests)
 import qualified Test.Consensus.Node.Recovery (tests)
 import qualified Test.Consensus.NodeKernel (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
@@ -58,6 +59,7 @@ tests =
     , Test.Consensus.Leios.LeiosNotify.tests
     , Test.Consensus.Leios.Relay.tests
     , Test.Consensus.Leios.VoteState.tests
+    , Test.Consensus.Leios.Voting.tests
     , Test.Consensus.Node.Recovery.tests
     , Test.Consensus.NodeKernel.tests
     , Test.Consensus.Leios.TxCache.tests
