@@ -72,20 +72,18 @@ import Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 newInMemoryLedgerTablesHandle ::
-  forall m l blk.
+  forall m blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , CanUpgradeLedgerTables l blk
-  , SerializeTablesWithHint l blk
-  , StandardHash (l blk)
-  , GetTip (l blk)
+  , HasLedgerTables LedgerState blk
+  , CanUpgradeLedgerTables LedgerState blk
+  , SerializeTablesWithHint LedgerState blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   -- | FileSystem in order to take snapshots
   SomeHasFS m ->
   -- | The tables
   LedgerTables blk ValuesMK ->
-  m (LedgerTablesHandle m l blk)
+  m (LedgerTablesHandle m blk)
 newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
     let h =
@@ -129,18 +127,16 @@ implReadRange (LedgerTables (ValuesMK m)) _ (f, t) =
 
 implDuplicateWithDiffs ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , CanUpgradeLedgerTables l blk
-  , StandardHash (l blk)
-  , GetTip (l blk)
-  , SerializeTablesWithHint l blk
+  , HasLedgerTables LedgerState blk
+  , CanUpgradeLedgerTables LedgerState blk
+  , SerializeTablesWithHint LedgerState blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   LedgerTables blk ValuesMK ->
   SomeHasFS m ->
-  l blk mk1 ->
-  l blk DiffMK ->
-  m (LedgerTablesHandle m l blk)
+  ExtLedgerState blk mk1 ->
+  ExtLedgerState blk DiffMK ->
+  m (LedgerTablesHandle m blk)
 implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
   let newtables =
         flip
@@ -151,10 +147,10 @@ implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
   newInMemoryLedgerTablesHandle tracer someFS newtables
 
 implTakeHandleSnapshot ::
-  (IOLike m, SerializeTablesWithHint l blk) =>
+  (IOLike m, SerializeTablesWithHint LedgerState blk) =>
   LedgerTables blk ValuesMK ->
   HasFS m h ->
-  l blk EmptyMK ->
+  ExtLedgerState blk EmptyMK ->
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot values hasFS hint snapshotName = do
@@ -177,7 +173,7 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManager m blk (StateRef m ExtLedgerState blk)
+  SnapshotManager m blk (StateRef m blk)
 snapshotManager ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
@@ -195,7 +191,7 @@ implTakeSnapshot ::
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   Maybe String ->
-  StateRef m ExtLedgerState blk ->
+  StateRef m blk ->
   m (Maybe (DiskSnapshot, RealPoint blk))
 implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
@@ -238,7 +234,7 @@ loadSnapshot ::
   CodecConfig blk ->
   SomeHasFS m ->
   DiskSnapshot ->
-  ExceptT (SnapshotFailure blk) m (StateRef m ExtLedgerState blk, RealPoint blk)
+  ExceptT (SnapshotFailure blk) m (StateRef m blk, RealPoint blk)
 loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
@@ -312,8 +308,8 @@ mkInMemoryArgs ::
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
 
-instance IOLike m => StreamingBackend m Mem l blk where
-  data YieldArgs m Mem l blk
+instance IOLike m => StreamingBackend m Mem blk where
+  data YieldArgs m Mem blk
     = -- \| Yield an in-memory snapshot
       YieldInMemory
         -- \| The file system anchored at the snapshots directory
@@ -322,7 +318,7 @@ instance IOLike m => StreamingBackend m Mem l blk where
         DiskSnapshot
         (Decoders blk)
 
-  data SinkArgs m Mem l blk
+  data SinkArgs m Mem blk
     = SinkInMemory
         Int
         (TxIn blk -> Encoding)
@@ -406,20 +402,20 @@ yieldInMemoryS ::
   DiskSnapshot ->
   (forall s. Decoder s (TxIn blk)) ->
   (forall s. Decoder s (TxOut blk)) ->
-  Yield m l blk
+  Yield m blk
 yieldInMemoryS fs ds decK decV _ k =
   streamingFile fs (snapshotToTablesPath ds) $ \s -> do
     k $ yieldCborMapS decK decV s
 
 sinkInMemoryS ::
-  forall m l blk.
+  forall m blk.
   MonadThrow m =>
   Int ->
   (TxIn blk -> Encoding) ->
   (TxOut blk -> Encoding) ->
   SomeHasFS m ->
   DiskSnapshot ->
-  Sink m l blk
+  Sink m blk
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) ds _ s =
   ExceptT $ withFile fs (snapshotToTablesPath ds) (WriteMode MustBeNew) $ \hdl -> do
     let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)

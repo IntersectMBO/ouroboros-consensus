@@ -26,6 +26,8 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -40,10 +42,10 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import Prelude hiding (read)
 
 -- | The state inside a forker.
-data ForkerEnv m l blk = ForkerEnv
-  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l blk))
+data ForkerEnv m blk = ForkerEnv
+  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m blk))
   -- ^ Local version of the LedgerSeq
-  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l blk))
+  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m blk))
   -- ^ This TVar is the same as the LedgerDB one
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
@@ -55,19 +57,18 @@ data ForkerEnv m l blk = ForkerEnv
 
 deriving instance
   ( IOLike m
-  , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
+  , NoThunks (PerasVotingCommittee blk)
+  , LedgerSupportsProtocol blk
   ) =>
-  NoThunks (ForkerEnv m l blk)
+  NoThunks (ForkerEnv m blk)
 
 {-------------------------------------------------------------------------------
   Forker operations
 -------------------------------------------------------------------------------}
 
 implForkerReadTables ::
-  (IOLike m, GetTip (l blk)) =>
-  ForkerEnv m l blk ->
+  (IsLedger LedgerState blk, IOLike m) =>
+  ForkerEnv m blk ->
   LedgerTables blk KeysMK ->
   m (LedgerTables blk ValuesMK)
 implForkerReadTables env ks =
@@ -76,9 +77,9 @@ implForkerReadTables env ks =
     read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
+  (IOLike m, IsLedger LedgerState blk, HasLedgerTables LedgerState blk) =>
   QueryBatchSize ->
-  ForkerEnv m l blk ->
+  ForkerEnv m blk ->
   RangeQueryPrevious blk ->
   m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
 implForkerRangeReadTables qbs env rq0 =
@@ -92,23 +93,23 @@ implForkerRangeReadTables qbs env rq0 =
         readRange (tables stateRef) (state stateRef) (Just k, n)
 
 implForkerGetLedgerState ::
-  (MonadSTM m, GetTip (l blk)) =>
-  ForkerEnv m l blk ->
-  STM m (l blk EmptyMK)
+  (IsLedger LedgerState blk, MonadSTM m) =>
+  ForkerEnv m blk ->
+  STM m (ExtLedgerState blk EmptyMK)
 implForkerGetLedgerState = fmap current . readTVar . foeLedgerSeq
 
 implForkerReadStatistics ::
-  (MonadSTM m, GetTip (l blk)) =>
-  ForkerEnv m l blk ->
+  (IsLedger LedgerState blk, MonadSTM m) =>
+  ForkerEnv m blk ->
   m Statistics
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   Statistics . tablesSize . tables . currentHandle <$> readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk, HasCallStack) =>
-  ForkerEnv m l blk ->
-  l blk DiffMK ->
+  (IOLike m, IsLedger LedgerState blk, HasLedgerTables LedgerState blk, HasCallStack) =>
+  ForkerEnv m blk ->
+  ExtLedgerState blk DiffMK ->
   m ()
 implForkerPush env newState = do
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do
@@ -125,8 +126,8 @@ implForkerPush env newState = do
     atomically $ writeTVar (foeLedgerSeq env) (extend (StateRef st tbs) lseq)
 
 implForkerCommit ::
-  (IOLike m, GetTip (l blk), StandardHash (l blk)) =>
-  ForkerEnv m l blk ->
+  (IOLike m, IsLedger LedgerState blk, StandardHash blk) =>
+  ForkerEnv m blk ->
   STM m (m ())
 implForkerCommit env = do
   wasCommitted <- readTVar (foeWasCommitted env)

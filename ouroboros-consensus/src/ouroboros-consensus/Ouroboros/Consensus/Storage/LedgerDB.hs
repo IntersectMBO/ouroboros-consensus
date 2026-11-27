@@ -19,10 +19,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer ((>$<))
-import Data.SOP (All, Top)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -50,7 +48,6 @@ import System.FS.API
 openDB ::
   forall m blk st.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
@@ -76,7 +73,7 @@ openDB ::
   -- | How to get the endorser blocks that blocks certify from the LeiosDB
   ResolveEndorserBlock m ->
   GetVolatileSuffix m blk ->
-  WithTempRegistry st m (LedgerDB' m blk)
+  WithTempRegistry st m (LedgerDB m blk)
 openDB
   args
   stream
@@ -127,7 +124,7 @@ doOpenDB ::
   StreamAPI m blk blk ->
   Point blk ->
   IsEBB ->
-  m (LedgerDB' m blk)
+  m (LedgerDB m blk)
 doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB =
   fst <$> openDBInternal args initDb snapManager stream replayGoal replayGoalIsEBB
 
@@ -144,7 +141,7 @@ openDBInternal ::
   StreamAPI m blk blk ->
   Point blk ->
   IsEBB ->
-  m (LedgerDB' m blk, TestInternals' m blk)
+  m (LedgerDB m blk, TestInternals m blk)
 openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal replayGoalIsEBB = do
   createDirectoryIfMissing fs True (mkFsPath [])
   (_initLog, db) <-

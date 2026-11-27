@@ -21,7 +21,6 @@ import Data.List (sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.SOP (All, Top)
 import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
@@ -562,7 +561,6 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
 -- | Set up all resources related to node start/shutdown.
 nodeLifecycle ::
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , MonadTime m
   , MonadTimer m
   , ShowProxy blk
@@ -625,7 +623,6 @@ nodeLifecycle protocolArgs schedulerConfig genesisTest lrTracer lrRegistry lrPee
 runPointSchedule ::
   forall m blk.
   ( IOLike m
-  , All Top (HardForkIndices blk)
   , MonadTime m
   , MonadTimer m
   , ShowProxy blk
