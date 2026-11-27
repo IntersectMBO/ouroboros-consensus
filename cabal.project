@@ -70,6 +70,23 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
+-- cardano-strict-containers from the branch of the unmerged cardano-base PR #700
+-- (cardano-strict-containers: add Data.Bitmap), which the LeiosFetch tx bitmaps
+-- use. The branch is cardano-base master plus that work, so this pin loses
+-- nothing; point it back at CHaP once #700 lands and releases.
+--
+-- Only this one subdir: the branch also bumps cardano-crypto-leios to 0.4, whose
+-- BitField wraps a Bitmap instead of a ByteArray, which cardano-ledger-binary's
+-- EncCBOR/DecCBOR BitField instances do not compile against (and cardano-ledger-core
+-- bounds it at ^>=0.3 besides). The ledger has to carry those instances first.
+source-repository-package
+  type: git
+  location: https://github.com/gdeest/cardano-base
+  tag: 3c6dce6c35e3fec18bf4deff4c445b6dcf8a7cf0
+  --sha256: sha256-jSlqLJKeqckrMpkRkZ4C1yoVicRHh2X//yDCLBQVWW8=
+  subdir:
+    cardano-strict-containers
+
 allow-newer:
     , cardano-keys:cardano-ledger-core
     , cardano-keys:cardano-ledger-shelley

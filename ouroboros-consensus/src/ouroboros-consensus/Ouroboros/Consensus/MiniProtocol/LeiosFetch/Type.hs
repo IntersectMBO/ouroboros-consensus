@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -18,14 +17,25 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , LeiosFetchBusy (..)
   , Message (..)
   , SingLeiosFetch (..)
-  , TxBitmaps
-  , bitmapToOffsets
   , byteLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
   , maxLeiosTxsRequestBytesSize
-  , offsetsToBitmap
   , timeLimitsLeiosFetch
+
+    -- * Txs bitmap
+
+    -- | The wire's sparse bitmap of requested tx offsets, and the pair of
+    -- functions that is the whole of what the rest of the node needs from it:
+    -- offsets in, offsets out.
+  , TxsBitmap
+  , txsBitmapChunkWidth
+  , txsBitmapToTxIndices
+  , txsBitmapFromTxIndices
+    -- | Exposed so the wire validation can be tested without going through a
+    -- whole 'Message'.
+  , decodeTxsBitmap
+  , encodeTxsBitmap
   ) where
 
 import Cardano.Ledger.Binary.Plain (decodeRecordSum)
@@ -35,16 +45,14 @@ import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
 import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
-import qualified Data.Bits as Bits
+import Control.Monad.Except (Except)
 import Data.ByteString.Lazy (ByteString)
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.IntSet as IntSet
+import Data.IntSet.NonEmpty (NEIntSet)
 import Data.Kind (Type)
-import Data.List (unfoldr)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word32)
 import Network.TypedProtocol.Codec.CBOR
   ( ActiveState
   , AnyMessage (..)
@@ -64,6 +72,8 @@ import Network.TypedProtocol.Core
   )
 import Ouroboros.Consensus.Leios.Types (maxEndorserBlockBytesSize)
 import Ouroboros.Consensus.Util.CBOR (decodeListUpTo)
+import Ouroboros.Consensus.Util.SparseBitmap (SparseBitmap)
+import qualified Ouroboros.Consensus.Util.SparseBitmap as SparseBitmap
 import Ouroboros.Network.Protocol.Limits
   ( ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
@@ -130,35 +140,32 @@ instance StateTokenI StDone where stateToken = SingDone
 
 -----
 
--- | Which of an endorser block's transactions a request names: each entry is
--- the index of a run of 64 transactions and a bitmap of those 64, the most
--- significant bit naming the first of them.
-type TxBitmaps = [(Word16, Word64)]
+-- | Which of an endorser block's transactions a request names: the sparse
+-- bitmap used by the transaction-request wire format.
+type TxsBitmap = SparseBitmap
 
--- | The offsets of the transactions the bitmaps name, in the bitmaps' order.
-bitmapToOffsets :: TxBitmaps -> [Int]
-bitmapToOffsets = unfoldr next
- where
-  next = \case
-    [] -> Nothing
-    (index, bitmap) : rest
-      | bitmap == 0 -> next rest
-      | otherwise ->
-          let i = Bits.countLeadingZeros bitmap
-           in Just (64 * fromIntegral index + i, (index, Bits.clearBit bitmap (63 - i)) : rest)
+-- | How many transaction offsets one `TxsBitmap` entry covers.
+txsBitmapChunkWidth :: Int
+txsBitmapChunkWidth = 64
 
--- | The bitmaps that name these offsets, in ascending order of index.
-offsetsToBitmap :: IntSet.IntSet -> TxBitmaps
-offsetsToBitmap offsets =
-  [ (fromIntegral q, bm)
-  | (q, bm) <- IntMap.toAscList chunks
-  ]
- where
-  chunks =
-    IntSet.foldr
-      (\off -> let (q, r) = off `divMod` 64 in IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)))
-      IntMap.empty
-      offsets
+-- | @maxTxs@ rounded up to a multiple of 'txsBitmapChunkWidth', so every
+-- chunk -- including the last -- is a full 'txsBitmapChunkWidth' wide, i.e.
+-- exactly 8 bytes on the wire, as CIP-0164 specifies. The handful of offsets
+-- this adds beyond @maxTxs@ are never valid for any endorser block; naming
+-- one only ever gets rejected downstream, the same as any other offset an
+-- endorser block does not have.
+txsBitmapTotalWidth :: Int -> Int
+txsBitmapTotalWidth maxTxs =
+  txsBitmapChunkWidth * ((maxTxs + txsBitmapChunkWidth - 1) `div` txsBitmapChunkWidth)
+
+-- | @txsBitmapFromTxIndices maxTxs@ names these offsets in a bitmap sized off
+-- @maxTxs@: the node's design ceiling on an endorser block's tx count, so the
+-- bitmap can never be asked to name an offset no endorser block can have.
+txsBitmapFromTxIndices :: Int -> NEIntSet -> Except String TxsBitmap
+txsBitmapFromTxIndices maxTxs = SparseBitmap.fromIndices txsBitmapChunkWidth (txsBitmapTotalWidth maxTxs)
+
+txsBitmapToTxIndices :: TxsBitmap -> NEIntSet
+txsBitmapToTxIndices = SparseBitmap.toIndices
 
 instance Protocol (LeiosFetch point eb tx) where
   data Message (LeiosFetch point eb tx) from to where
@@ -172,7 +179,7 @@ instance Protocol (LeiosFetch point eb tx) where
       Message (LeiosFetch point eb tx) (StBusy StBlock) StIdle
     MsgLeiosBlockTxsRequest ::
       !point ->
-      TxBitmaps ->
+      TxsBitmap ->
       Message (LeiosFetch point eb tx) StIdle (StBusy StBlockTxs)
     MsgLeiosBlockTxs ::
       !(V.Vector tx) ->
@@ -189,7 +196,7 @@ instance NFData (Message (LeiosFetch point eb tx) from to) where
     MsgDone -> ()
     MsgLeiosBlockRequest{} -> ()
     MsgLeiosBlock{} -> ()
-    MsgLeiosBlockTxsRequest _p bitmaps -> rnf bitmaps
+    MsgLeiosBlockTxsRequest _p txsBitmap -> rnf txsBitmap
     MsgLeiosBlockTxs{} -> ()
 
 deriving instance
@@ -250,8 +257,9 @@ timeLimitsLeiosFetch = ProtocolTimeLimits $ \case
 codecLeiosFetch ::
   forall (point :: Type) (eb :: Type) (tx :: Type) m.
   MonadST m =>
-  -- | The most txs an EB can hold. The decoder rejects a larger count before
-  -- it allocates.
+  -- | The most txs an EB can hold. Bounds both 'MsgLeiosBlockTxs' and the
+  -- txs bitmap's total width; the decoder rejects a larger count, or a
+  -- bitmap chunk index past it, before it allocates.
   Int ->
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
@@ -300,11 +308,11 @@ encodeLeiosFetch encodeP encodeEb encodeTx = \case
     CBOR.encodeListLen 2
       <> CBOR.encodeWord 2
       <> encodeEb x
-  MsgLeiosBlockTxsRequest p bitmaps ->
+  MsgLeiosBlockTxsRequest p txsBitmap ->
     CBOR.encodeListLen 3
       <> CBOR.encodeWord 3
       <> encodeP p
-      <> encodeBitmaps bitmaps
+      <> encodeTxsBitmap txsBitmap
   MsgLeiosBlockTxs txs ->
     CBOR.encodeListLen 2
       <> CBOR.encodeWord 4
@@ -337,10 +345,13 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok key =
       return $ SomeMessage $ MsgLeiosBlock x
     (SingIdle, 3) -> fields 3 $ do
       p <- decodeP
-      bitmaps <- decodeBitmaps maxTxs
-      return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
+      txsBitmap <- decodeTxsBitmap maxTxs
+      return $ SomeMessage $ MsgLeiosBlockTxsRequest p txsBitmap
     (SingBlockTxs, 4) -> fields 2 $ do
       txs <- decodeListUpTo "MsgLeiosBlockTxs" maxTxs decodeTx
+      -- A request names at least one tx, so a conforming reply carries at
+      -- least one.
+      when (null txs) $ fail "MsgLeiosBlockTxs: no transactions"
       return $ SomeMessage $ MsgLeiosBlockTxs $ V.fromList txs
     (SingDone, _) -> notActiveState stok
     -- failures per protocol state
@@ -404,55 +415,16 @@ codecLeiosFetchId = Codec{encode, decode}
 
 -----
 
--- | Always the indefinite-length map, as the cardano-blueprint writes it. Using
--- the definite-length encoding for small maps, as the ledger does, could only
--- ever save one byte.
-encodeBitmaps :: TxBitmaps -> CBOR.Encoding
-encodeBitmaps bitmaps =
-  CBOR.encodeMapLenIndef
-    <> foldr
-      (\(index, bitmap) r -> CBOR.encodeWord16 index <> CBOR.encodeWord64 bitmap <> r)
-      CBOR.encodeBreak
-      bitmaps
+-- | The wire represents chunk indices as 'Data.Word.Word16's.
+encodeTxsBitmap :: TxsBitmap -> CBOR.Encoding
+encodeTxsBitmap = SparseBitmap.encodeCbor (CBOR.encodeWord16 . fromIntegral)
 
--- | The most bitmap entries it takes to cover @maxTxs@ txs, 64 txs to an entry.
-maxBitmapEntries :: Int -> Int
-maxBitmapEntries maxTxs = (maxTxs + 63) `div` 64
-
--- | Decode at most enough bitmaps to cover @maxTxs@ txs. Each bitmap must be
--- non-zero. The indices must be strictly ascending, and each must be below
--- 'maxBitmapEntries'.
---
--- Accepts either CBOR map encoding. We encode the indefinite one, but a decoder
--- that rejects the definite one would reject a peer that is within spec. A
--- declared length is checked before the loop, so neither form reads more
--- entries than the cap.
-decodeBitmaps :: Int -> CBOR.Decoder s TxBitmaps
-decodeBitmaps maxTxs =
-  CBOR.decodeMapLenOrIndef >>= \case
-    Nothing -> go (const CBOR.decodeBreakOr) 0 Nothing []
-    Just n
-      | n > maxEntries -> fail tooManyEntries
-      | otherwise -> go (\k -> pure (k >= n)) 0 Nothing []
- where
-  maxEntries = maxBitmapEntries maxTxs
-  tooManyEntries = "TxBitmaps: more than " <> show maxEntries <> " entries"
-  -- 'done' is how the two encodings differ: a break byte, or the declared count.
-  go done !k mbPrevIndex acc =
-    done k >>= \case
-      True -> pure (reverse acc)
-      False
-        | k >= maxEntries -> fail tooManyEntries
-        | otherwise -> do
-            index <- CBOR.decodeWord16
-            bitmap <- CBOR.decodeWord64
-            when (bitmap == 0) $
-              fail $
-                "TxBitmaps: bitmap at index " <> show index <> " is zero"
-            when (fromIntegral index >= maxEntries) $
-              fail $
-                "TxBitmaps: index " <> show index <> " is not below " <> show maxEntries
-            when (maybe False (index <=) mbPrevIndex) $
-              fail $
-                "TxBitmaps: index " <> show index <> " is not strictly ascending"
-            go done (k + 1 :: Int) (Just index) ((index, bitmap) : acc)
+-- | @decodeTxsBitmap maxTxs@ decodes the wire's 'Data.Word.Word16' chunk
+-- indices into a bitmap sized off @maxTxs@. The decoder rejects a chunk index
+-- past what @maxTxs@ allows before it allocates.
+decodeTxsBitmap :: Int -> CBOR.Decoder s TxsBitmap
+decodeTxsBitmap maxTxs =
+  SparseBitmap.decodeCbor
+    txsBitmapChunkWidth
+    (txsBitmapTotalWidth maxTxs)
+    (fromIntegral <$> CBOR.decodeWord16)

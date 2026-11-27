@@ -13,8 +13,9 @@ leiosFetchMessage
 msgDone                 = [0]
 msgLeiosBlockRequest    = [1, point]
 msgLeiosBlock           = [2, endorser_block]
-msgLeiosBlockTxsRequest = [3, point, bitmaps]
-msgLeiosBlockTxs        = [4, tx_list]
+
+msgLeiosBlockTxsRequest = [3, point, txs_bitmap] ; 'txs_bitmap' MUST name at least one transaction offset, and only offsets that the endorser block ('point') has.
+msgLeiosBlockTxs        = [4, txs] ; 'txs' MUST include exactly the transactions requested with 'msgLeiosBlockTxsRequest', in the order requested.
 
 point = [base.slotno, eb_hash]
 eb_hash = base.hash
@@ -26,10 +27,30 @@ eb_hash = base.hash
 ; blocks are not allowed to be used across era boundaries.
 endorser_block = #6.24(bytes .cbor dijkstra.eb_references)
 
-; Inspired by roaring bitmaps: 64-tx window index to 64-bit presence bitmaps
-bitmaps = { * uint .size 2 => uint .size 8 }
+; Chunked sparse bitmap: Chunk index to that chunk's presence bitmap, one
+; bit per tx, the most significant bit naming the chunk's first tx. Every
+; chunk is exactly 8 bytes (64 bits), as CIP-0164 specifies.
+;
+; The bitmap's total width is 17152 bits, which is 17142 (maxTxsPerEndorserBlock)
+; rounded up to a multiple of 64.
+; There MUST be at least one and at most 268 chunks.
+;
+; Chunk indices MUST be:
+; 1. strictly ascending (so also without duplicates),
+; 2. in range from [0,267] (first 0, last 267, inclusive).
+;
+; Chunk bitmaps MUST be non-zero (must name an index).
+;
+; Examples:
+; 1. First chunk naming first 3 transactions [0,2] = 0xe0_00_00_00_00_00_00_00 (0xe0 = 0b1110_0000)
+; 2. Last chunk (267) naming all 54 of its valid txs [17088,17141] = 0xff_ff_ff_ff_ff_ff_fc_00 (0xfc = 0b1111_1100)
+txs_bitmap = { + uint .size 2 => bytes .size 8 }
 
-tx_list = [ *tx ]
+; Non-empty list of transactions.
+;
+; The number of entries MUST be less than or equal to 17142 (maxTxsPerEndorserBlock).
+; All requested transactions MUST be listed in the order they were requested.
+txs = [ +tx ]
 
 ; Endorsed transactions as CBOR-in-CBOR to indicate that neither fetch clients
 ; nor servers will decode this. However, consensus components like leios voting

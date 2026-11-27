@@ -16,6 +16,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , ExnLeiosFetchInvalidReply (..)
+  , ExnLeiosFetchRequestInvariantViolated (..)
   , JobMismatch (..)
   , awaitTerminate
   , nextLeiosFetchJob
@@ -28,6 +29,7 @@ import Cardano.Ledger.Binary (DecoderError)
 import Cardano.Ledger.Binary.Version (Version)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Control.Monad (void, when)
+import Control.Monad.Except (runExcept)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -35,6 +37,7 @@ import Data.Foldable (fold, for_, toList)
 import qualified Data.IntMap.NonEmpty as NEIntMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Monoid (Sum (..))
@@ -80,6 +83,7 @@ import Ouroboros.Consensus.Leios.Types
   , hashLeiosTx
   , hashSerialisedEndorserBlock
   , leiosEbByteSizes
+  , maxTxsPerEndorserBlock
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client (SomeLeiosFetchJob (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision
@@ -107,7 +111,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
   , fetchArrivalGood
   , fetchArrivalInvalid
   )
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), offsetsToBitmap)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (Message (..), txsBitmapFromTxIndices)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbWriter (..)
   , LocalFills
@@ -126,6 +130,7 @@ import Ouroboros.Consensus.Util.IOLike
   , readTVar
   , retry
   , throwIO
+  , throwSTM
   , tryPutMVar
   , writeTVar
   )
@@ -203,6 +208,18 @@ instance Exception ExnLeiosFetchInvalidReply
 data JobMismatch = JobBytesSizeMismatch | JobCommitmentMismatch
   deriving Show
 
+-- | A node-local invariant of its own outgoing request was violated: never
+-- expected, since a job's offsets are always non-empty and within the
+-- bitmap's width by construction.
+data ExnLeiosFetchRequestInvariantViolated
+  = -- | The request's jobs named no offsets at all.
+    ExnLeiosBlockTxsRequestEmpty !LeiosPoint
+  | -- | The request's offsets could not be named by a 'TxsBitmap'.
+    ExnLeiosBlockTxsRequestBitmap !LeiosPoint !String
+  deriving Show
+
+instance Exception ExnLeiosFetchRequestInvariantViolated
+
 -----
 
 -- | Blocks until this peer's client should stop.
@@ -228,22 +245,31 @@ nextLeiosFetchJob ::
 nextLeiosFetchJob ctx peer reqsVar =
   readTVar reqsVar >>= \case
     Seq.Empty -> retry
-    req Seq.:<| reqs -> toJob req <$ writeTVar reqsVar reqs
+    req Seq.:<| reqs -> do
+      job <- toJob req
+      job <$ writeTVar reqsVar reqs
  where
   -- Replies are processed right on the pipelined peer's collector thread:
   -- everything they touch is thread-safe.
   toJob = \case
     LeiosBlockRequest req ->
-      MkSomeLeiosFetchJob
-        (MsgLeiosBlockRequest (lbrPoint req))
-        (\(MsgLeiosBlock bytes) -> processLeiosBlock ctx peer req bytes)
+      pure $
+        MkSomeLeiosFetchJob
+          (MsgLeiosBlockRequest (lbrPoint req))
+          (\(MsgLeiosBlock bytes) -> processLeiosBlock ctx peer req bytes)
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point and bitmap: the union of the
       -- covered jobs' offsets.
-      let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
-       in MkSomeLeiosFetchJob
-            (MsgLeiosBlockTxsRequest p bitmaps)
-            (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
+      let mayOffsets = NEIntSet.nonEmptySet (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
+       in case mayOffsets of
+            Nothing -> throwSTM (ExnLeiosBlockTxsRequestEmpty p)
+            Just offsets -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock offsets) of
+              Left err -> throwSTM (ExnLeiosBlockTxsRequestBitmap p err)
+              Right txsBitmap ->
+                pure $
+                  MkSomeLeiosFetchJob
+                    (MsgLeiosBlockTxsRequest p txsBitmap)
+                    (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
 
 -- | Take in an endorser block that arrived in reply to this request.
 --

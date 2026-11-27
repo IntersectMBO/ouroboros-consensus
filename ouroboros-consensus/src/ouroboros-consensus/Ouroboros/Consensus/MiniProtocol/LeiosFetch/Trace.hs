@@ -15,7 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
 import Data.Time.Clock (NominalDiffTime)
 import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (ExnLeiosInvalidRequest)
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxBitmaps)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (TxsBitmap)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 
 -- | What the node's LeiosFetch clients do, naming the peer that sent what
@@ -114,7 +114,7 @@ data TraceLeiosFetchServerEvent
     TraceLeiosFetchServerBlockDbFailure !LeiosPoint !LeiosDbException
   | -- | Reading the LeiosDB for the client's request for these transactions of
     -- this endorser block failed, so the server disconnects the client.
-    TraceLeiosFetchServerTxsDbFailure !LeiosPoint !TxBitmaps !LeiosDbException
+    TraceLeiosFetchServerTxsDbFailure !LeiosPoint !TxsBitmap !LeiosDbException
   | -- | Opening the server's LeiosDB reader failed, so the server disconnects
     -- the client.
     TraceLeiosFetchServerOpenReaderDbFailure !LeiosDbException
