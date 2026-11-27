@@ -16,6 +16,7 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies
   ( LeiosFetchClientContext (..)
   , ExnLeiosFetchInvalidReply (..)
+  , ExnLeiosFetchRequestInvariantViolated (..)
   , JobMismatch (..)
   , awaitTerminate
   , nextLeiosFetchJob
@@ -129,6 +130,7 @@ import Ouroboros.Consensus.Util.IOLike
   , readTVar
   , retry
   , throwIO
+  , throwSTM
   , tryPutMVar
   , writeTVar
   )
@@ -206,6 +208,18 @@ instance Exception ExnLeiosFetchInvalidReply
 data JobMismatch = JobBytesSizeMismatch | JobCommitmentMismatch
   deriving Show
 
+-- | A node-local invariant of its own outgoing request was violated: never
+-- expected, since a job's offsets are always non-empty and within the
+-- bitmap's width by construction.
+data ExnLeiosFetchRequestInvariantViolated
+  = -- | The request's jobs named no offsets at all.
+    ExnLeiosBlockTxsRequestEmpty !LeiosPoint
+  | -- | The request's offsets could not be named by a 'TxsBitmap'.
+    ExnLeiosBlockTxsRequestBitmap !LeiosPoint !String
+  deriving Show
+
+instance Exception ExnLeiosFetchRequestInvariantViolated
+
 -----
 
 -- | Blocks until this peer's client should stop.
@@ -231,29 +245,31 @@ nextLeiosFetchJob ::
 nextLeiosFetchJob ctx peer reqsVar =
   readTVar reqsVar >>= \case
     Seq.Empty -> retry
-    req Seq.:<| reqs -> toJob req <$ writeTVar reqsVar reqs
+    req Seq.:<| reqs -> do
+      job <- toJob req
+      job <$ writeTVar reqsVar reqs
  where
   -- Replies are processed right on the pipelined peer's collector thread:
   -- everything they touch is thread-safe.
   toJob = \case
     LeiosBlockRequest req ->
-      MkSomeLeiosFetchJob
-        (MsgLeiosBlockRequest (lbrPoint req))
-        (\(MsgLeiosBlock bytes) -> processLeiosBlock ctx peer req bytes)
+      pure $
+        MkSomeLeiosFetchJob
+          (MsgLeiosBlockRequest (lbrPoint req))
+          (\(MsgLeiosBlock bytes) -> processLeiosBlock ctx peer req bytes)
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point and bitmap: the union of the
       -- covered jobs' offsets.
       let mayOffsets = NEIntSet.nonEmptySet (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
        in case mayOffsets of
-            Nothing ->
-              error "LeiosBlockTxsRequest invariant violated: transaction offsets to request must be non-empty"
+            Nothing -> throwSTM (ExnLeiosBlockTxsRequestEmpty p)
             Just offsets -> case runExcept (txsBitmapFromTxIndices maxTxsPerEndorserBlock offsets) of
-              Left err ->
-                error $ "LeiosBlockTxsRequest invariant violated: " <> err
+              Left err -> throwSTM (ExnLeiosBlockTxsRequestBitmap p err)
               Right txsBitmap ->
-                MkSomeLeiosFetchJob
-                  (MsgLeiosBlockTxsRequest p txsBitmap)
-                  (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
+                pure $
+                  MkSomeLeiosFetchJob
+                    (MsgLeiosBlockTxsRequest p txsBitmap)
+                    (\(MsgLeiosBlockTxs txs) -> processLeiosBlockTxs ctx peer req txs)
 
 -- | Take in an endorser block that arrived in reply to this request.
 --
