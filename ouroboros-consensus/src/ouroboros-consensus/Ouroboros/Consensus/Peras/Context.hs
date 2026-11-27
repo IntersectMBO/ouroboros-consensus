@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -36,8 +37,9 @@ module Ouroboros.Consensus.Peras.Context
 
     -- * Extracting and resolving Peras epoch contexts from the node state
   , StateSupportsPerasEpochContext (..)
+  , dummyPoolDistr
   , mkBoundedPerasEpochContextWith
-  , initPerasEpochContextResolver
+  , initPerasEpochContextResolverFromUntickedState
   , tickPerasEpochContextResolver
 
     -- * Time resolution
@@ -61,13 +63,21 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.BaseTypes (Nonce)
+import Cardano.Ledger.Coin (Coin (..), compactCoinOrError, knownNonZeroCoin)
+import Cardano.Ledger.Keys (KeyHash (..), toVRFVerKeyHash)
+import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
 import Cardano.Prelude (maybeToEither)
 import Control.Exception (Exception)
 import Control.Monad.Class.MonadSTM (STM)
 import Data.Bifunctor (Bifunctor (..))
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Char8 as ByteString
 import Data.Data (Proxy (..))
 import Data.Kind (Type)
+import qualified Data.Map as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (HCollapse (..), K (..))
 import Data.SOP.Constraint (All, Top)
 import Data.SOP.Index (himap, injectNS)
@@ -75,8 +85,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract
-  ( BlockProtocol
-  , EpochNo (..)
+  ( EpochNo (..)
   , Point
   , SlotNo
   , WithOrigin (..)
@@ -98,7 +107,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
-import Ouroboros.Consensus.Committee.Types (PoolId)
+import Ouroboros.Consensus.Committee.Types (PoolId, TargetCommitteeSize)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.History.Qry
   ( EpochToPerasRoundInfo (..)
@@ -117,16 +126,13 @@ import Ouroboros.Consensus.HeaderValidation
   , headerStateTip
   )
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig, LedgerState)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
+  , PerasParams
   , perasEnabledToMaybe
+  , perasTargetCommitteeSize
   , pattern NoPerasEnabled
   , pattern PerasEnabled
-  )
-import Ouroboros.Consensus.Protocol.Abstract
-  ( ChainDepStateSupportsPeras
-  , ConsensusProtocol (..)
   )
 import Ouroboros.Consensus.Storage.Serialisation
   ( DecodeDisk (..)
@@ -548,10 +554,6 @@ forgePerasVoteIfEligibleWithHandle handle poolId privateKey roundNo point =
 -- their corresponding ledger and chain-dep states.
 class
   ( HasHardForkHistory blk
-  , LedgerStateSupportsPeras (LedgerState blk)
-  , LedgerStateSupportsPeras (Ticked LedgerState blk)
-  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk)))
   , IsPerasError (PerasError blk) blk
   , Show (PerasError blk)
   , Show (PerasVotingCommittee blk)
@@ -594,20 +596,81 @@ class
     EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
     MaybeEraIndexedEpochToPerasRoundInfo blk
 
+  -- | Extract the stake distribution from an unticked ledger state.
+  getPerasPoolDistrFromLedger ::
+    LedgerState blk EmptyMK ->
+    PoolDistr
+
+  -- | Extract the stake distribution from a ticked ledger state.
+  getPerasPoolDistrFromTickedLedger ::
+    Ticked LedgerState blk EmptyMK ->
+    PoolDistr
+
+  -- | Extract the epoch nonce from an unticked header state.
+  getPerasNonceFromHeaderState ::
+    HeaderState blk ->
+    Nonce
+
+  -- | Extract the epoch nonce from a ticked header state.
+  getPerasNonceFromTickedHeaderState ::
+    Ticked (HeaderState blk) ->
+    Nonce
+
+  -- | Derive parameters from an unticked concrete ledger state.
+  mkPerasParamsFromLedger ::
+    LedgerConfig blk ->
+    LedgerState blk EmptyMK ->
+    Either String (PerasParams blk)
+
+  -- | Derive parameters from a ticked concrete ledger state.
+  mkPerasParamsFromTickedLedger ::
+    LedgerConfig blk ->
+    Ticked LedgerState blk EmptyMK ->
+    Either String (PerasParams blk)
+
   -- | Create a bounded epoch context from a given epoch-to-round info.
   mkBoundedPerasEpochContext ::
-    ( LedgerStateSupportsPeras ledgerState
-    , ChainDepStateSupportsPeras chainDepState
-    ) =>
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
-    ledgerState EmptyMK ->
-    chainDepState ->
+    PerasParams blk ->
+    PoolDistr ->
+    Nonce ->
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
 
+-- | A single-pool distribution for blocks that do not support Peras.
+--
+-- NOTE: this contains a single pool with a stake of 1 to avoid division by zero
+-- should this value ever be used in a test context.
+dummyPoolDistr :: PoolDistr
+dummyPoolDistr =
+  PoolDistr
+    { unPoolDistr = Map.singleton dummyPoolId dummyPoolStake
+    , pdTotalActiveStake = knownNonZeroCoin @1
+    }
+ where
+  dummyPoolId =
+    KeyHash
+      . Hash.castHash
+      . Hash.hashWith id
+      . BS8.pack
+      $ "peras-mock-pool"
+  dummyPoolVrf =
+    toVRFVerKeyHash
+      . Hash.castHash
+      . Hash.hashWith id
+      . BS8.pack
+      $ "peras-mock-pool-vrf"
+  dummyPoolStake =
+    IndividualPoolStake
+      { individualPoolStake = 1
+      , individualTotalPoolStake = compactCoinOrError (Coin 1)
+      , individualPoolStakeVrf = dummyPoolVrf
+      , individualPoolStakeBls = SNothing
+      }
+
 -- | Helper to build a 'BoundedPerasEpochContext' using a function that produces
--- a 'PerasVotingCommitteeInput' from a ledger and chain-dep state.
+-- a 'PerasVotingCommitteeInput' from the specific values it needs.
 --
 -- NOTE: this is useful to define instances for 'StateSupportsPerasEpochContext'
 -- where 'mkBoundedPerasEpochContext' is instantiated to either:
@@ -616,39 +679,38 @@ class
 --   * @mkBoundedPerasEpochContextWith V1.mkPerasVotingCommitteeInput@ for
 --     production types.
 mkBoundedPerasEpochContextWith ::
-  ( LedgerStateSupportsPeras ledgerState
-  , ChainDepStateSupportsPeras chainDepState
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  ( CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
   , IsPerasError (PerasError blk) blk
   ) =>
-  ( ( LedgerStateSupportsPeras ledgerState
-    , ChainDepStateSupportsPeras chainDepState
-    ) =>
-    ledgerState EmptyMK ->
-    chainDepState ->
+  ( PoolDistr ->
+    Nonce ->
+    TargetCommitteeSize ->
     Either
       (PerasError blk)
       (PerasVotingCommitteeInput blk)
   ) ->
   MaybeEraIndexedEpochToPerasRoundInfo blk ->
-  ledgerState EmptyMK ->
-  chainDepState ->
+  PerasParams blk ->
+  PoolDistr ->
+  Nonce ->
   Either
     (PerasError blk)
     (BoundedPerasEpochContext blk)
 mkBoundedPerasEpochContextWith
   mkPerasVotingCommitteeInput
   epochToRoundInfo
-  ledgerState
-  headerState = do
+  params
+  poolDistr
+  epochNonce = do
     committeeInput <-
-      mkPerasVotingCommitteeInput ledgerState headerState
+      mkPerasVotingCommitteeInput
+        poolDistr
+        epochNonce
+        (perasTargetCommitteeSize params)
     committee <-
       bimap injectVotingCommitteeError id $
         Committee.mkVotingCommittee committeeInput
-    let params =
-          getPerasParams Proxy ledgerState
     pure
       BoundedPerasEpochContext
         { startPerasRoundNo =
@@ -675,7 +737,7 @@ mkBoundedPerasEpochContextWith
 --   2. Given that we have no assumption that (1) would work, we made a
 --      polymorphic system where a 'BoundedEpochContext' can be created from
 --      either a ticked or unticked ledger+header state
---      (see 'LedgerStateSupportsPeras' and 'ChainDepStateSupportsPeras'
+--      (see 'StateSupportsPerasEpochContext'
 --      helper classes). This way, a 'PerasEpochContextResolver' can be
 --      initialized from unticked 'LedgerState' and 'HeaderState', but then
 --      ticked by using the 'Ticked LedgerState' and 'Ticked HeaderState'.
@@ -683,7 +745,8 @@ mkBoundedPerasEpochContextWith
 --      initialized with empty/error value, we can remove the polymorphic system
 --      and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState'
 --      and 'Ticked HeaderState'.
-initPerasEpochContextResolver ::
+initPerasEpochContextResolverFromUntickedState ::
+  forall blk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
   ) =>
@@ -691,33 +754,37 @@ initPerasEpochContextResolver ::
   LedgerState blk EmptyMK ->
   HeaderState blk ->
   PerasEpochContextResolver blk
-initPerasEpochContextResolver ledgerConfig ledgerState headerState =
-  case chainTipSlot of
-    Origin ->
-      newPerasEpochContextResolver NoPerasEnabled
-    NotOrigin slotNo ->
-      case resolveEpochToRoundInfo slotNo of
-        Left err ->
-          PerasEpochContextResolverError (show err)
-        Right eraIndexedEpochToPerasRoundInfo ->
-          embedBoundedEpochContext
-            newPerasEpochContextResolver
-            ledgerState
-            headerState
-            eraIndexedEpochToPerasRoundInfo
- where
-  chainTipSlot =
-    fmap annTipSlotNo (headerStateTip headerState)
-  timeResolutionContext =
-    TimeResolutionContext ledgerConfig ledgerState
-  resolveEpochToRoundInfo slotNo = do
-    (epochNo, _) <-
-      runQueryWithContext
+initPerasEpochContextResolverFromUntickedState
+  ledgerConfig
+  ledgerState
+  headerState =
+    case chainTipSlot of
+      Origin ->
+        newPerasEpochContextResolver NoPerasEnabled
+      NotOrigin slotNo ->
+        case resolveEpochToRoundInfo slotNo of
+          Left err ->
+            PerasEpochContextResolverError (show err)
+          Right eraIndexedEpochToPerasRoundInfo ->
+            createBoundedEpochContextResolverFromUntickedState
+              newPerasEpochContextResolver
+              eraIndexedEpochToPerasRoundInfo
+              ledgerConfig
+              ledgerState
+              headerState
+   where
+    chainTipSlot =
+      fmap annTipSlotNo (headerStateTip headerState)
+    timeResolutionContext =
+      TimeResolutionContext ledgerConfig ledgerState
+    resolveEpochToRoundInfo slotNo = do
+      (epochNo, _) <-
+        runQueryWithContext
+          timeResolutionContext
+          (slotToEpoch' slotNo)
+      runQueryEraIndexedWithContext
         timeResolutionContext
-        (slotToEpoch' slotNo)
-    runQueryEraIndexedWithContext
-      timeResolutionContext
-      (epochToPerasRoundInfo epochNo)
+        (epochToPerasRoundInfo epochNo)
 
 -- | Tick a 'PerasEpochContextResolver' to a target 'SlotNo'.
 --
@@ -729,6 +796,7 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
 --      need to carry exactly the same information. We tried, and it didn't
 --      improve readability.
 tickPerasEpochContextResolver ::
+  forall blk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
   ) =>
@@ -755,11 +823,12 @@ tickPerasEpochContextResolver
       Right (NextEpoch eraIndexedEpochToPerasRoundInfo) ->
         -- Exactly one epoch boundary was crossed: advance the two-epoch window
         -- incrementally (the current context becomes the previous one).
-        embedBoundedEpochContext
+        createBoundedEpochContextResolverFromTickedState
           (advancePerasEpochContextResolver perasEpochContextResolver)
+          eraIndexedEpochToPerasRoundInfo
+          ledgerConfig
           tickedLedger
           tickedHeader
-          eraIndexedEpochToPerasRoundInfo
       Right (ManyEpochsCrossed eraIndexedEpochToPerasRoundInfo) ->
         -- More than one epoch boundary was crossed at once, which is only
         -- possible when the chain skips one or more entire epochs (e.g. a
@@ -772,78 +841,144 @@ tickPerasEpochContextResolver
         -- handle this case in a way that doesn't break the more lenient
         -- test suites, where we might tick the ledger far ahead of its tip.
         -- See: https://github.com/tweag/cardano-peras/issues/260
-        embedBoundedEpochContext
+        createBoundedEpochContextResolverFromTickedState
           newPerasEpochContextResolver
+          eraIndexedEpochToPerasRoundInfo
+          ledgerConfig
           tickedLedger
           tickedHeader
-          eraIndexedEpochToPerasRoundInfo
    where
     chainTipSlot =
       fmap annTipSlotNo (headerStateTip headerState)
     timeResolutionContext =
       TimeResolutionContext ledgerConfig ledgerState
 
--- | Build a 'PerasEpochContextResolver' from the per-era Peras info for an
--- epoch, given a ledger and chain-dep state to derive the bounded epoch context
--- from and a way to embed that context into the resolver.
+-- | Build a 'PerasEpochContextResolver' from unticked ledger and header states.
 --
--- NOTE: this captures the logic shared between initialising the resolver
--- ('initPerasEpochContextResolver') and re-initialising or advancing it while
--- ticking ('tickPerasEpochContextResolver').
-embedBoundedEpochContext ::
-  forall blk ledgerState chainDepState.
+-- NOTE: the embedding function allows us to share the same logic depending on
+-- whether we are creating a fresh epoch context resolver or advancing an
+-- existing one.
+createBoundedEpochContextResolverFromUntickedState ::
+  forall blk.
   ( All Top (HardForkIndices blk)
-  , LedgerStateSupportsPeras ledgerState
-  , ChainDepStateSupportsPeras chainDepState
   , StateSupportsPerasEpochContext blk
   ) =>
   -- | How to embed the (optional) fresh bounded epoch context into a resolver.
-  ( PerasEnabled (BoundedPerasEpochContext blk) ->
-    PerasEpochContextResolver blk
-  ) ->
-  ledgerState EmptyMK ->
-  chainDepState ->
+  (PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk) ->
   EraIndexed (HardForkIndices blk) (PerasEnabled EpochToPerasRoundInfo) ->
+  LedgerConfig blk ->
+  LedgerState blk EmptyMK ->
+  HeaderState blk ->
   PerasEpochContextResolver blk
-embedBoundedEpochContext
-  embed
-  ledgerState
-  chainDepState
-  eraIndexedEpochToRoundInfo =
+createBoundedEpochContextResolverFromUntickedState
+  embedF
+  eraIndexedEpochToRoundInfo
+  ledgerConfig
+  untickedLedgerState
+  untickedHeaderState =
     case collapseEraIndexed eraIndexedEpochToRoundInfo of
       PerasEnabled eiEpochToPerasRoundInfo ->
-        case ( mkBoundedPerasEpochContext
-                 ( toMaybeEraIndexedEpochToPerasRoundInfo
-                     (Proxy @blk)
-                     eiEpochToPerasRoundInfo
-                 )
-                 ledgerState
-                 chainDepState
-             ) of
+        case mkPerasParamsFromLedger ledgerConfig untickedLedgerState of
           Left err ->
-            PerasEpochContextResolverError (show err)
-          Right boundedContext ->
-            embed (PerasEnabled boundedContext)
+            PerasEpochContextResolverError err
+          Right params ->
+            createBoundedEpochCOntextResolver
+              embedF
+              eiEpochToPerasRoundInfo
+              params
+              (getPerasPoolDistrFromLedger untickedLedgerState)
+              (getPerasNonceFromHeaderState untickedHeaderState)
       NoPerasEnabled ->
-        embed NoPerasEnabled
+        embedF NoPerasEnabled
+
+-- | Build a 'PerasEpochContextResolver' from ticked ledger and header states.
+--
+-- NOTE: the embedding function allows us to share the same logic depending on
+-- whether we are creating a fresh epoch context resolver or advancing an
+-- existing one.
+createBoundedEpochContextResolverFromTickedState ::
+  forall blk.
+  ( All Top (HardForkIndices blk)
+  , StateSupportsPerasEpochContext blk
+  ) =>
+  -- | How to embed the (optional) fresh bounded epoch context into a resolver.
+  (PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk) ->
+  EraIndexed (HardForkIndices blk) (PerasEnabled EpochToPerasRoundInfo) ->
+  LedgerConfig blk ->
+  Ticked LedgerState blk EmptyMK ->
+  Ticked (HeaderState blk) ->
+  PerasEpochContextResolver blk
+createBoundedEpochContextResolverFromTickedState
+  embedF
+  eraIndexedEpochToRoundInfo
+  ledgerConfig
+  tickedLedgerState
+  tickedHeaderState =
+    case collapseEraIndexed eraIndexedEpochToRoundInfo of
+      PerasEnabled eiEpochToPerasRoundInfo ->
+        case mkPerasParamsFromTickedLedger ledgerConfig tickedLedgerState of
+          Left err ->
+            PerasEpochContextResolverError err
+          Right params ->
+            createBoundedEpochCOntextResolver
+              embedF
+              eiEpochToPerasRoundInfo
+              params
+              (getPerasPoolDistrFromTickedLedger tickedLedgerState)
+              (getPerasNonceFromTickedHeaderState tickedHeaderState)
+      NoPerasEnabled ->
+        embedF NoPerasEnabled
+
+-- | Create a 'PerasEpochContextResolver' from a given 'EraIndexed' epoch-to-round
+createBoundedEpochCOntextResolver ::
+  forall blk.
+  ( All Top (HardForkIndices blk)
+  , StateSupportsPerasEpochContext blk
+  ) =>
+  -- | How to embed the (optional) fresh bounded epoch context into a resolver.
+  (PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk) ->
+  EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
+  PerasParams blk ->
+  PoolDistr ->
+  Nonce ->
+  PerasEpochContextResolver blk
+createBoundedEpochCOntextResolver
+  embedF
+  eraIndexedEpochToPerasRoundInfo
+  params
+  poolDistr
+  epochNonce =
+    either
+      (PerasEpochContextResolverError . show)
+      (embedF . PerasEnabled)
+      $ mkBoundedPerasEpochContext
+        mbEraIndexedEpochToPerasRoundInfo
+        params
+        poolDistr
+        epochNonce
    where
-    -- Swap the positions of the 'EraIndexed' and 'PerasEnabled' wrappers, so we
-    -- can directly pattern-match on the 'PerasEnabled' information.
-    collapseEraIndexed ::
-      All Top xs =>
-      EraIndexed xs (PerasEnabled a) ->
-      PerasEnabled (EraIndexed xs a)
-    collapseEraIndexed (EraIndexed ns) =
-      hcollapse $
-        himap
-          ( \idx (K pea) ->
-              case pea of
-                PerasEnabled a ->
-                  K (PerasEnabled (EraIndexed (injectNS idx (K a))))
-                NoPerasEnabled ->
-                  K NoPerasEnabled
-          )
-          ns
+    mbEraIndexedEpochToPerasRoundInfo =
+      toMaybeEraIndexedEpochToPerasRoundInfo
+        (Proxy @blk)
+        eraIndexedEpochToPerasRoundInfo
+
+-- | Swap the positions of the 'EraIndexed' and 'PerasEnabled' wrappers, so we
+-- can directly pattern-match on the 'PerasEnabled' information.
+collapseEraIndexed ::
+  All Top xs =>
+  EraIndexed xs (PerasEnabled a) ->
+  PerasEnabled (EraIndexed xs a)
+collapseEraIndexed (EraIndexed ns) =
+  hcollapse $
+    himap
+      ( \idx (K pea) ->
+          case pea of
+            PerasEnabled a ->
+              K (PerasEnabled (EraIndexed (injectNS idx (K a))))
+            NoPerasEnabled ->
+              K NoPerasEnabled
+      )
+      ns
 
 -- * Time resolution
 

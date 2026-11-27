@@ -104,7 +104,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   )
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -113,7 +112,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( HasSizeForBlockBodyInclusion (..)
   , TxLimits (..)
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Context
   ( BoundedPerasEpochContext (..)
   , PerasEpochContextResolver (..)
@@ -750,14 +748,3 @@ instance
               getPerasCertInBlock block
         )
       $ nsBlock
-
-{-------------------------------------------------------------------------------
-  LedgerSupportsPeras
--------------------------------------------------------------------------------}
-
-instance CanHardFork xs => LedgerStateSupportsPeras (LedgerState (HardForkBlock xs)) where
-  getPoolDistr =
-    hcollapse
-      . hcmap proxySingle (K . getPoolDistr . unFlip)
-      . State.tip
-      . hardForkLedgerStatePerEra
