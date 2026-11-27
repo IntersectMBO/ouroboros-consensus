@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Mempool
   )
 import Ouroboros.Consensus.Node.Run (RunNode)
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.NodeKernel.ForgeView (noForgeViews)
 import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   ( ChainDB
   , getTipPoint
@@ -177,7 +178,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     results <-
       mapM
         ( \bf ->
-            -- The synthesizer neither stores endorser blocks nor certifies them.
+            -- The synthesizer neither stores endorser blocks nor certifies them,
+            -- and prepares no forge views.
             withEarlyExit $
               forge
                 nullTracer
@@ -188,6 +190,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 bf
                 (\_ _ -> pure Nothing)
                 (\_ _ _ -> pure ())
+                (pure noForgeViews)
                 currentSlot
         )
         blockForging

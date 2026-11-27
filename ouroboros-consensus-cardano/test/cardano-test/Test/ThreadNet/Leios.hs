@@ -54,6 +54,7 @@ import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
@@ -65,6 +66,7 @@ import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractAsMempoolTxs)
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
+import Ouroboros.Consensus.Node.Tracers (TraceForgeEvent (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.PBFT (PBftSignatureThreshold (..))
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -84,6 +86,7 @@ import Test.QuickCheck
   ( Property
   , conjoin
   , counterexample
+  , tabulate
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
@@ -128,7 +131,7 @@ tests =
 
 -- | Three nodes in Dijkstra with equal stake, loaded beyond what fits in
 -- their ranking blocks, announce endorser blocks, vote for each other's and
--- certify them in later blocks.
+-- certify them in later blocks, which announce endorser blocks too.
 --
 -- No node holds enough stake to certify alone, so a certificate on the chain
 -- means votes of several nodes diffused. Every node must end on the same
@@ -147,9 +150,21 @@ propLeiosCertify seed =
         & counterexample "no block announces an endorser block"
     , any certifies chain
         & counterexample "no block certifies an endorser block"
+    , any (\blk -> certifies blk && announces blk) chain
+        & counterexample "no certifying block announces an endorser block"
     ]
     & counterexample ("transactions per block: " <> show (length . extractAsMempoolTxs <$> chain))
+    & tabulate "forge view" (concatMap (mapMaybe forgeViewUse . nodeOutputForgeEvents) nodeOutputs)
+    & tabulate
+      "certifying blocks"
+      [if announces blk then "announce" else "announce nothing" | blk <- chain, certifies blk]
  where
+  forgeViewUse = \case
+    TraceForgeFromView{} -> Just "from view"
+    TraceForgeViewPartial{} -> Just "from partial view"
+    TraceForgeNoView{} -> Just "no view"
+    _ -> Nothing
+
   nodeOutputs = Map.elems (testOutputNodes testOutput)
 
   nodeChain = Chain.toOldestFirst . nodeOutputFinalChain

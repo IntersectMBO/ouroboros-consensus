@@ -150,6 +150,7 @@ import Ouroboros.Consensus.Node.Genesis
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel.Forge (forge)
+import Ouroboros.Consensus.NodeKernel.ForgeView (noForgeViews, prepareForgeViews)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
@@ -318,6 +319,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , blockFetchSize :: Header blk -> SizeInBytes
   , mempoolCapacityOverride :: MempoolCapacityBytesOverride
   , mempoolTimeoutConfig :: Maybe MempoolTimeoutConfig
+  , forgeViewLeadTime :: DiffTime
+  -- ^ How long before a slot the node leads it starts preparing the forge view.
   , miniProtocolParameters :: MiniProtocolParameters
   , blockFetchConfiguration :: BlockFetchConfiguration
   , keepAliveRng :: StdGen
@@ -363,6 +366,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     , systemTime
+    , forgeViewLeadTime
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -657,7 +661,7 @@ initNodeKernel
             atomically $ writeTVar votingKeys []
             blockForging' <-
               traverse
-                (forkBlockForging st onForgedEb (votingVoteState votingEnv) votingKeys)
+                (forkBlockForging st systemTime forgeViewLeadTime onForgedEb (votingVoteState votingEnv) votingKeys)
                 blockForging
             voting' <-
               forkLinkedThread registry "NodeKernel.leiosVoting" $ do
@@ -815,6 +819,9 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
   InternalState m addrNTN addrNTC blk ->
+  SystemTime m ->
+  -- | How long before a slot the node leads it starts preparing the forge view.
+  DiffTime ->
   -- | What 'forge' does with each endorser block it produces, given the
   -- wall-clock onset of the slot it forged it in
   (RelativeTime -> Header blk -> StrictMaybe LeiosLedgerView -> ForgedEndorserBlock -> m ()) ->
@@ -824,33 +831,42 @@ forkBlockForging ::
   StrictTVar m [[LeiosSigningKey]] ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} onForgedEb voteState votingKeys (MkBlockForging blockForgingM) =
-  forkLinkedWatcherAllocate
-    registry
-    label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
-        \currentSlot slotOnset ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              cfg
-              chainDB
-              mempool
-              bf
-              ( getLeiosCertToForge
-                  (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
-                  chainDB
-                  voteState
-              )
-              (onForgedEb slotOnset)
-              currentSlot
-    )
+forkBlockForging IS{..} systemTime forgeViewLeadTime onForgedEb voteState votingKeys (MkBlockForging blockForgingM) =
+  forkLinkedThread registry label $ do
+    (key, bf) <- allocate registry (const blockForgingMLabel) finalize
+    varView <- uncheckedNewTVarM noForgeViews
+    ( withWatcher labelView (preparing bf varView) $
+        forging bf varView
+      )
+      `finally` release key
  where
+  preparing bf =
+    prepareForgeViews cfg btime systemTime chainDB leiosDB mempool (canBeLeader bf) forgeViewLeadTime
+
+  forging bf varView = knownSlotWatcher btime $
+    \currentSlot slotOnset ->
+      withEarlyExit_ $
+        forge
+          (forgeTracer tracers)
+          (forgeStateInfoTracer tracers)
+          cfg
+          chainDB
+          mempool
+          bf
+          ( getLeiosCertToForge
+              (TraceLabelCreds (forgeLabel bf) >$< forgeTracer tracers)
+              chainDB
+              voteState
+          )
+          (onForgedEb slotOnset)
+          (readTVar varView)
+          currentSlot
+
   label :: String
   label = "NodeKernel.blockForging"
+
+  labelView :: String
+labelView = "NodeKernel.forgeView"
 
   blockForgingMLabel = do
     bf <- blockForgingM
