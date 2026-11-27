@@ -317,9 +317,8 @@ data Handlers m addr blk = Handlers
         ( PeerTxAPI m (GenTxId blk) (GenTx blk) ->
           TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
         )
-  -- ^ Either we use the legacy tx submission protocol or the newest one
-  -- which require PeerTxAPI. This is decided by
-  -- 'EnableNewTxSubmissionProtocol' flag.
+  -- ^ The 'txSubmissionLogicVersion' of the 'MiniProtocolParameters' selects
+  -- the legacy server or the V2 server that requires a 'PeerTxAPI'.
   , hPerasCertDiffusionClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
@@ -399,7 +398,6 @@ mkHandlers ::
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
-  TxSubmissionLogicVersion ->
   Handlers m addrNTN blk
 mkHandlers
   NodeKernelArgs
@@ -426,8 +424,7 @@ mkHandlers
     , getLeiosFetchKernel
     , getTxDecisionPolicy
     , getTxSubmissionConfig
-    }
-  txSubmissionLogicVersion =
+    } =
     Handlers
       { hChainSyncClient = \peer _isBigLedgerpeer dynEnv mbLeiosPeer ->
           CsClient.chainSyncClient
@@ -482,7 +479,7 @@ mkHandlers
             (txOutboundVersion version)
             controlMessageSTM
       , hTxSubmissionServer = \version peer ->
-          case txSubmissionLogicVersion of
+          case txSubmissionLogicVersion miniProtocolParameters of
             TxSubmissionLogicV2 ->
               Right $ \api ->
                 txSubmissionInboundV2

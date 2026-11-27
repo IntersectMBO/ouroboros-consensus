@@ -616,12 +616,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                       Nothing -> HistoricityCheck.noCheck
                       Just historicityCutoff ->
                         HistoricityCheck.mkCheck systemTime getGsmState historicityCutoff
-              fmap
-                ( withTxSubmissionLogicVersion rnTxSubmissionLogicVersion
-                    . nodeKernelArgsEnforceInvariants
-                    . llrnCustomiseNodeKernelArgs
-                )
-                $ mkNodeKernelArgs
+              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
+                mkNodeKernelArgs
                   registry
                   llrnBfcSalt
                   gsmAntiThunderingHerd
@@ -696,7 +692,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnTraceNTN
                     llrnChainSyncIdleTimeout
                     llrnGenesisConfig
-                    rnTxSubmissionLogicVersion
                     nodeKernelArgs
                     nodeKernel
                     churnMetrics
@@ -853,7 +848,6 @@ mkNodeToNodeApps ::
   NTN.Tracers m addrNTN blk DeserialiseFailure ->
   ChainSyncIdleTimeout ->
   GenesisConfig ->
-  TxSubmissionLogicVersion ->
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
   PeerMetrics m addrNTN ->
@@ -866,7 +860,6 @@ mkNodeToNodeApps
   traceNTN
   chainSyncIdleTimeout
   genesisConfig
-  txSubmissionLogicVersion
   nodeKernelArgs
   nodeKernel
   peerMetrics
@@ -883,7 +876,7 @@ mkNodeToNodeApps
       (gcChainSyncLoPBucketConfig genesisConfig)
       (gcCSJConfig genesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel txSubmissionLogicVersion)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
 -- | The node's node-to-node applications for each version it supports, on
 -- connections where it is only the initiator.
@@ -1132,20 +1125,6 @@ mkNodeKernelArgs
           , getDiffusionPipeliningSupport
           , txSubmissionInitDelay
           }
-
--- | Run tx-submission with the node's 'TxSubmissionLogicVersion': it selects
--- the decision policy and each connection's 'TxSubmissionConfig'. Applied
--- after 'llrnCustomiseNodeKernelArgs', so that a customisation cannot make the
--- 'MiniProtocolParameters' disagree with the inbound logic the node runs.
-withTxSubmissionLogicVersion ::
-  TxSubmissionLogicVersion ->
-  NodeKernelArgs m addrNTN addrNTC blk ->
-  NodeKernelArgs m addrNTN addrNTC blk
-withTxSubmissionLogicVersion logicVersion nodeKernelArgs =
-  nodeKernelArgs
-    { miniProtocolParameters =
-        (miniProtocolParameters nodeKernelArgs){txSubmissionLogicVersion = logicVersion}
-    }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some

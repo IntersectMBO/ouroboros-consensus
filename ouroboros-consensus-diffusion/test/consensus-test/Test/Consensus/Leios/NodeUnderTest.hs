@@ -410,7 +410,6 @@ withNodeUnderTest cfg tracers nodeDBs leiosDB body = do
                 NTN.nullTracers
                 defaultChainSyncIdleTimeout
                 genesisConfig
-                defaultTxSubmissionLogicVersion
                 kernelArgs
                 kernel
                 peerMetrics

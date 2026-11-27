@@ -1155,7 +1155,7 @@ runThreadNetwork
               -- The purpose of this test is not testing protocols, so
               -- returning constant empty list is fine if we have thorough
               -- tests about the peer sharing protocol itself.
-              (NTN.mkHandlers nodeKernelArgs nodeKernel txLogicVersion)
+              (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
       -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
       -- needs the read-only forker to elaborate a complete UTxO set to generate

@@ -55,7 +55,7 @@ them.
 | `rnGenesisConfig` | The Ouroboros Genesis configuration, see [Genesis configuration](#genesis-configuration). |
 | `rnFeatureFlags` | Set of enabled experimental features (e.g. Peras). |
 | `rnMempoolTimeoutConfig` | Optional mempool validation timeouts, see [Mempool](#mempool). `Nothing` disables the timeouts. |
-| `rnTxSubmissionLogicVersion` | Which version of the tx-submission *logic* to run (see the [network spec](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf)). |
+| `rnTxSubmissionLogicVersion` | Which version of the tx-submission *logic* to run (see the [network spec](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf)). It sets the default `miniProtocolParameters`, so `llrnCustomiseNodeKernelArgs` can override it. |
 | `rnTxSubmissionInitDelay` | Delay before the tx-submission server starts processing transactions, used to avoid load spikes right after startup. |
 
 ## `StdRunNodeArgs`: what the node configures
