@@ -13,6 +13,7 @@ import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block (BlockSupportsPeras (..), StandardHash)
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Leios.TxCache.Optimized.MutableHashTable (ExnMutableHashTable)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( BlockFetchServerException
   )
@@ -87,6 +88,9 @@ consensusRethrowPolicy pb =
     -- Except for the LeiosDB: peers might provoke some of its failures, eg
     -- SQLite's BUSY, so these conservatively disconnect only the peer.
     <> mkRethrowPolicy (\_ctx (_ :: LeiosDbException) -> ShutdownPeer)
+    -- The tx cache is shared by all peers, and a failed mutation may have
+    -- changed it in place. Restarting the node gives it a fresh cache.
+    <> mkRethrowPolicy (\_ctx (_ :: ExnMutableHashTable) -> shutdownNode)
     -- When the system clock moved back, we have to restart the node.
     <> mkRethrowPolicy (\_ctx (_ :: SystemClockMovedBackException) -> shutdownNode)
     -- Some chain DB errors are indicative of a bug in our code, others

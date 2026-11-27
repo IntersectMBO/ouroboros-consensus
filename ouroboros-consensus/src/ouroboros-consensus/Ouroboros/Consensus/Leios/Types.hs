@@ -138,7 +138,7 @@ import GHC.Generics (Generic)
 import qualified GHC.IsList as IsList
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (toShortRawHash), HeaderHash)
-import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..), VersionWord16)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Network.Block (Serialised (..))
 
@@ -336,7 +336,7 @@ data ForgedEndorserBlock = ForgedEndorserBlock
   , forgedEbTxs :: !(NonEmpty ByteString)
   -- ^ The bytes of the transactions that 'forgedEbBody' references, in the
   -- same order.
-  , forgedEbTxsProtVer :: !Version
+  , forgedEbTxsProtVer :: !VersionWord16
   -- ^ The major protocol version the forge validated those transactions under.
   }
   deriving stock (Show, Eq)
@@ -344,7 +344,7 @@ data ForgedEndorserBlock = ForgedEndorserBlock
 -- | The endorser block that references the given transactions, in the given
 -- order, validated under this major protocol version. The reference to a
 -- transaction holds the Blake2b-256 hash and the length of its bytes.
-forgeLeiosEb :: Version -> NonEmpty ByteString -> ForgedEndorserBlock
+forgeLeiosEb :: VersionWord16 -> NonEmpty ByteString -> ForgedEndorserBlock
 forgeLeiosEb protVer txBytes =
   ForgedEndorserBlock
     { forgedEbBody = endorserBlockFromTxBytes txBytes
