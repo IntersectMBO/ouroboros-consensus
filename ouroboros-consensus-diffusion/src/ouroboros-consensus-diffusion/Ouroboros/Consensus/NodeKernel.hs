@@ -29,6 +29,9 @@ import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
   ( ConnectionId
   , MiniProtocolParameters (..)
+  , NodeToNodeVersion
+  , mkNodeTxDecisionPolicy
+  , txSubmissionConfigForVersion
   )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
@@ -174,7 +177,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy, TxSubmissionConfig)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( PeerTxRegistry
   , SharedTxStateVar
@@ -260,6 +263,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ What the node relays to its downstream peers over LeiosNotify.
   , getLeiosFetchKernel :: LeiosFetchKernel m (ConnectionId addrNTN) blk
   -- ^ What the node's LeiosFetch clients share.
+  , getTxSubmissionConfig :: NodeToNodeVersion -> TxSubmissionConfig
+  -- ^ The tx-submission configuration of a connection, by its negotiated
+  -- version.
   }
 
 -- | Arguments required when initializing a node
@@ -425,6 +431,7 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
+    txDecisionPolicy <- either throwIO pure (mkNodeTxDecisionPolicy miniProtocolParameters)
     peerTxRegistry <- newPeerTxRegistry
     txCountersVar <- newTxSubmissionCountersVar mempty
 
@@ -560,7 +567,7 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
-          (txDecisionPolicy miniProtocolParameters)
+          txDecisionPolicy
           (txCountersTracer tracers)
           (txLogicTracer tracers)
           txCountersVar
@@ -589,7 +596,8 @@ initNodeKernel
         , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
-        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getTxDecisionPolicy = txDecisionPolicy
+        , getTxSubmissionConfig = (`txSubmissionConfigForVersion` miniProtocolParameters)
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState

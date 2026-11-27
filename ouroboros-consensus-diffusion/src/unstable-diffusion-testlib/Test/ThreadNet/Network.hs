@@ -38,12 +38,13 @@ module Test.ThreadNet.Network
   , TestOutput (..)
   ) where
 
+import Cardano.Network.Diffusion.Configuration (defaultNodeTxSubmissionConfig)
 import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
   , ResponderContext (..)
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -1095,7 +1096,8 @@ runThreadNetwork
               , nextNewLeiosValidClaims = consumeNewLeiosValidClaims newLeiosValidClaims
               , leiosFetchRng = lfRng
               , leiosAnnouncementAgeLimits = defaultLeiosAnnouncementAgeLimits
-              , miniProtocolParameters = defaultMiniProtocolParameters
+              , miniProtocolParameters =
+                  mkDefaultMiniProtocolParameters txLogicVersion defaultNodeTxSubmissionConfig
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1
@@ -1157,7 +1159,7 @@ runThreadNetwork
               -- The purpose of this test is not testing protocols, so
               -- returning constant empty list is fine if we have thorough
               -- tests about the peer sharing protocol itself.
-              (NTN.mkHandlers nodeKernelArgs nodeKernel txLogicVersion)
+              (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
       -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
       -- needs the read-only forker to elaborate a complete UTxO set to generate

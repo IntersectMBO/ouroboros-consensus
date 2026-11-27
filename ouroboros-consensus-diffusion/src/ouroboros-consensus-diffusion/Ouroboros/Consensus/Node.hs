@@ -79,11 +79,10 @@ import Cardano.Network.NodeToClient
 import Cardano.Network.NodeToNode
   ( DiffusionMode (..)
   , ExceptionInHandler (..)
-  , MiniProtocolParameters
+  , MiniProtocolParameters (..)
   , NodeToNodeVersionData (..)
   , RemoteAddress
-  , blockFetchPipeliningMax
-  , defaultMiniProtocolParameters
+  , mkDefaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
 import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
@@ -646,6 +645,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   genesisArgs
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
+                  rnTxSubmissionLogicVersion
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -696,7 +696,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnTraceNTN
                     llrnChainSyncIdleTimeout
                     llrnGenesisConfig
-                    rnTxSubmissionLogicVersion
                     nodeKernelArgs
                     nodeKernel
                     churnMetrics
@@ -853,7 +852,6 @@ mkNodeToNodeApps ::
   NTN.Tracers m addrNTN blk DeserialiseFailure ->
   ChainSyncIdleTimeout ->
   GenesisConfig ->
-  TxSubmissionLogicVersion ->
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
   PeerMetrics m addrNTN ->
@@ -866,7 +864,6 @@ mkNodeToNodeApps
   traceNTN
   chainSyncIdleTimeout
   genesisConfig
-  txSubmissionLogicVersion
   nodeKernelArgs
   nodeKernel
   peerMetrics
@@ -883,7 +880,7 @@ mkNodeToNodeApps
       (gcChainSyncLoPBucketConfig genesisConfig)
       (gcCSJConfig genesisConfig)
       (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel txSubmissionLogicVersion)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
 -- | The node's node-to-node applications for each version it supports, on
 -- connections where it is only the initiator.
@@ -1083,6 +1080,7 @@ mkNodeKernelArgs ::
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionLogicVersion ->
   TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -1110,10 +1108,15 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
+  txLogicVersion
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
           (psRng, lfRng) = splitGen rng'
+          miniProtocolParameters =
+            mkDefaultMiniProtocolParameters
+              txLogicVersion
+              Diffusion.defaultNodeTxSubmissionConfig
       return
         NodeKernelArgs
           { tracers
@@ -1132,8 +1135,9 @@ mkNodeKernelArgs
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
           , mempoolTimeoutConfig = mempoolTimeoutConfig
-          , miniProtocolParameters = defaultMiniProtocolParameters
-          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , miniProtocolParameters
+          , blockFetchConfiguration =
+              Diffusion.mkDefaultBlockFetchConfiguration miniProtocolParameters bfcSalt
           , gsmArgs =
               GsmNodeKernelArgs
                 { gsmAntiThunderingHerd
@@ -1171,7 +1175,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
             blockFetchPipeliningMax =
               min
                 (blockFetchPipeliningMax miniProtocolParameters)
-                (blockFetchPipeliningMax defaultMiniProtocolParameters)
+                (blockFetchPipeliningMax defaultParameters)
           }
     , blockFetchConfiguration =
         blockFetchConfiguration
@@ -1184,6 +1188,10 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs =
     }
  where
   NodeKernelArgs{..} = nodeKernelArgs
+  defaultParameters =
+    mkDefaultMiniProtocolParameters
+      (txSubmissionLogicVersion miniProtocolParameters)
+      (nodeTxSubmissionConfig miniProtocolParameters)
 
 {-------------------------------------------------------------------------------
   Arguments for use in the real node
