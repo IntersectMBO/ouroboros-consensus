@@ -52,7 +52,7 @@ attachSlotTime cfg hdr =
     , hwtSlotRelativeTime =
         runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
     , -- Such a block has no Leios, so neither has its chain.
-      hwtCertRbInfo = SNothing
+      hwtLeiosClaim = SNothing
     }
  where
   ei = immutableEpochInfo cfg

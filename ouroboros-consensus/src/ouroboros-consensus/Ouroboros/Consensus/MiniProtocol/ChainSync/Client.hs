@@ -87,7 +87,6 @@ import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
-import Data.List (zipWith4)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -1143,7 +1142,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
           -- required by 'withTime' once when finding
           -- an intersection with a peer, so this
           -- should not impact the performance.
-          (withTime (configBlock cfg) ourFrag ourHeaderStateHistory, ourHeaderStateHistory) of
+          (ourFrag `withTime` ourHeaderStateHistory, ourHeaderStateHistory) of
           Just (c, d, _oldestRewound) -> return (c, d)
           Nothing ->
             -- The @intersection@ is not on our fragment, even
@@ -1171,18 +1170,17 @@ findIntersectionTop cfgEnv dynEnv intEnv =
       continueWithState kis $
         knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
 
--- | Augment the given fragment of headers with the times, Leios ledger views
--- and certified announcements specified in the given state history.
+-- | Augment the given fragment of headers with the times and Leios claims
+-- specified in the given state history.
 --
 -- PRECONDITION: the fragment must be a prefix of the state history.
 withTime ::
   forall blk.
   BlockSupportsProtocol blk =>
-  BlockConfig blk ->
   AnchoredFragment (Header blk) ->
   HeaderStateHistory blk ->
   AnchoredFragment (HeaderWithTime blk)
-withTime bcfg fragment (HeaderStateHistory history) =
+withTime fragment (HeaderStateHistory history) =
   assertWithMsg
     ( if AF.length fragment == AF.length history
         then Right ()
@@ -1196,30 +1194,27 @@ withTime bcfg fragment (HeaderStateHistory history) =
     )
     $ AF.fromOldestFirst
       (AF.castAnchor $ AF.anchor fragment)
-    $ zipWith4 addTimeToHeader hdrs predecessorSlots predecessorStates (AF.toOldestFirst history)
+    $ zipWith3 addTimeToHeader hdrs predecessorStates states
  where
   hdrs = AF.toOldestFirst fragment
 
-  predecessorStates = AF.anchor history : AF.toOldestFirst history
+  states = AF.toOldestFirst history
 
-  predecessorSlots =
-    AF.anchorToSlotNo (AF.anchor fragment) : map (NotOrigin . blockSlot) hdrs
+  predecessorStates = AF.anchor history : states
 
   addTimeToHeader ::
     Header blk ->
-    WithOrigin SlotNo ->
     HeaderStateWithTime blk ->
     HeaderStateWithTime blk ->
     HeaderWithTime blk
-  addTimeToHeader hdr predecessorSlot predHsWt hsWt =
+  addTimeToHeader hdr predHsWt hsWt =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
-      , hwtCertRbInfo =
+      , hwtLeiosClaim =
           -- The state the header's block produced gives the view at the
           -- header's slot, since the view is a property of the slot.
-          certRbInfo bcfg hdr predecessorSlot (hswtLeiosLedgerView hsWt) $
-            headerStateChainDep (hswtHeaderState predHsWt)
+          leiosClaim (hswtLeiosLedgerView hsWt) (hswtHeaderState predHsWt)
       }
 
 {-------------------------------------------------------------------------------
@@ -1979,13 +1974,10 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
-        , hwtCertRbInfo =
-            certRbInfo
-              (configBlock cfg)
-              hdr
-              (AF.headSlot theirFrag)
+        , hwtLeiosClaim =
+            leiosClaim
               (maybeToStrictMaybe $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) ledgerView)
-              (headerStateChainDep (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory)))
+              (hswtHeaderState (HeaderStateHistory.current theirHeaderStateHistory))
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same

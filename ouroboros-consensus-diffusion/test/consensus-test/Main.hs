@@ -14,7 +14,6 @@ import qualified Test.Consensus.Leios.LeiosFetch (tests)
 import qualified Test.Consensus.Leios.LeiosNotify (tests)
 import qualified Test.Consensus.Leios.Relay (tests)
 import qualified Test.Consensus.Leios.TxCache (tests)
-import qualified Test.Consensus.Leios.ValidClaims (tests)
 import qualified Test.Consensus.Leios.VoteState (tests)
 import qualified Test.Consensus.NodeKernel (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
@@ -49,7 +48,6 @@ tests =
     , Test.Consensus.BlockTree.Tests.tests
     , Test.Consensus.Genesis.TestSuite.SmallKey.Tests.tests
     , Test.Consensus.Leios.Cert.tests
-    , Test.Consensus.Leios.ValidClaims.tests
     , Test.Consensus.Leios.AcquiredEbs.tests
     , Test.Consensus.Leios.ChainDB.tests
     , Test.Consensus.Leios.Forge.tests

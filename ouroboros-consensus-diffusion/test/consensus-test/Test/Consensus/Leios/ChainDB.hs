@@ -16,6 +16,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
   ( Point
   , Proxy (..)
@@ -31,8 +32,7 @@ import Ouroboros.Consensus.Leios.Acquisitions
   ( LeiosAcquisition (..)
   , LeiosAcquisitions (..)
   )
-import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..), LeiosClaim (..))
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Cert (LeiosCertRejection (..))
 import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client.Replies (LeiosFetchClientContext (..))
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Decision (isFocusedPoint)
@@ -66,8 +66,9 @@ tests =
         runSimOrThrow
           (whyInvalid (\node -> addBlocks node [announcingA, minorityCertifyingA]) minorityCertifyingA)
           @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
-    , testCase "ChainSel does not verify a certificate again for a claim it established" $
-        runSimOrThrow (whyInvalid addSibling minoritySibling) @?= Nothing
+    , testCase "ChainSel rejects a minority certificate even for a claim another block made" $
+        runSimOrThrow (whyInvalid addSibling minoritySibling)
+          @?= Just (ExtValidationErrorLeiosCert (LeiosCertInvalid (InsufficientWeight (1 / 4))))
     , testCase "a restart forgets a certifying block off the selection, until it arrives again" $
         runSimOrThrow (heldAcrossRestart BodyOfA) @?= (True, False, True)
     , testCase "a restart keeps a certifying block on the selection" $
@@ -117,9 +118,7 @@ certifiedIsFetched = withNode $ \node -> do
   validClaims <- atomically $ nodeNewLeiosValidClaims node
   outstanding <- readMVar (lfcOutstanding (lfkContext (getLeiosFetchKernel (nodeKernel node))))
   pure
-    ( [ (leiosClaimSlot claim, announcementEbHash ann)
-      | (claim, ann) <- Map.toList validClaims
-      ]
+    ( Set.toList validClaims
     , isFocusedPoint pointA outstanding
     )
 
@@ -324,7 +323,7 @@ minoritySibling :: LeiosTestBlock
 minoritySibling =
   setLeiosCert (certOf (rbHashOf announcingA) [0]) (forkLeiosBlock certifyingA)
 
--- | Add 'certifyingA', which establishes its claim, and then 'minoritySibling'.
+-- | Add 'certifyingA', and then 'minoritySibling', which makes the same claim.
 addSibling :: NodeUnderTest (IOSim s) -> IOSim s ()
 addSibling node = do
   addBlocks node [announcingA, certifyingA]
