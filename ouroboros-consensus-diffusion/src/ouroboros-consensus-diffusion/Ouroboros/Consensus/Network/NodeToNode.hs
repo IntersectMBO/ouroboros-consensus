@@ -45,6 +45,41 @@ module Ouroboros.Consensus.Network.NodeToNode
 
 import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
 import Cardano.Network.NodeToNode
+  ( ConnectionId (remoteAddress)
+  , ControlMessageSTM
+  , ExpandedInitiatorContext
+    ( ExpandedInitiatorContext
+    , eicConnectionId
+    , eicControlMessage
+    , eicExtraFlags
+    , eicIsBigLedgerPeer
+    )
+  , IsBigLedgerPeer
+  , MiniProtocolParameters
+    ( chainSyncPipeliningHighMark
+    , chainSyncPipeliningLowMark
+    , perasCertDiffusionMaxObjectsUnacknowledged
+    , perasVoteDiffusionMaxObjectsUnacknowledged
+    , txSubmissionLogicVersion
+    )
+  , NodeToNodeProtocols
+    ( NodeToNodeProtocols
+    , blockFetchProtocol
+    , chainSyncProtocol
+    , keepAliveProtocol
+    , peerSharingProtocol
+    , perasCertDiffusionProtocol
+    , perasVoteDiffusionProtocol
+    , txSubmissionProtocol
+    )
+  , NodeToNodeVersionData
+  , ResponderContext (ResponderContext, rcConnectionId)
+  , TxSubmissionLogicVersion (TxSubmissionLogicV1, TxSubmissionLogicV2)
+  , maxCertSize
+  , maxVoteSize
+  , nodeToNodeProtocols
+  , txOutboundVersion
+  )
 import Cardano.Network.PeerSelection (PeerTrustable (..))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
